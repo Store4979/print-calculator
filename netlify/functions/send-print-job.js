@@ -37,7 +37,6 @@ exports.handler = async (event) => {
       },
     });
 
-    // Simple text summary of the job
     const textSummary = `Job Type: ${jobType || "N/A"}
 
 Details:
