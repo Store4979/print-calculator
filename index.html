@@ -218,35 +218,47 @@
       };
 
       // ---- EMAIL ORDER HELPER (Netlify Function call) ----
-      const sendOrderEmail = async (jobType, details, pdf) => {
-        try {
-          // Convert PDF to base64 (arraybuffer -> Uint8Array -> binary string -> base64)
-          const arrayBuffer = pdf.output('arraybuffer');
-          const base64Pdf = btoa(
-            String.fromCharCode(...new Uint8Array(arrayBuffer))
-          );
+const sendOrderEmail = async (jobType, details, pdf) => {
+  try {
+    // Convert PDF to base64 (arraybuffer -> Uint8Array -> binary string -> base64)
+    const arrayBuffer = pdf.output('arraybuffer');
+    const base64Pdf = btoa(
+      String.fromCharCode(...new Uint8Array(arrayBuffer))
+    );
 
-          const res = await fetch('/.netlify/functions/send-print-job', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              subject: 'PRINT JOB',
-              to: 'store4979@theupsstore.com',
-              jobType,
-              details,
-              pdfBase64: base64Pdf
-            })
-          });
+    const res = await fetch('/.netlify/functions/send-print-job', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: 'PRINT JOB',
+        to: 'store4979@theupsstore.com',
+        jobType,
+        details,
+        pdfBase64: base64Pdf
+      })
+    });
 
-          if (!res.ok) throw new Error('Network response was not ok');
-          alert('Order sent! The store will receive your PRINT JOB email.');
-        } catch (err) {
-          console.error(err);
-          alert(
-            'Could not send order automatically. Please download the PDF and email it to store4979@theupsstore.com.'
-          );
-        }
-      };
+    const text = await res.text(); // read body either way
+
+    if (!res.ok) {
+      console.error('Server error:', res.status, text);
+      alert(
+        'Server error while sending order:\n\n' +
+          text +
+          '\n\nPlease download the PDF and email it manually to store4979@theupsstore.com.'
+      );
+      return;
+    }
+
+    console.log('Order sent OK:', text);
+    alert('Order sent! The store will receive your PRINT JOB email.');
+  } catch (err) {
+    console.error('sendOrderEmail error:', err);
+    alert(
+      'Could not send order automatically. Please download the PDF and email it to store4979@theupsstore.com.'
+    );
+  }
+};
 
       // ---- Drawing multi-layout for sheet printing (async) ----
       const drawLayout = async (canvas, images, rotation, mode, sheetIndex = 0) => {
