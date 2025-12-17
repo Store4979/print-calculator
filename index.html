@@ -1,0 +1,2095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Print Price Calculator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-8">
+  <div id="root" class="max-w-5xl mx-auto"></div>
+
+  <!-- React, ReactDOM, jsPDF, pdfjsLib, Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+    const { jsPDF } = window.jspdf;
+
+    // Preset sheet dimensions (inches)
+    const PRESET_SHEETS = {
+      "8.5x11": [8.5, 11],
+      "11x17": [11, 17],
+      "12x18": [12, 18],
+      custom: null
+    };
+
+    const DPI = 300;
+    const MARGIN_IN = 0.1;
+    const SPACING_IN = 0.05;
+    const BLEED_IN = 0.125; // bleed per side in inches
+
+    // Paper types and which sheet sizes they are valid for (sheet printing)
+    const PAPER_TYPES = [
+      { key: '28lb', label: '28 LB Paper' },
+      { key: '20lb', label: '20 LB Paper' },
+      { key: '80c', label: '80 LB Cardstock Cover' },
+      { key: '110c', label: '110 LB Cardstock Cover' },
+      { key: '80t', label: '80 LB Text Gloss' },
+      { key: '100t', label: '100 LB Text Gloss' },
+      { key: '14pt', label: '14PT Gloss' },
+      { key: '18pt', label: '18PT Gloss' }
+    ];
+
+    // Rules: all paper options are 8.5x11 and 11x17 EXCEPT 14PT/18PT which are only 12x18
+    const SHEET_KEYS_FOR_PAPER = {
+      '28lb': ['8.5x11', '11x17'],
+      '20lb': ['8.5x11', '11x17'],
+      '80c': ['8.5x11', '11x17'],
+      '110c': ['8.5x11', '11x17'],
+      '80t': ['8.5x11', '11x17'],
+      '100t': ['8.5x11', '11x17'],
+      '14pt': ['12x18'],
+      '18pt': ['12x18']
+    };
+
+    // Large format paper types (per square foot pricing)
+    const LF_PAPER_TYPES = [
+      { key: 'hp_shpm', label: 'HP Super Heavyweight Plus Matte Paper' },
+      { key: 'hp_univ_gloss', label: 'HP Universal Instant-dry Gloss Photo Paper' },
+      { key: 'bond20', label: '20lb Plain Bond Paper' },
+      { key: 'lexjet46', label: 'LexJet #46 Bond Paper (Bright White Bond Paper)' },
+      { key: 'lexjet_thrifty', label: 'LexJet TOUGHcoat ThriftyBanner (Heavyweight Coated Paper *)' },
+      { key: 'lexjet_poly', label: 'LexJet TOUGHcoat Water-Resistant Polypropylene (Matte Polypropylene v2 *)' },
+      { key: 'fredrix_canvas', label: 'Fredrix 777VWR Vivid Matte Canvas (Photo Matte Paper)' },
+      { key: 'hp_adhesive_poly', label: 'HP Everyday Adhesive Matte Polypropylene' },
+      { key: 'hp_translucent', label: 'HP Translucent Bond Paper (Transparent/Clear Film)' }
+    ];
+
+    // Normalize a sheet-pricing entry so we can handle older JSON shapes too
+    const normalizeEntry = (raw = {}) => {
+      const paperCost = Number(raw.paperCost ?? raw.cost ?? 0) || 0;
+      const colorClickCost = Number(raw.colorClickCost ?? raw.clickCost ?? 0) || 0;
+      const bwClickCost = Number(raw.bwClickCost ?? raw.clickCost ?? 0) || 0;
+      const priceColor = Number(raw.priceColor ?? raw.price ?? 0) || 0;
+      const priceBW = Number(raw.priceBW ?? raw.price ?? 0) || 0;
+      return { paperCost, colorClickCost, bwClickCost, priceColor, priceBW };
+    };
+
+    const buildInitialPricing = () => {
+      const pricing = {};
+      PAPER_TYPES.forEach(pt => {
+        pricing[pt.key] = {};
+        (SHEET_KEYS_FOR_PAPER[pt.key] || []).forEach(sheetKey => {
+          pricing[pt.key][sheetKey] = {
+            paperCost: 0,
+            colorClickCost: 0,
+            bwClickCost: 0,
+            priceColor: 0,
+            priceBW: 0
+          };
+        });
+      });
+      return pricing;
+    };
+
+    const buildInitialLfPricing = () => {
+      const pricing = {};
+      LF_PAPER_TYPES.forEach(pt => {
+        pricing[pt.key] = {
+          baseCostPerSqFt: 0,
+          pricePerSqFt: 0
+        };
+      });
+      return pricing;
+    };
+
+    function PriceCalculatorApp() {
+      // Sheet printing state
+      const [sheetKey, setSheetKey] = useState('8.5x11');
+      const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 }); // inches
+      const [orientation, setOrientation] = useState('portrait');
+      const [prints, setPrints] = useState({ width: 5, height: 7, quantity: 2 });
+
+      // Bleed toggle
+      const [useBleed, setUseBleed] = useState(false);
+
+      // FRONT/BACK image or PDF-derived image(s)
+      const [frontImage, setFrontImage] = useState(null);
+      const [frontRotation, setFrontRotation] = useState(0);
+      const [backImage, setBackImage] = useState(null);
+      const [backRotation, setBackRotation] = useState(0);
+      const [showBack, setShowBack] = useState(false);
+      const [showGuides, setShowGuides] = useState(true);
+      const [showCutBox, setShowCutBox] = useState(true);
+      const [currentSheet, setCurrentSheet] = useState(0);
+
+      // Multi-page PDF images
+      const [frontPages, setFrontPages] = useState([]); // File[]
+      const [backPages, setBackPages] = useState([]);
+      const [multiLayoutMode, setMultiLayoutMode] = useState('1-2'); // '1-2' or '1-1'
+
+      // Per-side print mode: color or B/W
+      const [frontMode, setFrontMode] = useState('color'); // 'color' | 'bw'
+      const [backMode, setBackMode] = useState('color');   // 'color' | 'bw'
+      const [backSideFactor, setBackSideFactor] = useState(0.5); // fraction of per-sheet price for back
+
+      // Paper type selection (sheet printing)
+      const [paperKey, setPaperKey] = useState(PAPER_TYPES[0].key);
+
+      // Admin / pricing state (sheet printing)
+      const [pricing, setPricing] = useState(buildInitialPricing);
+      const [markupPerPaper, setMarkupPerPaper] = useState(() => {
+        const init = {};
+        PAPER_TYPES.forEach(pt => { init[pt.key] = 0; });
+        return init;
+      });
+      const [defaultColorClick, setDefaultColorClick] = useState(0.043);
+      const [defaultBWClick, setDefaultBWClick] = useState(0.0069);
+      const [quantityDiscounts, setQuantityDiscounts] = useState([
+        { minSheets: 0, discountPercent: 0 }
+      ]);
+
+      // Large format state
+      const [lfJob, setLfJob] = useState({ width: 24, height: 36, quantity: 1 });
+      const [lfPaperKey, setLfPaperKey] = useState(LF_PAPER_TYPES[0].key);
+      const [lfPricing, setLfPricing] = useState(buildInitialLfPricing);
+      const [lfMarkupPerPaper, setLfMarkupPerPaper] = useState(() => {
+        const init = {};
+        LF_PAPER_TYPES.forEach(pt => { init[pt.key] = 0; });
+        return init;
+      });
+      const [lfQuantityDiscounts, setLfQuantityDiscounts] = useState([
+        { minSqFt: 0, discountPercent: 0 }
+      ]);
+
+      // Large-format preview image
+      const [lfImage, setLfImage] = useState(null);
+      const [lfRotation, setLfRotation] = useState(0);
+      const [lfKeepProportion, setLfKeepProportion] = useState(false);
+
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [showAdmin, setShowAdmin] = useState(false);
+
+      // For JSON import/export
+      const importFileRef = useRef(null);
+
+      // PDF-specific state (info only)
+      const [frontPdfData, setFrontPdfData] = useState(null); // Uint8Array
+      const [frontPdfPages, setFrontPdfPages] = useState(0);
+      const [backPdfData, setBackPdfData] = useState(null); // Uint8Array
+      const [backPdfPages, setBackPdfPages] = useState(0);
+
+      const frontRef = useRef();
+      const backRef = useRef();
+      const lfRef = useRef();
+
+      // Utility: get current sheet size in inches [wIn, hIn]
+      const getSheetInches = () => {
+        if (sheetKey === 'custom') {
+          const wRaw = Number(customSize.w) || 0;
+          const hRaw = Number(customSize.h) || 0;
+          const w = Math.max(0.1, Math.min(36, wRaw)); // clamp to 36"
+          const h = Math.max(0.1, hRaw);
+          return [w, h];
+        }
+        return PRESET_SHEETS[sheetKey];
+      };
+
+      const currentPaper = PAPER_TYPES.find(pt => pt.key === paperKey) || PAPER_TYPES[0];
+
+      // Is this sheet/paper combo allowed (for warning only)?
+      const comboAllowed = (SHEET_KEYS_FOR_PAPER[paperKey] || []).includes(sheetKey);
+
+      // FRONT/BACK image arrays (single or multi-page)
+      const getFrontImages = () => {
+        if (frontPages && frontPages.length) return frontPages;
+        if (frontImage) return [frontImage];
+        return [];
+      };
+
+      const getBackImages = () => {
+        if (backPages && backPages.length) return backPages;
+        if (backImage) return [backImage];
+        return [];
+      };
+
+      // ---- EMAIL ORDER HELPER (Netlify Function call) ----
+      const sendOrderEmail = async (jobType, details, pdf) => {
+        try {
+          // Convert PDF to base64 (arraybuffer -> Uint8Array -> binary string -> base64)
+          const arrayBuffer = pdf.output('arraybuffer');
+          const base64Pdf = btoa(
+            String.fromCharCode(...new Uint8Array(arrayBuffer))
+          );
+
+          const res = await fetch('/.netlify/functions/send-print-job', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subject: 'PRINT JOB',
+              to: 'store4979@theupsstore.com',
+              jobType,
+              details,
+              pdfBase64: base64Pdf
+            })
+          });
+
+          if (!res.ok) throw new Error('Network response was not ok');
+          alert('Order sent! The store will receive your PRINT JOB email.');
+        } catch (err) {
+          console.error(err);
+          alert(
+            'Could not send order automatically. Please download the PDF and email it to store4979@theupsstore.com.'
+          );
+        }
+      };
+
+      // ---- Drawing multi-layout for sheet printing (async) ----
+      const drawLayout = async (canvas, images, rotation, mode, sheetIndex = 0) => {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        const [baseWIn, baseHIn] = getSheetInches();
+        const pageWIn = orientation === 'portrait' ? baseWIn : baseHIn;
+        const pageHIn = orientation === 'portrait' ? baseHIn : baseWIn;
+        const wPx = pageWIn * DPI;
+        const hPx = pageHIn * DPI;
+        const marginPx = MARGIN_IN * DPI;
+        const spacingPx = SPACING_IN * DPI;
+
+        canvas.width = Math.round(wPx);
+        canvas.height = Math.round(hPx);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (!images || !images.length) return;
+
+        const isMulti = images.length > 1;
+
+        // TRIM size (finished size)
+        const trimWIn = Math.max(0.01, prints.width);
+        const trimHIn = Math.max(0.01, prints.height);
+        const trimPW = trimWIn * DPI;
+        const trimPH = trimHIn * DPI;
+
+        // BLEED size (trim + 0.125" each side when enabled)
+        const bleedTotalIn = useBleed ? BLEED_IN * 2 : 0;
+        const effWIn = Math.max(0.01, prints.width + bleedTotalIn);
+        const effHIn = Math.max(0.01, prints.height + bleedTotalIn);
+        const effPW = effWIn * DPI;
+        const effPH = effHIn * DPI;
+
+        // Actual drawn image footprint (depends on rotation)
+        const drawW = rotation % 180 === 0 ? effPW : effPH;
+        const drawH = rotation % 180 === 0 ? effPH : effPW;
+
+        // Tile size for layout (bleed footprint if ON, trim if OFF)
+        const tilePW = useBleed ? effPW : trimPW;
+        const tilePH = useBleed ? effPH : trimPH;
+
+        const cols = Math.max(
+          1,
+          Math.floor((canvas.width - 2 * marginPx + spacingPx) / (tilePW + spacingPx))
+        );
+        const rows = Math.max(
+          1,
+          Math.floor((canvas.height - 2 * marginPx + spacingPx) / (tilePH + spacingPx))
+        );
+
+        const totalW = cols * tilePW + (cols - 1) * spacingPx;
+        const totalH = rows * tilePH + (rows - 1) * spacingPx;
+        const offX = marginPx + (canvas.width - 2 * marginPx - totalW) / 2;
+        const offY = marginPx + (canvas.height - 2 * marginPx - totalH) / 2;
+
+        const slots = rows * cols;
+
+        // Logical items to place (for multi-page docs tie to pages, else to quantity)
+        let totalItems;
+        if (isMulti) {
+          const pagesCount = images.length;
+          const qty = prints.quantity > 0 ? Math.min(prints.quantity, pagesCount) : pagesCount;
+          totalItems = qty;
+        } else {
+          const qty = prints.quantity > 0 ? prints.quantity : slots;
+          totalItems = qty;
+        }
+
+        const start = sheetIndex * slots;
+        if (start >= totalItems) return;
+
+        let drawn = 0;
+        let firstTrimX = null;
+        let firstTrimY = null;
+        const loadPromises = [];
+
+        const drawOneCell = (file, tileX, tileY) => {
+          return new Promise((resolve) => {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.onload = () => {
+              const centerX = tileX + tilePW / 2;
+              const centerY = tileY + tilePH / 2;
+              const rot = ((rotation % 360) + 360) % 360;
+
+              ctx.save();
+              ctx.translate(centerX, centerY);
+              ctx.rotate((rot * Math.PI) / 180);
+              ctx.filter = mode === 'bw' ? 'grayscale(100%)' : 'none';
+              ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+              ctx.filter = 'none';
+
+              // Draw cut lines (trim box) around target size (no bleed)
+              if (showCutBox) {
+                let cwIn = Math.max(0.01, prints.width);
+                let chIn = Math.max(0.01, prints.height);
+                if (rot === 90 || rot === 270) {
+                  [cwIn, chIn] = [chIn, cwIn];
+                }
+                const cw = cwIn * DPI;
+                const ch = chIn * DPI;
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(-cw / 2, -ch / 2, cw, ch);
+              }
+
+              ctx.restore();
+              URL.revokeObjectURL(url);
+              resolve();
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(url);
+              resolve();
+            };
+            img.src = url;
+          });
+        };
+
+        outer: for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const idx = start + drawn;
+            if (idx >= totalItems) break outer;
+
+            let file;
+            if (isMulti) {
+              const pagesCount = images.length;
+              let pageIndex;
+              if (multiLayoutMode === '1-2') {
+                pageIndex = Math.min(idx, pagesCount - 1);
+              } else {
+                pageIndex = Math.min(sheetIndex, pagesCount - 1);
+              }
+              if (pageIndex < 0 || pageIndex >= pagesCount) break outer;
+              file = images[pageIndex];
+            } else {
+              file = images[0];
+            }
+
+            const tileX = offX + c * (tilePW + spacingPx);
+            const tileY = offY + r * (tilePH + spacingPx);
+
+            const centerX = tileX + tilePW / 2;
+            const centerY = tileY + tilePH / 2;
+            const trimX = centerX - trimPW / 2;
+            const trimY = centerY - trimPH / 2;
+
+            if (firstTrimX === null) {
+              firstTrimX = trimX;
+              firstTrimY = trimY;
+            }
+
+            loadPromises.push(drawOneCell(file, tileX, tileY));
+            drawn++;
+          }
+        }
+
+        await Promise.all(loadPromises);
+
+        // Measurement guides (left/top) in inches, based on TRIM box
+        if (showGuides && firstTrimX !== null) {
+          const gap = 20;
+          ctx.strokeStyle = 'red';
+          ctx.fillStyle = 'red';
+          ctx.lineWidth = 1;
+          const leftDist = (firstTrimX / DPI).toFixed(2) + ' in';
+          const topDist = (firstTrimY / DPI).toFixed(2) + ' in';
+
+          // Horizontal from left edge to left edge of TRIM
+          const yLine = firstTrimY + trimPH + gap;
+          ctx.beginPath();
+          ctx.moveTo(0, yLine);
+          ctx.lineTo(firstTrimX, yLine);
+          ctx.stroke();
+          ctx.fillText(
+            leftDist,
+            firstTrimX / 2 - ctx.measureText(leftDist).width / 2,
+            yLine - 4
+          );
+
+          // Vertical from top edge to top edge of TRIM
+          const xLine = firstTrimX + trimPW + gap;
+          ctx.beginPath();
+          ctx.moveTo(xLine, 0);
+          ctx.lineTo(xLine, firstTrimY);
+          ctx.stroke();
+          ctx.fillText(
+            topDist,
+            xLine + 4,
+            firstTrimY / 2 + 4
+          );
+        }
+      };
+
+      // Draw preview whenever inputs change (sheet printing)
+      useEffect(() => {
+        const doDraw = async () => {
+          const frontImages = getFrontImages();
+          await drawLayout(frontRef.current, frontImages, frontRotation, frontMode, currentSheet);
+          if (showBack) {
+            const backImages = getBackImages();
+            await drawLayout(backRef.current, backImages, backRotation, backMode, currentSheet);
+          } else if (backRef.current) {
+            const ctx = backRef.current.getContext('2d');
+            ctx.clearRect(0, 0, backRef.current.width, backRef.current.height);
+          }
+        };
+        doDraw();
+      }, [
+        sheetKey,
+        customSize,
+        orientation,
+        prints,
+        frontImage,
+        frontPages,
+        frontRotation,
+        backImage,
+        backPages,
+        backRotation,
+        showBack,
+        showGuides,
+        showCutBox,
+        useBleed,
+        frontMode,
+        backMode,
+        currentSheet,
+        multiLayoutMode
+      ]);
+
+      // ---- Shared helper for large-format drawing (preview & PDF) ----
+      const drawLargeFormatOnCanvas = (canvas, file) => {
+        if (!canvas || !file) return;
+        const ctx = canvas.getContext('2d');
+
+        return new Promise((resolve) => {
+          const img = new Image();
+          const url = URL.createObjectURL(file);
+          img.onload = () => {
+            const canvasW = canvas.width;
+            const canvasH = canvas.height;
+
+            const rot = ((lfRotation % 360) + 360) % 360;
+            const angle = (rot * Math.PI) / 180;
+            const rot90 = rot === 90 || rot === 270;
+
+            const srcW = img.width;
+            const srcH = img.height;
+
+            ctx.save();
+            ctx.translate(canvasW / 2, canvasH / 2);
+            ctx.rotate(angle);
+
+            if (lfKeepProportion) {
+              // Uniform scale – keep proportions and fit entirely in the target
+              let scale;
+              if (rot90) {
+                scale = Math.min(canvasW / srcH, canvasH / srcW);
+              } else {
+                scale = Math.min(canvasW / srcW, canvasH / srcH);
+              }
+              ctx.scale(scale, scale);
+            } else {
+              // Non-uniform scaling – stretch to completely fill the target size
+              let sx, sy;
+              if (rot90) {
+                sx = canvasH / srcW;
+                sy = canvasW / srcH;
+              } else {
+                sx = canvasW / srcW;
+                sy = canvasH / srcH;
+              }
+              ctx.scale(sx, sy);
+            }
+
+            ctx.drawImage(img, -srcW / 2, -srcH / 2, srcW, srcH);
+            ctx.restore();
+
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          img.src = url;
+        });
+      };
+
+      // ---- Large format preview drawing ----
+      const drawLargeFormatPreview = () => {
+        const canvas = lfRef.current;
+        if (!canvas) return;
+
+        const widthIn = Math.max(0.1, Number(lfJob.width) || 0);
+        const heightIn = Math.max(0.1, Number(lfJob.height) || 0);
+
+        // Preview canvas max size (pixels)
+        const MAX_W_PX = 900;
+        const MAX_H_PX = 400;
+        const scale = Math.min(
+          MAX_W_PX / widthIn,
+          MAX_H_PX / heightIn
+        );
+
+        const wPx = Math.max(80, Math.round(widthIn * scale));
+        const hPx = Math.max(80, Math.round(heightIn * scale));
+
+        canvas.width = wPx;
+        canvas.height = hPx;
+
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, wPx, hPx);
+
+        if (lfImage) {
+          drawLargeFormatOnCanvas(canvas, lfImage);
+        }
+
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0.5, 0.5, wPx - 1, hPx - 1);
+      };
+
+      useEffect(() => {
+        drawLargeFormatPreview();
+      }, [lfJob.width, lfJob.height, lfImage, lfRotation, lfKeepProportion]);
+
+      // ---- PDF upload -> rasterize ALL pages to images ----
+      async function rasterizePdfToFiles(pdfData) {
+        const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+        const pages = pdf.numPages;
+        const images = [];
+        for (let pageNum = 1; pageNum <= pages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 3 });
+          const c = document.createElement('canvas');
+          const ctx = c.getContext('2d');
+          c.width = viewport.width;
+          c.height = viewport.height;
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const blob = await new Promise((resolve) =>
+            c.toBlob(resolve, 'image/png', 1.0)
+          );
+          images.push(new File([blob], `page-${pageNum}.png`, { type: 'image/png' }));
+        }
+        return { images, pages };
+      }
+
+      async function loadPdfToState(file, side) {
+        const data = new Uint8Array(await file.arrayBuffer());
+        const { images, pages } = await rasterizePdfToFiles(data);
+        if (!images.length) return;
+        if (side === 'front') {
+          setFrontPdfData(data);
+          setFrontPdfPages(pages);
+          setFrontPages(images);
+          setFrontImage(images[0]);
+        } else {
+          setBackPdfData(data);
+          setBackPdfPages(pages);
+          setBackPages(images);
+          setBackImage(images[0]);
+        }
+      }
+
+      // Sheet usage (layout-based using margins + bleed-aware spacing)
+      const [wIn, hIn] = getSheetInches();
+
+      const computePrintsPerSheet = () => {
+        const pageWIn = orientation === 'portrait' ? wIn : hIn;
+        const pageHIn = orientation === 'portrait' ? hIn : wIn;
+
+        const pageWPx = pageWIn * DPI;
+        const pageHPx = pageHIn * DPI;
+        const marginPx = MARGIN_IN * DPI;
+        const spacingPx = SPACING_IN * DPI;
+
+        const trimWIn = Math.max(0.01, prints.width);
+        const trimHIn = Math.max(0.01, prints.height);
+
+        const bleedTotalIn = useBleed ? BLEED_IN * 2 : 0;
+        const effWIn = Math.max(0.01, prints.width + bleedTotalIn);
+        const effHIn = Math.max(0.01, prints.height + bleedTotalIn);
+
+        const tileWIn = useBleed ? effWIn : trimWIn;
+        const tileHIn = useBleed ? effHIn : trimHIn;
+
+        const pw = tileWIn * DPI;
+        const ph = tileHIn * DPI;
+
+        const cols = Math.max(
+          1,
+          Math.floor((pageWPx - 2 * marginPx + spacingPx) / (pw + spacingPx))
+        );
+        const rows = Math.max(
+          1,
+          Math.floor((pageHPx - 2 * marginPx + spacingPx) / (ph + spacingPx))
+        );
+
+        return rows * cols;
+      };
+
+      const printsPerSheet = computePrintsPerSheet();
+      const sheetsNeeded = Math.ceil(
+        (Math.max(0, prints.quantity) || 0) / Math.max(1, printsPerSheet)
+      );
+
+      useEffect(() => {
+        setCurrentSheet((prev) => {
+          if (sheetsNeeded <= 0) return 0;
+          if (prev >= sheetsNeeded) return sheetsNeeded - 1;
+          if (prev < 0) return 0;
+          return prev;
+        });
+      }, [sheetsNeeded]);
+
+      const rawSelected = (pricing[paperKey] || {})[sheetKey] || {};
+      const selectedPricing = normalizeEntry(rawSelected);
+
+      const baseColorCost = selectedPricing.paperCost + selectedPricing.colorClickCost;
+      const baseBWCost = selectedPricing.paperCost + selectedPricing.bwClickCost;
+
+      const priceColor = selectedPricing.priceColor || 0;
+      const priceBW = selectedPricing.priceBW || 0;
+
+      const frontUnitPrice = frontMode === 'color' ? priceColor : priceBW;
+      const backUnitPrice = backMode === 'color' ? priceColor : priceBW;
+      const pricePerSheetBeforeDiscount =
+        frontUnitPrice + (showBack ? backSideFactor * backUnitPrice : 0);
+
+      let appliedQtyDiscount = 0;
+      if (Array.isArray(quantityDiscounts) && quantityDiscounts.length) {
+        quantityDiscounts.forEach((tier) => {
+          const min = Number(tier.minSheets) || 0;
+          const disc = Number(tier.discountPercent) || 0;
+          if (sheetsNeeded >= min && disc > appliedQtyDiscount) {
+            appliedQtyDiscount = disc;
+          }
+        });
+      }
+      const effectivePricePerSheet = pricePerSheetBeforeDiscount * (1 - appliedQtyDiscount / 100);
+      const totalCost = (sheetsNeeded * effectivePricePerSheet).toFixed(2);
+
+      // Large format price calculations
+      const lfJobWidth = Math.max(0, Number(lfJob.width) || 0);
+      const lfJobHeight = Math.max(0, Number(lfJob.height) || 0);
+      const lfJobQty = Math.max(0, Number(lfJob.quantity) || 0);
+      const lfAreaPerPrintSqFt = (lfJobWidth * lfJobHeight) / 144;
+      const lfTotalSqFt = lfAreaPerPrintSqFt * lfJobQty;
+
+      const lfSelectedPricing = lfPricing[lfPaperKey] || { baseCostPerSqFt: 0, pricePerSqFt: 0 };
+      const lfBaseCostPerSqFt = lfSelectedPricing.baseCostPerSqFt || 0;
+      const lfPricePerSqFtBeforeDiscount = lfSelectedPricing.pricePerSqFt || 0;
+
+      let lfAppliedDiscount = 0;
+      if (Array.isArray(lfQuantityDiscounts) && lfQuantityDiscounts.length) {
+        lfQuantityDiscounts.forEach(tier => {
+          const min = Number(tier.minSqFt) || 0;
+          const disc = Number(tier.discountPercent) || 0;
+          if (lfTotalSqFt >= min && disc > lfAppliedDiscount) {
+            lfAppliedDiscount = disc;
+          }
+        });
+      }
+      const lfEffectivePricePerSqFt =
+        lfPricePerSqFtBeforeDiscount * (1 - lfAppliedDiscount / 100);
+      const lfTotalPrice = lfEffectivePricePerSqFt * lfTotalSqFt;
+
+      // Build the sheet PDF (shared by Download & Order)
+      const buildSheetPdf = async () => {
+        const [baseWIn, baseHIn] = getSheetInches();
+        let pdfW = baseWIn;
+        let pdfH = baseHIn;
+        if (orientation === 'landscape') [pdfW, pdfH] = [baseHIn, baseWIn];
+
+        const frontImages = getFrontImages();
+        if (!frontImages.length) {
+          alert('Please upload a front file before exporting.');
+          return null;
+        }
+        const backImages = getBackImages();
+
+        const pdf = new jsPDF({ orientation, unit: 'in', format: [pdfW, pdfH] });
+        const totalSheets = Math.max(1, sheetsNeeded || 1);
+
+        for (let s = 0; s < totalSheets; s++) {
+          const frontCanvas = document.createElement('canvas');
+          await drawLayout(frontCanvas, frontImages, frontRotation, frontMode, s);
+          const frontData = frontCanvas.toDataURL('image/png', 1.0);
+          if (s === 0) {
+            pdf.addImage(frontData, 'PNG', 0, 0, pdfW, pdfH);
+          } else {
+            pdf.addPage([pdfW, pdfH], orientation);
+            pdf.addImage(frontData, 'PNG', 0, 0, pdfW, pdfH);
+          }
+
+          if (showBack && backImages.length) {
+            const backCanvas = document.createElement('canvas');
+            await drawLayout(backCanvas, backImages, backRotation, backMode, s);
+            const backData = backCanvas.toDataURL('image/png', 1.0);
+            pdf.addPage([pdfW, pdfH], orientation);
+            pdf.addImage(backData, 'PNG', 0, 0, pdfW, pdfH);
+          }
+        }
+
+        return pdf;
+      };
+
+      const downloadPDF = async () => {
+        const pdf = await buildSheetPdf();
+        if (!pdf) return;
+        pdf.save('print_preview.pdf');
+      };
+
+      const orderSheetJob = async () => {
+        const pdf = await buildSheetPdf();
+        if (!pdf) return;
+
+        const details = {
+          jobType: 'Sheet printing',
+          baseSheet:
+            sheetKey === 'custom'
+              ? `${customSize.w} x ${customSize.h} in (custom)`
+              : sheetKey + ' in',
+          orientation,
+          paperType: currentPaper.label,
+          printSizeInches: `${prints.width} x ${prints.height}`,
+          quantityRequested: prints.quantity,
+          printsPerSheet,
+          sheetsNeeded,
+          frontMode,
+          backEnabled: showBack,
+          backMode: showBack ? backMode : null,
+          bleed: useBleed,
+          totalPrice: Number(totalCost)
+        };
+
+        await sendOrderEmail('sheet', details, pdf);
+      };
+
+      // Build large-format PDF (shared by Download & Order)
+      const buildLargeFormatPdf = async () => {
+        const widthIn = Math.max(0.1, Number(lfJob.width) || 0);
+        const heightIn = Math.max(0.1, Number(lfJob.height) || 0);
+        if (!lfImage) {
+          alert('Please upload an image for the large format job.');
+          return null;
+        }
+
+        const pdf = new jsPDF({
+          unit: 'in',
+          format: [widthIn, heightIn]
+        });
+
+        const MAX_PX = 8000;
+        const maxSideIn = Math.max(widthIn, heightIn);
+        const pxScale = Math.min(DPI, MAX_PX / maxSideIn);
+        const pxW = Math.max(10, Math.round(widthIn * pxScale));
+        const pxH = Math.max(10, Math.round(heightIn * pxScale));
+
+        const exportCanvas = document.createElement('canvas');
+        exportCanvas.width = pxW;
+        exportCanvas.height = pxH;
+        const ctx = exportCanvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+        await drawLargeFormatOnCanvas(exportCanvas, lfImage);
+
+        const dataUrl = exportCanvas.toDataURL('image/png', 1.0);
+        pdf.addImage(dataUrl, 'PNG', 0, 0, widthIn, heightIn);
+        return pdf;
+      };
+
+      const downloadLargeFormatPDF = async () => {
+        const pdf = await buildLargeFormatPdf();
+        if (!pdf) return;
+        pdf.save('large_format_preview.pdf');
+      };
+
+      const orderLargeFormatJob = async () => {
+        const pdf = await buildLargeFormatPdf();
+        if (!pdf) return;
+
+        const details = {
+          jobType: 'Large format',
+          paperType: (LF_PAPER_TYPES.find(p => p.key === lfPaperKey) || {}).label,
+          widthIn: lfJobWidth,
+          heightIn: lfJobHeight,
+          quantityRequested: lfJobQty,
+          keepProportion: lfKeepProportion,
+          rotationDegrees: lfRotation % 360,
+          totalSqFt: lfTotalSqFt,
+          pricePerSqFt: lfEffectivePricePerSqFt,
+          totalPrice: Number(lfTotalPrice)
+        };
+
+        await sendOrderEmail('large-format', details, pdf);
+      };
+
+      const handleAdminClick = () => {
+        if (!isAdmin) {
+          const pwd = window.prompt('Enter admin password');
+          if (pwd === 'store4979') {
+            setIsAdmin(true);
+            setShowAdmin(true);
+          } else {
+            window.alert('Incorrect password');
+          }
+        } else {
+          setShowAdmin(v => !v);
+        }
+      };
+
+      // Apply markup for a single sheet paper type
+      const applyMarkupForPaper = (pk) => {
+        const m = parseFloat(markupPerPaper[pk]) || 0;
+        const factor = 1 + m / 100;
+        setPricing(prev => {
+          const next = { ...prev };
+          const group = prev[pk] || {};
+          next[pk] = {};
+          for (const sk in group) {
+            const norm = normalizeEntry(group[sk]);
+            const baseColor = norm.paperCost + norm.colorClickCost;
+            const baseBW = norm.paperCost + norm.bwClickCost;
+            next[pk][sk] = {
+              paperCost: norm.paperCost,
+              colorClickCost: norm.colorClickCost,
+              bwClickCost: norm.bwClickCost,
+              priceColor: parseFloat((baseColor * factor).toFixed(4)),
+              priceBW: parseFloat((baseBW * factor).toFixed(4))
+            };
+          }
+          return next;
+        });
+      };
+
+      // Apply markup for a single large-format paper type (per sq ft)
+      const applyLfMarkupForPaper = (pk) => {
+        const m = parseFloat(lfMarkupPerPaper[pk]) || 0;
+        const factor = 1 + m / 100;
+        setLfPricing(prev => {
+          const prevEntry = prev[pk] || { baseCostPerSqFt: 0, pricePerSqFt: 0 };
+          const base = Number(prevEntry.baseCostPerSqFt) || 0;
+          return {
+            ...prev,
+            [pk]: {
+              baseCostPerSqFt: base,
+              pricePerSqFt: parseFloat((base * factor).toFixed(4))
+            }
+          };
+        });
+      };
+
+      // ---------- SHARED HELPER: apply pricing object (import & auto-load) ----------
+      const applyImportedPricingObject = (data, { silent = false } = {}) => {
+        if (!data || typeof data !== 'object') {
+          throw new Error('Invalid JSON structure');
+        }
+        if (!data.pricing || typeof data.pricing !== 'object') {
+          throw new Error('Missing "pricing" in JSON');
+        }
+        if (!data.markupPerPaper || typeof data.markupPerPaper !== 'object') {
+          throw new Error('Missing "markupPerPaper" in JSON');
+        }
+
+        const importedMarkup = { ...data.markupPerPaper };
+        PAPER_TYPES.forEach(pt => {
+          if (typeof importedMarkup[pt.key] === 'undefined') {
+            importedMarkup[pt.key] = 0;
+          }
+        });
+
+        const importedPricing = {};
+        for (const pk in data.pricing) {
+          importedPricing[pk] = {};
+          const group = data.pricing[pk] || {};
+          const m = parseFloat(importedMarkup[pk]) || 0;
+          const factor = 1 + m / 100;
+
+          for (const sk in group) {
+            const norm = normalizeEntry(group[sk]);
+            const baseColor = norm.paperCost + norm.colorClickCost;
+            const baseBW = norm.paperCost + norm.bwClickCost;
+            importedPricing[pk][sk] = {
+              paperCost: norm.paperCost,
+              colorClickCost: norm.colorClickCost,
+              bwClickCost: norm.bwClickCost,
+              priceColor: parseFloat((baseColor * factor).toFixed(4)),
+              priceBW: parseFloat((baseBW * factor).toFixed(4))
+            };
+          }
+        }
+
+        setPricing(prev => ({ ...prev, ...importedPricing }));
+        setMarkupPerPaper(prev => ({ ...prev, ...importedMarkup }));
+
+        if (Array.isArray(data.quantityDiscounts)) {
+          setQuantityDiscounts(data.quantityDiscounts);
+        }
+        if (typeof data.defaultColorClick !== 'undefined') {
+          setDefaultColorClick(Number(data.defaultColorClick) || 0);
+        }
+        if (typeof data.defaultBWClick !== 'undefined') {
+          setDefaultBWClick(Number(data.defaultBWClick) || 0);
+        }
+        if (typeof data.backSideFactor !== 'undefined') {
+          setBackSideFactor(Number(data.backSideFactor) || 0.5);
+        }
+
+        // Large-format pricing, markup, discounts
+        if (data.lfPricing && typeof data.lfPricing === 'object') {
+          const normLfPricing = {};
+          LF_PAPER_TYPES.forEach(pt => {
+            const raw = data.lfPricing[pt.key] || {};
+            normLfPricing[pt.key] = {
+              baseCostPerSqFt: Number(raw.baseCostPerSqFt) || 0,
+              pricePerSqFt: Number(raw.pricePerSqFt) || 0
+            };
+          });
+          setLfPricing(prev => ({ ...prev, ...normLfPricing }));
+        }
+
+        if (data.lfMarkupPerPaper && typeof data.lfMarkupPerPaper === 'object') {
+          const importedLfMarkup = { ...data.lfMarkupPerPaper };
+          LF_PAPER_TYPES.forEach(pt => {
+            if (typeof importedLfMarkup[pt.key] === 'undefined') {
+              importedLfMarkup[pt.key] = 0;
+            }
+          });
+          setLfMarkupPerPaper(prev => ({ ...prev, ...importedLfMarkup }));
+        }
+
+        if (Array.isArray(data.lfQuantityDiscounts)) {
+          setLfQuantityDiscounts(data.lfQuantityDiscounts);
+        }
+
+        if (!silent) {
+          window.alert('Pricing and markups imported successfully.');
+        }
+      };
+
+      // ---------- LOCALSTORAGE auto-load ----------
+      useEffect(() => {
+        try {
+          const saved = localStorage.getItem('pricingStateV1');
+          if (saved) {
+            const data = JSON.parse(saved);
+            applyImportedPricingObject(data, { silent: true });
+          }
+        } catch (err) {
+          console.warn('Failed to load pricing from localStorage:', err);
+        }
+      }, []);
+
+      // ---------- AUTO-LOAD pricing.json from server if present ----------
+      useEffect(() => {
+        (async () => {
+          try {
+            const res = await fetch('pricing.json', { cache: 'no-cache' });
+            if (!res.ok) return;
+            const data = await res.json();
+            applyImportedPricingObject(data, { silent: true });
+          } catch (err) {
+            console.warn('No pricing.json loaded (using default/local pricing):', err);
+          }
+        })();
+      }, []);
+
+      // ---------- LOCALSTORAGE auto-save ----------
+      useEffect(() => {
+        try {
+          const data = {
+            pricing,
+            markupPerPaper,
+            defaultColorClick,
+            defaultBWClick,
+            quantityDiscounts,
+            backSideFactor,
+            lfPricing,
+            lfMarkupPerPaper,
+            lfQuantityDiscounts
+          };
+          localStorage.setItem('pricingStateV1', JSON.stringify(data));
+        } catch (err) {
+          console.warn('Failed to save pricing to localStorage:', err);
+        }
+      }, [
+        pricing,
+        markupPerPaper,
+        defaultColorClick,
+        defaultBWClick,
+        quantityDiscounts,
+        backSideFactor,
+        lfPricing,
+        lfMarkupPerPaper,
+        lfQuantityDiscounts
+      ]);
+
+      // ---- Export / Import pricing JSON ----
+      const handleExportPricing = () => {
+        const data = {
+          pricing,
+          markupPerPaper,
+          defaultColorClick,
+          defaultBWClick,
+          quantityDiscounts,
+          backSideFactor,
+          lfPricing,
+          lfMarkupPerPaper,
+          lfQuantityDiscounts
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+          type: 'application/json'
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'pricing.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      const handleImportPricingClick = () => {
+        if (importFileRef.current) {
+          importFileRef.current.value = '';
+          importFileRef.current.click();
+        }
+      };
+
+      const handleImportFile = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const text = ev.target.result;
+            const data = JSON.parse(text);
+            applyImportedPricingObject(data, { silent: false });
+          } catch (err) {
+            console.error(err);
+            window.alert('Failed to import pricing JSON: ' + err.message);
+          }
+        };
+        reader.onerror = () => {
+          window.alert('Failed to read file.');
+        };
+        reader.readAsText(file);
+      };
+
+      const applyClickCostToAll = (kind, value) => {
+        const v = Number(value) || 0;
+        setPricing(prev => {
+          const next = { ...prev };
+          PAPER_TYPES.forEach(pt => {
+            const group = prev[pt.key] || {};
+            next[pt.key] = { ...group };
+            (SHEET_KEYS_FOR_PAPER[pt.key] || []).forEach(sk => {
+              const prevEntry = normalizeEntry(group[sk] || {});
+              next[pt.key][sk] = {
+                ...prevEntry,
+                [kind]: v
+              };
+            });
+          });
+          return next;
+        });
+      };
+
+      const applyColorClickToAll = () => applyClickCostToAll('colorClickCost', defaultColorClick);
+      const applyBWClickToAll = () => applyClickCostToAll('bwClickCost', defaultBWClick);
+
+      // ---- UI ----
+      return (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold">Print Layout &amp; Pricing Tool</h1>
+            <button
+              type="button"
+              onClick={handleAdminClick}
+              className="px-3 py-1 border rounded text-sm bg-white"
+            >
+              {isAdmin ? (showAdmin ? 'Hide Admin' : 'Show Admin') : 'Admin / Pricing'}
+            </button>
+          </div>
+
+          {/* SHEET PRINTING CONTROLS */}
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="block text-sm font-medium">Base Sheet</label>
+              <select
+                value={sheetKey}
+                onChange={(e) => setSheetKey(e.target.value)}
+                className="border p-1"
+              >
+                <option value="8.5x11">8.5 × 11 in</option>
+                <option value="11x17">11 × 17 in</option>
+                <option value="12x18">12 × 18 in</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+
+            {sheetKey === 'custom' && (
+              <div className="flex items-end gap-3">
+                <div>
+                  <label className="block text-sm font-medium">Custom Width (in)</label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="36"
+                    step="0.01"
+                    value={customSize.w}
+                    onChange={(e) =>
+                      setCustomSize((s) => ({
+                        ...s,
+                        w: Math.min(36, +e.target.value || 0)
+                      }))
+                    }
+                    className="border p-1 w-28"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Max 36&quot; wide.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium">Custom Height (in)</label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    step="0.01"
+                    value={customSize.h}
+                    onChange={(e) =>
+                      setCustomSize((s) => ({ ...s, h: +e.target.value || 0 }))
+                    }
+                    className="border p-1 w-28"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-x-2">
+              <label className="text-sm font-medium mr-2">Orientation</label>
+              <button
+                onClick={() => setOrientation('portrait')}
+                className={`border p-1 ${
+                  orientation === 'portrait' ? 'bg-white' : 'bg-gray-100'
+                }`}
+              >
+                Portrait
+              </button>
+              <button
+                onClick={() => setOrientation('landscape')}
+                className={`border p-1 ${
+                  orientation === 'landscape' ? 'bg-white' : 'bg-gray-100'
+                }`}
+              >
+                Landscape
+              </button>
+            </div>
+
+            <div className="flex space-x-2 items-end">
+              <div>
+                <label className="block text-sm font-medium">Print W (in)</label>
+                <input
+                  type="number"
+                  value={prints.width}
+                  onChange={(e) =>
+                    setPrints((p) => ({ ...p, width: +e.target.value || 0 }))
+                  }
+                  className="border p-1 w-24"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Print H (in)</label>
+                <input
+                  type="number"
+                  value={prints.height}
+                  onChange={(e) =>
+                    setPrints((p) => ({ ...p, height: +e.target.value || 0 }))
+                  }
+                  className="border p-1 w-24"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Qty</label>
+                <input
+                  type="number"
+                  value={prints.quantity}
+                  onChange={(e) =>
+                    setPrints((p) => ({ ...p, quantity: +e.target.value || 0 }))
+                  }
+                  className="border p-1 w-20"
+                />
+              </div>
+            </div>
+
+            <div className="mt-1">
+              <button
+                type="button"
+                onClick={() => setUseBleed((b) => !b)}
+                className={`px-3 py-1 border rounded text-xs ${
+                  useBleed ? 'bg-green-500 text-white' : 'bg-white'
+                }`}
+              >
+                {useBleed
+                  ? 'Bleed ON (adds 0.125" each side)'
+                  : 'Bleed OFF (no extra bleed)'}
+              </button>
+              <p className="text-xs text-gray-600 mt-1">
+                When bleed is ON, tiles are spaced using the bleed size so they never overlap.
+              </p>
+            </div>
+          </div>
+
+          {/* Paper type buttons (sheet printing) */}
+          <div className="space-y-2">
+            <span className="block text-sm font-medium">Paper Type (Sheet Printing)</span>
+            <div className="flex flex-wrap gap-2">
+              {PAPER_TYPES.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setPaperKey(opt.key)}
+                  className={`px-3 py-1 border rounded text-sm ${
+                    paperKey === opt.key ? 'bg-blue-500 text-white' : 'bg-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {!comboAllowed && (
+              <p className="text-xs text-red-600">
+                Note: {currentPaper.label} is only supported on{' '}
+                {SHEET_KEYS_FOR_PAPER[paperKey].join(' or ')}.
+              </p>
+            )}
+            <label className="text-sm mt-2 block">
+              <input
+                type="checkbox"
+                className="mr-1"
+                checked={showGuides}
+                onChange={(e) => setShowGuides(e.target.checked)}
+              />
+              Show red measurement guides
+            </label>
+            <label className="text-sm mt-1 block">
+              <input
+                type="checkbox"
+                className="mr-1"
+                checked={showCutBox}
+                onChange={(e) => setShowCutBox(e.target.checked)}
+              />
+              Show cut box around each print
+            </label>
+          </div>
+
+          {sheetsNeeded > 1 && (
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => setCurrentSheet((s) => Math.max(0, s - 1))}
+                disabled={currentSheet === 0}
+                className="px-2 py-1 border rounded text-sm bg-white disabled:opacity-50"
+              >
+                ◀ Prev sheet
+              </button>
+              <span className="text-sm">
+                Sheet {currentSheet + 1} of {sheetsNeeded}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setCurrentSheet((s) => Math.min(sheetsNeeded - 1, s + 1))
+                }
+                disabled={currentSheet >= sheetsNeeded - 1}
+                className="px-2 py-1 border rounded text-sm bg-white disabled:opacity-50"
+              >
+                Next sheet ▶
+              </button>
+            </div>
+          )}
+
+          {/* PREVIEW CANVASES (SHEET PRINTING) */}
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* FRONT controls */}
+            <div className="space-y-2">
+              <h2 className="font-semibold">Front</h2>
+              <div className="space-x-2 text-xs mb-1">
+                <span className="font-medium mr-1">Front mode:</span>
+                <button
+                  type="button"
+                  onClick={() => setFrontMode('color')}
+                  className={`border px-2 py-0.5 rounded ${frontMode === 'color' ? 'bg-blue-500 text-white' : 'bg-white'}`}
+                >
+                  Color
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFrontMode('bw')}
+                  className={`border px-2 py-0.5 rounded ${frontMode === 'bw' ? 'bg-blue-500 text-white' : 'bg-white'}`}
+                >
+                  B/W
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={async (e) => {
+                    const f = e.target.files[0];
+                    if (!f) return;
+                    if (f.type === 'application/pdf') {
+                      await loadPdfToState(f, 'front');
+                    } else {
+                      setFrontPdfData(null);
+                      setFrontPdfPages(0);
+                      setFrontPages([]);
+                      setFrontImage(f);
+                    }
+                  }}
+                  className="border p-1"
+                />
+                <button
+                  onClick={() => setFrontRotation((r) => r + 90)}
+                  className="border p-1"
+                >
+                  Rotate 90°
+                </button>
+              </div>
+
+              {frontPdfPages > 1 && (
+                <div className="mt-2 text-xs flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Multi-page layout:</span>
+                  <button
+                    type="button"
+                    onClick={() => setMultiLayoutMode('1-2')}
+                    className={`px-2 py-1 border rounded ${
+                      multiLayoutMode === '1-2' ? 'bg-blue-500 text-white' : 'bg-white'
+                    }`}
+                  >
+                    1–2 (sequential pages per sheet)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMultiLayoutMode('1-1')}
+                    className={`px-2 py-1 border rounded ${
+                      multiLayoutMode === '1-1' ? 'bg-blue-500 text-white' : 'bg-white'
+                    }`}
+                  >
+                    1–1 (same page per sheet)
+                  </button>
+                </div>
+              )}
+
+              <canvas ref={frontRef} className="w-full h-auto border" />
+            </div>
+
+            {/* BACK controls */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold">Back</h2>
+                <label className="text-sm">
+                  <input
+                    type="checkbox"
+                    checked={showBack}
+                    onChange={(e) => setShowBack(e.target.checked)}
+                    className="mr-1"
+                  />
+                  Enable
+                </label>
+              </div>
+              {showBack && (
+                <>
+                  <div className="space-x-2 text-xs mb-1">
+                    <span className="font-medium mr-1">Back mode:</span>
+                    <button
+                      type="button"
+                      onClick={() => setBackMode('color')}
+                      className={`border px-2 py-0.5 rounded ${backMode === 'color' ? 'bg-blue-500 text-white' : 'bg-white'}`}
+                    >
+                      Color
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBackMode('bw')}
+                      className={`border px-2 py-0.5 rounded ${backMode === 'bw' ? 'bg-blue-500 text-white' : 'bg-white'}`}
+                    >
+                      B/W
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={async (e) => {
+                        const f = e.target.files[0];
+                        if (!f) return;
+                        if (f.type === 'application/pdf') {
+                          await loadPdfToState(f, 'back');
+                        } else {
+                          setBackPdfData(null);
+                          setBackPdfPages(0);
+                          setBackPages([]);
+                          setBackImage(f);
+                        }
+                      }}
+                      className="border p-1"
+                    />
+                    <button
+                      onClick={() => setBackRotation((r) => r + 90)}
+                      className="border p-1"
+                    >
+                      Rotate 90°
+                    </button>
+                  </div>
+                  <canvas ref={backRef} className="w-full h-auto border" />
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* SHEET PRICING SUMMARY + ACTIONS */}
+          <div className="mt-4 flex items-center gap-6 flex-wrap">
+            <div>
+              <p>Sheets Needed: {sheetsNeeded}</p>
+              <p className="text-sm text-gray-600">Selected paper: {currentPaper.label}</p>
+              <p className="text-sm text-gray-600">
+                Effective price per sheet (with discounts): ${effectivePricePerSheet.toFixed(2)}
+              </p>
+              <p className="font-semibold">Total price: ${totalCost}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={downloadPDF}
+                className="bg-blue-500 text-white px-4 py-2 rounded"
+              >
+                Download Preview (PDF)
+              </button>
+              <button
+                onClick={orderSheetJob}
+                className="bg-green-600 text-white px-4 py-2 rounded"
+              >
+                Order Prints (Sheet)
+              </button>
+            </div>
+          </div>
+
+          {/* LARGE FORMAT SECTION */}
+          <div className="mt-10 border-t pt-6">
+            <h2 className="text-xl font-semibold mb-4">Large Format Printing</h2>
+            <div className="flex flex-wrap gap-4 items-end">
+              <div>
+                <label className="block text-sm font-medium">Width (in)</label>
+                <input
+                  type="number"
+                  min="0.1"
+                  max="36"
+                  step="0.01"
+                  value={lfJob.width}
+                  onChange={e =>
+                    setLfJob(job => ({
+                      ...job,
+                      width: Math.min(36, +e.target.value || 0)
+                    }))
+                  }
+                  className="border p-1 w-24"
+                />
+                <p className="text-xs text-gray-500 mt-1">Max 36&quot; wide</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Height (in)</label>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.01"
+                  value={lfJob.height}
+                  onChange={e =>
+                    setLfJob(job => ({
+                      ...job,
+                      height: +e.target.value || 0
+                    }))
+                  }
+                  className="border p-1 w-24"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={lfJob.quantity}
+                  onChange={e =>
+                    setLfJob(job => ({
+                      ...job,
+                      quantity: +e.target.value || 0
+                    }))
+                  }
+                  className="border p-1 w-24"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Paper Type (Large Format)</label>
+                <select
+                  value={lfPaperKey}
+                  onChange={e => setLfPaperKey(e.target.value)}
+                  className="border p-1 w-80 max-w-full"
+                >
+                  {LF_PAPER_TYPES.map(pt => (
+                    <option key={pt.key} value={pt.key}>
+                      {pt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1 text-xs">
+                <label>
+                  <input
+                    type="checkbox"
+                    className="mr-1"
+                    checked={lfKeepProportion}
+                    onChange={e => setLfKeepProportion(e.target.checked)}
+                  />
+                  Keep image proportion (no distortion)
+                </label>
+                {!lfKeepProportion && lfImage && (
+                  <p className="text-xs text-red-600 max-w-xs">
+                    Warning: proportions may be distorted to fill the exact target size.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-4 items-center">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={e => {
+                  const f = e.target.files && e.target.files[0];
+                  if (f) setLfImage(f);
+                }}
+                className="border p-1"
+              />
+              <button
+                type="button"
+                onClick={() => setLfRotation(r => r + 90)}
+                className="border px-3 py-1 text-sm bg-white"
+              >
+                Rotate 90°
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <canvas ref={lfRef} className="border w-full h-auto" />
+            </div>
+
+            <div className="mt-4 flex items-center gap-6 flex-wrap">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Area per print: {lfAreaPerPrintSqFt.toFixed(2)} sq ft
+                </p>
+                <p className="text-sm text-gray-700">
+                  Total area: {lfTotalSqFt.toFixed(2)} sq ft
+                </p>
+                <p className="text-sm text-gray-700">
+                  Effective price / sq ft (with discounts): ${lfEffectivePricePerSqFt.toFixed(2)}
+                </p>
+                <p className="font-semibold">
+                  Total price (large format): ${lfTotalPrice.toFixed(2)}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={downloadLargeFormatPDF}
+                  className="bg-blue-500 text-white px-4 py-2 rounded"
+                >
+                  Download Large Format (PDF)
+                </button>
+                <button
+                  type="button"
+                  onClick={orderLargeFormatJob}
+                  className="bg-green-600 text-white px-4 py-2 rounded"
+                >
+                  Order Prints (Large Format)
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ADMIN PANEL */}
+          {isAdmin && showAdmin && (
+            <div className="mt-8 border-t pt-4">
+              <h2 className="text-xl font-semibold mb-3">Admin Pricing Panel</h2>
+              <p className="text-xs text-gray-600 mb-4">
+                Protected by password (store4979). Values are stored in memory/localStorage only
+                and will reset if the browser data is cleared.
+              </p>
+
+              <div className="flex flex-wrap gap-4 mb-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium">Default Color Click Cost</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={defaultColorClick}
+                    onChange={e => setDefaultColorClick(e.target.value)}
+                    className="border p-1 w-24"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyColorClickToAll}
+                    className="mt-1 px-2 py-1 border rounded text-xs bg-blue-500 text-white"
+                  >
+                    Apply to all sheet papers
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium">Default B/W Click Cost</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={defaultBWClick}
+                    onChange={e => setDefaultBWClick(e.target.value)}
+                    className="border p-1 w-24"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyBWClickToAll}
+                    className="mt-1 px-2 py-1 border rounded text-xs bg-blue-500 text-white"
+                  >
+                    Apply to all sheet papers
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium">
+                    Back side factor (sheet back price multiplier)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={backSideFactor}
+                    onChange={e => setBackSideFactor(+e.target.value || 0)}
+                    className="border p-1 w-24"
+                  />
+                  <p className="text-xs text-gray-600 mt-1">
+                    Example: 0.5 means back side costs 50% of front per sheet.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={handleExportPricing}
+                    className="px-3 py-1 border rounded text-xs bg-white"
+                  >
+                    Export pricing JSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImportPricingClick}
+                    className="px-3 py-1 border rounded text-xs bg-white"
+                  >
+                    Import pricing JSON
+                  </button>
+                  <input
+                    type="file"
+                    ref={importFileRef}
+                    accept="application/json"
+                    className="hidden"
+                    onChange={handleImportFile}
+                  />
+                </div>
+              </div>
+
+              {/* Sheet quantity discounts */}
+              <div className="mb-6">
+                <h3 className="font-semibold text-sm mb-2">Sheet Quantity Discounts</h3>
+                <table className="min-w-full text-xs border">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Min Sheets</th>
+                      <th className="px-2 py-1 text-left">Discount %</th>
+                      <th className="px-2 py-1 text-left">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quantityDiscounts.map((tier, idx) => (
+                      <tr key={idx} className="border-t">
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            step="1"
+                            value={tier.minSheets}
+                            onChange={e => {
+                              const v = +e.target.value || 0;
+                              setQuantityDiscounts(prev => {
+                                const copy = [...prev];
+                                copy[idx] = { ...copy[idx], minSheets: v };
+                                return copy;
+                              });
+                            }}
+                            className="border p-1 w-24"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={tier.discountPercent}
+                            onChange={e => {
+                              const v = +e.target.value || 0;
+                              setQuantityDiscounts(prev => {
+                                const copy = [...prev];
+                                copy[idx] = { ...copy[idx], discountPercent: v };
+                                return copy;
+                              });
+                            }}
+                            className="border p-1 w-24"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuantityDiscounts(prev =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
+                              }
+                              className="px-2 py-0.5 border rounded text-xs"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuantityDiscounts(prev => ([
+                      ...prev,
+                      { minSheets: 0, discountPercent: 0 }
+                    ]))
+                  }
+                  className="mt-2 px-2 py-1 border rounded text-xs bg-white"
+                >
+                  Add tier
+                </button>
+              </div>
+
+              {/* Sheet pricing table */}
+              <div className="overflow-auto max-h-96 border rounded mb-8">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Paper Type</th>
+                      <th className="px-2 py-1 text-left">Sheet Size</th>
+                      <th className="px-2 py-1 text-left">Paper Cost / Sheet</th>
+                      <th className="px-2 py-1 text-left">Color Click Cost / Sheet</th>
+                      <th className="px-2 py-1 text-left">B/W Click Cost / Sheet</th>
+                      <th className="px-2 py-1 text-left">Color Price / Sheet</th>
+                      <th className="px-2 py-1 text-left">B/W Price / Sheet</th>
+                      <th className="px-2 py-1 text-left">Markup %</th>
+                      <th className="px-2 py-1 text-left">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {PAPER_TYPES.map(pt => (
+                      (SHEET_KEYS_FOR_PAPER[pt.key] || []).map(sk => {
+                        const entryRaw = (pricing[pt.key] || {})[sk] || {};
+                        const entry = normalizeEntry(entryRaw);
+                        const markup = markupPerPaper[pt.key] || 0;
+                        return (
+                          <tr key={pt.key + '-' + sk} className="border-t">
+                            <td className="px-2 py-1">{pt.label}</td>
+                            <td className="px-2 py-1">{sk}</td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={entry.paperCost}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setPricing(prev => {
+                                    const next = { ...prev };
+                                    next[pt.key] = { ...(prev[pt.key] || {}) };
+                                    const prevEntry = normalizeEntry(next[pt.key][sk] || {});
+                                    next[pt.key][sk] = {
+                                      ...prevEntry,
+                                      paperCost: v
+                                    };
+                                    return next;
+                                  });
+                                }}
+                                className="border p-1 w-24"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={entry.colorClickCost}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setPricing(prev => {
+                                    const next = { ...prev };
+                                    next[pt.key] = { ...(prev[pt.key] || {}) };
+                                    const prevEntry = normalizeEntry(next[pt.key][sk] || {});
+                                    next[pt.key][sk] = {
+                                      ...prevEntry,
+                                      colorClickCost: v
+                                    };
+                                    return next;
+                                  });
+                                }}
+                                className="border p-1 w-24"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={entry.bwClickCost}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setPricing(prev => {
+                                    const next = { ...prev };
+                                    next[pt.key] = { ...(prev[pt.key] || {}) };
+                                    const prevEntry = normalizeEntry(next[pt.key][sk] || {});
+                                    next[pt.key][sk] = {
+                                      ...prevEntry,
+                                      bwClickCost: v
+                                    };
+                                    return next;
+                                  });
+                                }}
+                                className="border p-1 w-24"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              ${entry.priceColor.toFixed(4)}
+                            </td>
+                            <td className="px-2 py-1">
+                              ${entry.priceBW.toFixed(4)}
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={markup}
+                                onChange={(e) =>
+                                  setMarkupPerPaper(prev => ({
+                                    ...prev,
+                                    [pt.key]: e.target.value
+                                  }))
+                                }
+                                className="border p-1 w-20"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <button
+                                type="button"
+                                onClick={() => applyMarkupForPaper(pt.key)}
+                                className="px-2 py-0.5 border rounded text-xs bg-blue-500 text-white"
+                              >
+                                Apply markup
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Large format quantity discounts */}
+              <div className="mb-6">
+                <h3 className="font-semibold text-sm mb-2">Large Format Quantity Discounts</h3>
+                <table className="min-w-full text-xs border">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Min Sq Ft</th>
+                      <th className="px-2 py-1 text-left">Discount %</th>
+                      <th className="px-2 py-1 text-left">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lfQuantityDiscounts.map((tier, idx) => (
+                      <tr key={idx} className="border-t">
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={tier.minSqFt}
+                            onChange={e => {
+                              const v = +e.target.value || 0;
+                              setLfQuantityDiscounts(prev => {
+                                const copy = [...prev];
+                                copy[idx] = { ...copy[idx], minSqFt: v };
+                                return copy;
+                              });
+                            }}
+                            className="border p-1 w-24"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={tier.discountPercent}
+                            onChange={e => {
+                              const v = +e.target.value || 0;
+                              setLfQuantityDiscounts(prev => {
+                                const copy = [...prev];
+                                copy[idx] = { ...copy[idx], discountPercent: v };
+                                return copy;
+                              });
+                            }}
+                            className="border p-1 w-24"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setLfQuantityDiscounts(prev =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
+                              }
+                              className="px-2 py-0.5 border rounded text-xs"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLfQuantityDiscounts(prev => ([
+                      ...prev,
+                      { minSqFt: 0, discountPercent: 0 }
+                    ]))
+                  }
+                  className="mt-2 px-2 py-1 border rounded text-xs bg-white"
+                >
+                  Add tier
+                </button>
+              </div>
+
+              {/* Large format pricing table */}
+              <div className="overflow-auto max-h-96 border rounded mb-4">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Large Format Paper</th>
+                      <th className="px-2 py-1 text-left">Base Cost / sq ft</th>
+                      <th className="px-2 py-1 text-left">Price / sq ft</th>
+                      <th className="px-2 py-1 text-left">Markup %</th>
+                      <th className="px-2 py-1 text-left">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {LF_PAPER_TYPES.map(pt => {
+                      const entry = lfPricing[pt.key] || { baseCostPerSqFt: 0, pricePerSqFt: 0 };
+                      const markup = lfMarkupPerPaper[pt.key] || 0;
+                      return (
+                        <tr key={pt.key} className="border-t">
+                          <td className="px-2 py-1">{pt.label}</td>
+                          <td className="px-2 py-1">
+                            <input
+                              type="number"
+                              step="0.0001"
+                              value={entry.baseCostPerSqFt}
+                              onChange={e => {
+                                const v = +e.target.value || 0;
+                                setLfPricing(prev => {
+                                  return {
+                                    ...prev,
+                                    [pt.key]: {
+                                      ...prev[pt.key],
+                                      baseCostPerSqFt: v
+                                    }
+                                  };
+                                });
+                              }}
+                              className="border p-1 w-24"
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            ${entry.pricePerSqFt.toFixed(4)}
+                          </td>
+                          <td className="px-2 py-1">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={markup}
+                              onChange={e =>
+                                setLfMarkupPerPaper(prev => ({
+                                  ...prev,
+                                  [pt.key]: e.target.value
+                                }))
+                              }
+                              className="border p-1 w-20"
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            <button
+                              type="button"
+                              onClick={() => applyLfMarkupForPaper(pt.key)}
+                              className="px-2 py-0.5 border rounded text-xs bg-blue-500 text-white"
+                            >
+                              Apply markup
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<PriceCalculatorApp />);
+  </script>
+</body>
+</html>
