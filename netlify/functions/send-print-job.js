@@ -1,6 +1,8 @@
 const nodemailer = require("nodemailer");
 
 exports.handler = async (event) => {
+  console.log("send-print-job invoked", { httpMethod: event.httpMethod });
+
   // Only allow POST
   if (event.httpMethod !== "POST") {
     return {
@@ -10,23 +12,48 @@ exports.handler = async (event) => {
   }
 
   try {
-    const body = JSON.parse(event.body || "{}");
-    const {
-      subject,
-      to,
-      jobType,
-      details,
-      pdfBase64,
-    } = body;
+    console.log("Raw body length:", event.body ? event.body.length : 0);
+
+    let body;
+    try {
+      body = JSON.parse(event.body || "{}");
+    } catch (err) {
+      console.error("Failed to parse JSON body", err);
+      return {
+        statusCode: 400,
+        body: "Invalid JSON body",
+      };
+    }
+
+    console.log("Parsed body keys:", Object.keys(body));
+
+    const { subject, to, jobType, details, pdfBase64 } = body;
 
     if (!pdfBase64) {
+      console.error("Missing pdfBase64 on request");
       return {
         statusCode: 400,
         body: "Missing pdfBase64 in request body",
       };
     }
 
-    // Create SMTP transporter using environment variables
+    // Check SMTP env vars BEFORE trying to send
+    const missingEnv = [];
+    ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"].forEach((key) => {
+      if (!process.env[key]) missingEnv.push(key);
+    });
+
+    if (missingEnv.length) {
+      console.error("Missing SMTP env vars:", missingEnv.join(", "));
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: "SMTP not configured on server",
+          missingEnv,
+        }),
+      };
+    }
+
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 587),
@@ -57,19 +84,19 @@ ${JSON.stringify(details, null, 2)}
       ],
     });
 
-    console.log("Mail sent:", info.messageId);
+    console.log("Mail sent OK:", info && info.messageId);
 
     return {
       statusCode: 200,
       body: JSON.stringify({ message: "Email sent", id: info.messageId }),
     };
   } catch (err) {
-    console.error("send-print-job error:", err);
+    console.error("Unhandled send-print-job error:", err);
     return {
       statusCode: 500,
       body: JSON.stringify({
         error: "Failed to send email",
-        details: String(err),
+        details: err && err.message ? err.message : String(err),
       }),
     };
   }
