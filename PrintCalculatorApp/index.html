@@ -1468,45 +1468,23 @@
                       Rotate 90°
                     </button>
                   </div>
-                  {backPdfPages > 1 && (
-                    <p className="mt-2 text-xs text-gray-600">
-                      Back uses the same 1–1 / 1–2 multi-page layout setting as the front.
-                    </p>
-                  )}
                   <canvas ref={backRef} className="w-full h-auto border" />
                 </>
               )}
             </div>
           </div>
 
-          {/* SHEET PRINTING SUMMARY + BUTTONS */}
+          {/* SHEET PRICING SUMMARY + ACTIONS */}
           <div className="mt-4 flex items-center gap-6 flex-wrap">
             <div>
               <p>Sheets Needed: {sheetsNeeded}</p>
-              <p className="text-sm text-gray-600">Prints per sheet: {printsPerSheet}</p>
-              <p className="text-sm text-gray-600">
-                Total prints produced (max): {sheetsNeeded * printsPerSheet}
-              </p>
               <p className="text-sm text-gray-600">Selected paper: {currentPaper.label}</p>
               <p className="text-sm text-gray-600">
-                Front mode: {frontMode === 'color' ? 'Color' : 'B/W'}
-                {showBack && `, Back mode: ${backMode === 'color' ? 'Color' : 'B/W'}`}
-                {!showBack && ' (single-sided)'}
-              </p>
-              <p className="text-sm text-gray-600">
-                Price per sheet (with markup, before qty discount): $
-                {pricePerSheetBeforeDiscount.toFixed(4)}
-              </p>
-              <p className="text-sm text-gray-600">
-                Quantity discount applied: {appliedQtyDiscount}%
-              </p>
-              <p className="text-sm text-gray-600">
-                Effective price per sheet: ${effectivePricePerSheet.toFixed(4)}
+                Effective price per sheet (with discounts): ${effectivePricePerSheet.toFixed(2)}
               </p>
               <p className="font-semibold">Total price: ${totalCost}</p>
             </div>
-
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <button
                 onClick={downloadPDF}
                 className="bg-blue-500 text-white px-4 py-2 rounded"
@@ -1517,19 +1495,15 @@
                 onClick={orderSheetJob}
                 className="bg-green-600 text-white px-4 py-2 rounded"
               >
-                Order Prints
+                Order Prints (Sheet)
               </button>
             </div>
           </div>
 
           {/* LARGE FORMAT SECTION */}
-          <div className="mt-8 border-t pt-4">
-            <h2 className="text-lg font-semibold mb-2">Large Format Printing</h2>
-            <p className="text-xs text-gray-600 mb-3">
-              For roll-based wide prints. Width is limited to 36&quot; maximum.
-            </p>
-
-            <div className="flex flex-wrap gap-4 items-end mb-4">
+          <div className="mt-10 border-t pt-6">
+            <h2 className="text-xl font-semibold mb-4">Large Format Printing</h2>
+            <div className="flex flex-wrap gap-4 items-end">
               <div>
                 <label className="block text-sm font-medium">Width (in)</label>
                 <input
@@ -1549,14 +1523,17 @@
                 <p className="text-xs text-gray-500 mt-1">Max 36&quot; wide</p>
               </div>
               <div>
-                <label className="block text-sm font-medium">Height / Length (in)</label>
+                <label className="block text-sm font-medium">Height (in)</label>
                 <input
                   type="number"
                   min="0.1"
                   step="0.01"
                   value={lfJob.height}
                   onChange={e =>
-                    setLfJob(job => ({ ...job, height: +e.target.value || 0 }))
+                    setLfJob(job => ({
+                      ...job,
+                      height: +e.target.value || 0
+                    }))
                   }
                   className="border p-1 w-24"
                 />
@@ -1569,17 +1546,20 @@
                   step="1"
                   value={lfJob.quantity}
                   onChange={e =>
-                    setLfJob(job => ({ ...job, quantity: +e.target.value || 0 }))
+                    setLfJob(job => ({
+                      ...job,
+                      quantity: +e.target.value || 0
+                    }))
                   }
                   className="border p-1 w-24"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium">Large Format Paper</label>
+                <label className="block text-sm font-medium">Paper Type (Large Format)</label>
                 <select
                   value={lfPaperKey}
                   onChange={e => setLfPaperKey(e.target.value)}
-                  className="border p-1 max-w-xs"
+                  className="border p-1 w-80 max-w-full"
                 >
                   {LF_PAPER_TYPES.map(pt => (
                     <option key={pt.key} value={pt.key}>
@@ -1588,91 +1568,77 @@
                   ))}
                 </select>
               </div>
+              <div className="flex flex-col gap-1 text-xs">
+                <label>
+                  <input
+                    type="checkbox"
+                    className="mr-1"
+                    checked={lfKeepProportion}
+                    onChange={e => setLfKeepProportion(e.target.checked)}
+                  />
+                  Keep image proportion (no distortion)
+                </label>
+                {!lfKeepProportion && lfImage && (
+                  <p className="text-xs text-red-600 max-w-xs">
+                    Warning: proportions may be distorted to fill the exact target size.
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Large-format preview + summary */}
-            <div className="grid md:grid-cols-2 gap-6 items-start mb-4">
-              <div className="space-y-2">
-                <h3 className="font-semibold text-sm">Large Format Preview</h3>
-                <div className="flex flex-wrap items-center gap-3">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const f = e.target.files[0];
-                      if (!f) return;
-                      setLfImage(f);
-                    }}
-                    className="border p-1"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setLfRotation(r => r + 90)}
-                    className="border p-1 text-sm bg-white"
-                  >
-                    Rotate 90°
-                  </button>
-                </div>
-                <div className="mt-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setLfKeepProportion(v => !v)}
-                    className={`px-2 py-1 border rounded ${
-                      lfKeepProportion ? 'bg-blue-500 text-white' : 'bg-white'
-                    }`}
-                  >
-                    {lfKeepProportion
-                      ? 'Keep image proportion (no distortion)'
-                      : 'Stretch image to fill target size'}
-                  </button>
-                  {!lfKeepProportion && (
-                    <p className="mt-1 text-[11px] text-red-600">
-                      Warning: image is stretched independently in width and height
-                      to match the target size and may appear distorted.
-                    </p>
-                  )}
-                  {lfKeepProportion && (
-                    <p className="mt-1 text-[11px] text-gray-600">
-                      Image keeps its original proportions and shrinks to fit inside
-                      the target size (may show white margins).
-                    </p>
-                  )}
-                </div>
-                <canvas ref={lfRef} className="w-full h-auto border bg-white" />
-              </div>
-              <div className="text-sm text-gray-700 space-y-1">
-                <p>
+            <div className="mt-4 flex flex-wrap gap-4 items-center">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={e => {
+                  const f = e.target.files && e.target.files[0];
+                  if (f) setLfImage(f);
+                }}
+                className="border p-1"
+              />
+              <button
+                type="button"
+                onClick={() => setLfRotation(r => r + 90)}
+                className="border px-3 py-1 text-sm bg-white"
+              >
+                Rotate 90°
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <canvas ref={lfRef} className="border w-full h-auto" />
+            </div>
+
+            <div className="mt-4 flex items-center gap-6 flex-wrap">
+              <div>
+                <p className="text-sm text-gray-700">
                   Area per print: {lfAreaPerPrintSqFt.toFixed(2)} sq ft
                 </p>
-                <p>Total area: {lfTotalSqFt.toFixed(2)} sq ft</p>
-                <p>Base cost / sq ft: ${lfBaseCostPerSqFt.toFixed(4)}</p>
-                <p>
-                  Price / sq ft (with markup, before qty discount): $
-                  {lfPricePerSqFtBeforeDiscount.toFixed(4)}
+                <p className="text-sm text-gray-700">
+                  Total area: {lfTotalSqFt.toFixed(2)} sq ft
                 </p>
-                <p>Large format quantity discount applied: {lfAppliedDiscount}%</p>
+                <p className="text-sm text-gray-700">
+                  Effective price / sq ft (with discounts): ${lfEffectivePricePerSqFt.toFixed(2)}
+                </p>
                 <p className="font-semibold">
-                  Total large format price: ${lfTotalPrice.toFixed(2)}
+                  Total price (large format): ${lfTotalPrice.toFixed(2)}
                 </p>
-                <p className="text-xs text-gray-500 mt-2">
-                  Preview and downloaded PDF use the same scaling logic.
-                </p>
-                <div className="flex gap-3 mt-3">
-                  <button
-                    type="button"
-                    onClick={downloadLargeFormatPDF}
-                    className="bg-blue-500 text-white px-4 py-2 rounded text-sm"
-                  >
-                    Download Large Format (PDF)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={orderLargeFormatJob}
-                    className="bg-green-600 text-white px-4 py-2 rounded text-sm"
-                  >
-                    Order Large Format
-                  </button>
-                </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={downloadLargeFormatPDF}
+                  className="bg-blue-500 text-white px-4 py-2 rounded"
+                >
+                  Download Large Format (PDF)
+                </button>
+                <button
+                  type="button"
+                  onClick={orderLargeFormatJob}
+                  className="bg-green-600 text-white px-4 py-2 rounded"
+                >
+                  Order Prints (Large Format)
+                </button>
               </div>
             </div>
           </div>
@@ -1681,106 +1647,95 @@
           {isAdmin && showAdmin && (
             <div className="mt-8 border-t pt-4">
               <h2 className="text-xl font-semibold mb-3">Admin Pricing Panel</h2>
-              <p className="text-xs text-gray-600 mb-2">
-                Password: <span className="font-mono">store4979</span>. Pricing is in-memory / localStorage
-                unless you export it as JSON.
+              <p className="text-xs text-gray-600 mb-4">
+                Protected by password (store4979). Values are stored in memory/localStorage only
+                and will reset if the browser data is cleared.
               </p>
 
-              <div className="flex flex-wrap items-center gap-3 mb-4">
-                <button
-                  type="button"
-                  onClick={handleExportPricing}
-                  className="px-3 py-1 border rounded bg-white text-sm"
-                >
-                  Export pricing (JSON)
-                </button>
-                <button
-                  type="button"
-                  onClick={handleImportPricingClick}
-                  className="px-3 py-1 border rounded bg-white text-sm"
-                >
-                  Import pricing (JSON)
-                </button>
-                <input
-                  type="file"
-                  accept="application/json"
-                  ref={importFileRef}
-                  onChange={handleImportFile}
-                  style={{ display: 'none' }}
-                />
-              </div>
-
-              {/* Sheet printing admin controls */}
-              <div className="mb-4 grid md:grid-cols-2 gap-4">
+              <div className="flex flex-wrap gap-4 mb-4 items-end">
                 <div>
-                  <label className="block text-xs font-medium">Default COLOR click cost</label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <input
-                      type="number"
-                      step="0.0001"
-                      value={defaultColorClick}
-                      onChange={e => setDefaultColorClick(Number(e.target.value) || 0)}
-                      className="border p-1 w-24"
-                    />
-                    <button
-                      type="button"
-                      onClick={applyColorClickToAll}
-                      className="px-2 py-1 border rounded bg-blue-500 text-white text-xs"
-                    >
-                      Apply to all rows
-                    </button>
-                  </div>
+                  <label className="block text-sm font-medium">Default Color Click Cost</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={defaultColorClick}
+                    onChange={e => setDefaultColorClick(e.target.value)}
+                    className="border p-1 w-24"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyColorClickToAll}
+                    className="mt-1 px-2 py-1 border rounded text-xs bg-blue-500 text-white"
+                  >
+                    Apply to all sheet papers
+                  </button>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium">Default B/W click cost</label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <input
-                      type="number"
-                      step="0.0001"
-                      value={defaultBWClick}
-                      onChange={e => setDefaultBWClick(Number(e.target.value) || 0)}
-                      className="border p-1 w-24"
-                    />
-                    <button
-                      type="button"
-                      onClick={applyBWClickToAll}
-                      className="px-2 py-1 border rounded bg-blue-500 text-white text-xs"
-                    >
-                      Apply to all rows
-                    </button>
-                  </div>
+                  <label className="block text-sm font-medium">Default B/W Click Cost</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={defaultBWClick}
+                    onChange={e => setDefaultBWClick(e.target.value)}
+                    className="border p-1 w-24"
+                  />
+                  <button
+                    type="button"
+                    onClick={applyBWClickToAll}
+                    className="mt-1 px-2 py-1 border rounded text-xs bg-blue-500 text-white"
+                  >
+                    Apply to all sheet papers
+                  </button>
                 </div>
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-xs font-medium">Back side price factor</label>
-                <div className="flex items-center gap-2 mt-1">
+                <div>
+                  <label className="block text-sm font-medium">
+                    Back side factor (sheet back price multiplier)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
                     value={backSideFactor}
-                    onChange={e => setBackSideFactor(Number(e.target.value) || 0)}
+                    onChange={e => setBackSideFactor(+e.target.value || 0)}
                     className="border p-1 w-24"
                   />
-                  <span className="text-xs text-gray-600">
-                    1.0 = same as front, 0.5 = half price on back side
-                  </span>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Example: 0.5 means back side costs 50% of front per sheet.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={handleExportPricing}
+                    className="px-3 py-1 border rounded text-xs bg-white"
+                  >
+                    Export pricing JSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImportPricingClick}
+                    className="px-3 py-1 border rounded text-xs bg-white"
+                  >
+                    Import pricing JSON
+                  </button>
+                  <input
+                    type="file"
+                    ref={importFileRef}
+                    accept="application/json"
+                    className="hidden"
+                    onChange={handleImportFile}
+                  />
                 </div>
               </div>
 
-              {/* Quantity discounts by sheet count */}
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold mb-1">Sheet Quantity discounts (by sheets needed)</h3>
-                <p className="text-xs text-gray-600 mb-2">
-                  Highest discount where <span className="font-mono">sheets ≥ Min sheets</span> wins.
-                  Applied on top of markup.
-                </p>
-                <table className="text-xs border rounded w-full max-w-md">
+              {/* Sheet quantity discounts */}
+              <div className="mb-6">
+                <h3 className="font-semibold text-sm mb-2">Sheet Quantity Discounts</h3>
+                <table className="min-w-full text-xs border">
                   <thead className="bg-gray-100">
                     <tr>
-                      <th className="px-2 py-1 text-left">Min sheets</th>
+                      <th className="px-2 py-1 text-left">Min Sheets</th>
                       <th className="px-2 py-1 text-left">Discount %</th>
-                      <th className="px-2 py-1 text-left"></th>
+                      <th className="px-2 py-1 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1789,41 +1744,45 @@
                         <td className="px-2 py-1">
                           <input
                             type="number"
+                            step="1"
                             value={tier.minSheets}
                             onChange={e => {
-                              const v = Number(e.target.value) || 0;
+                              const v = +e.target.value || 0;
                               setQuantityDiscounts(prev => {
                                 const copy = [...prev];
                                 copy[idx] = { ...copy[idx], minSheets: v };
                                 return copy;
                               });
                             }}
-                            className="border p-1 w-20"
+                            className="border p-1 w-24"
                           />
                         </td>
                         <td className="px-2 py-1">
                           <input
                             type="number"
+                            step="0.1"
                             value={tier.discountPercent}
                             onChange={e => {
-                              const v = Number(e.target.value) || 0;
+                              const v = +e.target.value || 0;
                               setQuantityDiscounts(prev => {
                                 const copy = [...prev];
                                 copy[idx] = { ...copy[idx], discountPercent: v };
                                 return copy;
                               });
                             }}
-                            className="border p-1 w-20"
+                            className="border p-1 w-24"
                           />
                         </td>
-                        <td className="px-2 py-1 text-right">
-                          {quantityDiscounts.length > 1 && (
+                        <td className="px-2 py-1">
+                          {idx > 0 && (
                             <button
                               type="button"
-                              className="text-red-500 text-xs"
                               onClick={() =>
-                                setQuantityDiscounts(prev => prev.filter((_, i) => i !== idx))
+                                setQuantityDiscounts(prev =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
                               }
+                              className="px-2 py-0.5 border rounded text-xs"
                             >
                               Remove
                             </button>
@@ -1831,77 +1790,44 @@
                         </td>
                       </tr>
                     ))}
-                    <tr>
-                      <td colSpan={3} className="px-2 py-1 text-right">
-                        <button
-                          type="button"
-                          className="text-blue-500 text-xs"
-                          onClick={() =>
-                            setQuantityDiscounts(prev => ([...prev, { minSheets: 0, discountPercent: 0 }]))
-                          }
-                        >
-                          + Add tier
-                        </button>
-                      </td>
-                    </tr>
                   </tbody>
                 </table>
-              </div>
-
-              {/* Per-paper markup controls (sheet printing) */}
-              <div className="mb-4 grid md:grid-cols-2 gap-3">
-                {PAPER_TYPES.map(pt => (
-                  <div key={pt.key} className="flex items-end gap-2">
-                    <div>
-                      <label className="block text-xs font-medium">
-                        {pt.label} Markup %
-                      </label>
-                      <input
-                        type="number"
-                        value={markupPerPaper[pt.key]}
-                        onChange={e =>
-                          setMarkupPerPaper(prev => ({
-                            ...prev,
-                            [pt.key]: e.target.value
-                          }))
-                        }
-                        className="border p-1 w-24"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => applyMarkupForPaper(pt.key)}
-                      className="px-2 py-1 border rounded bg-blue-500 text-white text-xs"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuantityDiscounts(prev => ([
+                      ...prev,
+                      { minSheets: 0, discountPercent: 0 }
+                    ]))
+                  }
+                  className="mt-2 px-2 py-1 border rounded text-xs bg-white"
+                >
+                  Add tier
+                </button>
               </div>
 
               {/* Sheet pricing table */}
-              <div className="overflow-auto max-h-96 border rounded mb-6">
+              <div className="overflow-auto max-h-96 border rounded mb-8">
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-100">
                     <tr>
                       <th className="px-2 py-1 text-left">Paper Type</th>
                       <th className="px-2 py-1 text-left">Sheet Size</th>
                       <th className="px-2 py-1 text-left">Paper Cost / Sheet</th>
-                      <th className="px-2 py-1 text-left">Color Click / Sheet</th>
-                      <th className="px-2 py-1 text-left">B/W Click / Sheet</th>
-                      <th className="px-2 py-1 text-left">Base Color (cost+click)</th>
-                      <th className="px-2 py-1 text-left">Base B/W (cost+click)</th>
-                      <th className="px-2 py-1 text-left">Price / Sheet COLOR</th>
-                      <th className="px-2 py-1 text-left">Price / Sheet B/W</th>
+                      <th className="px-2 py-1 text-left">Color Click Cost / Sheet</th>
+                      <th className="px-2 py-1 text-left">B/W Click Cost / Sheet</th>
+                      <th className="px-2 py-1 text-left">Color Price / Sheet</th>
+                      <th className="px-2 py-1 text-left">B/W Price / Sheet</th>
+                      <th className="px-2 py-1 text-left">Markup %</th>
+                      <th className="px-2 py-1 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {PAPER_TYPES.map(pt => (
                       (SHEET_KEYS_FOR_PAPER[pt.key] || []).map(sk => {
-                        const raw = (pricing[pt.key] || {})[sk] || {};
-                        const entry = normalizeEntry(raw);
-                        const baseColor = entry.paperCost + entry.colorClickCost;
-                        const baseBW = entry.paperCost + entry.bwClickCost;
+                        const entryRaw = (pricing[pt.key] || {})[sk] || {};
+                        const entry = normalizeEntry(entryRaw);
+                        const markup = markupPerPaper[pt.key] || 0;
                         return (
                           <tr key={pt.key + '-' + sk} className="border-t">
                             <td className="px-2 py-1">{pt.label}</td>
@@ -1915,9 +1841,8 @@
                                   const v = parseFloat(e.target.value) || 0;
                                   setPricing(prev => {
                                     const next = { ...prev };
-                                    const prevGroup = prev[pt.key] || {};
-                                    const prevEntry = normalizeEntry(prevGroup[sk] || {});
-                                    if (!next[pt.key]) next[pt.key] = {};
+                                    next[pt.key] = { ...(prev[pt.key] || {}) };
+                                    const prevEntry = normalizeEntry(next[pt.key][sk] || {});
                                     next[pt.key][sk] = {
                                       ...prevEntry,
                                       paperCost: v
@@ -1925,7 +1850,7 @@
                                     return next;
                                   });
                                 }}
-                                className="border p-1 w-20"
+                                className="border p-1 w-24"
                               />
                             </td>
                             <td className="px-2 py-1">
@@ -1937,9 +1862,8 @@
                                   const v = parseFloat(e.target.value) || 0;
                                   setPricing(prev => {
                                     const next = { ...prev };
-                                    const prevGroup = prev[pt.key] || {};
-                                    const prevEntry = normalizeEntry(prevGroup[sk] || {});
-                                    if (!next[pt.key]) next[pt.key] = {};
+                                    next[pt.key] = { ...(prev[pt.key] || {}) };
+                                    const prevEntry = normalizeEntry(next[pt.key][sk] || {});
                                     next[pt.key][sk] = {
                                       ...prevEntry,
                                       colorClickCost: v
@@ -1947,7 +1871,7 @@
                                     return next;
                                   });
                                 }}
-                                className="border p-1 w-20"
+                                className="border p-1 w-24"
                               />
                             </td>
                             <td className="px-2 py-1">
@@ -1959,9 +1883,8 @@
                                   const v = parseFloat(e.target.value) || 0;
                                   setPricing(prev => {
                                     const next = { ...prev };
-                                    const prevGroup = prev[pt.key] || {};
-                                    const prevEntry = normalizeEntry(prevGroup[sk] || {});
-                                    if (!next[pt.key]) next[pt.key] = {};
+                                    next[pt.key] = { ...(prev[pt.key] || {}) };
+                                    const prevEntry = normalizeEntry(next[pt.key][sk] || {});
                                     next[pt.key][sk] = {
                                       ...prevEntry,
                                       bwClickCost: v
@@ -1969,13 +1892,38 @@
                                     return next;
                                   });
                                 }}
+                                className="border p-1 w-24"
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              ${entry.priceColor.toFixed(4)}
+                            </td>
+                            <td className="px-2 py-1">
+                              ${entry.priceBW.toFixed(4)}
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={markup}
+                                onChange={(e) =>
+                                  setMarkupPerPaper(prev => ({
+                                    ...prev,
+                                    [pt.key]: e.target.value
+                                  }))
+                                }
                                 className="border p-1 w-20"
                               />
                             </td>
-                            <td className="px-2 py-1">${baseColor.toFixed(4)}</td>
-                            <td className="px-2 py-1">${baseBW.toFixed(4)}</td>
-                            <td className="px-2 py-1">${entry.priceColor.toFixed(4)}</td>
-                            <td className="px-2 py-1">${entry.priceBW.toFixed(4)}</td>
+                            <td className="px-2 py-1">
+                              <button
+                                type="button"
+                                onClick={() => applyMarkupForPaper(pt.key)}
+                                className="px-2 py-0.5 border rounded text-xs bg-blue-500 text-white"
+                              >
+                                Apply markup
+                              </button>
+                            </td>
                           </tr>
                         );
                       })
@@ -1984,21 +1932,15 @@
                 </table>
               </div>
 
-              {/* LARGE FORMAT ADMIN */}
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold mb-1">
-                  Large Format Quantity Discounts (by total sq ft)
-                </h3>
-                <p className="text-xs text-gray-600 mb-2">
-                  Highest discount where{' '}
-                  <span className="font-mono">total sq ft ≥ Min sq ft</span> wins.
-                </p>
-                <table className="text-xs border rounded w-full max-w-md">
+              {/* Large format quantity discounts */}
+              <div className="mb-6">
+                <h3 className="font-semibold text-sm mb-2">Large Format Quantity Discounts</h3>
+                <table className="min-w-full text-xs border">
                   <thead className="bg-gray-100">
                     <tr>
-                      <th className="px-2 py-1 text-left">Min sq ft</th>
+                      <th className="px-2 py-1 text-left">Min Sq Ft</th>
                       <th className="px-2 py-1 text-left">Discount %</th>
-                      <th className="px-2 py-1 text-left"></th>
+                      <th className="px-2 py-1 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2007,9 +1949,10 @@
                         <td className="px-2 py-1">
                           <input
                             type="number"
+                            step="0.1"
                             value={tier.minSqFt}
                             onChange={e => {
-                              const v = Number(e.target.value) || 0;
+                              const v = +e.target.value || 0;
                               setLfQuantityDiscounts(prev => {
                                 const copy = [...prev];
                                 copy[idx] = { ...copy[idx], minSqFt: v };
@@ -2022,9 +1965,10 @@
                         <td className="px-2 py-1">
                           <input
                             type="number"
+                            step="0.1"
                             value={tier.discountPercent}
                             onChange={e => {
-                              const v = Number(e.target.value) || 0;
+                              const v = +e.target.value || 0;
                               setLfQuantityDiscounts(prev => {
                                 const copy = [...prev];
                                 copy[idx] = { ...copy[idx], discountPercent: v };
@@ -2034,14 +1978,16 @@
                             className="border p-1 w-24"
                           />
                         </td>
-                        <td className="px-2 py-1 text-right">
-                          {lfQuantityDiscounts.length > 1 && (
+                        <td className="px-2 py-1">
+                          {idx > 0 && (
                             <button
                               type="button"
-                              className="text-red-500 text-xs"
                               onClick={() =>
-                                setLfQuantityDiscounts(prev => prev.filter((_, i) => i !== idx))
+                                setLfQuantityDiscounts(prev =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
                               }
+                              className="px-2 py-0.5 border rounded text-xs"
                             >
                               Remove
                             </button>
@@ -2049,71 +1995,38 @@
                         </td>
                       </tr>
                     ))}
-                    <tr>
-                      <td colSpan={3} className="px-2 py-1 text-right">
-                        <button
-                          type="button"
-                          className="text-blue-500 text-xs"
-                          onClick={() =>
-                            setLfQuantityDiscounts(prev => ([
-                              ...prev,
-                              { minSqFt: 0, discountPercent: 0 }
-                            ]))
-                          }
-                        >
-                          + Add tier
-                        </button>
-                      </td>
-                    </tr>
                   </tbody>
                 </table>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLfQuantityDiscounts(prev => ([
+                      ...prev,
+                      { minSqFt: 0, discountPercent: 0 }
+                    ]))
+                  }
+                  className="mt-2 px-2 py-1 border rounded text-xs bg-white"
+                >
+                  Add tier
+                </button>
               </div>
 
-              <div className="mb-4 grid md:grid-cols-2 gap-3">
-                {LF_PAPER_TYPES.map(pt => (
-                  <div key={pt.key} className="flex items-end gap-2">
-                    <div>
-                      <label className="block text-xs font-medium">
-                        {pt.label} Markup %
-                      </label>
-                      <input
-                        type="number"
-                        value={lfMarkupPerPaper[pt.key]}
-                        onChange={e =>
-                          setLfMarkupPerPaper(prev => ({
-                            ...prev,
-                            [pt.key]: e.target.value
-                          }))
-                        }
-                        className="border p-1 w-24"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => applyLfMarkupForPaper(pt.key)}
-                      className="px-2 py-1 border rounded bg-blue-500 text-white text-xs"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="overflow-auto max-h-64 border rounded">
+              {/* Large format pricing table */}
+              <div className="overflow-auto max-h-96 border rounded mb-4">
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-100">
                     <tr>
                       <th className="px-2 py-1 text-left">Large Format Paper</th>
                       <th className="px-2 py-1 text-left">Base Cost / sq ft</th>
-                      <th className="px-2 py-1 text-left">Price / sq ft (with markup)</th>
+                      <th className="px-2 py-1 text-left">Price / sq ft</th>
+                      <th className="px-2 py-1 text-left">Markup %</th>
+                      <th className="px-2 py-1 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {LF_PAPER_TYPES.map(pt => {
-                      const entry = lfPricing[pt.key] || {
-                        baseCostPerSqFt: 0,
-                        pricePerSqFt: 0
-                      };
+                      const entry = lfPricing[pt.key] || { baseCostPerSqFt: 0, pricePerSqFt: 0 };
+                      const markup = lfMarkupPerPaper[pt.key] || 0;
                       return (
                         <tr key={pt.key} className="border-t">
                           <td className="px-2 py-1">{pt.label}</td>
@@ -2123,16 +2036,12 @@
                               step="0.0001"
                               value={entry.baseCostPerSqFt}
                               onChange={e => {
-                                const v = parseFloat(e.target.value) || 0;
+                                const v = +e.target.value || 0;
                                 setLfPricing(prev => {
-                                  const prevEntry = prev[pt.key] || {
-                                    baseCostPerSqFt: 0,
-                                    pricePerSqFt: 0
-                                  };
                                   return {
                                     ...prev,
                                     [pt.key]: {
-                                      ...prevEntry,
+                                      ...prev[pt.key],
                                       baseCostPerSqFt: v
                                     }
                                   };
@@ -2142,7 +2051,30 @@
                             />
                           </td>
                           <td className="px-2 py-1">
-                            ${(entry.pricePerSqFt || 0).toFixed(4)}
+                            ${entry.pricePerSqFt.toFixed(4)}
+                          </td>
+                          <td className="px-2 py-1">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={markup}
+                              onChange={e =>
+                                setLfMarkupPerPaper(prev => ({
+                                  ...prev,
+                                  [pt.key]: e.target.value
+                                }))
+                              }
+                              className="border p-1 w-20"
+                            />
+                          </td>
+                          <td className="px-2 py-1">
+                            <button
+                              type="button"
+                              onClick={() => applyLfMarkupForPaper(pt.key)}
+                              className="px-2 py-0.5 border rounded text-xs bg-blue-500 text-white"
+                            >
+                              Apply markup
+                            </button>
                           </td>
                         </tr>
                       );
@@ -2150,6 +2082,7 @@
                   </tbody>
                 </table>
               </div>
+
             </div>
           )}
         </div>
