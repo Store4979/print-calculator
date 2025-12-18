@@ -19,7 +19,7 @@ exports.handler = async (event) => {
       body = JSON.parse(event.body || "{}");
     } catch (err) {
       console.error("Failed to parse JSON body", err);
-      // If JSON is totally broken, 400 is OK here
+      // This is the ONLY case where we still return 400
       return {
         statusCode: 400,
         body: "Invalid JSON body",
@@ -30,8 +30,8 @@ exports.handler = async (event) => {
 
     const { subject, to, jobType, details, pdfBase64 } = body;
 
-    // 🔴 IMPORTANT CHANGE: do NOT reject missing pdfBase64 anymore.
-    // Just log a warning and, if it's missing, send the email without attachment.
+    // 🔴 DO NOT reject just because pdfBase64 is missing.
+    // If it's missing, we send the email without attachment.
     if (!pdfBase64) {
       console.warn(
         "No pdfBase64 provided; email will be sent WITHOUT PDF attachment."
@@ -58,7 +58,7 @@ exports.handler = async (event) => {
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 587),
-      secure: false, // use STARTTLS on 587
+      secure: false, // STARTTLS on 587
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
@@ -79,7 +79,7 @@ ${JSON.stringify(details, null, 2)}
       attachments: [],
     };
 
-    // Only attach the PDF if we actually have base64
+    // Attach PDF only if we actually got base64
     if (pdfBase64) {
       mailOptions.attachments.push({
         filename: "print-job.pdf",
