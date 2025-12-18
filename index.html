@@ -31,9 +31,7 @@
     const MARGIN_IN = 0.1;
     const SPACING_IN = 0.05;
     const BLEED_IN = 0.125; // 1/8" bleed for sheet jobs
-
-    // Large format max width when custom is used (inches)
-    const LARGE_FORMAT_MAX_WIDTH = 36;
+    const LARGE_FORMAT_MAX_WIDTH = 36; // max custom width in large-format mode
 
     // Sheet Paper types
     const SHEET_PAPER_TYPES = [
@@ -72,14 +70,13 @@
       { key: "hp_translucent_bond", label: "HP Translucent Bond Paper (Transparent/Clear Film)" }
     ];
 
-    // Build initial pricing structures
     const buildInitialSheetPricing = () => {
       const pricing = {};
       SHEET_PAPER_TYPES.forEach(pt => {
         pricing[pt.key] = {};
         (SHEET_KEYS_FOR_PAPER[pt.key] || []).forEach(sheetKey => {
           pricing[pt.key][sheetKey] = {
-            baseCostColor: 0,  // paper + click
+            baseCostColor: 0,
             baseCostBW: 0,
             priceColor: 0,
             priceBW: 0
@@ -100,7 +97,9 @@
       return pricing;
     };
 
-    // ---- Helper: turn jsPDF into base64 (without data: prefix) ----
+    // ---- Helpers for PDF & email ----
+    const MAX_EMAIL_BASE64_LEN = 6000000; // ~4–5 MB of base64, under Netlify body limit
+
     const pdfToBase64 = (pdf) => {
       return new Promise((resolve, reject) => {
         try {
@@ -127,11 +126,41 @@
       });
     };
 
-    // ---- EMAIL / ORDER FUNCTION ----
+    // Downscale a canvas before embedding in email PDF to keep file small
+    const canvasToDataUrlScaled = (sourceCanvas, maxSize = 1400) => {
+      if (!sourceCanvas) return null;
+      const width = sourceCanvas.width;
+      const height = sourceCanvas.height;
+      if (!width || !height) return null;
+
+      const maxDim = Math.max(width, height);
+      const scale = maxDim > maxSize ? maxSize / maxDim : 1;
+
+      if (scale >= 1) {
+        // Just export as JPEG to compress a bit
+        return sourceCanvas.toDataURL('image/jpeg', 0.8);
+      }
+
+      const c = document.createElement('canvas');
+      c.width = Math.round(width * scale);
+      c.height = Math.round(height * scale);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(sourceCanvas, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.8);
+    };
+
     const sendOrderEmail = async (jobType, details, pdf) => {
       try {
         const base64Pdf = await pdfToBase64(pdf);
         console.log('pdfBase64 length (client):', base64Pdf.length);
+
+        if (base64Pdf.length > MAX_EMAIL_BASE64_LEN) {
+          alert(
+            'Order file is too large to send automatically.\n\n' +
+            'Please use the Download button and email the PDF manually to store4979@theupsstore.com.'
+          );
+          return;
+        }
 
         const res = await fetch('/.netlify/functions/send-print-job', {
           method: 'POST',
@@ -151,8 +180,8 @@
           console.error('Server error:', res.status, text);
           alert(
             'Server error while sending order:\n\n' +
-              text +
-              '\n\nPlease download the PDF and email it manually to store4979@theupsstore.com.'
+            text +
+            '\n\nPlease download the PDF and email it manually to store4979@theupsstore.com.'
           );
           return;
         }
@@ -404,7 +433,6 @@
       // ---- Sheet imposition & pricing ----
       const [baseWIn, baseHIn] = getSheetInches();
 
-      // respect orientation for layout math
       let sheetWIn = baseWIn;
       let sheetHIn = baseHIn;
       if (orientation === 'landscape') {
@@ -481,10 +509,10 @@
 
       let backPerSheet = 0;
       if (showBack && backPageCostIsAdminEnabled) {
-        const base = colorModeBack === "color"
+        const baseBack = colorModeBack === "color"
           ? (selectedSheetPricing.priceColor || 0)
           : (selectedSheetPricing.priceBW || 0);
-        backPerSheet = backPageCostMode === "half" ? base * 0.5 : base;
+        backPerSheet = backPageCostMode === "half" ? baseBack * 0.5 : baseBack;
       }
 
       const sheetPriceBeforeDiscount = (pricePerSheetFront + backPerSheet) * sheetsNeeded;
@@ -699,7 +727,7 @@
         rows
       ]);
 
-      // ---- PDF helpers (for multi-page PDF -> image) ----
+      // ---- PDF helpers (for multi-page PDF -> image files) ----
       async function loadPdfToState(file, side) {
         const data = new Uint8Array(await file.arrayBuffer());
         const pdf = await pdfjsLib.getDocument({ data }).promise;
@@ -803,7 +831,7 @@
       const lfBasePrice = currentLfPricing.pricePerSqFt * lfAreaSqFt;
       const lfTotalPrice = applyLfQtyDiscount(lfBasePrice, lfAreaSqFt);
 
-      // ---- Download PDF for sheet ----
+      // ---- Download PDF for sheet (full-res, print-ready) ----
       const downloadSheetPDF = () => {
         if (!frontFileList || frontFileList.length === 0) {
           alert("Please upload at least one front file before downloading.");
@@ -832,7 +860,7 @@
         pdf.save('print_preview.pdf');
       };
 
-      // ---- Order sheet job ----
+      // ---- Order sheet job (compressed proof PDF for email) ----
       const orderSheetJob = async () => {
         if (!frontFileList || frontFileList.length === 0) {
           alert("Please upload at least one front file before ordering.");
@@ -849,13 +877,21 @@
           format: [pdfW, pdfH]
         });
 
-        const frontData = frontRef.current.toDataURL('image/png', 1.0);
-        pdf.addImage(frontData, 'PNG', 0, 0, pdfW, pdfH);
+        const frontDataEmail = canvasToDataUrlScaled(frontRef.current, 1400);
+        if (!frontDataEmail) {
+          alert("Could not prepare preview image for email.");
+          return;
+        }
+        pdf.addImage(frontDataEmail, 'JPEG', 0, 0, pdfW, pdfH);
 
         if (showBack && backFileList && backFileList.length > 0) {
           pdf.addPage([pdfW, pdfH], orientation);
-          const backData = backRef.current.toDataURL('image/png', 1.0);
-          pdf.addImage(backData, 'PNG', 0, 0, pdfW, pdfH);
+          const backDataEmail = canvasToDataUrlScaled(backRef.current, 1400);
+          if (!backDataEmail) {
+            alert("Could not prepare back preview image for email.");
+            return;
+          }
+          pdf.addImage(backDataEmail, 'JPEG', 0, 0, pdfW, pdfH);
         }
 
         const details = {
@@ -911,8 +947,13 @@
           format: [pdfW, pdfH]
         });
 
-        const imgData = lfRef.current.toDataURL('image/png', 1.0);
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+        const imgDataEmail = canvasToDataUrlScaled(lfRef.current, 2000);
+        if (!imgDataEmail) {
+          alert("Could not prepare large format preview image for email.");
+          return;
+        }
+
+        pdf.addImage(imgDataEmail, 'JPEG', 0, 0, pdfW, pdfH);
 
         const details = {
           type: "Large Format",
