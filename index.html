@@ -33,6 +33,11 @@
     const BLEED_IN = 0.125; // 1/8" bleed for sheet jobs
     const LARGE_FORMAT_MAX_WIDTH = 36; // max custom width in large-format mode
 
+    // Email-preview scaling
+    const MAX_EMAIL_BASE64_LEN = 6000000; // ~4–5 MB of base64
+    const EMAIL_MAX_IMG_SIZE = 2200;      // max pixels for long edge in email previews
+    const EMAIL_JPEG_QUALITY = 0.9;
+
     // Sheet Paper types
     const SHEET_PAPER_TYPES = [
       { key: '28lb', label: '28 LB Paper' },
@@ -98,8 +103,6 @@
     };
 
     // ---- Helpers for PDF & email ----
-    const MAX_EMAIL_BASE64_LEN = 6000000; // ~4–5 MB of base64, under Netlify body limit
-
     const pdfToBase64 = (pdf) => {
       return new Promise((resolve, reject) => {
         try {
@@ -127,7 +130,7 @@
     };
 
     // Downscale a canvas before embedding in email PDF to keep file small
-    const canvasToDataUrlScaled = (sourceCanvas, maxSize = 1400) => {
+    const canvasToDataUrlScaled = (sourceCanvas, maxSize = EMAIL_MAX_IMG_SIZE) => {
       if (!sourceCanvas) return null;
       const width = sourceCanvas.width;
       const height = sourceCanvas.height;
@@ -137,8 +140,8 @@
       const scale = maxDim > maxSize ? maxSize / maxDim : 1;
 
       if (scale >= 1) {
-        // Just export as JPEG to compress a bit
-        return sourceCanvas.toDataURL('image/jpeg', 0.8);
+        // No scaling, just compress a bit
+        return sourceCanvas.toDataURL('image/jpeg', EMAIL_JPEG_QUALITY);
       }
 
       const c = document.createElement('canvas');
@@ -146,7 +149,7 @@
       c.height = Math.round(height * scale);
       const ctx = c.getContext('2d');
       ctx.drawImage(sourceCanvas, 0, 0, c.width, c.height);
-      return c.toDataURL('image/jpeg', 0.8);
+      return c.toDataURL('image/jpeg', EMAIL_JPEG_QUALITY);
     };
 
     const sendOrderEmail = async (jobType, details, pdf) => {
@@ -272,6 +275,16 @@
       const sheetHighlightRef = useRef(null);
       const lfRef = useRef();
 
+      // Order dialog (customer info)
+      const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+      const [orderDialogType, setOrderDialogType] = useState(null); // "sheet" | "large"
+      const [orderCustomer, setOrderCustomer] = useState({
+        name: "",
+        email: "",
+        phone: ""
+      });
+      const [orderSending, setOrderSending] = useState(false);
+
       // ---- LocalStorage Auto-save ----
       useEffect(() => {
         try {
@@ -320,7 +333,7 @@
         }
       }, [lfQtyDiscounts]);
 
-      // Auto-load pricing.json once
+      // Auto-load pricing.json once (supports both new & legacy formats)
       useEffect(() => {
         const loadJSONPricing = async () => {
           try {
@@ -341,12 +354,67 @@
 
       const applyPricingJSON = (data) => {
         try {
-          if (data.sheetPricing) setSheetPricing(data.sheetPricing);
+          // SHEET pricing
+          if (data.sheetPricing || data.pricing) {
+            if (data.sheetPricing) {
+              // Direct format: { sheetPricing: { paperKey: { sheetKey: { baseCostColor, baseCostBW, priceColor, priceBW } } } }
+              setSheetPricing(data.sheetPricing);
+            } else if (data.pricing) {
+              // Legacy format like your current pricing.json
+              const converted = buildInitialSheetPricing();
+              const defaultColorClick = data.defaultColorClick ?? 0;
+              const defaultBWClick = data.defaultBWClick ?? 0;
+
+              Object.entries(data.pricing).forEach(([paperKey, sheetMap]) => {
+                if (!converted[paperKey]) converted[paperKey] = {};
+                Object.entries(sheetMap).forEach(([sheetSize, v]) => {
+                  const paperCost = v.paperCost || 0;
+                  const colorClickCost = v.colorClickCost ?? defaultColorClick;
+                  const bwClickCost = v.bwClickCost ?? defaultBWClick;
+                  const baseCostColor = paperCost + colorClickCost;
+                  const baseCostBW = paperCost + bwClickCost;
+                  const priceColor = v.priceColor ?? baseCostColor;
+                  const priceBW = v.priceBW ?? baseCostBW;
+                  converted[paperKey][sheetSize] = {
+                    baseCostColor,
+                    baseCostBW,
+                    priceColor,
+                    priceBW
+                  };
+                });
+              });
+              setSheetPricing(converted);
+            }
+          }
+
+          // LARGE FORMAT pricing
           if (data.lfPricing) setLfPricing(data.lfPricing);
-          if (data.sheetQtyDiscounts) setSheetQtyDiscounts(data.sheetQtyDiscounts);
+
+          // SHEET quantity discounts
+          if (data.sheetQtyDiscounts || data.quantityDiscounts) {
+            if (data.sheetQtyDiscounts) {
+              setSheetQtyDiscounts(data.sheetQtyDiscounts);
+            } else {
+              const mapped = (data.quantityDiscounts || []).map(d => ({
+                minQty: d.minSheets ?? d.minQty ?? 0,
+                discountPercent: d.discountPercent ?? d.percent ?? 0
+              }));
+              setSheetQtyDiscounts(mapped);
+            }
+          }
+
+          // LARGE FORMAT quantity discounts
           if (data.lfQtyDiscounts) setLfQtyDiscounts(data.lfQtyDiscounts);
-          if (data.sheetMarkupPerPaper) setSheetMarkupPerPaper(data.sheetMarkupPerPaper);
+
+          // Sheet markup per paper
+          if (data.sheetMarkupPerPaper || data.markupPerPaper) {
+            if (data.sheetMarkupPerPaper) setSheetMarkupPerPaper(data.sheetMarkupPerPaper);
+            else setSheetMarkupPerPaper(data.markupPerPaper);
+          }
+
+          // Large-format markup per paper
           if (data.lfMarkupPerPaper) setLfMarkupPerPaper(data.lfMarkupPerPaper);
+
           setPricingLoadError("");
         } catch (e) {
           console.error("Error applying pricing JSON", e);
@@ -877,7 +945,7 @@
           format: [pdfW, pdfH]
         });
 
-        const frontDataEmail = canvasToDataUrlScaled(frontRef.current, 1400);
+        const frontDataEmail = canvasToDataUrlScaled(frontRef.current, EMAIL_MAX_IMG_SIZE);
         if (!frontDataEmail) {
           alert("Could not prepare preview image for email.");
           return;
@@ -886,7 +954,7 @@
 
         if (showBack && backFileList && backFileList.length > 0) {
           pdf.addPage([pdfW, pdfH], orientation);
-          const backDataEmail = canvasToDataUrlScaled(backRef.current, 1400);
+          const backDataEmail = canvasToDataUrlScaled(backRef.current, EMAIL_MAX_IMG_SIZE);
           if (!backDataEmail) {
             alert("Could not prepare back preview image for email.");
             return;
@@ -906,7 +974,8 @@
           colorModeBack: showBack ? colorModeBack : null,
           bleedEnabled,
           totalPrice: sheetTotal,
-          pricePerSheet: effectivePricePerSheet
+          pricePerSheet: effectivePricePerSheet,
+          customer: orderCustomer
         };
 
         await sendOrderEmail("sheet", details, pdf);
@@ -962,10 +1031,50 @@
           keepProportions: largeFormatKeepProportions,
           rotation: largeFormatRotation,
           areaSqFt: lfAreaSqFt,
-          totalPrice: lfTotalPrice
+          totalPrice: lfTotalPrice,
+          customer: orderCustomer
         };
 
         await sendOrderEmail("large-format", details, pdf);
+      };
+
+      // ---- Order dialog helpers ----
+      const handleStartOrder = (type) => {
+        if (type === "sheet") {
+          if (!frontFileList || frontFileList.length === 0) {
+            alert("Please upload at least one front file before ordering.");
+            return;
+          }
+          if (sheetsNeeded === 0) {
+            alert("Please enter a quantity greater than 0.");
+            return;
+          }
+        } else {
+          if (!largeFormatFiles || largeFormatFiles.length === 0) {
+            alert("Please upload a large format image before ordering.");
+            return;
+          }
+        }
+        setOrderDialogType(type);
+        setOrderDialogOpen(true);
+      };
+
+      const handleConfirmOrder = async () => {
+        if (!orderCustomer.name || !orderCustomer.email || !orderCustomer.phone) {
+          alert("Please enter your name, email, and phone number.");
+          return;
+        }
+        setOrderSending(true);
+        try {
+          if (orderDialogType === "sheet") {
+            await orderSheetJob();
+          } else if (orderDialogType === "large") {
+            await orderLfJob();
+          }
+          setOrderDialogOpen(false);
+        } finally {
+          setOrderSending(false);
+        }
       };
 
       // ---- Admin import/export pricing ----
@@ -1338,7 +1447,7 @@
                   Download Preview (PDF)
                 </button>
                 <button
-                  onClick={orderSheetJob}
+                  onClick={() => handleStartOrder('sheet')}
                   className="bg-green-600 text-white px-4 py-2 rounded text-sm"
                 >
                   Order Prints (Sheet)
@@ -1452,10 +1561,75 @@
                     Download Large Format (PDF)
                   </button>
                   <button
-                    onClick={orderLfJob}
+                    onClick={() => handleStartOrder('large')}
                     className="bg-green-600 text-white px-4 py-2 rounded text-sm"
                   >
                     Order Prints (Large Format)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ORDER CONTACT DIALOG */}
+          {orderDialogOpen && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+              <div className="bg-white rounded shadow-lg p-4 w-full max-w-md space-y-3">
+                <h3 className="text-lg font-semibold">Contact information for this order</h3>
+                <p className="text-xs text-gray-600">
+                  This information will be included in the PRINT JOB email sent to the store.
+                </p>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs font-medium">Name</label>
+                    <input
+                      type="text"
+                      value={orderCustomer.name}
+                      onChange={(e) =>
+                        setOrderCustomer((c) => ({ ...c, name: e.target.value }))
+                      }
+                      className="border p-1 w-full text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium">Email</label>
+                    <input
+                      type="email"
+                      value={orderCustomer.email}
+                      onChange={(e) =>
+                        setOrderCustomer((c) => ({ ...c, email: e.target.value }))
+                      }
+                      className="border p-1 w-full text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium">Phone</label>
+                    <input
+                      type="tel"
+                      value={orderCustomer.phone}
+                      onChange={(e) =>
+                        setOrderCustomer((c) => ({ ...c, phone: e.target.value }))
+                      }
+                      className="border p-1 w-full text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setOrderDialogOpen(false)}
+                    className="px-3 py-1 border rounded text-xs bg-gray-100"
+                    disabled={orderSending}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmOrder}
+                    className="px-3 py-1 rounded text-xs bg-green-600 text-white disabled:opacity-60"
+                    disabled={orderSending}
+                  >
+                    {orderSending ? 'Sending…' : 'Send Order'}
                   </button>
                 </div>
               </div>
