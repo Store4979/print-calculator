@@ -220,9 +220,7 @@
       // ---- EMAIL ORDER HELPER (Netlify Function call) ----
 const sendOrderEmail = async (jobType, details, pdf) => {
   try {
-    // Use jsPDF's data URI output to get base64 safely
-    const dataUri = pdf.output('datauristring'); 
-    // "data:application/pdf;filename=generated.pdf;base64,JVBERi0xLjcKJ..."
+    const dataUri = pdf.output('datauristring');
     const commaIndex = dataUri.indexOf(',');
     const base64Pdf =
       commaIndex >= 0 ? dataUri.slice(commaIndex + 1) : dataUri;
@@ -238,6 +236,28 @@ const sendOrderEmail = async (jobType, details, pdf) => {
         pdfBase64: base64Pdf
       })
     });
+
+    const text = await res.text();
+
+    if (!res.ok) {
+      console.error('Server error:', res.status, text);
+      alert(
+        'Server error while sending order:\n\n' +
+          text +
+          '\n\nPlease download the PDF and email it manually to store4979@theupsstore.com.'
+      );
+      return;
+    }
+
+    console.log('Order sent OK:', text);
+    alert('Order sent! The store will receive your PRINT JOB email.');
+  } catch (err) {
+    console.error('sendOrderEmail error:', err);
+    alert(
+      'Could not send order automatically. Please download the PDF and email it to store4979@theupsstore.com.'
+    );
+  }
+};
 
     const text = await res.text();
 
