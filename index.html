@@ -103,9 +103,7 @@
     // ---- EMAIL / ORDER FUNCTION ----
     const sendOrderEmail = async (jobType, details, pdf) => {
       try {
-        // Use jsPDF's data URI output to get base64 safely
         const dataUri = pdf.output('datauristring');
-        // "data:application/pdf;filename=generated.pdf;base64,JVBERi0xLjcKJ..."
         const commaIndex = dataUri.indexOf(',');
         const base64Pdf =
           commaIndex >= 0 ? dataUri.slice(commaIndex + 1) : dataUri;
@@ -152,7 +150,7 @@
       const [prints, setPrints] = useState({ width: 5, height: 7, quantity: 2 });
 
       // FRONT/BACK image or PDF-derived image
-      const [frontFileList, setFrontFileList] = useState([]); // multiple front images
+      const [frontFileList, setFrontFileList] = useState([]);
       const [frontRotation, setFrontRotation] = useState(0);
       const [backFileList, setBackFileList] = useState([]);
       const [backRotation, setBackRotation] = useState(0);
@@ -164,13 +162,9 @@
       // Multi-page layout mode for PDFs: "1-1" or "1-2"
       const [multiPageLayout, setMultiPageLayout] = useState("1-2");
 
-      // Color mode & back color mode
-      const [colorModeFront, setColorModeFront] = useState("color"); // "color" or "bw"
+      // Color mode
+      const [colorModeFront, setColorModeFront] = useState("color");
       const [colorModeBack, setColorModeBack] = useState("color");
-
-      // Bleed application state
-      const [applyBleedFront, setApplyBleedFront] = useState(false);
-      const [applyBleedBack, setApplyBleedBack] = useState(false);
 
       // Paper type selection
       const [paperKey, setPaperKey] = useState(SHEET_PAPER_TYPES[0].key);
@@ -198,12 +192,12 @@
         return init;
       });
 
-      // Quantity discounts (sheet & large format)
+      // Quantity discounts
       const [sheetQtyDiscounts, setSheetQtyDiscounts] = useState([]);
       const [lfQtyDiscounts, setLfQtyDiscounts] = useState([]);
 
       // Back page cost behavior
-      const [backPageCostMode, setBackPageCostMode] = useState("half"); // "half" or "full"
+      const [backPageCostMode, setBackPageCostMode] = useState("half");
       const [backPageCostIsAdminEnabled, setBackPageCostIsAdminEnabled] = useState(true);
 
       // Admin view
@@ -213,43 +207,28 @@
       // JSON pricing import/export
       const [pricingLoadError, setPricingLoadError] = useState("");
 
-      // PDF-specific state (multi-page selection) for FRONT/BACK
+      // PDF-specific state
       const [frontPdfData, setFrontPdfData] = useState(null);
       const [frontPdfPages, setFrontPdfPages] = useState(0);
-      const [frontPdfPage, setFrontPdfPage] = useState(1);
-
       const [backPdfData, setBackPdfData] = useState(null);
       const [backPdfPages, setBackPdfPages] = useState(0);
-      const [backPdfPage, setBackPdfPage] = useState(1);
 
       const frontRef = useRef();
       const backRef = useRef();
       const sheetHighlightRef = useRef(null);
-
-      // Large format canvas ref
       const lfRef = useRef();
 
-      // ---- LocalStorage Auto-save for pricing ----
+      // ---- LocalStorage Auto-save ----
       useEffect(() => {
         try {
           const storedSheet = window.localStorage.getItem("printCalcSheetPricing");
           const storedLf = window.localStorage.getItem("printCalcLfPricing");
           const storedSheetDisc = window.localStorage.getItem("printCalcSheetDiscounts");
           const storedLfDisc = window.localStorage.getItem("printCalcLfDiscounts");
-          if (storedSheet) {
-            const parsed = JSON.parse(storedSheet);
-            setSheetPricing(parsed);
-          }
-          if (storedLf) {
-            const parsedLf = JSON.parse(storedLf);
-            setLfPricing(parsedLf);
-          }
-          if (storedSheetDisc) {
-            setSheetQtyDiscounts(JSON.parse(storedSheetDisc));
-          }
-          if (storedLfDisc) {
-            setLfQtyDiscounts(JSON.parse(storedLfDisc));
-          }
+          if (storedSheet) setSheetPricing(JSON.parse(storedSheet));
+          if (storedLf) setLfPricing(JSON.parse(storedLf));
+          if (storedSheetDisc) setSheetQtyDiscounts(JSON.parse(storedSheetDisc));
+          if (storedLfDisc) setLfQtyDiscounts(JSON.parse(storedLfDisc));
         } catch (e) {
           console.error("Failed to load pricing from localStorage", e);
         }
@@ -308,24 +287,12 @@
 
       const applyPricingJSON = (data) => {
         try {
-          if (data.sheetPricing) {
-            setSheetPricing(data.sheetPricing);
-          }
-          if (data.lfPricing) {
-            setLfPricing(data.lfPricing);
-          }
-          if (data.sheetQtyDiscounts) {
-            setSheetQtyDiscounts(data.sheetQtyDiscounts);
-          }
-          if (data.lfQtyDiscounts) {
-            setLfQtyDiscounts(data.lfQtyDiscounts);
-          }
-          if (data.sheetMarkupPerPaper) {
-            setSheetMarkupPerPaper(data.sheetMarkupPerPaper);
-          }
-          if (data.lfMarkupPerPaper) {
-            setLfMarkupPerPaper(data.lfMarkupPerPaper);
-          }
+          if (data.sheetPricing) setSheetPricing(data.sheetPricing);
+          if (data.lfPricing) setLfPricing(data.lfPricing);
+          if (data.sheetQtyDiscounts) setSheetQtyDiscounts(data.sheetQtyDiscounts);
+          if (data.lfQtyDiscounts) setLfQtyDiscounts(data.lfQtyDiscounts);
+          if (data.sheetMarkupPerPaper) setSheetMarkupPerPaper(data.sheetMarkupPerPaper);
+          if (data.lfMarkupPerPaper) setLfMarkupPerPaper(data.lfMarkupPerPaper);
           setPricingLoadError("");
         } catch (e) {
           console.error("Error applying pricing JSON", e);
@@ -338,9 +305,7 @@
         if (sheetKey === 'custom') {
           let w = Math.max(0.1, Number(customSize.w) || 0);
           let h = Math.max(0.1, Number(customSize.h) || 0);
-          if (largeFormatEnabled) {
-            if (w > LARGE_FORMAT_MAX_WIDTH) w = LARGE_FORMAT_MAX_WIDTH;
-          }
+          if (largeFormatEnabled && w > LARGE_FORMAT_MAX_WIDTH) w = LARGE_FORMAT_MAX_WIDTH;
           return [w, h];
         }
         return PRESET_SHEETS[sheetKey];
@@ -353,7 +318,7 @@
       useEffect(() => {
         if (sheetHighlightRef.current) {
           sheetHighlightRef.current.classList.remove("ring-2", "ring-yellow-400");
-          void sheetHighlightRef.current.offsetWidth; // reflow
+          void sheetHighlightRef.current.offsetWidth;
           sheetHighlightRef.current.classList.add("ring-2", "ring-yellow-400");
           const t = setTimeout(() => {
             sheetHighlightRef.current &&
@@ -383,27 +348,6 @@
         });
       };
 
-      const applySheetMarkupToAll = () => {
-        setSheetPricing(prev => {
-          const next = { ...prev };
-          for (const pk in prev) {
-            const group = prev[pk] || {};
-            const m = parseFloat(sheetMarkupPerPaper[pk]) || 0;
-            const factor = 1 + m / 100;
-            next[pk] = {};
-            for (const sk in group) {
-              const entry = group[sk];
-              next[pk][sk] = {
-                ...entry,
-                priceColor: parseFloat((entry.baseCostColor * factor).toFixed(4)),
-                priceBW: parseFloat((entry.baseCostBW * factor).toFixed(4))
-              };
-            }
-          }
-          return next;
-        });
-      };
-
       const applyLfMarkupForPaper = (pk) => {
         const m = parseFloat(lfMarkupPerPaper[pk]) || 0;
         const factor = 1 + m / 100;
@@ -414,22 +358,6 @@
             ...entry,
             pricePerSqFt: parseFloat((entry.baseCostPerSqFt * factor).toFixed(4))
           };
-          return next;
-        });
-      };
-
-      const applyLfMarkupToAll = () => {
-        setLfPricing(prev => {
-          const next = { ...prev };
-          for (const pk in prev) {
-            const entry = prev[pk] || { baseCostPerSqFt: 0, pricePerSqFt: 0 };
-            const m = parseFloat(lfMarkupPerPaper[pk]) || 0;
-            const factor = 1 + m / 100;
-            next[pk] = {
-              ...entry,
-              pricePerSqFt: parseFloat((entry.baseCostPerSqFt * factor).toFixed(4))
-            };
-          }
           return next;
         });
       };
@@ -449,7 +377,15 @@
       };
 
       // ---- Sheet imposition & pricing ----
-      const [wIn, hIn] = getSheetInches();
+      const [baseWIn, baseHIn] = getSheetInches();
+
+      // ✅ respect orientation for layout math
+      let sheetWIn = baseWIn;
+      let sheetHIn = baseHIn;
+      if (orientation === 'landscape') {
+        [sheetWIn, sheetHIn] = [sheetHIn, sheetWIn];
+      }
+
       const printW = Math.max(0.01, prints.width);
       const printH = Math.max(0.01, prints.height);
 
@@ -460,8 +396,9 @@
       const marginIn = MARGIN_IN;
       const spacingIn = SPACING_IN;
 
-      const usableW = wIn - 2 * marginIn;
-      const usableH = hIn - 2 * marginIn;
+      const usableW = sheetWIn - 2 * marginIn;
+      const usableH = sheetHIn - 2 * marginIn;
+
       const cols = Math.max(
         1,
         Math.floor((usableW + spacingIn) / (slotW + spacingIn))
@@ -522,24 +459,18 @@
         const base = colorModeBack === "color"
           ? (selectedSheetPricing.priceColor || 0)
           : (selectedSheetPricing.priceBW || 0);
-        if (backPageCostMode === "half") {
-          backPerSheet = base * 0.5;
-        } else {
-          backPerSheet = base;
-        }
+        backPerSheet = backPageCostMode === "half" ? base * 0.5 : base;
       }
 
       const sheetPriceBeforeDiscount = (pricePerSheetFront + backPerSheet) * sheetsNeeded;
       const sheetTotal = applySheetQtyDiscount(sheetPriceBeforeDiscount, sheetsNeeded);
       const effectivePricePerSheet = sheetsNeeded > 0 ? sheetTotal / sheetsNeeded : 0;
 
-      // ---- Drawing multi-layout for sheet printing (async) ----
+      // ---- Drawing ----
       const fileToImageBitmap = (file) => {
         return new Promise((resolve, reject) => {
           const img = new Image();
-          img.onload = () => {
-            resolve(img);
-          };
+          img.onload = () => resolve(img);
           img.onerror = reject;
           img.src = URL.createObjectURL(file);
         });
@@ -549,9 +480,8 @@
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
 
-        const [baseWIn, baseHIn] = getSheetInches();
-        const wPx = (orientation === 'portrait' ? baseWIn : baseHIn) * DPI;
-        const hPx = (orientation === 'portrait' ? baseHIn : baseWIn) * DPI;
+        const wPx = sheetWIn * DPI;
+        const hPx = sheetHIn * DPI;
 
         const marginPx = MARGIN_IN * DPI;
         const spacingPx = SPACING_IN * DPI;
@@ -574,18 +504,16 @@
         const totalWPx = colsPx * slotWPx + (colsPx - 1) * spacingPx;
         const totalHPx = rowsPx * slotHPx + (rowsPx - 1) * spacingPx;
 
-        let offX = marginPx + (canvas.width - 2 * marginPx - totalWPx) / 2;
-        let offY = marginPx + (canvas.height - 2 * marginPx - totalHPx) / 2;
+        const offX = marginPx + (canvas.width - 2 * marginPx - totalWPx) / 2;
+        const offY = marginPx + (canvas.height - 2 * marginPx - totalHPx) / 2;
 
         let count = 0;
         let firstX = null;
         let firstY = null;
 
         const maxSlots = colsPx * rowsPx;
-        const neededPrints = Math.min(requestedQty, maxSlots);
-        const allocatedPrints = Math.max(neededPrints, requestedQty === 0 ? 0 : 1);
-
-        let imgIndex = 0;
+        const neededPrints = Math.min(requestedQty || maxSlots, maxSlots);
+        const allocatedPrints = neededPrints === 0 ? maxSlots : neededPrints;
 
         const allBitmaps = [];
         for (const f of fileList) {
@@ -724,8 +652,10 @@
           }
         })();
       }, [
-        sheetKey,
-        customSize,
+        baseWIn,
+        baseHIn,
+        sheetWIn,
+        sheetHIn,
         orientation,
         prints,
         frontFileList,
@@ -738,33 +668,28 @@
         bleedEnabled,
         colorModeFront,
         colorModeBack,
-        multiPageLayout
+        multiPageLayout,
+        cols,
+        rows
       ]);
 
-      // ---- PDF helpers for Front/Back (single-PDF upload) ----
+      // ---- PDF helpers (for multi-page PDF -> image) ----
       async function loadPdfToState(file, side) {
         const data = new Uint8Array(await file.arrayBuffer());
         const pdf = await pdfjsLib.getDocument({ data }).promise;
         const pages = pdf.numPages;
+        const imgs = [];
+        for (let i = 1; i <= pages; i++) {
+          const f = await rasterizePdfPageToFile(data, i);
+          imgs.push(f);
+        }
         if (side === 'front') {
           setFrontPdfData(data);
           setFrontPdfPages(pages);
-          setFrontPdfPage(1);
-          const imgs = [];
-          for (let i = 1; i <= pages; i++) {
-            const f = await rasterizePdfPageToFile(data, i);
-            imgs.push(f);
-          }
           setFrontFileList(imgs);
         } else {
           setBackPdfData(data);
           setBackPdfPages(pages);
-          setBackPdfPage(1);
-          const imgs = [];
-          for (let i = 1; i <= pages; i++) {
-            const f = await rasterizePdfPageToFile(data, i);
-            imgs.push(f);
-          }
           setBackFileList(imgs);
         }
       }
@@ -854,9 +779,14 @@
 
       // ---- Download PDF for sheet ----
       const downloadSheetPDF = () => {
-        let pdfW = wIn;
-        let pdfH = hIn;
-        if (orientation === 'landscape') [pdfW, pdfH] = [hIn, wIn];
+        if (!frontFileList || frontFileList.length === 0) {
+          alert("Please upload at least one front file before downloading.");
+          return;
+        }
+
+        let pdfW = baseWIn;
+        let pdfH = baseHIn;
+        if (orientation === 'landscape') [pdfW, pdfH] = [baseHIn, baseWIn];
 
         const pdf = new jsPDF({
           orientation,
@@ -867,7 +797,7 @@
         const frontData = frontRef.current.toDataURL('image/png', 1.0);
         pdf.addImage(frontData, 'PNG', 0, 0, pdfW, pdfH);
 
-        if (showBack) {
+        if (showBack && backFileList && backFileList.length > 0) {
           pdf.addPage([pdfW, pdfH], orientation);
           const backData = backRef.current.toDataURL('image/png', 1.0);
           pdf.addImage(backData, 'PNG', 0, 0, pdfW, pdfH);
@@ -878,9 +808,14 @@
 
       // ---- Order sheet job ----
       const orderSheetJob = async () => {
-        let pdfW = wIn;
-        let pdfH = hIn;
-        if (orientation === 'landscape') [pdfW, pdfH] = [hIn, wIn];
+        if (!frontFileList || frontFileList.length === 0) {
+          alert("Please upload at least one front file before ordering.");
+          return;
+        }
+
+        let pdfW = baseWIn;
+        let pdfH = baseHIn;
+        if (orientation === 'landscape') [pdfW, pdfH] = [baseHIn, baseWIn];
 
         const pdf = new jsPDF({
           orientation,
@@ -891,7 +826,7 @@
         const frontData = frontRef.current.toDataURL('image/png', 1.0);
         pdf.addImage(frontData, 'PNG', 0, 0, pdfW, pdfH);
 
-        if (showBack) {
+        if (showBack && backFileList && backFileList.length > 0) {
           pdf.addPage([pdfW, pdfH], orientation);
           const backData = backRef.current.toDataURL('image/png', 1.0);
           pdf.addImage(backData, 'PNG', 0, 0, pdfW, pdfH);
@@ -915,8 +850,12 @@
         await sendOrderEmail("sheet", details, pdf);
       };
 
-      // ---- Download PDF for large format ----
+      // ---- Download / Order Large Format ----
       const downloadLfPDF = () => {
+        if (!largeFormatFiles || largeFormatFiles.length === 0) {
+          alert("Please upload a large format image before downloading.");
+          return;
+        }
         const pdfW = largeFormatSize.w;
         const pdfH = largeFormatSize.h;
 
@@ -932,6 +871,11 @@
       };
 
       const orderLfJob = async () => {
+        if (!largeFormatFiles || largeFormatFiles.length === 0) {
+          alert("Please upload a large format image before ordering.");
+          return;
+        }
+
         const pdfW = largeFormatSize.w;
         const pdfH = largeFormatSize.h;
 
@@ -1184,7 +1128,7 @@
                   Add 0.125" bleed
                 </label>
                 <label className="flex items-center gap-1 text-sm">
-                  <span>Front:</span>
+                  <span>Front mode:</span>
                   <select
                     value={colorModeFront}
                     onChange={(e) => setColorModeFront(e.target.value)}
@@ -1224,15 +1168,12 @@
 
                         const newList = [...frontFileList];
 
-                        for (const img of images) {
-                          newList.push(img);
-                        }
-
-                        for (const pdfFile of pdfs) {
-                          await loadPdfToState(pdfFile, 'front');
-                        }
-
-                        if (images.length && !pdfs.length) {
+                        for (const img of images) newList.push(img);
+                        if (pdfs.length) {
+                          for (const pdfFile of pdfs) {
+                            await loadPdfToState(pdfFile, 'front');
+                          }
+                        } else {
                           setFrontFileList(newList);
                         }
                       }}
@@ -1277,15 +1218,12 @@
 
                             const newList = [...backFileList];
 
-                            for (const img of images) {
-                              newList.push(img);
-                            }
-
-                            for (const pdfFile of pdfs) {
-                              await loadPdfToState(pdfFile, 'back');
-                            }
-
-                            if (images.length && !pdfs.length) {
+                            for (const img of images) newList.push(img);
+                            if (pdfs.length) {
+                              for (const pdfFile of pdfs) {
+                                await loadPdfToState(pdfFile, 'back');
+                              }
+                            } else {
                               setBackFileList(newList);
                             }
                           }}
@@ -1298,7 +1236,7 @@
                           Rotate 90°
                         </button>
                         <label className="flex items-center gap-1 text-sm">
-                          <span>Back:</span>
+                          <span>Back mode:</span>
                           <select
                             value={colorModeBack}
                             onChange={(e) => setColorModeBack(e.target.value)}
@@ -1499,12 +1437,6 @@
               {/* Sheet pricing table */}
               <div className="space-y-3">
                 <h3 className="font-semibold">Sheet Pricing</h3>
-                <div className="flex flex-wrap gap-3 items-end">
-                  <span className="text-xs text-gray-600">
-                    Set base cost (paper + click) for Color & B/W. Then set markup % per paper
-                    type.
-                  </span>
-                </div>
                 <div className="overflow-auto max-h-96 border rounded">
                   <table className="min-w-full text-xs">
                     <thead className="bg-gray-100">
