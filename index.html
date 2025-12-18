@@ -220,11 +220,13 @@
       // ---- EMAIL ORDER HELPER (Netlify Function call) ----
 const sendOrderEmail = async (jobType, details, pdf) => {
   try {
-    // Convert PDF to base64 (arraybuffer -> Uint8Array -> binary string -> base64)
-    const arrayBuffer = pdf.output('arraybuffer');
-    const base64Pdf = btoa(
-      String.fromCharCode(...new Uint8Array(arrayBuffer))
-    );
+    // Use jsPDF's built-in data URI output instead of manual ArrayBuffer → base64
+    // This avoids the huge argument spread that was causing the RangeError.
+    const dataUri = pdf.output('datauristring'); 
+    // dataUri looks like: "data:application/pdf;filename=generated.pdf;base64,JVBERi0xLjcKJ..."
+    const commaIndex = dataUri.indexOf(',');
+    const base64Pdf =
+      commaIndex >= 0 ? dataUri.slice(commaIndex + 1) : dataUri;
 
     const res = await fetch('/.netlify/functions/send-print-job', {
       method: 'POST',
@@ -238,7 +240,7 @@ const sendOrderEmail = async (jobType, details, pdf) => {
       })
     });
 
-    const text = await res.text(); // read body either way
+    const text = await res.text();
 
     if (!res.ok) {
       console.error('Server error:', res.status, text);
