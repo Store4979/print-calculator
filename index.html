@@ -47,7 +47,7 @@
       { key: '18pt', label: '18PT Gloss' }
     ];
 
-    // Sheet rules: all paper options are 8.5x11 and 11x17 EXCEPT 14PT/18PT which are only 12x18
+    // Rules: all paper options are 8.5x11 and 11x17 EXCEPT 14PT/18PT which are only 12x18
     const SHEET_KEYS_FOR_PAPER = {
       '28lb': ['8.5x11', '11x17'],
       '20lb': ['8.5x11', '11x17'],
@@ -100,13 +100,38 @@
       return pricing;
     };
 
+    // ---- Helper: turn jsPDF into base64 (without data: prefix) ----
+    const pdfToBase64 = (pdf) => {
+      return new Promise((resolve, reject) => {
+        try {
+          const blob = pdf.output('blob');
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            try {
+              const result = reader.result || '';
+              const commaIndex = result.indexOf(',');
+              const base64 = commaIndex >= 0 ? result.slice(commaIndex + 1) : result;
+              if (!base64) {
+                return reject(new Error('Empty base64 from PDF'));
+              }
+              resolve(base64);
+            } catch (e) {
+              reject(e);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    };
+
     // ---- EMAIL / ORDER FUNCTION ----
     const sendOrderEmail = async (jobType, details, pdf) => {
       try {
-        const dataUri = pdf.output('datauristring');
-        const commaIndex = dataUri.indexOf(',');
-        const base64Pdf =
-          commaIndex >= 0 ? dataUri.slice(commaIndex + 1) : dataUri;
+        const base64Pdf = await pdfToBase64(pdf);
+        console.log('pdfBase64 length (client):', base64Pdf.length);
 
         const res = await fetch('/.netlify/functions/send-print-job', {
           method: 'POST',
@@ -379,7 +404,7 @@
       // ---- Sheet imposition & pricing ----
       const [baseWIn, baseHIn] = getSheetInches();
 
-      // ✅ respect orientation for layout math
+      // respect orientation for layout math
       let sheetWIn = baseWIn;
       let sheetHIn = baseHIn;
       if (orientation === 'landscape') {
@@ -612,20 +637,21 @@
           ctx.lineWidth = 1;
           ctx.font = '12px sans-serif';
 
+          const totalHPxWithImage = drawHPx;
           const leftDist = (firstX / DPI).toFixed(2) + ' in';
           const topDist = (firstY / DPI).toFixed(2) + ' in';
 
           const gap = 20;
 
           ctx.beginPath();
-          ctx.moveTo(0, firstY + drawHPx + gap);
-          ctx.lineTo(firstX, firstY + drawHPx + gap);
+          ctx.moveTo(0, firstY + totalHPxWithImage + gap);
+          ctx.lineTo(firstX, firstY + totalHPxWithImage + gap);
           ctx.stroke();
           const leftTextWidth = ctx.measureText(leftDist).width;
           ctx.fillText(
             leftDist,
             firstX / 2 - leftTextWidth / 2,
-            firstY + drawHPx + gap - 4
+            firstY + totalHPxWithImage + gap - 4
           );
 
           ctx.beginPath();
