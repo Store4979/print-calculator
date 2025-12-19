@@ -237,6 +237,9 @@
         return init;
       });
 
+      // NEW: back-side cost multiplier (global)
+      const [backPageMultiplier, setBackPageMultiplier] = useState(0.5);
+
       // Large format state
       const [largeFormatEnabled, setLargeFormatEnabled] = useState(false);
       const [largeFormatPaperKey, setLargeFormatPaperKey] = useState(LARGE_FORMAT_PAPERS[0].key);
@@ -267,10 +270,6 @@
       // Quantity discounts
       const [sheetQtyDiscounts, setSheetQtyDiscounts] = useState([]);
       const [lfQtyDiscounts, setLfQtyDiscounts] = useState([]);
-
-      // Back page cost behavior (still used for live layout, but not exposed here)
-      const [backPageCostMode] = useState("half");
-      const [backPageCostIsAdminEnabled] = useState(true);
 
       // Admin view
       const [isAdmin, setIsAdmin] = useState(false);
@@ -308,7 +307,7 @@
       });
       const [quoteColorMode, setQuoteColorMode] = useState("color");
       const [quoteBleedEnabled, setQuoteBleedEnabled] = useState(false);
-      // NEW: back printing options for quote
+      // back printing options for quote
       const [quoteBackEnabled, setQuoteBackEnabled] = useState(false);
       const [quoteBackColorMode, setQuoteBackColorMode] = useState("bw");
 
@@ -327,11 +326,16 @@
           const storedSheetDisc = window.localStorage.getItem("printCalcSheetDiscounts");
           const storedLfDisc = window.localStorage.getItem("printCalcLfDiscounts");
           const storedLfAddOns = window.localStorage.getItem("printCalcLfAddOnPricing");
+          const storedBackMult = window.localStorage.getItem("printCalcBackPageMultiplier");
           if (storedSheet) setSheetPricing(JSON.parse(storedSheet));
           if (storedLf) setLfPricing(JSON.parse(storedLf));
           if (storedSheetDisc) setSheetQtyDiscounts(JSON.parse(storedSheetDisc));
           if (storedLfDisc) setLfQtyDiscounts(JSON.parse(storedLfDisc));
           if (storedLfAddOns) setLfAddOnPricing(JSON.parse(storedLfAddOns));
+          if (storedBackMult) {
+            const v = parseFloat(storedBackMult);
+            if (Number.isFinite(v)) setBackPageMultiplier(v);
+          }
         } catch (e) {
           console.error("Failed to load pricing from localStorage", e);
         }
@@ -376,6 +380,14 @@
           console.error("Failed to save LF add-on pricing", e);
         }
       }, [lfAddOnPricing]);
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem("printCalcBackPageMultiplier", String(backPageMultiplier));
+        } catch (e) {
+          console.error("Failed to save back-page multiplier", e);
+        }
+      }, [backPageMultiplier]);
 
       // Auto-load pricing.json once (supports both new & legacy formats)
       useEffect(() => {
@@ -461,6 +473,11 @@
 
           // Large-format add-on pricing
           if (data.lfAddOnPricing) setLfAddOnPricing(data.lfAddOnPricing);
+
+          // NEW: back-side multiplier
+          if (typeof data.backPageMultiplier === "number") {
+            setBackPageMultiplier(data.backPageMultiplier);
+          }
 
           setPricingLoadError("");
         } catch (e) {
@@ -622,12 +639,13 @@
         ? (selectedSheetPricing.priceColor || 0)
         : (selectedSheetPricing.priceBW || 0);
 
+      // NEW: use backPageMultiplier for back side
       let backPerSheet = 0;
-      if (showBack && backPageCostIsAdminEnabled) {
+      if (showBack) {
         const baseBack = colorModeBack === "color"
           ? (selectedSheetPricing.priceColor || 0)
           : (selectedSheetPricing.priceBW || 0);
-        backPerSheet = backPageCostMode === "half" ? baseBack * 0.5 : baseBack;
+        backPerSheet = baseBack * backPageMultiplier;
       }
 
       const sheetPriceBeforeDiscount = (pricePerSheetFront + backPerSheet) * sheetsNeeded;
@@ -1043,6 +1061,7 @@
           colorModeFront,
           colorModeBack: showBack ? colorModeBack : null,
           bleedEnabled,
+          backPageMultiplier,
           totalPrice: sheetTotal,
           pricePerSheet: effectivePricePerSheet,
           customer: orderCustomer
@@ -1158,7 +1177,8 @@
           lfQtyDiscounts,
           sheetMarkupPerPaper,
           lfMarkupPerPaper,
-          lfAddOnPricing
+          lfAddOnPricing,
+          backPageMultiplier
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], {
           type: "application/json"
@@ -1227,9 +1247,10 @@
             let totalPerSheet = frontPerSheet;
 
             if (quoteBackEnabled) {
-              const backPerSheetQ = quoteBackColorMode === 'color'
+              const baseBackQ = quoteBackColorMode === 'color'
                 ? (pricingEntry.priceColor || 0)
                 : (pricingEntry.priceBW || 0);
+              const backPerSheetQ = baseBackQ * backPageMultiplier;
               totalPerSheet += backPerSheetQ;
             }
 
@@ -1295,7 +1316,7 @@
             </button>
           </div>
 
-          {/* TOOL VIEW (existing behavior) */}
+          {/* TOOL VIEW */}
           {viewMode === 'tool' && (
             <>
               {/* Sheet / Large format toggle */}
@@ -1876,12 +1897,13 @@
 
                 {quoteBackEnabled && (
                   <p className="text-xs text-red-600 mt-1">
-                    Warning: Back printing is selected. Prices below include printing on both sides of each sheet.
+                    Warning: Back printing is selected. Prices below include printing on both sides of each sheet
+                    using multiplier {backPageMultiplier}.
                   </p>
                 )}
 
                 <p className="text-xs text-gray-500 mt-1">
-                  The quote below assumes your current pricing, markups, and quantity discounts.
+                  The quote below assumes your current pricing, markups, back-side multiplier, and quantity discounts.
                   For each paper type, the best base sheet size &amp; orientation is chosen automatically.
                 </p>
 
@@ -2093,8 +2115,7 @@
                       Price / sq ft: ${currentLfPricing.pricePerSqFt.toFixed(4)}
                     </div>
                     <div>
-                      Add-ons per piece: $
-                      {lfAddOnUnit.toFixed(2)}
+                      Add-ons per piece: ${lfAddOnUnit.toFixed(2)}
                     </div>
                   </div>
                   <div className="text-right">
@@ -2391,6 +2412,30 @@
                 >
                   Add Discount Tier
                 </button>
+              </div>
+
+              {/* NEW: Back-side cost multiplier */}
+              <div className="space-y-2">
+                <h3 className="font-semibold">Back-side Cost Multiplier</h3>
+                <p className="text-xs text-gray-600">
+                  Applies whenever back printing is enabled (tool & Quick Quote).
+                  Example: 0.5 means the back side adds 50% of the per-sheet price, so
+                  front + back = 1.5 × single-side price.
+                </p>
+                <div className="flex items-center gap-2 text-xs">
+                  <span>Multiplier:</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={backPageMultiplier}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      setBackPageMultiplier(Number.isFinite(v) ? v : 0.5);
+                    }}
+                    className="border p-1 w-20"
+                  />
+                </div>
               </div>
 
               {/* Large format pricing */}
