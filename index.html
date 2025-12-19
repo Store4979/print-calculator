@@ -201,6 +201,9 @@
 
     // ---- Main App ----
     function PriceCalculatorApp() {
+      // View: tool vs quote
+      const [viewMode, setViewMode] = useState('tool'); // 'tool' | 'quote'
+
       const [sheetKey, setSheetKey] = useState('8.5x11');
       const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 }); // inches
       const [orientation, setOrientation] = useState('portrait');
@@ -219,7 +222,7 @@
       // Multi-page layout mode for PDFs: "1-1" or "1-2"
       const [multiPageLayout, setMultiPageLayout] = useState("1-2");
 
-      // Color mode
+      // Color mode for sheet previews
       const [colorModeFront, setColorModeFront] = useState("color");
       const [colorModeBack, setColorModeBack] = useState("color");
 
@@ -249,7 +252,7 @@
         return init;
       });
 
-      // Large format add-ons (NEW)
+      // Large format add-ons
       const [lfAddOns, setLfAddOns] = useState({
         grommets: false,
         foamCore: false,
@@ -296,6 +299,18 @@
         phone: ""
       });
       const [orderSending, setOrderSending] = useState(false);
+
+      // QUICK QUOTE state
+      const [quoteTarget, setQuoteTarget] = useState({
+        width: 5,
+        height: 7,
+        quantity: 500
+      });
+      const [quoteColorMode, setQuoteColorMode] = useState("color");
+      const [quoteBleedEnabled, setQuoteBleedEnabled] = useState(false);
+
+      // Large format quick quote quantity
+      const [lfQuoteQty, setLfQuoteQty] = useState(1);
 
       // ---- LocalStorage Auto-save ----
       useEffect(() => {
@@ -437,7 +452,7 @@
           // Large-format markup per paper
           if (data.lfMarkupPerPaper) setLfMarkupPerPaper(data.lfMarkupPerPaper);
 
-          // Large-format add-on pricing (NEW)
+          // Large-format add-on pricing
           if (data.lfAddOnPricing) setLfAddOnPricing(data.lfAddOnPricing);
 
           setPricingLoadError("");
@@ -523,7 +538,7 @@
         }
       };
 
-      // ---- Sheet imposition & pricing ----
+      // ---- Sheet imposition & pricing (main tool) ----
       const [baseWIn, baseHIn] = getSheetInches();
 
       let sheetWIn = baseWIn;
@@ -612,7 +627,7 @@
       const sheetTotal = applySheetQtyDiscount(sheetPriceBeforeDiscount, sheetsNeeded);
       const effectivePricePerSheet = sheetsNeeded > 0 ? sheetTotal / sheetsNeeded : 0;
 
-      // ---- Drawing ----
+      // ---- Drawing (sheet) ----
       const fileToImageBitmap = (file) => {
         return new Promise((resolve, reject) => {
           const img = new Image();
@@ -914,7 +929,7 @@
         largeFormatKeepProportions
       ]);
 
-      // Large format pricing
+      // Large format pricing (tool)
       const currentLfPricing = lfPricing[largeFormatPaperKey] || {
         baseCostPerSqFt: 0,
         pricePerSqFt: 0
@@ -924,13 +939,23 @@
       const lfBasePrice = currentLfPricing.pricePerSqFt * lfAreaSqFt;
       const lfPriceWithDiscount = applyLfQtyDiscount(lfBasePrice, lfAreaSqFt);
 
-      // Add-on totals (flat per job)
       const lfAddOnTotal =
         (lfAddOns.grommets ? (lfAddOnPricing.grommets || 0) : 0) +
         (lfAddOns.foamCore ? (lfAddOnPricing.foamCore || 0) : 0) +
         (lfAddOns.coroSign ? (lfAddOnPricing.coroSign || 0) : 0);
 
       const lfTotalPrice = lfPriceWithDiscount + lfAddOnTotal;
+
+      // Large format QUICK QUOTE (with quantity)
+      const lfQuoteAreaSqFt = lfAreaSqFt * Math.max(1, lfQuoteQty);
+      const lfQuoteBasePrice = currentLfPricing.pricePerSqFt * lfQuoteAreaSqFt;
+      const lfQuoteDiscounted = applyLfQtyDiscount(lfQuoteBasePrice, lfQuoteAreaSqFt);
+      const lfAddOnUnit =
+        (lfAddOns.grommets ? (lfAddOnPricing.grommets || 0) : 0) +
+        (lfAddOns.foamCore ? (lfAddOnPricing.foamCore || 0) : 0) +
+        (lfAddOns.coroSign ? (lfAddOnPricing.coroSign || 0) : 0);
+      const lfQuoteAddOnTotal = lfAddOnUnit * Math.max(1, lfQuoteQty);
+      const lfQuoteTotalPrice = lfQuoteDiscounted + lfQuoteAddOnTotal;
 
       // ---- Download PDF for sheet (full-res, print-ready) ----
       const downloadSheetPDF = () => {
@@ -1014,7 +1039,7 @@
         await sendOrderEmail("sheet", details, pdf);
       };
 
-      // ---- Download / Order Large Format ----
+      // ---- Download / Order Large Format (tool) ----
       const downloadLfPDF = () => {
         if (!largeFormatFiles || largeFormatFiles.length === 0) {
           alert("Please upload a large format image before downloading.");
@@ -1148,6 +1173,69 @@
         reader.readAsText(file);
       };
 
+      // ---- QUICK QUOTE: compute best option per paper type ----
+      const computeSheetQuoteForPaper = (paperKeyForQuote) => {
+        const targetW = Math.max(0.01, quoteTarget.width);
+        const targetH = Math.max(0.01, quoteTarget.height);
+        const qty = Math.max(0, quoteTarget.quantity) || 0;
+        const allowedSheets = SHEET_KEYS_FOR_PAPER[paperKeyForQuote] || [];
+        if (!allowedSheets.length || qty === 0) return null;
+
+        const results = [];
+
+        for (const baseKey of allowedSheets) {
+          const baseSize = PRESET_SHEETS[baseKey];
+          if (!baseSize) continue;
+
+          ['portrait', 'landscape'].forEach((ori) => {
+            let sw = baseSize[0];
+            let sh = baseSize[1];
+            if (ori === 'landscape') [sw, sh] = [sh, sw];
+
+            const slotWq = targetW + (quoteBleedEnabled ? BLEED_IN * 2 : 0);
+            const slotHq = targetH + (quoteBleedEnabled ? BLEED_IN * 2 : 0);
+            const usableWq = sw - 2 * MARGIN_IN;
+            const usableHq = sh - 2 * MARGIN_IN;
+
+            let colsQ = Math.floor((usableWq + SPACING_IN) / (slotWq + SPACING_IN));
+            let rowsQ = Math.floor((usableHq + SPACING_IN) / (slotHq + SPACING_IN));
+            colsQ = Math.max(1, colsQ);
+            rowsQ = Math.max(1, rowsQ);
+            const perSheet = colsQ * rowsQ;
+            if (perSheet <= 0) return;
+
+            const sheetsNeededLocal = qty === 0 ? 0 : Math.ceil(qty / perSheet);
+            const pricingEntry = (sheetPricing[paperKeyForQuote] || {})[baseKey];
+            if (!pricingEntry) return;
+
+            const perSheetPrice = quoteColorMode === 'color'
+              ? (pricingEntry.priceColor || 0)
+              : (pricingEntry.priceBW || 0);
+
+            const totalBeforeDisc = perSheetPrice * sheetsNeededLocal;
+            const total = applySheetQtyDiscount(totalBeforeDisc, sheetsNeededLocal);
+            const effPerSheet = sheetsNeededLocal > 0 ? total / sheetsNeededLocal : 0;
+
+            results.push({
+              sheetKey: baseKey,
+              orientation: ori,
+              printsPerSheet: perSheet,
+              sheetsNeeded: sheetsNeededLocal,
+              totalPrice: total,
+              effectivePricePerSheet: effPerSheet
+            });
+          });
+        }
+
+        if (!results.length) return null;
+        results.sort(
+          (a, b) =>
+            a.totalPrice - b.totalPrice ||
+            b.printsPerSheet - a.printsPerSheet
+        );
+        return results[0];
+      };
+
       // ---- UI ----
       return (
         <div className="space-y-6">
@@ -1164,259 +1252,234 @@
             </div>
           </div>
 
-          {/* Sheet / Large format toggle */}
-          <div className="flex gap-4 items-center">
-            <label className="flex items-center gap-1 text-sm">
-              <input
-                type="checkbox"
-                checked={largeFormatEnabled}
-                onChange={(e) => setLargeFormatEnabled(e.target.checked)}
-              />
-              Use Large Format Mode
-            </label>
+          {/* View mode toggle */}
+          <div className="flex gap-2 mb-2">
+            <button
+              type="button"
+              onClick={() => setViewMode('tool')}
+              className={`px-3 py-1 text-sm rounded border ${
+                viewMode === 'tool' ? 'bg-blue-600 text-white' : 'bg-white'
+              }`}
+            >
+              Layout & Orders
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('quote')}
+              className={`px-3 py-1 text-sm rounded border ${
+                viewMode === 'quote' ? 'bg-blue-600 text-white' : 'bg-white'
+              }`}
+            >
+              Quick Quote
+            </button>
           </div>
 
-          {/* SHEET SECTION */}
-          {!largeFormatEnabled && (
+          {/* TOOL VIEW (existing behavior) */}
+          {viewMode === 'tool' && (
             <>
-              <div
-                ref={sheetHighlightRef}
-                className="flex flex-wrap gap-4 items-end bg-white p-3 rounded border"
-              >
-                <div>
-                  <label className="block text-sm font-medium">Base Sheet</label>
-                  <select
-                    value={sheetKey}
-                    onChange={(e) => setSheetKey(e.target.value)}
-                    className="border p-1"
-                  >
-                    <option value="8.5x11">8.5 × 11 in</option>
-                    <option value="11x17">11 × 17 in</option>
-                    <option value="12x18">12 × 18 in</option>
-                    <option value="custom">Custom…</option>
-                  </select>
-                </div>
+              {/* Sheet / Large format toggle */}
+              <div className="flex gap-4 items-center">
+                <label className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={largeFormatEnabled}
+                    onChange={(e) => setLargeFormatEnabled(e.target.checked)}
+                  />
+                  Use Large Format Mode
+                </label>
+              </div>
 
-                {sheetKey === 'custom' && (
-                  <div className="flex items-end gap-3">
+              {/* SHEET SECTION */}
+              {!largeFormatEnabled && (
+                <>
+                  <div
+                    ref={sheetHighlightRef}
+                    className="flex flex-wrap gap-4 items-end bg-white p-3 rounded border"
+                  >
                     <div>
-                      <label className="block text-sm font-medium">Custom Width (in)</label>
-                      <input
-                        type="number"
-                        min="0.1"
-                        max={LARGE_FORMAT_MAX_WIDTH}
-                        step="0.01"
-                        value={customSize.w}
-                        onChange={(e) =>
-                          setCustomSize((s) => ({
-                            ...s,
-                            w: Math.min(+e.target.value || 0, LARGE_FORMAT_MAX_WIDTH)
-                          }))
-                        }
-                        className="border p-1 w-28"
-                      />
+                      <label className="block text-sm font-medium">Base Sheet</label>
+                      <select
+                        value={sheetKey}
+                        onChange={(e) => setSheetKey(e.target.value)}
+                        className="border p-1"
+                      >
+                        <option value="8.5x11">8.5 × 11 in</option>
+                        <option value="11x17">11 × 17 in</option>
+                        <option value="12x18">12 × 18 in</option>
+                        <option value="custom">Custom…</option>
+                      </select>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium">Custom Height (in)</label>
-                      <input
-                        type="number"
-                        min="0.1"
-                        step="0.01"
-                        value={customSize.h}
-                        onChange={(e) =>
-                          setCustomSize((s) => ({ ...s, h: +e.target.value || 0 }))
-                        }
-                        className="border p-1 w-28"
-                      />
+
+                    {sheetKey === 'custom' && (
+                      <div className="flex items-end gap-3">
+                        <div>
+                          <label className="block text-sm font-medium">Custom Width (in)</label>
+                          <input
+                            type="number"
+                            min="0.1"
+                            max={LARGE_FORMAT_MAX_WIDTH}
+                            step="0.01"
+                            value={customSize.w}
+                            onChange={(e) =>
+                              setCustomSize((s) => ({
+                                ...s,
+                                w: Math.min(+e.target.value || 0, LARGE_FORMAT_MAX_WIDTH)
+                              }))
+                            }
+                            className="border p-1 w-28"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium">Custom Height (in)</label>
+                          <input
+                            type="number"
+                            min="0.1"
+                            step="0.01"
+                            value={customSize.h}
+                            onChange={(e) =>
+                              setCustomSize((s) => ({ ...s, h: +e.target.value || 0 }))
+                            }
+                            className="border p-1 w-28"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-x-2">
+                      <label className="text-sm font-medium mr-2">Orientation</label>
+                      <button
+                        onClick={() => setOrientation('portrait')}
+                        className={`border p-1 ${
+                          orientation === 'portrait' ? 'bg-white' : 'bg-gray-100'
+                        }`}
+                      >
+                        Portrait
+                      </button>
+                      <button
+                        onClick={() => setOrientation('landscape')}
+                        className={`border p-1 ${
+                          orientation === 'landscape' ? 'bg-white' : 'bg-gray-100'
+                        }`}
+                      >
+                        Landscape
+                      </button>
                     </div>
-                  </div>
-                )}
 
-                <div className="space-x-2">
-                  <label className="text-sm font-medium mr-2">Orientation</label>
-                  <button
-                    onClick={() => setOrientation('portrait')}
-                    className={`border p-1 ${
-                      orientation === 'portrait' ? 'bg-white' : 'bg-gray-100'
-                    }`}
-                  >
-                    Portrait
-                  </button>
-                  <button
-                    onClick={() => setOrientation('landscape')}
-                    className={`border p-1 ${
-                      orientation === 'landscape' ? 'bg-white' : 'bg-gray-100'
-                    }`}
-                  >
-                    Landscape
-                  </button>
-                </div>
-
-                <div className="flex space-x-2 items-end">
-                  <div>
-                    <label className="block text-sm font-medium">Print W (in)</label>
-                    <input
-                      type="number"
-                      value={prints.width}
-                      onChange={(e) =>
-                        setPrints((p) => ({ ...p, width: +e.target.value || 0 }))
-                      }
-                      className="border p-1 w-24"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium">Print H (in)</label>
-                    <input
-                      type="number"
-                      value={prints.height}
-                      onChange={(e) =>
-                        setPrints((p) => ({ ...p, height: +e.target.value || 0 }))
-                      }
-                      className="border p-1 w-24"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium">Qty</label>
-                    <input
-                      type="number"
-                      value={prints.quantity}
-                      onChange={(e) =>
-                        setPrints((p) => ({ ...p, quantity: +e.target.value || 0 }))
-                      }
-                      className="border p-1 w-20"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Paper type buttons */}
-              <div className="space-y-2">
-                <span className="block text-sm font-medium">Paper Type</span>
-                <div className="flex flex-wrap gap-2">
-                  {SHEET_PAPER_TYPES.map((opt) => (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      onClick={() => setPaperKey(opt.key)}
-                      className={`px-3 py-1 border rounded text-sm ${
-                        paperKey === opt.key ? 'bg-blue-500 text-white' : 'bg-white'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                {!comboAllowed && (
-                  <p className="text-xs text-red-600">
-                    Note: {currentSheetPaper.label} is only supported on{' '}
-                    {SHEET_KEYS_FOR_PAPER[paperKey].join(' or ')}.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-4 items-center">
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={showGuides}
-                    onChange={(e) => setShowGuides(e.target.checked)}
-                  />
-                  Show margin distances
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={showCutLines}
-                    onChange={(e) => setShowCutLines(e.target.checked)}
-                  />
-                  Show cut lines
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={bleedEnabled}
-                    onChange={(e) => setBleedEnabled(e.target.checked)}
-                  />
-                  Add 0.125" bleed
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <span>Front mode:</span>
-                  <select
-                    value={colorModeFront}
-                    onChange={(e) => setColorModeFront(e.target.value)}
-                    className="border p-1 text-xs"
-                  >
-                    <option value="color">Color</option>
-                    <option value="bw">B/W</option>
-                  </select>
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <span>Layout:</span>
-                  <select
-                    value={multiPageLayout}
-                    onChange={(e) => setMultiPageLayout(e.target.value)}
-                    className="border p-1 text-xs"
-                  >
-                    <option value="1-1">1 page per slot</option>
-                    <option value="1-2">2 pages per sheet (1-2, 3-4...)</option>
-                  </select>
-                </label>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* FRONT controls */}
-                <div className="space-y-2">
-                  <h2 className="font-semibold">Front</h2>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <input
-                      type="file"
-                      accept="image/*,application/pdf"
-                      multiple
-                      onChange={async (e) => {
-                        const files = Array.from(e.target.files || []);
-                        if (!files.length) return;
-                        const pdfs = files.filter(f => f.type === 'application/pdf');
-                        const images = files.filter(f => f.type !== 'application/pdf');
-
-                        const newList = [...frontFileList];
-
-                        for (const img of images) newList.push(img);
-                        if (pdfs.length) {
-                          for (const pdfFile of pdfs) {
-                            await loadPdfToState(pdfFile, 'front');
+                    <div className="flex space-x-2 items-end">
+                      <div>
+                        <label className="block text-sm font-medium">Print W (in)</label>
+                        <input
+                          type="number"
+                          value={prints.width}
+                          onChange={(e) =>
+                            setPrints((p) => ({ ...p, width: +e.target.value || 0 }))
                           }
-                        } else {
-                          setFrontFileList(newList);
-                        }
-                      }}
-                      className="border p-1"
-                    />
-                    <button
-                      onClick={() => setFrontRotation((r) => r + 90)}
-                      className="border p-1 text-sm"
-                    >
-                      Rotate 90°
-                    </button>
+                          className="border p-1 w-24"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium">Print H (in)</label>
+                        <input
+                          type="number"
+                          value={prints.height}
+                          onChange={(e) =>
+                            setPrints((p) => ({ ...p, height: +e.target.value || 0 }))
+                          }
+                          className="border p-1 w-24"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium">Qty</label>
+                        <input
+                          type="number"
+                          value={prints.quantity}
+                          onChange={(e) =>
+                            setPrints((p) => ({ ...p, quantity: +e.target.value || 0 }))
+                          }
+                          className="border p-1 w-20"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <canvas ref={frontRef} className="w-full h-auto border bg-white" />
-                </div>
 
-                {/* BACK controls */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h2 className="font-semibold">Back</h2>
-                    <label className="text-sm">
+                  {/* Paper type buttons */}
+                  <div className="space-y-2">
+                    <span className="block text-sm font-medium">Paper Type</span>
+                    <div className="flex flex-wrap gap-2">
+                      {SHEET_PAPER_TYPES.map((opt) => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setPaperKey(opt.key)}
+                          className={`px-3 py-1 border rounded text-sm ${
+                            paperKey === opt.key ? 'bg-blue-500 text-white' : 'bg-white'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    {!comboAllowed && (
+                      <p className="text-xs text-red-600">
+                        Note: {currentSheetPaper.label} is only supported on{' '}
+                        {SHEET_KEYS_FOR_PAPER[paperKey].join(' or ')}.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-4 items-center">
+                    <label className="flex items-center gap-1 text-sm">
                       <input
                         type="checkbox"
-                        checked={showBack}
-                        onChange={(e) => setShowBack(e.target.checked)}
-                        className="mr-1"
+                        checked={showGuides}
+                        onChange={(e) => setShowGuides(e.target.checked)}
                       />
-                      Enable
+                      Show margin distances
+                    </label>
+                    <label className="flex items-center gap-1 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={showCutLines}
+                        onChange={(e) => setShowCutLines(e.target.checked)}
+                      />
+                      Show cut lines
+                    </label>
+                    <label className="flex items-center gap-1 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={bleedEnabled}
+                        onChange={(e) => setBleedEnabled(e.target.checked)}
+                      />
+                      Add 0.125" bleed
+                    </label>
+                    <label className="flex items-center gap-1 text-sm">
+                      <span>Front mode:</span>
+                      <select
+                        value={colorModeFront}
+                        onChange={(e) => setColorModeFront(e.target.value)}
+                        className="border p-1 text-xs"
+                      >
+                        <option value="color">Color</option>
+                        <option value="bw">B/W</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1 text-sm">
+                      <span>Layout:</span>
+                      <select
+                        value={multiPageLayout}
+                        onChange={(e) => setMultiPageLayout(e.target.value)}
+                        className="border p-1 text-xs"
+                      >
+                        <option value="1-1">1 page per slot</option>
+                        <option value="1-2">2 pages per sheet (1-2, 3-4...)</option>
+                      </select>
                     </label>
                   </div>
-                  {showBack && (
-                    <>
+
+                  <div className="grid md:grid-cols-2 gap-6">
+                    {/* FRONT controls */}
+                    <div className="space-y-2">
+                      <h2 className="font-semibold">Front</h2>
                       <div className="flex flex-wrap items-center gap-3">
                         <input
                           type="file"
@@ -1428,82 +1491,414 @@
                             const pdfs = files.filter(f => f.type === 'application/pdf');
                             const images = files.filter(f => f.type !== 'application/pdf');
 
-                            const newList = [...backFileList];
+                            const newList = [...frontFileList];
 
                             for (const img of images) newList.push(img);
                             if (pdfs.length) {
                               for (const pdfFile of pdfs) {
-                                await loadPdfToState(pdfFile, 'back');
+                                await loadPdfToState(pdfFile, 'front');
                               }
                             } else {
-                              setBackFileList(newList);
+                              setFrontFileList(newList);
                             }
                           }}
                           className="border p-1"
                         />
                         <button
-                          onClick={() => setBackRotation((r) => r + 90)}
+                          onClick={() => setFrontRotation((r) => r + 90)}
                           className="border p-1 text-sm"
                         >
                           Rotate 90°
                         </button>
-                        <label className="flex items-center gap-1 text-sm">
-                          <span>Back mode:</span>
-                          <select
-                            value={colorModeBack}
-                            onChange={(e) => setColorModeBack(e.target.value)}
-                            className="border p-1 text-xs"
-                          >
-                            <option value="color">Color</option>
-                            <option value="bw">B/W</option>
-                          </select>
+                      </div>
+                      <canvas ref={frontRef} className="w-full h-auto border bg-white" />
+                    </div>
+
+                    {/* BACK controls */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h2 className="font-semibold">Back</h2>
+                        <label className="text-sm">
+                          <input
+                            type="checkbox"
+                            checked={showBack}
+                            onChange={(e) => setShowBack(e.target.checked)}
+                            className="mr-1"
+                          />
+                          Enable
                         </label>
                       </div>
-                      <canvas ref={backRef} className="w-full h-auto border bg-white" />
-                    </>
-                  )}
-                </div>
-              </div>
+                      {showBack && (
+                        <>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              multiple
+                              onChange={async (e) => {
+                                const files = Array.from(e.target.files || []);
+                                if (!files.length) return;
+                                const pdfs = files.filter(f => f.type === 'application/pdf');
+                                const images = files.filter(f => f.type !== 'application/pdf');
 
-              <div className="mt-4 flex items-center gap-6 flex-wrap">
-                <div>
-                  <p>Sheets Needed: {sheetsNeeded}</p>
-                  <p className="text-sm text-gray-600">
-                    Selected paper: {currentSheetPaper.label}
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    Effective price per sheet: ${effectivePricePerSheet.toFixed(2)}
-                  </p>
-                  <p className="font-semibold">Total price: ${sheetTotal.toFixed(2)}</p>
+                                const newList = [...backFileList];
+
+                                for (const img of images) newList.push(img);
+                                if (pdfs.length) {
+                                  for (const pdfFile of pdfs) {
+                                    await loadPdfToState(pdfFile, 'back');
+                                  }
+                                } else {
+                                  setBackFileList(newList);
+                                }
+                              }}
+                              className="border p-1"
+                            />
+                            <button
+                              onClick={() => setBackRotation((r) => r + 90)}
+                              className="border p-1 text-sm"
+                            >
+                              Rotate 90°
+                            </button>
+                            <label className="flex items-center gap-1 text-sm">
+                              <span>Back mode:</span>
+                              <select
+                                value={colorModeBack}
+                                onChange={(e) => setColorModeBack(e.target.value)}
+                                className="border p-1 text-xs"
+                              >
+                                <option value="color">Color</option>
+                                <option value="bw">B/W</option>
+                              </select>
+                            </label>
+                          </div>
+                          <canvas ref={backRef} className="w-full h-auto border bg-white" />
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center gap-6 flex-wrap">
+                    <div>
+                      <p>Sheets Needed: {sheetsNeeded}</p>
+                      <p className="text-sm text-gray-600">
+                        Selected paper: {currentSheetPaper.label}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        Effective price per sheet: ${effectivePricePerSheet.toFixed(2)}
+                      </p>
+                      <p className="font-semibold">Total price: ${sheetTotal.toFixed(2)}</p>
+                    </div>
+                    <button
+                      onClick={downloadSheetPDF}
+                      className="bg-blue-500 text-white px-4 py-2 rounded text-sm"
+                    >
+                      Download Preview (PDF)
+                    </button>
+                    <button
+                      onClick={() => handleStartOrder('sheet')}
+                      className="bg-green-600 text-white px-4 py-2 rounded text-sm"
+                    >
+                      Order Prints (Sheet)
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* LARGE FORMAT SECTION (tool) */}
+              {largeFormatEnabled && (
+                <div className="space-y-4">
+                  <div className="bg-white p-3 rounded border space-y-3">
+                    <h2 className="font-semibold text-lg">Large Format Printing</h2>
+                    <div className="flex flex-wrap gap-4 items-end">
+                      <div>
+                        <label className="block text-sm font-medium">Paper Type</label>
+                        <select
+                          value={largeFormatPaperKey}
+                          onChange={(e) => setLargeFormatPaperKey(e.target.value)}
+                          className="border p-1"
+                        >
+                          {LARGE_FORMAT_PAPERS.map(p => (
+                            <option key={p.key} value={p.key}>{p.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex gap-3 items-end">
+                        <div>
+                          <label className="block text-sm font-medium">Width (in)</label>
+                          <input
+                            type="number"
+                            min="0.1"
+                            max={LARGE_FORMAT_MAX_WIDTH}
+                            step="0.01"
+                            value={largeFormatSize.w}
+                            onChange={(e) =>
+                              setLargeFormatSize((s) => ({
+                                ...s,
+                                w: Math.min(+e.target.value || 0, LARGE_FORMAT_MAX_WIDTH)
+                              }))
+                            }
+                            className="border p-1 w-24"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium">Height (in)</label>
+                          <input
+                            type="number"
+                            min="0.1"
+                            step="0.01"
+                            value={largeFormatSize.h}
+                            onChange={(e) =>
+                              setLargeFormatSize((s) => ({ ...s, h: +e.target.value || 0 }))
+                            }
+                            className="border p-1 w-24"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={largeFormatKeepProportions}
+                            onChange={(e) => setLargeFormatKeepProportions(e.target.checked)}
+                          />
+                          Keep image proportions
+                        </label>
+                        {!largeFormatKeepProportions && (
+                          <span className="text-xs text-red-600">
+                            Image may be stretched / distorted.
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium">Target Image</label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files && e.target.files[0];
+                            if (!file) return;
+                            setLargeFormatFiles([file]);
+                          }}
+                          className="border p-1"
+                        />
+                      </div>
+                      <button
+                        onClick={() => setLargeFormatRotation((r) => r + 90)}
+                        className="border p-1 text-sm"
+                      >
+                        Rotate 90°
+                      </button>
+                    </div>
+
+                    {/* Large format add-ons */}
+                    <div className="flex flex-wrap gap-4 items-center mt-3 text-sm">
+                      <span className="font-medium">Add-ons:</span>
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={lfAddOns.grommets}
+                          onChange={(e) =>
+                            setLfAddOns(a => ({ ...a, grommets: e.target.checked }))
+                          }
+                        />
+                        Grommets
+                      </label>
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={lfAddOns.foamCore}
+                          onChange={(e) =>
+                            setLfAddOns(a => ({ ...a, foamCore: e.target.checked }))
+                          }
+                        />
+                        Foam Core
+                      </label>
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={lfAddOns.coroSign}
+                          onChange={(e) =>
+                            setLfAddOns(a => ({ ...a, coroSign: e.target.checked }))
+                          }
+                        />
+                        Coro Sign
+                      </label>
+                      <span className="text-xs text-gray-500">
+                        (Prices set in Admin panel; applied as flat add-ons per job)
+                      </span>
+                    </div>
+
+                    <canvas ref={lfRef} className="w-full h-auto border bg-white" />
+                    <div className="flex items-center gap-6 flex-wrap mt-2">
+                      <div>
+                        <p className="text-sm text-gray-700">
+                          Area: {lfAreaSqFt.toFixed(2)} sq ft
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          Price / sq ft: ${currentLfPricing.pricePerSqFt.toFixed(4)}
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          Add-ons: ${lfAddOnTotal.toFixed(2)}
+                        </p>
+                        <p className="font-semibold">
+                          Total price: ${lfTotalPrice.toFixed(2)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={downloadLfPDF}
+                        className="bg-blue-500 text-white px-4 py-2 rounded text-sm"
+                      >
+                        Download Large Format (PDF)
+                      </button>
+                      <button
+                        onClick={() => handleStartOrder('large')}
+                        className="bg-green-600 text-white px-4 py-2 rounded text-sm"
+                      >
+                        Order Prints (Large Format)
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <button
-                  onClick={downloadSheetPDF}
-                  className="bg-blue-500 text-white px-4 py-2 rounded text-sm"
-                >
-                  Download Preview (PDF)
-                </button>
-                <button
-                  onClick={() => handleStartOrder('sheet')}
-                  className="bg-green-600 text-white px-4 py-2 rounded text-sm"
-                >
-                  Order Prints (Sheet)
-                </button>
-              </div>
+              )}
             </>
           )}
 
-          {/* LARGE FORMAT SECTION */}
-          {largeFormatEnabled && (
-            <div className="space-y-4">
-              <div className="bg-white p-3 rounded border space-y-3">
-                <h2 className="font-semibold text-lg">Large Format Printing</h2>
+          {/* QUICK QUOTE VIEW */}
+          {viewMode === 'quote' && (
+            <div className="space-y-6">
+              {/* SHEET QUICK QUOTE */}
+              <div className="bg-white p-4 rounded border space-y-4">
+                <h2 className="font-semibold text-lg">Sheet Quick Quote</h2>
+                <div className="flex flex-wrap gap-4 items-end">
+                  <div>
+                    <label className="block text-sm font-medium">Target Width (in)</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={quoteTarget.width}
+                      onChange={(e) =>
+                        setQuoteTarget(t => ({ ...t, width: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-24"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Target Height (in)</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={quoteTarget.height}
+                      onChange={(e) =>
+                        setQuoteTarget(t => ({ ...t, height: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-24"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={quoteTarget.quantity}
+                      onChange={(e) =>
+                        setQuoteTarget(t => ({ ...t, quantity: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-28"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Color Mode</label>
+                    <select
+                      value={quoteColorMode}
+                      onChange={(e) => setQuoteColorMode(e.target.value)}
+                      className="border p-1 w-28"
+                    >
+                      <option value="color">Color</option>
+                      <option value="bw">B/W</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-1 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={quoteBleedEnabled}
+                      onChange={(e) => setQuoteBleedEnabled(e.target.checked)}
+                    />
+                    Include 0.125" bleed for imposition
+                  </label>
+                </div>
+
+                <p className="text-xs text-gray-500">
+                  The quote below assumes single-sided printing and uses your current pricing,
+                  markups, and quantity discounts. For each paper type, the best base sheet size
+                  & orientation is chosen automatically.
+                </p>
+
+                <div className="space-y-3 mt-2">
+                  {SHEET_PAPER_TYPES.map(pt => {
+                    const best = computeSheetQuoteForPaper(pt.key);
+                    if (!best) {
+                      return (
+                        <div
+                          key={pt.key}
+                          className="border rounded p-3 bg-gray-50 text-xs flex justify-between items-center"
+                        >
+                          <div>
+                            <div className="font-semibold">{pt.label}</div>
+                            <div className="text-gray-500">
+                              No pricing configured or quantity is zero.
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-gray-400">Estimated total</div>
+                            <div className="text-xl font-bold text-gray-400">$0.00</div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={pt.key}
+                        className="border rounded p-3 bg-white flex justify-between items-center"
+                      >
+                        <div className="space-y-1 text-sm">
+                          <div className="font-semibold">{pt.label}</div>
+                          <div>
+                            Best sheet: {best.sheetKey} ({best.orientation})
+                          </div>
+                          <div>Prints per sheet: {best.printsPerSheet}</div>
+                          <div>Sheets needed: {best.sheetsNeeded}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs text-gray-500 mb-1">
+                            Estimated total
+                          </div>
+                          <div className="text-3xl font-extrabold text-green-700">
+                            ${best.totalPrice.toFixed(2)}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            ≈ ${best.effectivePricePerSheet.toFixed(2)} / sheet
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* LARGE FORMAT QUICK QUOTE */}
+              <div className="bg-white p-4 rounded border space-y-4">
+                <h2 className="font-semibold text-lg">Large Format Quick Quote</h2>
                 <div className="flex flex-wrap gap-4 items-end">
                   <div>
                     <label className="block text-sm font-medium">Paper Type</label>
                     <select
                       value={largeFormatPaperKey}
                       onChange={(e) => setLargeFormatPaperKey(e.target.value)}
-                      className="border p-1"
+                      className="border p-1 w-64"
                     >
                       {LARGE_FORMAT_PAPERS.map(p => (
                         <option key={p.key} value={p.key}>{p.label}</option>
@@ -1541,109 +1936,89 @@
                         className="border p-1 w-24"
                       />
                     </div>
+                    <div>
+                      <label className="block text-sm font-medium">Quantity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={lfQuoteQty}
+                        onChange={(e) =>
+                          setLfQuoteQty(+e.target.value || 1)
+                        }
+                        className="border p-1 w-20"
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-1 text-sm">
+                  <div className="flex flex-wrap gap-3 items-center text-sm">
+                    <span className="font-medium">Add-ons (per piece):</span>
+                    <label className="flex items-center gap-1">
                       <input
                         type="checkbox"
-                        checked={largeFormatKeepProportions}
-                        onChange={(e) => setLargeFormatKeepProportions(e.target.checked)}
+                        checked={lfAddOns.grommets}
+                        onChange={(e) =>
+                          setLfAddOns(a => ({ ...a, grommets: e.target.checked }))
+                        }
                       />
-                      Keep image proportions
+                      Grommets
                     </label>
-                    {!largeFormatKeepProportions && (
-                      <span className="text-xs text-red-600">
-                        Image may be stretched / distorted.
-                      </span>
-                    )}
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={lfAddOns.foamCore}
+                        onChange={(e) =>
+                          setLfAddOns(a => ({ ...a, foamCore: e.target.checked }))
+                        }
+                      />
+                      Foam Core
+                    </label>
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={lfAddOns.coroSign}
+                        onChange={(e) =>
+                          setLfAddOns(a => ({ ...a, coroSign: e.target.checked }))
+                        }
+                      />
+                      Coro Sign
+                    </label>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium">Target Image</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={async (e) => {
-                        const file = e.target.files && e.target.files[0];
-                        if (!file) return;
-                        setLargeFormatFiles([file]);
-                      }}
-                      className="border p-1"
-                    />
-                  </div>
-                  <button
-                    onClick={() => setLargeFormatRotation((r) => r + 90)}
-                    className="border p-1 text-sm"
-                  >
-                    Rotate 90°
-                  </button>
                 </div>
+                <p className="text-xs text-gray-500">
+                  Uses your large format price per square foot, quantity discounts (based on
+                  total square footage), and add-on pricing from the Admin panel.
+                </p>
 
-                {/* Large format add-ons (NEW) */}
-                <div className="flex flex-wrap gap-4 items-center mt-3 text-sm">
-                  <span className="font-medium">Add-ons:</span>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={lfAddOns.grommets}
-                      onChange={(e) =>
-                        setLfAddOns(a => ({ ...a, grommets: e.target.checked }))
-                      }
-                    />
-                    Grommets
-                  </label>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={lfAddOns.foamCore}
-                      onChange={(e) =>
-                        setLfAddOns(a => ({ ...a, foamCore: e.target.checked }))
-                      }
-                    />
-                    Foam Core
-                  </label>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={lfAddOns.coroSign}
-                      onChange={(e) =>
-                        setLfAddOns(a => ({ ...a, coroSign: e.target.checked }))
-                      }
-                    />
-                    Coro Sign
-                  </label>
-                  <span className="text-xs text-gray-500">
-                    (Prices set in Admin panel; applied as flat add-ons per job)
-                  </span>
-                </div>
-
-                <canvas ref={lfRef} className="w-full h-auto border bg-white" />
-                <div className="flex items-center gap-6 flex-wrap mt-2">
-                  <div>
-                    <p className="text-sm text-gray-700">
-                      Area: {lfAreaSqFt.toFixed(2)} sq ft
-                    </p>
-                    <p className="text-sm text-gray-700">
+                <div className="flex justify-between items-center mt-2">
+                  <div className="text-sm space-y-1">
+                    <div>
+                      Size per piece: {largeFormatSize.w.toFixed(2)}" × {largeFormatSize.h.toFixed(2)}"
+                    </div>
+                    <div>
+                      Total quantity: {lfQuoteQty}
+                    </div>
+                    <div>
+                      Total area: {lfQuoteAreaSqFt.toFixed(2)} sq ft
+                    </div>
+                    <div>
                       Price / sq ft: ${currentLfPricing.pricePerSqFt.toFixed(4)}
-                    </p>
-                    <p className="text-sm text-gray-700">
-                      Add-ons: ${lfAddOnTotal.toFixed(2)}
-                    </p>
-                    <p className="font-semibold">
-                      Total price: ${lfTotalPrice.toFixed(2)}
-                    </p>
+                    </div>
+                    <div>
+                      Add-ons per piece: $
+                      {lfAddOnUnit.toFixed(2)}
+                    </div>
                   </div>
-                  <button
-                    onClick={downloadLfPDF}
-                    className="bg-blue-500 text-white px-4 py-2 rounded text-sm"
-                  >
-                    Download Large Format (PDF)
-                  </button>
-                  <button
-                    onClick={() => handleStartOrder('large')}
-                    className="bg-green-600 text-white px-4 py-2 rounded text-sm"
-                  >
-                    Order Prints (Large Format)
-                  </button>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-500 mb-1">
+                      Estimated total
+                    </div>
+                    <div className="text-3xl font-extrabold text-green-700">
+                      ${lfQuoteTotalPrice.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      ≈ ${(lfQuoteTotalPrice / Math.max(1, lfQuoteQty)).toFixed(2)} / piece
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2004,11 +2379,12 @@
                 </div>
               </div>
 
-              {/* Large format add-on pricing (NEW) */}
+              {/* Large format add-on pricing */}
               <div className="space-y-2">
                 <h3 className="font-semibold">Large Format Add-ons</h3>
                 <p className="text-xs text-gray-600">
-                  These are flat add-on prices per job (not per sq ft). They show up as checkboxes in the large format section.
+                  These are add-on prices per piece for quick quote. In the layout tool they
+                  are applied per job.
                 </p>
                 <div className="space-y-1 text-xs">
                   <div className="flex items-center gap-2">
