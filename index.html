@@ -237,7 +237,7 @@
         return init;
       });
 
-      // NEW: back-side cost multiplier (global)
+      // back-side cost multiplier (global)
       const [backPageMultiplier, setBackPageMultiplier] = useState(0.5);
 
       // Large format state
@@ -474,7 +474,7 @@
           // Large-format add-on pricing
           if (data.lfAddOnPricing) setLfAddOnPricing(data.lfAddOnPricing);
 
-          // NEW: back-side multiplier
+          // back-side multiplier
           if (typeof data.backPageMultiplier === "number") {
             setBackPageMultiplier(data.backPageMultiplier);
           }
@@ -639,7 +639,7 @@
         ? (selectedSheetPricing.priceColor || 0)
         : (selectedSheetPricing.priceBW || 0);
 
-      // NEW: use backPageMultiplier for back side
+      // use backPageMultiplier for back side
       let backPerSheet = 0;
       if (showBack) {
         const baseBack = colorModeBack === "color"
@@ -1205,7 +1205,7 @@
         reader.readAsText(file);
       };
 
-      // ---- QUICK QUOTE: compute best option per paper type ----
+      // ---- QUICK QUOTE: show per-sheet-size breakdown and recommendation ----
       const computeSheetQuoteForPaper = (paperKeyForQuote) => {
         const targetW = Math.max(0.01, quoteTarget.width);
         const targetH = Math.max(0.01, quoteTarget.height);
@@ -1213,11 +1213,13 @@
         const allowedSheets = SHEET_KEYS_FOR_PAPER[paperKeyForQuote] || [];
         if (!allowedSheets.length || qty === 0) return null;
 
-        const results = [];
+        const perSize = {};
 
         for (const baseKey of allowedSheets) {
           const baseSize = PRESET_SHEETS[baseKey];
           if (!baseSize) continue;
+
+          let bestForThisSize = null;
 
           ['portrait', 'landscape'].forEach((ori) => {
             let sw = baseSize[0];
@@ -1258,24 +1260,47 @@
             const total = applySheetQtyDiscount(totalBeforeDisc, sheetsNeededLocal);
             const effPerSheet = sheetsNeededLocal > 0 ? total / sheetsNeededLocal : 0;
 
-            results.push({
+            const candidate = {
               sheetKey: baseKey,
               orientation: ori,
               printsPerSheet: perSheet,
               sheetsNeeded: sheetsNeededLocal,
               totalPrice: total,
               effectivePricePerSheet: effPerSheet
-            });
+            };
+
+            if (
+              !bestForThisSize ||
+              candidate.totalPrice < bestForThisSize.totalPrice ||
+              (Math.abs(candidate.totalPrice - bestForThisSize.totalPrice) < 1e-6 &&
+                candidate.printsPerSheet > bestForThisSize.printsPerSheet)
+            ) {
+              bestForThisSize = candidate;
+            }
           });
+
+          if (bestForThisSize) {
+            perSize[baseKey] = bestForThisSize;
+          }
         }
 
-        if (!results.length) return null;
-        results.sort(
-          (a, b) =>
-            a.totalPrice - b.totalPrice ||
-            b.printsPerSheet - a.printsPerSheet
-        );
-        return results[0];
+        const sizeKeys = Object.keys(perSize);
+        if (!sizeKeys.length) return null;
+
+        let recommendedKey = sizeKeys[0];
+        sizeKeys.forEach((k) => {
+          const r = perSize[k];
+          const cur = perSize[recommendedKey];
+          if (
+            r.totalPrice < cur.totalPrice ||
+            (Math.abs(r.totalPrice - cur.totalPrice) < 1e-6 &&
+              r.printsPerSheet > cur.printsPerSheet)
+          ) {
+            recommendedKey = k;
+          }
+        });
+
+        return { perSize, recommendedKey };
       };
 
       // ---- UI ----
@@ -1903,14 +1928,14 @@
                 )}
 
                 <p className="text-xs text-gray-500 mt-1">
-                  The quote below assumes your current pricing, markups, back-side multiplier, and quantity discounts.
-                  For each paper type, the best base sheet size &amp; orientation is chosen automatically.
+                  For each paper type, you’ll see separate pricing for 8.5×11 and 11×17 (and 12×18 if that’s the only valid option),
+                  plus a recommended choice based on the lowest total price and best imposition for your target size.
                 </p>
 
                 <div className="space-y-3 mt-2">
                   {SHEET_PAPER_TYPES.map(pt => {
-                    const best = computeSheetQuoteForPaper(pt.key);
-                    if (!best) {
+                    const res = computeSheetQuoteForPaper(pt.key);
+                    if (!res) {
                       return (
                         <div
                           key={pt.key}
@@ -1929,34 +1954,87 @@
                         </div>
                       );
                     }
+                    const { perSize, recommendedKey } = res;
+                    const sizeOrder = ['8.5x11', '11x17', '12x18'];
+                    const recommended = perSize[recommendedKey];
+
                     return (
                       <div
                         key={pt.key}
-                        className="border rounded p-3 bg-white flex justify-between items-center"
+                        className="border rounded p-3 bg-white space-y-2"
                       >
-                        <div className="space-y-1 text-sm">
-                          <div className="font-semibold">{pt.label}</div>
-                          <div>
-                            Best sheet: {best.sheetKey} ({best.orientation})
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1 text-sm">
+                            <div className="font-semibold">{pt.label}</div>
+                            {quoteBackEnabled && (
+                              <div className="text-xs text-gray-600">
+                                Includes back printing ({quoteBackColorMode === 'color' ? 'Color' : 'B/W'}).
+                              </div>
+                            )}
+                            <div className="text-xs text-gray-500">
+                              Shows 8.5×11 and 11×17 price points (and 12×18 where applicable).
+                            </div>
                           </div>
-                          <div>Prints per sheet: {best.printsPerSheet}</div>
-                          <div>Sheets needed: {best.sheetsNeeded}</div>
-                          {quoteBackEnabled && (
-                            <div className="text-xs text-gray-600">
-                              Includes back printing ({quoteBackColorMode === 'color' ? 'Color' : 'B/W'}).
+                          {recommended && (
+                            <div className="text-right">
+                              <div className="text-xs text-gray-500 mb-0.5">
+                                Recommended option
+                              </div>
+                              <div className="text-lg font-bold text-green-700">
+                                {recommended.sheetKey} ({recommended.orientation}) – $
+                                {recommended.totalPrice.toFixed(2)}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {recommended.sheetsNeeded} sheets • {recommended.printsPerSheet} prints/sheet
+                              </div>
                             </div>
                           )}
                         </div>
-                        <div className="text-right">
-                          <div className="text-xs text-gray-500 mb-1">
-                            Estimated total
-                          </div>
-                          <div className="text-3xl font-extrabold text-green-700">
-                            ${best.totalPrice.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            ≈ ${best.effectivePricePerSheet.toFixed(2)} / sheet
-                          </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-xs">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-2 py-1 text-left">Sheet</th>
+                                <th className="px-2 py-1 text-left">Orientation</th>
+                                <th className="px-2 py-1 text-right">Prints / sheet</th>
+                                <th className="px-2 py-1 text-right">Sheets needed</th>
+                                <th className="px-2 py-1 text-right">Est. total</th>
+                                <th className="px-2 py-1 text-right">$ / sheet</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sizeOrder.map(sk => {
+                                const r = perSize[sk];
+                                if (!r) return null;
+                                const isRec = sk === recommendedKey;
+                                return (
+                                  <tr
+                                    key={sk}
+                                    className={`border-t ${isRec ? 'bg-green-50' : ''}`}
+                                  >
+                                    <td className="px-2 py-1">
+                                      {sk}
+                                      {isRec && (
+                                        <span className="ml-1 text-[10px] text-green-700 font-semibold">
+                                          Recommended
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="px-2 py-1">{r.orientation}</td>
+                                    <td className="px-2 py-1 text-right">{r.printsPerSheet}</td>
+                                    <td className="px-2 py-1 text-right">{r.sheetsNeeded}</td>
+                                    <td className="px-2 py-1 text-right">
+                                      ${r.totalPrice.toFixed(2)}
+                                    </td>
+                                    <td className="px-2 py-1 text-right">
+                                      ${r.effectivePricePerSheet.toFixed(2)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     );
@@ -2414,7 +2492,7 @@
                 </button>
               </div>
 
-              {/* NEW: Back-side cost multiplier */}
+              {/* Back-side cost multiplier */}
               <div className="space-y-2">
                 <h3 className="font-semibold">Back-side Cost Multiplier</h3>
                 <p className="text-xs text-gray-600">
