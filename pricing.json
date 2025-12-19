@@ -1,121 +1,176 @@
 {
-  "pricing": {
+  "sheetPricing": {
     "28lb": {
       "8.5x11": {
-        "paperCost": 0.02,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.063,
+        "baseCostBW": 0.0269,
         "priceColor": 0.504,
         "priceBW": 0.2152
       },
       "11x17": {
-        "paperCost": 0.07,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.113,
+        "baseCostBW": 0.07690000000000001,
         "priceColor": 0.904,
         "priceBW": 0.6152
       }
     },
     "20lb": {
       "8.5x11": {
-        "paperCost": 0.008,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.051,
+        "baseCostBW": 0.0149,
         "priceColor": 0.357,
         "priceBW": 0.1043
       },
       "11x17": {
-        "paperCost": 0.04,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.08299999999999999,
+        "baseCostBW": 0.0469,
         "priceColor": 0.581,
         "priceBW": 0.3283
       }
     },
     "80c": {
       "8.5x11": {
-        "paperCost": 0.05,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.093,
+        "baseCostBW": 0.056900000000000006,
         "priceColor": 0.651,
         "priceBW": 0.3983
       },
       "11x17": {
-        "paperCost": 0.105,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.148,
+        "baseCostBW": 0.1119,
         "priceColor": 1.036,
         "priceBW": 0.7833
       }
     },
     "110c": {
       "8.5x11": {
-        "paperCost": 0.17,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.21300000000000002,
+        "baseCostBW": 0.1769,
         "priceColor": 1.491,
         "priceBW": 1.2383
       },
       "11x17": {
-        "paperCost": 0.32,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.363,
+        "baseCostBW": 0.3269,
         "priceColor": 2.541,
         "priceBW": 2.2883
       }
     },
     "80t": {
       "8.5x11": {
-        "paperCost": 0.05,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.093,
+        "baseCostBW": 0.056900000000000006,
         "priceColor": 0.651,
         "priceBW": 0.3983
       },
       "11x17": {
-        "paperCost": 0.09,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.133,
+        "baseCostBW": 0.0969,
         "priceColor": 0.931,
         "priceBW": 0.6783
       }
     },
     "100t": {
       "8.5x11": {
-        "paperCost": 0.06,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.103,
+        "baseCostBW": 0.0669,
         "priceColor": 0.721,
         "priceBW": 0.4683
       },
       "11x17": {
-        "paperCost": 0.12,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.16299999999999998,
+        "baseCostBW": 0.12689999999999999,
         "priceColor": 1.141,
         "priceBW": 0.8883
       }
     },
     "14pt": {
       "12x18": {
-        "paperCost": 0.43,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.473,
+        "baseCostBW": 0.4369,
         "priceColor": 1.892,
         "priceBW": 1.7476
       }
     },
     "18pt": {
       "12x18": {
-        "paperCost": 0.57,
-        "colorClickCost": 0.043,
-        "bwClickCost": 0.0069,
+        "baseCostColor": 0.613,
+        "baseCostBW": 0.5769,
         "priceColor": 2.7585,
         "priceBW": 2.596
       }
     }
   },
-  "markupPerPaper": {
+  "lfPricing": {
+    "hp_super_matte": {
+      "baseCostPerSqFt": 0.57,
+      "pricePerSqFt": 5.8425
+    },
+    "hp_gloss_photo": {
+      "baseCostPerSqFt": 0.46,
+      "pricePerSqFt": 5.29
+    },
+    "plain_20lb": {
+      "baseCostPerSqFt": 0.01,
+      "pricePerSqFt": 3.11
+    },
+    "lexjet_46_bond": {
+      "baseCostPerSqFt": 0.25,
+      "pricePerSqFt": 4.25
+    },
+    "lexjet_thrifty_banner": {
+      "baseCostPerSqFt": 1.04,
+      "pricePerSqFt": 8.32
+    },
+    "lexjet_polypro": {
+      "baseCostPerSqFt": 0.5,
+      "pricePerSqFt": 5.5
+    },
+    "fredrix_canvas": {
+      "baseCostPerSqFt": 1.35,
+      "pricePerSqFt": 9.7875
+    },
+    "hp_adhesive_polypro": {
+      "baseCostPerSqFt": 0.66,
+      "pricePerSqFt": 6.303
+    },
+    "hp_translucent_bond": {
+      "baseCostPerSqFt": 0.14,
+      "pricePerSqFt": 1.848
+    }
+  },
+  "sheetQtyDiscounts": [
+    {
+      "minQty": 50,
+      "discountPercent": 10
+    },
+    {
+      "minQty": 150,
+      "discountPercent": 15
+    },
+    {
+      "minQty": 250,
+      "discountPercent": 20
+    },
+    {
+      "minQty": 350,
+      "discountPercent": 25
+    },
+    {
+      "minQty": 450,
+      "discountPercent": 30
+    },
+    {
+      "minQty": 550,
+      "discountPercent": 35
+    },
+    {
+      "minQty": 650,
+      "discountPercent": 40
+    }
+  ],
+  "lfQtyDiscounts": [],
+  "sheetMarkupPerPaper": {
     "28lb": "700",
     "20lb": "600",
     "80c": "600",
@@ -125,44 +180,15 @@
     "14pt": "300",
     "18pt": "350"
   },
-  "defaultColorClick": 0.043,
-  "defaultBWClick": 0.0069,
-  "quantityDiscounts": [
-    {
-      "minSheets": 50,
-      "percent": 10,
-      "discountPercent": 10
-    },
-    {
-      "minSheets": 150,
-      "percent": 15,
-      "discountPercent": 15
-    },
-    {
-      "minSheets": 250,
-      "percent": 20,
-      "discountPercent": 20
-    },
-    {
-      "minSheets": 350,
-      "percent": 25,
-      "discountPercent": 25
-    },
-    {
-      "minSheets": 450,
-      "percent": 30,
-      "discountPercent": 30
-    },
-    {
-      "minSheets": 550,
-      "percent": 40,
-      "discountPercent": 35
-    },
-    {
-      "minSheets": 650,
-      "percent": 50,
-      "discountPercent": 40
-    }
-  ],
-  "backSideFactor": 0.5
+  "lfMarkupPerPaper": {
+    "hp_super_matte": "925",
+    "hp_gloss_photo": "1050",
+    "plain_20lb": "31000",
+    "lexjet_46_bond": "1600",
+    "lexjet_thrifty_banner": "700",
+    "lexjet_polypro": "1000",
+    "fredrix_canvas": "625",
+    "hp_adhesive_polypro": "855",
+    "hp_translucent_bond": "1220"
+  }
 }
