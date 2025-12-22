@@ -117,8 +117,9 @@
     ];
 
     function PriceCalculatorApp() {
+      const [viewMode, setViewMode] = useState('tool'); // 'tool' | 'quote'
+
       // Sheet printing state
-      const [viewMode, setViewMode] = useState('tool');
       const [sheetKey, setSheetKey] = useState('8.5x11');
       const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 }); // inches
       const [orientation, setOrientation] = useState('portrait');
@@ -137,12 +138,12 @@
       const [showBack, setShowBack] = useState(false);
       const [showGuides, setShowGuides] = useState(true);
 
-      // Multi-page support: arrays of images
+      // Multi-page support
       const [frontPages, setFrontPages] = useState([]);
       const [backPages, setBackPages] = useState([]);
-      const [multiLayoutMode, setMultiLayoutMode] = useState('1-2'); // '1-2' or '1-1'
+      const [multiLayoutMode, setMultiLayoutMode] = useState('1-2'); // '1-2' | '1-1'
 
-      // Allow multiple front images on same layout
+      // Multiple front images
       const [extraFrontImages, setExtraFrontImages] = useState([]);
 
       // Paper type selection
@@ -175,9 +176,6 @@
       // Back-side multiplier (admin configurable)
       const [backSideFactor, setBackSideFactor] = useState(0.5);
 
-      // Back-side color/BW mode for price calc
-      const [backSideEnabledInQuote, setBackSideEnabledInQuote] = useState(false);
-
       // Large-format job
       const [lfJob, setLfJob] = useState({
         width: 24,
@@ -194,6 +192,18 @@
         LF_ADDONS.forEach(a => { init[a.key] = 0; });
         return init;
       });
+
+      // Quick quote state
+      const [quoteTarget, setQuoteTarget] = useState({
+        width: 5,
+        height: 7,
+        quantity: 100,
+        colorMode: 'color',
+        backEnabled: false,
+        backColorMode: 'bw'
+      });
+      const [quoteDocPages, setQuoteDocPages] = useState(1);
+      const [quoteDoubleSided, setQuoteDoubleSided] = useState(true);
 
       // Email/order form modal
       const [showOrderForm, setShowOrderForm] = useState(false);
@@ -215,36 +225,28 @@
       const backRef = useRef();
       const lfRef = useRef();
 
-      // Utility: get current sheet size in inches [wIn, hIn]
-      const getSheetInches = () => {
-        if (sheetKey === 'custom') {
+      // Utility: get sheet size in inches [wIn, hIn] for a given key
+      const getSheetInchesForKey = (key) => {
+        if (key === 'custom') {
           const wRaw = Number(customSize.w) || 0;
           const hRaw = Number(customSize.h) || 0;
-          const w = Math.max(0.1, Math.min(36, wRaw)); // clamp to 36"
+          const w = Math.max(0.1, Math.min(36, wRaw));
           const h = Math.max(0.1, hRaw);
           return [w, h];
         }
-        return PRESET_SHEETS[sheetKey];
+        return PRESET_SHEETS[key] || [8.5, 11];
       };
 
-      const currentPaper = PAPER_TYPES.find(pt => pt.key === paperKey) || PAPER_TYPES[0];
+      // Utility: get current sheet size in inches [wIn, hIn]
+      const getSheetInches = () => getSheetInchesForKey(sheetKey);
+
+      const currentPaper =
+        PAPER_TYPES.find(pt => pt.key === paperKey) || PAPER_TYPES[0];
 
       // Is this sheet/paper combo allowed (for warning only)?
       const comboAllowed = (SHEET_KEYS_FOR_PAPER[paperKey] || []).includes(sheetKey);
 
-      // FRONT/BACK image arrays (single or multi-page)
-      const getFrontImages = () => {
-        if (frontPages && frontPages.length) return frontPages;
-        if (frontImage) return [frontImage];
-        return [];
-      };
-      const getBackImages = () => {
-        if (backPages && backPages.length) return backPages;
-        if (backImage) return [backImage];
-        return [];
-      };
-
-      // Admin "normalize" helper so we can safely read pricing entries
+      // Normalize pricing entry
       const normalizeEntry = (entry) => {
         return {
           paperCost: Number(entry.paperCost) || 0,
@@ -255,152 +257,25 @@
         };
       };
 
-      // LocalStorage keys
-      const LS_PRICING_KEY = 'print_tool_pricing_v1';
-      const LS_LF_PRICING_KEY = 'print_tool_lf_pricing_v1';
-      const LS_QTY_DISCOUNTS_KEY = 'print_tool_qty_discounts_v1';
-      const LS_LF_QTY_DISCOUNTS_KEY = 'print_tool_lf_qty_discounts_v1';
-      const LS_BACK_FACTOR_KEY = 'print_tool_back_factor_v1';
-      const LS_LF_ADDONS_KEY = 'print_tool_lf_addons_v1';
-
-      // Load pricing from pricing.json if present, otherwise from localStorage
-      useEffect(() => {
-        const loadAllPricing = async () => {
-          try {
-            // Try localStorage first
-            const savedPricing = window.localStorage.getItem(LS_PRICING_KEY);
-            const savedLfPricing = window.localStorage.getItem(LS_LF_PRICING_KEY);
-            const savedQty = window.localStorage.getItem(LS_QTY_DISCOUNTS_KEY);
-            const savedLfQty = window.localStorage.getItem(LS_LF_QTY_DISCOUNTS_KEY);
-            const savedBackFactor = window.localStorage.getItem(LS_BACK_FACTOR_KEY);
-            const savedLfAddons = window.localStorage.getItem(LS_LF_ADDONS_KEY);
-
-            if (savedPricing) {
-              setPricing(JSON.parse(savedPricing));
-            }
-            if (savedLfPricing) {
-              setLfPricing(JSON.parse(savedLfPricing));
-            }
-            if (savedQty) {
-              setQuantityDiscounts(JSON.parse(savedQty));
-            }
-            if (savedLfQty) {
-              setLfQuantityDiscounts(JSON.parse(savedLfQty));
-            }
-            if (savedBackFactor) {
-              setBackSideFactor(Number(savedBackFactor) || 0.5);
-            }
-            if (savedLfAddons) {
-              setLfAddonPricing(JSON.parse(savedLfAddons));
-            }
-
-            // Also attempt to auto-load from pricing.json (for Netlify/GitHub)
-            const resp = await fetch('pricing.json', { cache: 'no-store' });
-            if (resp.ok) {
-              const json = await resp.json();
-              if (json.sheetPricing) {
-                setPricing(json.sheetPricing);
-                window.localStorage.setItem(
-                  LS_PRICING_KEY,
-                  JSON.stringify(json.sheetPricing)
-                );
-              }
-              if (json.lfPricing) {
-                setLfPricing(json.lfPricing);
-                window.localStorage.setItem(
-                  LS_LF_PRICING_KEY,
-                  JSON.stringify(json.lfPricing)
-                );
-              }
-              if (json.quantityDiscounts) {
-                setQuantityDiscounts(json.quantityDiscounts);
-                window.localStorage.setItem(
-                  LS_QTY_DISCOUNTS_KEY,
-                  JSON.stringify(json.quantityDiscounts)
-                );
-              }
-              if (json.lfQuantityDiscounts) {
-                setLfQuantityDiscounts(json.lfQuantityDiscounts);
-                window.localStorage.setItem(
-                  LS_LF_QTY_DISCOUNTS_KEY,
-                  JSON.stringify(json.lfQuantityDiscounts)
-                );
-              }
-              if (typeof json.backSideFactor === 'number') {
-                setBackSideFactor(json.backSideFactor);
-                window.localStorage.setItem(
-                  LS_BACK_FACTOR_KEY,
-                  String(json.backSideFactor)
-                );
-              }
-              if (json.lfAddonPricing) {
-                setLfAddonPricing(json.lfAddonPricing);
-                window.localStorage.setItem(
-                  LS_LF_ADDONS_KEY,
-                  JSON.stringify(json.lfAddonPricing)
-                );
-              }
-            }
-          } catch (err) {
-            console.error('Failed to auto-load pricing.json or localStorage', err);
-          }
-        };
-        loadAllPricing();
-      }, []);
-
-      // Auto-save pricing and related settings to localStorage
-      useEffect(() => {
-        try {
-          window.localStorage.setItem(LS_PRICING_KEY, JSON.stringify(pricing));
-        } catch (e) {}
-      }, [pricing]);
-      useEffect(() => {
-        try {
-          window.localStorage.setItem(LS_LF_PRICING_KEY, JSON.stringify(lfPricing));
-        } catch (e) {}
-      }, [lfPricing]);
-      useEffect(() => {
-        try {
-          window.localStorage.setItem(LS_QTY_DISCOUNTS_KEY, JSON.stringify(quantityDiscounts));
-        } catch (e) {}
-      }, [quantityDiscounts]);
-      useEffect(() => {
-        try {
-          window.localStorage.setItem(LS_LF_QTY_DISCOUNTS_KEY, JSON.stringify(lfQuantityDiscounts));
-        } catch (e) {}
-      }, [lfQuantityDiscounts]);
-      useEffect(() => {
-        try {
-          window.localStorage.setItem(LS_BACK_FACTOR_KEY, String(backSideFactor));
-        } catch (e) {}
-      }, [backSideFactor]);
-      useEffect(() => {
-        try {
-          window.localStorage.setItem(LS_LF_ADDONS_KEY, JSON.stringify(lfAddonPricing));
-        } catch (e) {}
-      }, [lfAddonPricing]);
-
-      // --------- DRAWING HELPERS ----------
-
-      // Compute how many prints fit on a sheet (respecting margins, spacing, bleed)
-      const computePrintsPerSheet = () => {
-        const [baseWIn, baseHIn] = getSheetInches();
-        const pageWIn = orientation === 'portrait' ? baseWIn : baseHIn;
-        const pageHIn = orientation === 'portrait' ? baseHIn : baseWIn;
+      // Capacity helper (how many prints fit on a sheet)
+      const computeCapacity = (sheetKeyLocal, orientationLocal, widthIn, heightIn, useBleedLocal) => {
+        const [baseWIn, baseHIn] = getSheetInchesForKey(sheetKeyLocal);
+        const pageWIn = orientationLocal === 'portrait' ? baseWIn : baseHIn;
+        const pageHIn = orientationLocal === 'portrait' ? baseHIn : baseWIn;
 
         const margin = MARGIN_IN;
         const spacing = SPACING_IN;
 
-        // Trim (desired) size
-        const trimWIn = Math.max(0.01, prints.width);
-        const trimHIn = Math.max(0.01, prints.height);
+        const trimWIn = Math.max(0.01, widthIn);
+        const trimHIn = Math.max(0.01, heightIn);
 
-        // If bleed on, we must reserve extra around each
-        const perWIn = trimWIn + (useBleed ? 2 * BLEED_IN : 0);
-        const perHIn = trimHIn + (useBleed ? 2 * BLEED_IN : 0);
+        const perWIn = trimWIn + (useBleedLocal ? 2 * BLEED_IN : 0);
+        const perHIn = trimHIn + (useBleedLocal ? 2 * BLEED_IN : 0);
 
         const usableWIn = pageWIn - 2 * margin;
         const usableHIn = pageHIn - 2 * margin;
+
+        if (usableWIn <= 0 || usableHIn <= 0) return 0;
 
         const cols = Math.max(
           0,
@@ -414,12 +289,127 @@
         return rows * cols;
       };
 
+      const computePrintsPerSheet = () =>
+        computeCapacity(sheetKey, orientation, prints.width, prints.height, useBleed);
+
+      // FRONT/BACK image arrays (single or multi-page)
+      const getFrontImages = () => {
+        if (frontPages && frontPages.length) return frontPages;
+        if (frontImage) return [frontImage];
+        if (extraFrontImages && extraFrontImages.length) return extraFrontImages;
+        return [];
+      };
+      const getBackImages = () => {
+        if (backPages && backPages.length) return backPages;
+        if (backImage) return [backImage];
+        return [];
+      };
+
+      // LocalStorage keys
+      const LS_PRICING_KEY = 'print_tool_pricing_v1';
+      const LS_LF_PRICING_KEY = 'print_tool_lf_pricing_v1';
+      const LS_QTY_DISCOUNTS_KEY = 'print_tool_qty_discounts_v1';
+      const LS_LF_QTY_DISCOUNTS_KEY = 'print_tool_lf_qty_discounts_v1';
+      const LS_BACK_FACTOR_KEY = 'print_tool_back_factor_v1';
+      const LS_LF_ADDONS_KEY = 'print_tool_lf_addons_v1';
+
+      // Load pricing from localStorage and pricing.json
+      useEffect(() => {
+        const loadAllPricing = async () => {
+          try {
+            const savedPricing = window.localStorage.getItem(LS_PRICING_KEY);
+            const savedLfPricing = window.localStorage.getItem(LS_LF_PRICING_KEY);
+            const savedQty = window.localStorage.getItem(LS_QTY_DISCOUNTS_KEY);
+            const savedLfQty = window.localStorage.getItem(LS_LF_QTY_DISCOUNTS_KEY);
+            const savedBackFactor = window.localStorage.getItem(LS_BACK_FACTOR_KEY);
+            const savedLfAddons = window.localStorage.getItem(LS_LF_ADDONS_KEY);
+
+            if (savedPricing) setPricing(JSON.parse(savedPricing));
+            if (savedLfPricing) setLfPricing(JSON.parse(savedLfPricing));
+            if (savedQty) setQuantityDiscounts(JSON.parse(savedQty));
+            if (savedLfQty) setLfQuantityDiscounts(JSON.parse(savedLfQty));
+            if (savedBackFactor) setBackSideFactor(Number(savedBackFactor) || 0.5);
+            if (savedLfAddons) setLfAddonPricing(JSON.parse(savedLfAddons));
+
+            const resp = await fetch('pricing.json', { cache: 'no-store' });
+            if (resp.ok) {
+              const json = await resp.json();
+              if (json.sheetPricing) {
+                setPricing(json.sheetPricing);
+                window.localStorage.setItem(LS_PRICING_KEY, JSON.stringify(json.sheetPricing));
+              }
+              if (json.lfPricing) {
+                setLfPricing(json.lfPricing);
+                window.localStorage.setItem(LS_LF_PRICING_KEY, JSON.stringify(json.lfPricing));
+              }
+              if (json.quantityDiscounts) {
+                setQuantityDiscounts(json.quantityDiscounts);
+                window.localStorage.setItem(LS_QTY_DISCOUNTS_KEY, JSON.stringify(json.quantityDiscounts));
+              }
+              if (json.lfQuantityDiscounts) {
+                setLfQuantityDiscounts(json.lfQuantityDiscounts);
+                window.localStorage.setItem(LS_LF_QTY_DISCOUNTS_KEY, JSON.stringify(json.lfQuantityDiscounts));
+              }
+              if (typeof json.backSideFactor === 'number') {
+                setBackSideFactor(json.backSideFactor);
+                window.localStorage.setItem(LS_BACK_FACTOR_KEY, String(json.backSideFactor));
+              }
+              if (json.lfAddonPricing) {
+                setLfAddonPricing(json.lfAddonPricing);
+                window.localStorage.setItem(LS_LF_ADDONS_KEY, JSON.stringify(json.lfAddonPricing));
+              }
+            }
+          } catch (err) {
+            console.error('Failed to auto-load pricing.json or localStorage', err);
+          }
+        };
+        loadAllPricing();
+      }, []);
+
+      // Auto-save to localStorage
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(LS_PRICING_KEY, JSON.stringify(pricing));
+        } catch {}
+      }, [pricing]);
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(LS_LF_PRICING_KEY, JSON.stringify(lfPricing));
+        } catch {}
+      }, [lfPricing]);
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(LS_QTY_DISCOUNTS_KEY, JSON.stringify(quantityDiscounts));
+        } catch {}
+      }, [quantityDiscounts]);
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(LS_LF_QTY_DISCOUNTS_KEY, JSON.stringify(lfQuantityDiscounts));
+        } catch {}
+      }, [lfQuantityDiscounts]);
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(LS_BACK_FACTOR_KEY, String(backSideFactor));
+        } catch {}
+      }, [backSideFactor]);
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(LS_LF_ADDONS_KEY, JSON.stringify(lfAddonPricing));
+        } catch {}
+      }, [lfAddonPricing]);
+
+      // --------- MAIN SHEET PRICING ----------
+
       const printsPerSheet = computePrintsPerSheet();
       const sheetsNeeded = printsPerSheet > 0
         ? Math.ceil((Math.max(0, prints.quantity) || 0) / printsPerSheet)
         : 0;
 
-      // Ensure sheetsNeeded is never negative quantity
       useEffect(() => {
         setPrints(prev => {
           if (!prev) return prev;
@@ -452,10 +442,12 @@
           }
         });
       }
-      const effectivePricePerSheet = pricePerSheetBeforeDiscount * (1 - appliedQtyDiscount / 100);
+      const effectivePricePerSheet =
+        pricePerSheetBeforeDiscount * (1 - appliedQtyDiscount / 100);
       const totalCost = (sheetsNeeded * effectivePricePerSheet).toFixed(2);
 
-      // Large format price calculations
+      // --------- LARGE FORMAT PRICING ----------
+
       const lfJobWidth = Math.max(0, Number(lfJob.width) || 0);
       const lfJobHeight = Math.max(0, Number(lfJob.height) || 0);
       const lfJobQty = Math.max(0, Number(lfJob.quantity) || 0);
@@ -480,7 +472,6 @@
         lfPricePerSqFtBeforeDiscount * (1 - lfAppliedDiscount / 100);
       let lfTotalPrice = lfEffectivePricePerSqFt * lfTotalSqFt;
 
-      // Add-on costs for large format
       let lfAddonTotal = 0;
       LF_ADDONS.forEach(a => {
         const perPrint = Number(lfAddonPricing[a.key]) || 0;
@@ -488,7 +479,93 @@
       });
       lfTotalPrice += lfAddonTotal;
 
-      // Build the sheet PDF (shared by Download & Order)
+      // --------- QUICK QUOTE CALCULATIONS ----------
+
+      const computeQuoteForSheet = (sheetKeyCandidate) => {
+        const orientations = ['portrait', 'landscape'];
+        let best = null;
+
+        orientations.forEach(orient => {
+          const capacity = computeCapacity(
+            sheetKeyCandidate,
+            orient,
+            quoteTarget.width,
+            quoteTarget.height,
+            useBleed
+          );
+          if (capacity <= 0) return;
+
+          PAPER_TYPES.forEach(pt => {
+            if (!(SHEET_KEYS_FOR_PAPER[pt.key] || []).includes(sheetKeyCandidate)) return;
+
+            const entryRaw = ((pricing[pt.key] || {})[sheetKeyCandidate]) || {};
+            const entry = normalizeEntry(entryRaw);
+
+            const frontUnit =
+              quoteTarget.colorMode === 'color' ? entry.priceColor : entry.priceBW;
+            const backUnit =
+              quoteTarget.backColorMode === 'color' ? entry.priceColor : entry.priceBW;
+
+            if (!frontUnit && !backUnit && !quoteTarget.backEnabled) return;
+
+            const perSheetBeforeDisc =
+              frontUnit + (quoteTarget.backEnabled ? backSideFactor * backUnit : 0);
+            if (perSheetBeforeDisc <= 0) return;
+
+            const sheetsNeededLocal = capacity > 0
+              ? Math.ceil((Math.max(0, quoteTarget.quantity) || 0) / capacity)
+              : 0;
+            if (sheetsNeededLocal <= 0) return;
+
+            let disc = 0;
+            if (Array.isArray(quantityDiscounts)) {
+              quantityDiscounts.forEach(tier => {
+                const min = Number(tier.minSheets) || 0;
+                const d = Number(tier.discountPercent) || 0;
+                if (sheetsNeededLocal >= min && d > disc) disc = d;
+              });
+            }
+
+            const perSheetAfterDisc = perSheetBeforeDisc * (1 - disc / 100);
+            const total = perSheetAfterDisc * sheetsNeededLocal;
+
+            const candidate = {
+              sheetKey: sheetKeyCandidate,
+              orientation: orient,
+              paperKey: pt.key,
+              paperLabel: pt.label,
+              printsPerSheet: capacity,
+              sheetsNeeded: sheetsNeededLocal,
+              discount: disc,
+              pricePerSheet: perSheetAfterDisc,
+              totalPrice: total
+            };
+
+            if (!best || total < best.totalPrice) best = candidate;
+          });
+        });
+
+        return best;
+      };
+
+      const quoteResult85 = computeQuoteForSheet('8.5x11');
+      const quoteResult1117 = computeQuoteForSheet('11x17');
+      let recommendedQuote = null;
+      if (quoteResult85 && quoteResult1117) {
+        recommendedQuote =
+          quoteResult85.totalPrice <= quoteResult1117.totalPrice
+            ? quoteResult85
+            : quoteResult1117;
+      } else {
+        recommendedQuote = quoteResult85 || quoteResult1117;
+      }
+
+      const quoteSheetsForDoc = quoteDoubleSided
+        ? Math.ceil((Math.max(0, quoteDocPages) || 0) / 2)
+        : (Math.max(0, quoteDocPages) || 0);
+
+      // --------- PDF / DRAWING FUNCTIONS ----------
+
       const buildSheetPdf = async () => {
         const [baseWIn, baseHIn] = getSheetInches();
         let pdfW = baseWIn;
@@ -505,9 +582,7 @@
         const backImages = getBackImages();
         const mainImages = frontImages.length ? frontImages : extraFrontImages;
 
-        if (!mainImages.length) {
-          return pdf;
-        }
+        if (!mainImages.length) return pdf;
 
         const renderSheetToCanvas = async (pageIndex, mode, rotation, imagesForSide) => {
           const canvas = document.createElement('canvas');
@@ -515,7 +590,9 @@
           return canvas.toDataURL('image/png', 1.0);
         };
 
-        for (let s = 0; s < sheetsNeeded || s === 0; s++) {
+        const totalSheets = sheetsNeeded || 1;
+
+        for (let s = 0; s < totalSheets; s++) {
           const frontData = await renderSheetToCanvas(
             s,
             frontMode,
@@ -549,7 +626,6 @@
         pdf.save('print_preview.pdf');
       };
 
-      // Build large format PDF
       const buildLargeFormatPdf = async () => {
         const pdfW = lfJobWidth || 1;
         const pdfH = lfJobHeight || 1;
@@ -560,9 +636,7 @@
           format: [pdfW, pdfH]
         });
 
-        if (!lfImage) {
-          return pdf;
-        }
+        if (!lfImage) return pdf;
 
         const canvas = document.createElement('canvas');
         await drawLargeFormatLayout(canvas);
@@ -586,8 +660,7 @@
 
           console.log('pdfBase64 length (client):', pdfBase64.length);
 
-          // Hard cap payload size for Netlify (approx ~8–10 MB safe)
-          if (pdfBase64.length > 8_000_000) {
+          if (pdfBase64.length > 8000000) {
             alert(
               'This file is very large. Please download the PDF instead and email it manually to store4979@theupsstore.com.'
             );
@@ -674,22 +747,19 @@
         }
       };
 
-      const orderSheetJob = async () => {
+      const orderSheetJob = () => {
         setOrderJobType('sheet');
         setShowOrderForm(true);
       };
 
-      const orderLargeJob = async () => {
+      const orderLargeJob = () => {
         setOrderJobType('large');
         setShowOrderForm(true);
       };
 
       const handleStartOrder = (jobType) => {
-        if (jobType === 'sheet') {
-          orderSheetJob();
-        } else {
-          orderLargeJob();
-        }
+        if (jobType === 'sheet') orderSheetJob();
+        else orderLargeJob();
       };
 
       // ---- PDF upload -> rasterize selected page(s) to image(s) ----
@@ -736,7 +806,6 @@
         });
       }
 
-      // ----- MAIN SHEET LAYOUT DRAWING -----
       const drawLayout = (canvas, images, rotationDeg, colorMode, sheetIndex) => {
         if (!canvas) return Promise.resolve();
         const ctx = canvas.getContext('2d');
@@ -783,7 +852,7 @@
           totalTiles,
           Math.max(0, prints.quantity - globalStartIndex)
         );
-        if (tilesToDraw <= 0) tilesToDraw = totalTiles; // preview full sheet
+        if (tilesToDraw <= 0) tilesToDraw = totalTiles; // for preview
 
         const totalWidthPx = cols * tileWPx + (cols - 1) * spacingPx;
         const totalHeightPx = rows * tileHPx + (rows - 1) * spacingPx;
@@ -800,19 +869,6 @@
             img.onerror = () => resolve(null);
             img.src = URL.createObjectURL(file);
           });
-
-        const toGray = (ctx, x, y, w, h) => {
-          const imageData = ctx.getImageData(x, y, w, h);
-          const data = imageData.data;
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const avg = 0.299 * r + 0.587 * g + 0.114 * b;
-            data[i] = data[i + 1] = data[i + 2] = avg;
-          }
-          ctx.putImageData(imageData, x, y);
-        };
 
         let firstTrimX = null;
         let firstTrimY = null;
@@ -843,12 +899,7 @@
           ctx.drawImage(img, sx, sy, sw, sh);
 
           if (colorMode === 'bw') {
-            const pxX = -pageWPx * 2;
-            const pxY = -pageHPx * 2;
-            const pxW = pageWPx * 4;
-            const pxH = pageHPx * 4;
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const imageData = ctx.getImageData(-pageWPx * 2, -pageHPx * 2, pageWPx * 4, pageHPx * 4);
             const data = imageData.data;
             for (let i = 0; i < data.length; i += 4) {
               const r = data[i];
@@ -857,7 +908,7 @@
               const avg = 0.299 * r + 0.587 * g + 0.114 * b;
               data[i] = data[i + 1] = data[i + 2] = avg;
             }
-            ctx.putImageData(imageData, 0, 0);
+            ctx.putImageData(imageData, -pageWPx * 2, -pageHPx * 2);
           }
 
           ctx.restore();
@@ -868,8 +919,7 @@
           ctx.save();
           ctx.strokeStyle = '#000000';
           ctx.lineWidth = 0.75;
-          const dash = [6, 4];
-          ctx.setLineDash(dash);
+          ctx.setLineDash([6, 4]);
           ctx.strokeRect(
             centerX - drawWidthPx / 2,
             centerY - drawHeightPx / 2,
@@ -935,7 +985,6 @@
         });
       };
 
-      // Draw large-format preview
       const drawLargeFormatLayout = async (canvas) => {
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -997,7 +1046,7 @@
         if (frontRef.current) {
           drawLayout(frontRef.current, images, frontRotation, frontMode, 0);
         }
-      }, [sheetKey, customSize, orientation, prints, frontImage, frontPages, frontRotation, frontMode, useBleed, showGuides, paperKey]);
+      }, [sheetKey, customSize, orientation, prints, frontImage, frontPages, extraFrontImages, frontRotation, frontMode, useBleed, showGuides, paperKey]);
 
       useEffect(() => {
         if (showBack) {
@@ -1136,7 +1185,7 @@
             if (json.lfQuantityDiscounts) setLfQuantityDiscounts(json.lfQuantityDiscounts);
             if (typeof json.backSideFactor === 'number') setBackSideFactor(json.backSideFactor);
             if (json.lfAddonPricing) setLfAddonPricing(json.lfAddonPricing);
-          } catch (err) {
+          } catch {
             alert('Invalid pricing JSON file.');
           }
         };
@@ -1195,7 +1244,6 @@
               </div>
             </div>
 
-            {/* friendly “how it works” strip */}
             <div className="grid md:grid-cols-3 gap-3 text-xs text-slate-600">
               <div className="flex items-start gap-2">
                 <div className="h-6 w-6 rounded-full bg-slate-900 text-white flex items-center justify-center text-[11px] font-semibold">
@@ -1227,281 +1275,199 @@
             </div>
           </div>
 
-          {/* SHEET PRINTING CONTROLS */}
-          <div className="flex flex-wrap gap-4 items-end">
-            <div>
-              <label className="block text-sm font-medium">Base Sheet</label>
-              <select
-                value={sheetKey}
-                onChange={(e) => setSheetKey(e.target.value)}
-                className="border p-1 rounded"
-              >
-                <option value="8.5x11">8.5 × 11 in</option>
-                <option value="11x17">11 × 17 in</option>
-                <option value="12x18">12 × 18 in</option>
-                <option value="custom">Custom…</option>
-              </select>
-              {!comboAllowed && (
-                <p className="text-xs text-red-600 mt-1">
-                  Note: {(currentPaper || {}).label} is not normally used with {sheetKey}.
-                </p>
-              )}
-            </div>
-            {sheetKey === 'custom' && (
-              <div className="flex items-end gap-3">
+          {/* MAIN TOOL VIEW */}
+          {viewMode === 'tool' && (
+            <>
+              {/* SHEET PRINTING CONTROLS */}
+              <div className="flex flex-wrap gap-4 items-end">
                 <div>
-                  <label className="block text-sm font-medium">Custom Width (in)</label>
-                  <input
-                    type="number"
-                    min="0.1"
-                    step="0.01"
-                    value={customSize.w}
-                    onChange={(e) =>
-                      setCustomSize((s) => ({ ...s, w: +e.target.value || 0 }))
-                    }
-                    className="border p-1 w-28 rounded"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium">Custom Height (in)</label>
-                  <input
-                    type="number"
-                    min="0.1"
-                    step="0.01"
-                    value={customSize.h}
-                    onChange={(e) =>
-                      setCustomSize((s) => ({ ...s, h: +e.target.value || 0 }))
-                    }
-                    className="border p-1 w-28 rounded"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="space-x-2">
-              <label className="text-sm font-medium mr-2">Orientation</label>
-              <button
-                onClick={() => setOrientation('portrait')}
-                className={`border p-1 rounded text-sm ${
-                  orientation === 'portrait' ? 'bg-white shadow-sm' : 'bg-gray-100'
-                }`}
-              >
-                Portrait
-              </button>
-              <button
-                onClick={() => setOrientation('landscape')}
-                className={`border p-1 rounded text-sm ${
-                  orientation === 'landscape' ? 'bg-white shadow-sm' : 'bg-gray-100'
-                }`}
-              >
-                Landscape
-              </button>
-            </div>
-            <div className="flex space-x-2 items-end">
-              <div>
-                <label className="block text-sm font-medium">Print W (in)</label>
-                <input
-                  type="number"
-                  value={prints.width}
-                  onChange={(e) =>
-                    setPrints((p) => ({ ...p, width: +e.target.value || 0 }))
-                  }
-                  className="border p-1 w-24 rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium">Print H (in)</label>
-                <input
-                  type="number"
-                  value={prints.height}
-                  onChange={(e) =>
-                    setPrints((p) => ({ ...p, height: +e.target.value || 0 }))
-                  }
-                  className="border p-1 w-24 rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium">Qty</label>
-                <input
-                  type="number"
-                  value={prints.quantity}
-                  onChange={(e) =>
-                    setPrints((p) => ({ ...p, quantity: +e.target.value || 0 }))
-                  }
-                  className="border p-1 w-20 rounded"
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2 ml-auto">
-              <label className="flex items-center text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  className="mr-1"
-                  checked={useBleed}
-                  onChange={(e) => setUseBleed(e.target.checked)}
-                />
-                Add 0.125&quot; bleed
-              </label>
-              <label className="flex items-center text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  className="mr-1"
-                  checked={showGuides}
-                  onChange={(e) => setShowGuides(e.target.checked)}
-                />
-                Show margin distances
-              </label>
-            </div>
-          </div>
-
-          {/* Paper type buttons */}
-          <div className="space-y-2">
-            <span className="block text-sm font-medium">Paper Type</span>
-            <div className="flex flex-wrap gap-2">
-              {PAPER_TYPES.map((opt) => (
-                <button
-                  key={opt.key}
-                  type="button"
-                  onClick={() => setPaperKey(opt.key)}
-                  className={`px-3 py-1 border rounded-full text-xs ${
-                    paperKey === opt.key ? 'bg-blue-600 text-white shadow-sm' : 'bg-white hover:bg-slate-50'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            {!comboAllowed && (
-              <p className="text-xs text-red-600">
-                Note: {currentPaper.label} is usually paired with{' '}
-                {SHEET_KEYS_FOR_PAPER[paperKey].join(' or ')}.
-              </p>
-            )}
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* FRONT controls */}
-            <div className="space-y-3">
-              <h2 className="font-semibold text-sm">Front</h2>
-              <div className="flex flex-wrap items-center gap-3 text-xs">
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  multiple
-                  onChange={async (e) => {
-                    const files = Array.from(e.target.files || []);
-                    if (!files.length) return;
-
-                    const pdfs = files.filter(f => f.type === 'application/pdf');
-                    const imgs = files.filter(f => f.type !== 'application/pdf');
-
-                    if (pdfs.length) {
-                      await loadPdfToState(pdfs[0], 'front');
-                    } else if (imgs.length === 1) {
-                      setFrontPdfData(null);
-                      setFrontPdfPages(0);
-                      setFrontPages([]);
-                      setFrontImage(imgs[0]);
-                    } else if (imgs.length > 1) {
-                      setFrontPdfData(null);
-                      setFrontPdfPages(0);
-                      setFrontPages([]);
-                      setFrontImage(imgs[0]);
-                      setExtraFrontImages(imgs);
-                    }
-                  }}
-                  className="border p-1 rounded bg-white"
-                />
-                <button
-                  onClick={() => setFrontRotation((r) => r + 90)}
-                  className="border p-1 rounded text-xs bg-white"
-                >
-                  Rotate 90°
-                </button>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs">Mode:</span>
-                  <button
-                    type="button"
-                    onClick={() => setFrontMode('color')}
-                    className={`px-2 py-1 border rounded text-xs ${
-                      frontMode === 'color' ? 'bg-emerald-500 text-white' : 'bg-white'
-                    }`}
+                  <label className="block text-sm font-medium">Base Sheet</label>
+                  <select
+                    value={sheetKey}
+                    onChange={(e) => setSheetKey(e.target.value)}
+                    className="border p-1 rounded"
                   >
-                    Color
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFrontMode('bw')}
-                    className={`px-2 py-1 border rounded text-xs ${
-                      frontMode === 'bw' ? 'bg-slate-700 text-white' : 'bg-white'
-                    }`}
-                  >
-                    B/W
-                  </button>
+                    <option value="8.5x11">8.5 × 11 in</option>
+                    <option value="11x17">11 × 17 in</option>
+                    <option value="12x18">12 × 18 in</option>
+                    <option value="custom">Custom…</option>
+                  </select>
+                  {!comboAllowed && (
+                    <p className="text-xs text-red-600 mt-1">
+                      Note: {(currentPaper || {}).label} is not normally used with {sheetKey}.
+                    </p>
+                  )}
                 </div>
-                {frontPdfPages > 1 && (
-                  <div className="mt-2 text-xs flex flex-wrap items-center gap-2">
-                    <span>Multi-page layout:</span>
-                    <button
-                      type="button"
-                      onClick={() => setMultiLayoutMode('1-2')}
-                      className={`px-2 py-1 border rounded ${
-                        multiLayoutMode === '1-2' ? 'bg-blue-500 text-white' : 'bg-white'
-                      }`}
-                    >
-                      1–2 (sequential pages per sheet)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMultiLayoutMode('1-1')}
-                      className={`px-2 py-1 border rounded ${
-                        multiLayoutMode === '1-1' ? 'bg-blue-500 text-white' : 'bg-white'
-                      }`}
-                    >
-                      1–1 (same page per side)
-                    </button>
+                {sheetKey === 'custom' && (
+                  <div className="flex items-end gap-3">
+                    <div>
+                      <label className="block text-sm font-medium">Custom Width (in)</label>
+                      <input
+                        type="number"
+                        min="0.1"
+                        step="0.01"
+                        value={customSize.w}
+                        onChange={(e) =>
+                          setCustomSize((s) => ({ ...s, w: +e.target.value || 0 }))
+                        }
+                        className="border p-1 w-28 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium">Custom Height (in)</label>
+                      <input
+                        type="number"
+                        min="0.1"
+                        step="0.01"
+                        value={customSize.h}
+                        onChange={(e) =>
+                          setCustomSize((s) => ({ ...s, h: +e.target.value || 0 }))
+                        }
+                        className="border p-1 w-28 rounded"
+                      />
+                    </div>
                   </div>
                 )}
-              </div>
-              <canvas ref={frontRef} className="w-full h-auto border rounded bg-white" />
-            </div>
 
-            {/* BACK controls */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-sm">Back</h2>
-                <label className="text-xs flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={showBack}
-                    onChange={(e) => setShowBack(e.target.checked)}
-                    className="mr-1"
-                  />
-                  Enable back printing
-                </label>
+                <div className="space-x-2">
+                  <label className="text-sm font-medium mr-2">Orientation</label>
+                  <button
+                    onClick={() => setOrientation('portrait')}
+                    className={`border p-1 rounded text-sm ${
+                      orientation === 'portrait' ? 'bg-white shadow-sm' : 'bg-gray-100'
+                    }`}
+                  >
+                    Portrait
+                  </button>
+                  <button
+                    onClick={() => setOrientation('landscape')}
+                    className={`border p-1 rounded text-sm ${
+                      orientation === 'landscape' ? 'bg-white shadow-sm' : 'bg-gray-100'
+                    }`}
+                  >
+                    Landscape
+                  </button>
+                </div>
+                <div className="flex space-x-2 items-end">
+                  <div>
+                    <label className="block text-sm font-medium">Print W (in)</label>
+                    <input
+                      type="number"
+                      value={prints.width}
+                      onChange={(e) =>
+                        setPrints((p) => ({ ...p, width: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-24 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Print H (in)</label>
+                    <input
+                      type="number"
+                      value={prints.height}
+                      onChange={(e) =>
+                        setPrints((p) => ({ ...p, height: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-24 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Qty</label>
+                    <input
+                      type="number"
+                      value={prints.quantity}
+                      onChange={(e) =>
+                        setPrints((p) => ({ ...p, quantity: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-20 rounded"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <label className="flex items-center text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      className="mr-1"
+                      checked={useBleed}
+                      onChange={(e) => setUseBleed(e.target.checked)}
+                    />
+                    Add 0.125&quot; bleed
+                  </label>
+                  <label className="flex items-center text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      className="mr-1"
+                      checked={showGuides}
+                      onChange={(e) => setShowGuides(e.target.checked)}
+                    />
+                    Show margin distances
+                  </label>
+                </div>
               </div>
-              {showBack && (
-                <>
+
+              {/* Paper type buttons */}
+              <div className="space-y-2">
+                <span className="block text-sm font-medium">Paper Type</span>
+                <div className="flex flex-wrap gap-2">
+                  {PAPER_TYPES.map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setPaperKey(opt.key)}
+                      className={`px-3 py-1 border rounded-full text-xs ${
+                        paperKey === opt.key
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {!comboAllowed && (
+                  <p className="text-xs text-red-600">
+                    Note: {currentPaper.label} is usually paired with{' '}
+                    {SHEET_KEYS_FOR_PAPER[paperKey].join(' or ')}.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* FRONT controls */}
+                <div className="space-y-3">
+                  <h2 className="font-semibold text-sm">Front</h2>
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <input
                       type="file"
                       accept="image/*,application/pdf"
+                      multiple
                       onChange={async (e) => {
-                        const f = e.target.files[0];
-                        if (!f) return;
-                        if (f.type === 'application/pdf') {
-                          await loadPdfToState(f, 'back');
-                        } else {
-                          setBackPdfData(null);
-                          setBackPdfPages(0);
-                          setBackPages([]);
-                          setBackImage(f);
+                        const files = Array.from(e.target.files || []);
+                        if (!files.length) return;
+
+                        const pdfs = files.filter(f => f.type === 'application/pdf');
+                        const imgs = files.filter(f => f.type !== 'application/pdf');
+
+                        if (pdfs.length) {
+                          await loadPdfToState(pdfs[0], 'front');
+                        } else if (imgs.length === 1) {
+                          setFrontPdfData(null);
+                          setFrontPdfPages(0);
+                          setFrontPages([]);
+                          setFrontImage(imgs[0]);
+                          setExtraFrontImages([]);
+                        } else if (imgs.length > 1) {
+                          setFrontPdfData(null);
+                          setFrontPdfPages(0);
+                          setFrontPages([]);
+                          setFrontImage(imgs[0]);
+                          setExtraFrontImages(imgs);
                         }
                       }}
                       className="border p-1 rounded bg-white"
                     />
                     <button
-                      onClick={() => setBackRotation((r) => r + 90)}
+                      onClick={() => setFrontRotation((r) => r + 90)}
                       className="border p-1 rounded text-xs bg-white"
                     >
                       Rotate 90°
@@ -1510,247 +1476,623 @@
                       <span className="text-xs">Mode:</span>
                       <button
                         type="button"
-                        onClick={() => setBackMode('color')}
+                        onClick={() => setFrontMode('color')}
                         className={`px-2 py-1 border rounded text-xs ${
-                          backMode === 'color' ? 'bg-emerald-500 text-white' : 'bg-white'
+                          frontMode === 'color' ? 'bg-emerald-500 text-white' : 'bg-white'
                         }`}
                       >
                         Color
                       </button>
                       <button
                         type="button"
-                        onClick={() => setBackMode('bw')}
+                        onClick={() => setFrontMode('bw')}
                         className={`px-2 py-1 border rounded text-xs ${
-                          backMode === 'bw' ? 'bg-slate-700 text-white' : 'bg-white'
+                          frontMode === 'bw' ? 'bg-slate-700 text-white' : 'bg-white'
                         }`}
                       >
                         B/W
                       </button>
                     </div>
-                    {backPdfPages > 1 && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <label>Pages</label>
-                        <span>({backPdfPages} pages loaded)</span>
+                    {frontPdfPages > 1 && (
+                      <div className="mt-2 text-xs flex flex-wrap items-center gap-2">
+                        <span>Multi-page layout:</span>
+                        <button
+                          type="button"
+                          onClick={() => setMultiLayoutMode('1-2')}
+                          className={`px-2 py-1 border rounded ${
+                            multiLayoutMode === '1-2' ? 'bg-blue-500 text-white' : 'bg-white'
+                          }`}
+                        >
+                          1–2 (sequential pages per sheet)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMultiLayoutMode('1-1')}
+                          className={`px-2 py-1 border rounded ${
+                            multiLayoutMode === '1-1' ? 'bg-blue-500 text-white' : 'bg-white'
+                          }`}
+                        >
+                          1–1 (same page per side)
+                        </button>
                       </div>
                     )}
                   </div>
-                  <canvas ref={backRef} className="w-full h-auto border rounded bg-white" />
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center gap-6 flex-wrap">
-            <div className="text-sm text-slate-700 space-y-1">
-              <p>Sheets needed: <span className="font-semibold">{sheetsNeeded}</span></p>
-              <p>Selected paper: <span className="font-semibold">{currentPaper.label}</span></p>
-              <p className="text-xs text-slate-500">
-                Price per sheet (with markup, before qty discount): $
-                {pricePerSheetBeforeDiscount.toFixed(4)}
-              </p>
-              <p className="text-xs text-slate-500">
-                Quantity discount applied: {appliedQtyDiscount}%
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Estimated total (before tax)
-              </p>
-              <p className="text-2xl font-extrabold text-blue-700">
-                ${totalCost}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                ≈ ${effectivePricePerSheet.toFixed(2)} per sheet
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={downloadPDF}
-                className="bg-blue-500 text-white px-4 py-2 rounded-full text-xs shadow-sm hover:bg-blue-600 transition"
-              >
-                Download Preview (PDF)
-              </button>
-              <button
-                onClick={() => handleStartOrder('sheet')}
-                className="bg-emerald-600 text-white px-4 py-2 rounded-full text-xs shadow-sm hover:bg-emerald-500 transition"
-              >
-                Order Prints – Send to Store
-              </button>
-            </div>
-          </div>
-
-          {/* LARGE FORMAT SECTION */}
-          <div className="mt-8 border-t pt-4">
-            <h2 className="text-lg font-semibold mb-2">Large Format Printing</h2>
-            <p className="text-xs text-gray-600 mb-3">
-              For roll-based wide prints. Width is limited to 36&quot; maximum.
-            </p>
-
-            <div className="flex flex-wrap gap-4 items-end mb-4">
-              <div>
-                <label className="block text-sm font-medium">Width (in)</label>
-                <input
-                  type="number"
-                  min="0.1"
-                  max="36"
-                  step="0.01"
-                  value={lfJob.width}
-                  onChange={e =>
-                    setLfJob(job => ({
-                      ...job,
-                      width: Math.min(36, +e.target.value || 0)
-                    }))
-                  }
-                  className="border p-1 w-24 rounded"
-                />
-                <p className="text-xs text-gray-500 mt-1">Max 36&quot; wide</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium">Height / Length (in)</label>
-                <input
-                  type="number"
-                  min="0.1"
-                  step="0.01"
-                  value={lfJob.height}
-                  onChange={e =>
-                    setLfJob(job => ({ ...job, height: +e.target.value || 0 }))
-                  }
-                  className="border p-1 w-24 rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium">Quantity</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={lfJob.quantity}
-                  onChange={e =>
-                    setLfJob(job => ({ ...job, quantity: +e.target.value || 0 }))
-                  }
-                  className="border p-1 w-24 rounded"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium">Paper</label>
-                <select
-                  value={lfPaperKey}
-                  onChange={e => setLfPaperKey(e.target.value)}
-                  className="border p-1 rounded"
-                >
-                  {LF_PAPER_TYPES.map(pt => (
-                    <option key={pt.key} value={pt.key}>
-                      {pt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col text-xs text-slate-700">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    className="mr-1"
-                    checked={lfKeepProportions}
-                    onChange={e => setLfKeepProportions(e.target.checked)}
-                  />
-                  Keep proportions of uploaded image
-                </label>
-                {!lfKeepProportions && (
-                  <span className="text-[11px] text-amber-700 mt-1">
-                    Image may be stretched to fit target size.
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Large-format preview + summary */}
-            <div className="grid md:grid-cols-2 gap-6 items-start mb-4">
-              <div className="space-y-2">
-                <h3 className="font-semibold text-sm">Large Format Preview</h3>
-                <div className="flex flex-wrap items-center gap-3 text-xs">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const f = e.target.files[0];
-                      if (!f) return;
-                      setLfImage(f);
-                    }}
-                    className="border p-1 rounded bg-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setLfRotation(r => r + 90)}
-                    className="border p-1 text-sm bg-white rounded"
-                  >
-                    Rotate 90°
-                  </button>
+                  <canvas ref={frontRef} className="w-full h-auto border rounded bg-white" />
                 </div>
-                <canvas ref={lfRef} className="w-full h-auto border rounded bg-white" />
-              </div>
 
-              <div className="space-y-2 text-sm text-slate-700">
-                <h3 className="font-semibold text-sm">Large Format Summary</h3>
-                <p>Approx. area per print: {lfAreaPerPrintSqFt.toFixed(2)} sq ft</p>
-                <p>Total area: {lfTotalSqFt.toFixed(2)} sq ft</p>
-                <p className="text-[11px] text-slate-500">
-                  Base cost / sq ft: ${lfBaseCostPerSqFt.toFixed(4)}
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Price / sq ft (before qty discount): ${lfPricePerSqFtBeforeDiscount.toFixed(4)} ·
-                  Qty discount: {lfAppliedDiscount}%
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Approx. area per print and total area are used to calculate the price.
-                </p>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Estimated total (before tax)
-                </p>
-                <p className="text-2xl font-extrabold text-blue-700">
-                  ${lfTotalPrice.toFixed(2)}
-                </p>
-                <p className="text-xs text-gray-500 mt-2">
-                  Preview and downloaded PDF use the same scaling logic.
-                </p>
-                <div className="mt-3 text-xs">
-                  <div className="font-semibold mb-1">Add-ons</div>
-                  {LF_ADDONS.map(a => (
-                    <label key={a.key} className="flex items-center gap-2 mb-1">
+                {/* BACK controls */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-semibold text-sm">Back</h2>
+                    <label className="text-xs flex items-center">
                       <input
                         type="checkbox"
-                        checked={!!lfAddonSelections[a.key]}
-                        onChange={e =>
-                          setLfAddonSelections(prev => ({
-                            ...prev,
-                            [a.key]: e.target.checked
-                          }))
-                        }
+                        checked={showBack}
+                        onChange={(e) => setShowBack(e.target.checked)}
+                        className="mr-1"
                       />
-                      <span>{a.label}</span>
-                      <span className="ml-auto">
-                        ${Number(lfAddonPricing[a.key] || 0).toFixed(2)} / print
-                      </span>
+                      Enable back printing
                     </label>
-                  ))}
+                  </div>
+                  {showBack && (
+                    <>
+                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={async (e) => {
+                            const f = e.target.files[0];
+                            if (!f) return;
+                            if (f.type === 'application/pdf') {
+                              await loadPdfToState(f, 'back');
+                            } else {
+                              setBackPdfData(null);
+                              setBackPdfPages(0);
+                              setBackPages([]);
+                              setBackImage(f);
+                            }
+                          }}
+                          className="border p-1 rounded bg-white"
+                        />
+                        <button
+                          onClick={() => setBackRotation((r) => r + 90)}
+                          className="border p-1 rounded text-xs bg-white"
+                        >
+                          Rotate 90°
+                        </button>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs">Mode:</span>
+                          <button
+                            type="button"
+                            onClick={() => setBackMode('color')}
+                            className={`px-2 py-1 border rounded text-xs ${
+                              backMode === 'color' ? 'bg-emerald-500 text-white' : 'bg-white'
+                            }`}
+                          >
+                            Color
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBackMode('bw')}
+                            className={`px-2 py-1 border rounded text-xs ${
+                              backMode === 'bw' ? 'bg-slate-700 text-white' : 'bg-white'
+                            }`}
+                          >
+                            B/W
+                          </button>
+                        </div>
+                        {backPdfPages > 1 && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <label>Pages</label>
+                            <span>({backPdfPages} pages loaded)</span>
+                          </div>
+                        )}
+                      </div>
+                      <canvas ref={backRef} className="w-full h-auto border rounded bg-white" />
+                    </>
+                  )}
                 </div>
-                <div className="flex gap-3 mt-3">
+              </div>
+
+              <div className="mt-4 flex items-center gap-6 flex-wrap">
+                <div className="text-sm text-slate-700 space-y-1">
+                  <p>Sheets needed: <span className="font-semibold">{sheetsNeeded}</span></p>
+                  <p>Selected paper: <span className="font-semibold">{currentPaper.label}</span></p>
+                  <p className="text-xs text-slate-500">
+                    Price per sheet (with markup, before qty discount): $
+                    {pricePerSheetBeforeDiscount.toFixed(4)}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Quantity discount applied: {appliedQtyDiscount}%
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Estimated total (before tax)
+                  </p>
+                  <p className="text-2xl font-extrabold text-blue-700">
+                    ${totalCost}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    ≈ ${effectivePricePerSheet.toFixed(2)} per sheet
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
                   <button
-                    type="button"
-                    onClick={downloadLargeFormatPDF}
-                    className="bg-blue-500 text-white px-4 py-2 rounded-full text-xs shadow-sm"
+                    onClick={downloadPDF}
+                    className="bg-blue-500 text-white px-4 py-2 rounded-full text-xs shadow-sm hover:bg-blue-600 transition"
                   >
-                    Download Large Format (PDF)
+                    Download Preview (PDF)
                   </button>
                   <button
-                    type="button"
-                    onClick={() => handleStartOrder('large')}
+                    onClick={() => handleStartOrder('sheet')}
                     className="bg-emerald-600 text-white px-4 py-2 rounded-full text-xs shadow-sm hover:bg-emerald-500 transition"
                   >
-                    Order Large Format – Send to Store
+                    Order Prints – Send to Store
                   </button>
                 </div>
               </div>
+
+              {/* LARGE FORMAT SECTION */}
+              <div className="mt-8 border-t pt-4">
+                <h2 className="text-lg font-semibold mb-2">Large Format Printing</h2>
+                <p className="text-xs text-gray-600 mb-3">
+                  For roll-based wide prints. Width is limited to 36&quot; maximum.
+                </p>
+
+                <div className="flex flex-wrap gap-4 items-end mb-4">
+                  <div>
+                    <label className="block text-sm font-medium">Width (in)</label>
+                    <input
+                      type="number"
+                      min="0.1"
+                      max="36"
+                      step="0.01"
+                      value={lfJob.width}
+                      onChange={e =>
+                        setLfJob(job => ({
+                          ...job,
+                          width: Math.min(36, +e.target.value || 0)
+                        }))
+                      }
+                      className="border p-1 w-24 rounded"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Max 36&quot; wide</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Height / Length (in)</label>
+                    <input
+                      type="number"
+                      min="0.1"
+                      step="0.01"
+                      value={lfJob.height}
+                      onChange={e =>
+                        setLfJob(job => ({ ...job, height: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-24 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={lfJob.quantity}
+                      onChange={e =>
+                        setLfJob(job => ({ ...job, quantity: +e.target.value || 0 }))
+                      }
+                      className="border p-1 w-24 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Paper</label>
+                    <select
+                      value={lfPaperKey}
+                      onChange={e => setLfPaperKey(e.target.value)}
+                      className="border p-1 rounded"
+                    >
+                      {LF_PAPER_TYPES.map(pt => (
+                        <option key={pt.key} value={pt.key}>
+                          {pt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col text-xs text-slate-700">
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        className="mr-1"
+                        checked={lfKeepProportions}
+                        onChange={e => setLfKeepProportions(e.target.checked)}
+                      />
+                      Keep proportions of uploaded image
+                    </label>
+                    {!lfKeepProportions && (
+                      <span className="text-[11px] text-amber-700 mt-1">
+                        Image may be stretched to fit target size.
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6 items-start mb-4">
+                  <div className="space-y-2">
+                    <h3 className="font-semibold text-sm">Large Format Preview</h3>
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const f = e.target.files[0];
+                          if (!f) return;
+                          setLfImage(f);
+                        }}
+                        className="border p-1 rounded bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLfRotation(r => r + 90)}
+                        className="border p-1 text-sm bg-white rounded"
+                      >
+                        Rotate 90°
+                      </button>
+                    </div>
+                    <canvas ref={lfRef} className="w-full h-auto border rounded bg-white" />
+                  </div>
+
+                  <div className="space-y-2 text-sm text-slate-700">
+                    <h3 className="font-semibold text-sm">Large Format Summary</h3>
+                    <p>Approx. area per print: {lfAreaPerPrintSqFt.toFixed(2)} sq ft</p>
+                    <p>Total area: {lfTotalSqFt.toFixed(2)} sq ft</p>
+                    <p className="text-[11px] text-slate-500">
+                      Base cost / sq ft: ${lfBaseCostPerSqFt.toFixed(4)}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Price / sq ft (before qty discount): ${lfPricePerSqFtBeforeDiscount.toFixed(4)} ·
+                      Qty discount: {lfAppliedDiscount}%
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Estimated total (before tax)
+                    </p>
+                    <p className="text-2xl font-extrabold text-blue-700">
+                      ${lfTotalPrice.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Preview and downloaded PDF use the same scaling logic.
+                    </p>
+                    <div className="mt-3 text-xs">
+                      <div className="font-semibold mb-1">Add-ons</div>
+                      {LF_ADDONS.map(a => (
+                        <label key={a.key} className="flex items-center gap-2 mb-1">
+                          <input
+                            type="checkbox"
+                            checked={!!lfAddonSelections[a.key]}
+                            onChange={e =>
+                              setLfAddonSelections(prev => ({
+                                ...prev,
+                                [a.key]: e.target.checked
+                              }))
+                            }
+                          />
+                          <span>{a.label}</span>
+                          <span className="ml-auto">
+                            ${Number(lfAddonPricing[a.key] || 0).toFixed(2)} / print
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-3 mt-3">
+                      <button
+                        type="button"
+                        onClick={downloadLargeFormatPDF}
+                        className="bg-blue-500 text-white px-4 py-2 rounded-full text-xs shadow-sm"
+                      >
+                        Download Large Format (PDF)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStartOrder('large')}
+                        className="bg-emerald-600 text-white px-4 py-2 rounded-full text-xs shadow-sm hover:bg-emerald-500 transition"
+                      >
+                        Order Large Format – Send to Store
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* QUICK QUOTE VIEW */}
+          {viewMode === 'quote' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-semibold mb-1">Quick Quote</h2>
+                <p className="text-xs text-slate-500">
+                  Get an instant estimate using your desired print size, quantity, and color mode.
+                  Uses your current pricing settings.
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6 items-start">
+                {/* Quote inputs */}
+                <div className="space-y-4 text-sm">
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                    <h3 className="font-semibold text-sm">Target Print Details</h3>
+                    <div className="flex flex-wrap gap-3">
+                      <div>
+                        <label className="block text-xs font-medium">Print Width (in)</label>
+                        <input
+                          type="number"
+                          min="0.1"
+                          step="0.01"
+                          value={quoteTarget.width}
+                          onChange={e =>
+                            setQuoteTarget(t => ({ ...t, width: +e.target.value || 0 }))
+                          }
+                          className="border p-1 w-24 rounded"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium">Print Height (in)</label>
+                        <input
+                          type="number"
+                          min="0.1"
+                          step="0.01"
+                          value={quoteTarget.height}
+                          onChange={e =>
+                            setQuoteTarget(t => ({ ...t, height: +e.target.value || 0 }))
+                          }
+                          className="border p-1 w-24 rounded"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium">Quantity</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={quoteTarget.quantity}
+                          onChange={e =>
+                            setQuoteTarget(t => ({ ...t, quantity: +e.target.value || 0 }))
+                          }
+                          className="border p-1 w-24 rounded"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 mt-2">
+                      <div className="flex items-center gap-1 text-xs">
+                        <span className="font-medium">Front:</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setQuoteTarget(t => ({ ...t, colorMode: 'color' }))
+                          }
+                          className={`px-2 py-1 border rounded ${
+                            quoteTarget.colorMode === 'color'
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-white'
+                          }`}
+                        >
+                          Color
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setQuoteTarget(t => ({ ...t, colorMode: 'bw' }))
+                          }
+                          className={`px-2 py-1 border rounded ${
+                            quoteTarget.colorMode === 'bw'
+                              ? 'bg-slate-700 text-white'
+                              : 'bg-white'
+                          }`}
+                        >
+                          B/W
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs">
+                        <label className="flex items-center">
+                          <input
+                            type="checkbox"
+                            className="mr-1"
+                            checked={quoteTarget.backEnabled}
+                            onChange={e =>
+                              setQuoteTarget(t => ({ ...t, backEnabled: e.target.checked }))
+                            }
+                          />
+                          Back printing
+                        </label>
+                        {quoteTarget.backEnabled && (
+                          <>
+                            <span>Back mode:</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuoteTarget(t => ({ ...t, backColorMode: 'color' }))
+                              }
+                              className={`px-2 py-1 border rounded ${
+                                quoteTarget.backColorMode === 'color'
+                                  ? 'bg-emerald-500 text-white'
+                                  : 'bg-white'
+                              }`}
+                            >
+                              Color
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuoteTarget(t => ({ ...t, backColorMode: 'bw' }))
+                              }
+                              className={`px-2 py-1 border rounded ${
+                                quoteTarget.backColorMode === 'bw'
+                                  ? 'bg-slate-700 text-white'
+                                  : 'bg-white'
+                              }`}
+                            >
+                              B/W
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {quoteTarget.backEnabled && (
+                        <div className="text-[11px] text-amber-700">
+                          Back printing selected – pricing includes back-side factor (
+                          {backSideFactor}×).
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                    <h3 className="font-semibold text-sm">Front/Back Sheet Calculator</h3>
+                    <p className="text-[11px] text-slate-500">
+                      For multi-page documents: quickly estimate how many sheets are needed if
+                      printing front only or front/back.
+                    </p>
+                    <div className="flex flex-wrap gap-3 items-end">
+                      <div>
+                        <label className="block text-xs font-medium">Total pages</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={quoteDocPages}
+                          onChange={e =>
+                            setQuoteDocPages(+e.target.value || 0)
+                          }
+                          className="border p-1 w-24 rounded"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <label className="flex items-center">
+                          <input
+                            type="checkbox"
+                            className="mr-1"
+                            checked={quoteDoubleSided}
+                            onChange={e => setQuoteDoubleSided(e.target.checked)}
+                          />
+                          Print front &amp; back
+                        </label>
+                      </div>
+                    </div>
+                    <p className="text-sm mt-1">
+                      Sheets required:{' '}
+                      <span className="font-semibold">{quoteSheetsForDoc}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Quote results */}
+                <div className="space-y-4 text-sm">
+                  <div className="grid gap-3">
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-semibold text-sm">8.5 × 11 in</div>
+                        {quoteResult85 && (
+                          <span className="text-[11px] text-slate-500">
+                            Best: {quoteResult85.paperLabel} ({quoteResult85.orientation})
+                          </span>
+                        )}
+                      </div>
+                      {quoteResult85 ? (
+                        <div className="space-y-1">
+                          <div className="text-lg font-bold text-slate-900">
+                            ${quoteResult85.totalPrice.toFixed(2)}
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            Sheets needed: {quoteResult85.sheetsNeeded} ·
+                            Approx. {quoteResult85.printsPerSheet} prints per sheet
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Price per sheet (after discount): $
+                            {quoteResult85.pricePerSheet.toFixed(4)} ·
+                            Discount: {quoteResult85.discount}%
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">
+                          Target size does not fit on 8.5 × 11 with current settings, or
+                          pricing not configured.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-semibold text-sm">11 × 17 in</div>
+                        {quoteResult1117 && (
+                          <span className="text-[11px] text-slate-500">
+                            Best: {quoteResult1117.paperLabel} ({quoteResult1117.orientation})
+                          </span>
+                        )}
+                      </div>
+                      {quoteResult1117 ? (
+                        <div className="space-y-1">
+                          <div className="text-lg font-bold text-slate-900">
+                            ${quoteResult1117.totalPrice.toFixed(2)}
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            Sheets needed: {quoteResult1117.sheetsNeeded} ·
+                            Approx. {quoteResult1117.printsPerSheet} prints per sheet
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            Price per sheet (after discount): $
+                            {quoteResult1117.pricePerSheet.toFixed(4)} ·
+                            Discount: {quoteResult1117.discount}%
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">
+                          Target size does not fit on 11 × 17 with current settings, or
+                          pricing not configured.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {recommendedQuote && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-sm">
+                      <div className="font-semibold text-emerald-900 mb-1">Recommended</div>
+                      <p className="text-xs text-emerald-900">
+                        Based on your target size and quantity,{' '}
+                        <span className="font-semibold">
+                          {recommendedQuote.sheetKey} ({recommendedQuote.orientation})
+                        </span>{' '}
+                        on{' '}
+                        <span className="font-semibold">{recommendedQuote.paperLabel}</span>{' '}
+                        is the most economical, at approximately{' '}
+                        <span className="font-semibold">
+                          ${recommendedQuote.totalPrice.toFixed(2)}
+                        </span>{' '}
+                        total (about ${recommendedQuote.pricePerSheet.toFixed(2)} per sheet).
+                      </p>
+                      {quoteTarget.backEnabled && (
+                        <p className="text-[11px] text-emerald-800 mt-1">
+                          Note: This quote includes back printing with multiplier{' '}
+                          {backSideFactor}.
+                        </p>
+                      )}
+                      <p className="text-[11px] text-emerald-800 mt-1">
+                        This is an estimate only. Final price may vary after file review.
+                      </p>
+                    </div>
+                  )}
+
+                  {!quoteResult85 && !quoteResult1117 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-800">
+                      No valid quote could be calculated with the current settings.
+                      Try reducing the target size, disabling bleed, or configuring pricing
+                      in the Admin panel.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* ADMIN PANEL */}
           {isAdmin && showAdmin && (
