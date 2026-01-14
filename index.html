@@ -1644,7 +1644,7 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
               if (quoteShowAllPapers) cols.push(`<td>${r.paperLabel}</td>`);
               cols.push(
                 `<td>${r.sheetKey}</td>`,
-                `<td style="text-align:right">${r.printsPer}` + ${r.layout ? `<div class='muted' style='font-size:11px;line-height:1.2;margin-top:2px'>${r.layout.cols}×${r.layout.rows} · sheet ${r.layout.sheetOrientation}${r.layout.printRotated ? ' · print rotated' : ''}</div>` : ''}</td>`,
+                `<td style="text-align:right">${r.printsPer}${r.layout ? `<div class='muted' style='font-size:11px;line-height:1.2;margin-top:2px'>${r.layout.cols}×${r.layout.rows} · sheet ${r.layout.sheetOrientation}${r.layout.printRotated ? ' · print rotated' : ''}</div>` : ''}</td>`,
                 `<td style="text-align:right">${r.sheets}</td>`,
                 `<td style="text-align:right">$${r.perSheetFront.toFixed(4)} / $${r.perSheetBack.toFixed(4)}</td>`,
                 `<td style="text-align:right"><b>$${r.total.toFixed(2)}</b></td>`
