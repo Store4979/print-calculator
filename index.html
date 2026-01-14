@@ -1483,26 +1483,42 @@
 
         const computeQuickQuoteRows = () => {
           const rows = [];
+
+          // When "Show all paper types" is OFF, only calculate for the selected paper.
+          // Sizes should also be limited to what that paper supports.
           const sizes = quoteShowAllPapers
-            ? Object.keys(PRESET_SHEETS).filter((k) => k !== "custom")
+            ? Array.from(
+                new Set(
+                  PAPER_TYPES.flatMap((pt) =>
+                    Object.keys(PRESET_SHEETS)
+                      .filter((k) => k !== "custom")
+                      .filter((sk) =>
+                        (SHEET_KEYS_FOR_PAPER[pt.key] || []).includes(sk)
+                      )
+                  )
+                )
+              )
             : SHEET_KEYS_FOR_PAPER[quotePaperKey] || [];
+
+          const paperKeys = quoteShowAllPapers
+            ? PAPER_TYPES.map((pt) => pt.key)
+            : [quotePaperKey];
 
           sizes.forEach((sk) => {
             const [sW, sH] = PRESET_SHEETS[sk];
             const orientedW = sW;
             const orientedH = sH;
 
-            PAPER_TYPES.forEach((pt) => {
-              if (!SHEET_KEYS_FOR_PAPER[pt.key].includes(sk)) return;
-              const entry = normalizeEntry(
-                (pricing[pt.key] || {})[sk] || {}
-              );
+            paperKeys.forEach((paperKey) => {
+              const pt = PAPER_TYPES.find((p) => p.key === paperKey);
+              if (!pt) return;
+              if (!(SHEET_KEYS_FOR_PAPER[paperKey] || []).includes(sk)) return;
+
+              const entry = normalizeEntry((pricing[paperKey] || {})[sk] || {});
               if (!entry.priceColor && !entry.priceBW) return;
 
               const perSheet =
-                quoteFrontColorMode === "color"
-                  ? entry.priceColor
-                  : entry.priceBW;
+                quoteFrontColorMode === "color" ? entry.priceColor : entry.priceBW;
 
               const perSheetBack =
                 quoteBackEnabled && backSideFactor > 0
@@ -1512,22 +1528,16 @@
                   : 0;
 
               const printsPer =
-                computePrintsPerSheet(
-                  orientedW,
-                  orientedH,
-                  quoteWidth,
-                  quoteHeight
-                ) || 1;
-              const sheets = Math.ceil(
-                (quoteQty || 0) / printsPer
-              );
+                computePrintsPerSheet(orientedW, orientedH, quoteWidth, quoteHeight) ||
+                1;
+              const sheets = Math.ceil((quoteQty || 0) / printsPer);
 
               const discFactor = getSheetDiscountFactor(sheets);
-              const total =
-                (perSheet + perSheetBack) * sheets * discFactor;
+              const total = (perSheet + perSheetBack) * sheets * discFactor;
 
               rows.push({
                 paperLabel: pt.label,
+                paperKey,
                 sheetKey: sk,
                 perSheetFront: perSheet,
                 perSheetBack,
