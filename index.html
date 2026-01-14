@@ -321,6 +321,74 @@
         return cols * rows || 1;
       };
 
+
+// Returns grid fit details (cols/rows/count) for a given orientation
+const computeGridFit = (sheetWIn, sheetHIn, printWIn, printHIn) => {
+  if (printWIn <= 0 || printHIn <= 0) return { cols: 1, rows: 1, count: 1 };
+
+  const margin = MARGIN_IN;
+  const spacing = SPACING_IN;
+
+  const innerW = sheetWIn - 2 * margin;
+  const innerH = sheetHIn - 2 * margin;
+  if (innerW <= 0 || innerH <= 0) return { cols: 1, rows: 1, count: 1 };
+
+  const cols = Math.max(
+    1,
+    Math.floor((innerW + spacing) / (printWIn + spacing))
+  );
+  const rows = Math.max(
+    1,
+    Math.floor((innerH + spacing) / (printHIn + spacing))
+  );
+  return { cols, rows, count: Math.max(1, cols * rows) };
+};
+
+// Best-fit imposition: considers rotating the SHEET and/or rotating the PRINT to maximize prints/sheet
+// Example: 5x7 on 8.5x11 -> portrait fits 1, landscape fits 2
+const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
+  const sheetOpts = [
+    { w: sheetWIn, h: sheetHIn, sheetOrientation: "portrait" },
+    { w: sheetHIn, h: sheetWIn, sheetOrientation: "landscape" }
+  ];
+
+  const printOpts = [
+    { w: printWIn, h: printHIn, printRotated: false },
+    { w: printHIn, h: printWIn, printRotated: true }
+  ];
+
+  let best = null;
+
+  sheetOpts.forEach((so) => {
+    printOpts.forEach((po) => {
+      const fit = computeGridFit(so.w, so.h, po.w, po.h);
+      const candidate = {
+        ...fit,
+        sheetOrientation: so.sheetOrientation,
+        printRotated: po.printRotated
+      };
+
+      if (!best) {
+        best = candidate;
+        return;
+      }
+
+      // Prefer higher count. If tie: prefer not rotating the print. If still tie: prefer portrait sheet.
+      if (candidate.count > best.count) best = candidate;
+      else if (candidate.count === best.count) {
+        if (best.printRotated && !candidate.printRotated) best = candidate;
+        else if (candidate.printRotated === best.printRotated) {
+          if (best.sheetOrientation === "landscape" && candidate.sheetOrientation === "portrait")
+            best = candidate;
+        }
+      }
+    });
+  });
+
+  return best || { cols: 1, rows: 1, count: 1, sheetOrientation: "portrait", printRotated: false };
+};
+
+
       // ---------- MAIN APP ----------
 
       function PriceCalculatorApp() {
@@ -1505,9 +1573,8 @@
             : [quotePaperKey];
 
           sizes.forEach((sk) => {
-            const [sW, sH] = PRESET_SHEETS[sk];
-            const orientedW = sW;
-            const orientedH = sH;
+                        const [sW, sH] = PRESET_SHEETS[sk];
+            const bestFit = computeBestImposition(sW, sH, quoteWidth, quoteHeight);
 
             paperKeys.forEach((paperKey) => {
               const pt = PAPER_TYPES.find((p) => p.key === paperKey);
@@ -1527,15 +1594,13 @@
                       : entry.priceBW) * backSideFactor
                   : 0;
 
-              const printsPer =
-                computePrintsPerSheet(orientedW, orientedH, quoteWidth, quoteHeight) ||
-                1;
+                            const printsPer = (bestFit && bestFit.count) ? bestFit.count : 1;
               const sheets = Math.ceil((quoteQty || 0) / printsPer);
 
               const discFactor = getSheetDiscountFactor(sheets);
               const total = (perSheet + perSheetBack) * sheets * discFactor;
 
-              rows.push({
+                            rows.push({
                 paperLabel: pt.label,
                 paperKey,
                 sheetKey: sk,
@@ -1543,7 +1608,8 @@
                 perSheetBack,
                 printsPer,
                 sheets,
-                total
+                total,
+                layout: bestFit
               });
             });
           });
@@ -1578,7 +1644,7 @@
               if (quoteShowAllPapers) cols.push(`<td>${r.paperLabel}</td>`);
               cols.push(
                 `<td>${r.sheetKey}</td>`,
-                `<td style="text-align:right">${r.printsPer}</td>`,
+                `<td style="text-align:right">${r.printsPer}` + ${r.layout ? `<div class='muted' style='font-size:11px;line-height:1.2;margin-top:2px'>${r.layout.cols}×${r.layout.rows} · sheet ${r.layout.sheetOrientation}${r.layout.printRotated ? ' · print rotated' : ''}</div>` : ''}</td>`,
                 `<td style="text-align:right">${r.sheets}</td>`,
                 `<td style="text-align:right">$${r.perSheetFront.toFixed(4)} / $${r.perSheetBack.toFixed(4)}</td>`,
                 `<td style="text-align:right"><b>$${r.total.toFixed(2)}</b></td>`
@@ -2720,9 +2786,16 @@ const quoteRows = computeQuickQuoteRows();
                             <td className="px-2 py-1">
                               {row.sheetKey}
                             </td>
-                            <td className="px-2 py-1 text-right">
-                              {row.printsPer}
-                            </td>
+<td className="px-2 py-1 text-right">
+  <div className="font-semibold">{row.printsPer}</div>
+  {row.layout && (
+    <div className="text-[10px] text-slate-500 leading-tight">
+      {row.layout.cols}×{row.layout.rows} · sheet{" "}
+      {row.layout.sheetOrientation}
+      {row.layout.printRotated ? " · print rotated" : ""}
+    </div>
+  )}
+</td>
                             <td className="px-2 py-1 text-right">
                               {row.sheets}
                             </td>
