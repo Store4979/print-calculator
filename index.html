@@ -185,6 +185,51 @@
         { key: "hp_translucent_bond", label: "HP Translucent Bond Paper" }
       ];
 
+      // Blueprint (large format - fixed sizes, 20lb plain bond only)
+      const BLUEPRINT_SIZES = [
+        { key: "11x17", w: 11, h: 17, label: "11×17" },
+        { key: "12x18", w: 12, h: 18, label: "12×18" },
+        { key: "17x22", w: 17, h: 22, label: "17×22" },
+        { key: "18x24", w: 18, h: 24, label: "18×24" },
+        { key: "22x34", w: 22, h: 34, label: "22×34" },
+        { key: "24x36", w: 24, h: 36, label: "24×36" },
+        { key: "30x42", w: 30, h: 42, label: "30×42" },
+        { key: "34x44", w: 34, h: 44, label: "34×44" },
+        { key: "36x48", w: 36, h: 48, label: "36×48" }
+      ];
+
+      // Defaults based on the uploaded blueprint pricing sheet:
+      // - price is configured as "price per sq ft" (PSF)
+      // - quantity tiers are per SIZE (sheet count), editable in Admin
+      const buildInitialBlueprintPricing = () => {
+        const psfDefaults = [1.13, 0.56, 0.48, 0.41];
+        const sizeTierMax = {
+          "11x17": [50, 150, 400, null],
+          "12x18": [50, 150, 400, null],
+          "17x22": [33, 100, 266, null],
+          "18x24": [33, 100, 266, null],
+          "22x34": [16, 50, 133, null],
+          "24x36": [16, 50, 133, null],
+          "30x42": [11, 33, 88, null],
+          "34x44": [9, 27, 72, null],
+          "36x48": [8, 25, 66, null]
+        };
+
+        const bp = {};
+        BLUEPRINT_SIZES.forEach((s) => {
+          const maxes = sizeTierMax[s.key] || [50, 150, 400, null];
+          bp[s.key] = {
+            tiers: [
+              { maxQty: maxes[0], psf: psfDefaults[0] },
+              { maxQty: maxes[1], psf: psfDefaults[1] },
+              { maxQty: maxes[2], psf: psfDefaults[2] },
+              { maxQty: maxes[3], psf: psfDefaults[3] }
+            ]
+          };
+        });
+        return bp;
+      };
+
       // localStorage keys
       const LS_PRICING_KEY = "printcalc_sheet_pricing_v1";
       const LS_LF_PRICING_KEY = "printcalc_lf_pricing_v1";
@@ -194,6 +239,7 @@
       const LS_LF_ADDONS_KEY = "printcalc_lf_addons_v1";
       const LS_MARKUP_PER_PAPER_KEY = "printcalc_markup_per_paper_v1";
       const LS_LF_MARKUP_PER_PAPER_KEY = "printcalc_lf_markup_per_paper_v1";
+      const LS_BP_PRICING_KEY = "printcalc_blueprint_pricing_v1";
 
       // ---------- HELPERS ----------
 
@@ -333,6 +379,16 @@
           coroSign: 0
         });
 
+        // Blueprint state (large format - fixed sizes, 20lb plain bond only)
+        const [bpPricing, setBpPricing] = useState(
+          buildInitialBlueprintPricing
+        );
+        const [bpSizeKey, setBpSizeKey] = useState("24x36");
+        const [bpQty, setBpQty] = useState(1);
+        const [bpMaintainProp, setBpMaintainProp] = useState(true);
+        const [bpImage, setBpImage] = useState(null);
+        const [bpRotation, setBpRotation] = useState(0);
+
         // Admin toggles
         const [isAdmin, setIsAdmin] = useState(false);
         const [showAdmin, setShowAdmin] = useState(false);
@@ -364,6 +420,7 @@
         const frontRef = useRef(null);
         const backRef = useRef(null);
         const lfRef = useRef(null);
+        const bpRef = useRef(null);
 
         // -------- LOAD FROM localStorage + pricing.json --------
 
@@ -389,6 +446,9 @@
               const lsLfMarkup = window.localStorage.getItem(
                 LS_LF_MARKUP_PER_PAPER_KEY
               );
+              const lsBp = window.localStorage.getItem(
+                LS_BP_PRICING_KEY
+              );
 
               if (lsPricing) setPricing(JSON.parse(lsPricing));
               if (lsLfPricing) setLfPricing(JSON.parse(lsLfPricing));
@@ -406,6 +466,7 @@
                   ...prev,
                   ...JSON.parse(lsLfMarkup)
                 }));
+              if (lsBp) setBpPricing(JSON.parse(lsBp));
 
               // 2) pricing.json from site root
               const resp = await fetch("pricing.json", {
@@ -523,6 +584,15 @@
                     JSON.stringify(json.lfAddonPricing)
                   );
                 }
+
+                // Blueprint pricing (large format - fixed sizes)
+                if (json.blueprintPricing) {
+                  setBpPricing(json.blueprintPricing);
+                  window.localStorage.setItem(
+                    LS_BP_PRICING_KEY,
+                    JSON.stringify(json.blueprintPricing)
+                  );
+                }
               }
             } catch (err) {
               console.error("Error loading pricing.json/localStorage", err);
@@ -586,6 +656,13 @@
             JSON.stringify(lfMarkupPerPaper)
           );
         }, [lfMarkupPerPaper]);
+
+        useEffect(() => {
+          window.localStorage.setItem(
+            LS_BP_PRICING_KEY,
+            JSON.stringify(bpPricing)
+          );
+        }, [bpPricing]);
 
         // -------- SHEET GEOMETRY --------
 
@@ -871,6 +948,88 @@
 
         const lfTotalWithDiscount = lfTotal * getLfDiscountFactor(lfAreaSqFt);
 
+        // -------- BLUEPRINT (PRESET LARGE FORMAT SIZES) --------
+
+        const getBlueprintSize = (key) =>
+          BLUEPRINT_SIZES.find((s) => s.key === key) || BLUEPRINT_SIZES[0];
+
+        const bpSize = getBlueprintSize(bpSizeKey);
+        const bpWidth = bpSize.w;
+        const bpHeight = bpSize.h;
+
+        const bpAreaPerSheetSqFt = (bpWidth * bpHeight) / 144;
+        const bpTotalSqFt = bpAreaPerSheetSqFt * Math.max(0, bpQty || 0);
+
+        const getBlueprintTier = (sizeKey, qty) => {
+          const cfg = (bpPricing || {})[sizeKey] || {};
+          const tiers = Array.isArray(cfg.tiers) ? cfg.tiers : [];
+          const q = Math.max(0, Number(qty) || 0);
+
+          // pick first tier whose maxQty is null (open-ended) or >= qty
+          for (const t of tiers) {
+            const maxQ = t.maxQty == null ? null : Number(t.maxQty);
+            if (maxQ == null || q <= maxQ) {
+              return {
+                maxQty: maxQ,
+                psf: Number(t.psf) || 0
+              };
+            }
+          }
+          // fallback: last tier
+          const last = tiers[tiers.length - 1] || { maxQty: null, psf: 0 };
+          return { maxQty: last.maxQty == null ? null : Number(last.maxQty), psf: Number(last.psf) || 0 };
+        };
+
+        const bpTier = getBlueprintTier(bpSizeKey, bpQty);
+        const bpPsf = bpTier.psf;
+
+        const bpPerSheet = bpPsf * bpAreaPerSheetSqFt;
+        const bpTotal = bpPerSheet * Math.max(0, Number(bpQty) || 0);
+
+        const drawBlueprint = (canvas, imgFile) => {
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+
+          const wPx = inchesToPx(bpWidth);
+          const hPx = inchesToPx(bpHeight);
+
+          canvas.width = wPx;
+          canvas.height = hPx;
+
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, wPx, hPx);
+
+          if (!imgFile) return;
+
+          const img = new Image();
+          img.onload = () => {
+            ctx.save();
+            ctx.translate(wPx / 2, hPx / 2);
+            const rad = (bpRotation * Math.PI) / 180;
+            ctx.rotate(rad);
+
+            let drawW = wPx;
+            let drawH = (img.height / img.width) * wPx;
+            if (bpMaintainProp) {
+              if (drawH > hPx) {
+                drawH = hPx;
+                drawW = (img.width / img.height) * hPx;
+              }
+            } else {
+              drawW = wPx;
+              drawH = hPx;
+            }
+
+            ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+            ctx.restore();
+          };
+          img.src = URL.createObjectURL(imgFile);
+        };
+
+        useEffect(() => {
+          drawBlueprint(bpRef.current, bpImage);
+        }, [bpImage, bpSizeKey, bpMaintainProp, bpRotation]);
+
         const drawLargeFormat = (canvas, imgFile) => {
           if (!canvas) return;
           const ctx = canvas.getContext("2d");
@@ -958,6 +1117,22 @@
           doc.save("large_format_preview.pdf");
         };
 
+        const downloadBlueprintPDF = () => {
+          if (!bpRef.current) return;
+          const pdfW = bpWidth;
+          const pdfH = bpHeight;
+
+          const doc = new jsPDF({
+            orientation: pdfW >= pdfH ? "landscape" : "portrait",
+            unit: "in",
+            format: [pdfW, pdfH]
+          });
+
+          const data = bpRef.current.toDataURL("image/png", 1.0);
+          doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
+          doc.save("blueprint_preview.pdf");
+        };
+
         // -------- EMAIL ORDER (Netlify Function) --------
 
         const sendOrderEmail = async (jobType, pdfBlob) => {
@@ -1015,6 +1190,18 @@
                   coroSign: lfCoroSign
                 },
                 lfTotal: lfTotalWithDiscount.toFixed(2)
+              },
+              blueprints: {
+                size: bpSizeKey,
+                width: bpWidth,
+                height: bpHeight,
+                qty: bpQty,
+                paperKey: "plain_20lb",
+                colorMode: "bw",
+                psf: Number(bpPsf || 0).toFixed(4),
+                areaPerSheetSqFt: bpAreaPerSheetSqFt.toFixed(3),
+                totalSqFt: bpTotalSqFt.toFixed(3),
+                total: bpTotal.toFixed(2)
               },
               user: { name, email, phone }
             };
@@ -1106,6 +1293,28 @@
           doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
           const blob = doc.output("blob");
           await sendOrderEmail("large-format", blob);
+        };
+
+
+
+        const orderBlueprintJob = async () => {
+          if (!bpRef.current) {
+            alert("Please upload a blueprint image first.");
+            return;
+          }
+          const pdfW = bpWidth;
+          const pdfH = bpHeight;
+
+          const doc = new jsPDF({
+            orientation: pdfW >= pdfH ? "landscape" : "portrait",
+            unit: "in",
+            format: [pdfW, pdfH]
+          });
+
+          const data = bpRef.current.toDataURL("image/png", 1.0);
+          doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
+          const blob = doc.output("blob");
+          await sendOrderEmail("blueprints", blob);
         };
 
         // -------- ADMIN ACTIONS --------
@@ -1208,6 +1417,7 @@
           const data = {
             sheetPricing: pricing,
             lfPricing,
+            blueprintPricing: bpPricing,
             sheetQtyDiscounts: quantityDiscounts,
             lfQtyDiscounts: lfQuantityDiscounts,
             sheetMarkupPerPaper: markupPerPaper,
@@ -1236,6 +1446,7 @@
 
               if (json.sheetPricing) setPricing(json.sheetPricing);
               if (json.lfPricing) setLfPricing(json.lfPricing);
+              if (json.blueprintPricing) setBpPricing(json.blueprintPricing);
               if (json.sheetQtyDiscounts)
                 setQuantityDiscounts(json.sheetQtyDiscounts);
               if (json.lfQtyDiscounts)
@@ -1985,6 +2196,122 @@
                     </div>
                   </div>
                 </section>
+                {/* BLUEPRINT SECTION */}
+                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-semibold text-slate-800 text-sm">
+                      Blueprint Printing
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      20lb plain bond only · B/W
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4 items-end text-sm">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600">
+                        Blueprint size
+                      </label>
+                      <select
+                        value={bpSizeKey}
+                        onChange={(e) => setBpSizeKey(e.target.value)}
+                        className="border rounded-md px-2 py-1 text-sm"
+                      >
+                        {BLUEPRINT_SIZES.map((s) => (
+                          <option key={s.key} value={s.key}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600">
+                        Quantity (sheets)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={bpQty}
+                        onChange={(e) => setBpQty(+e.target.value || 1)}
+                        className="border rounded-md px-2 py-1 text-sm w-28"
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-1 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={bpMaintainProp}
+                        onChange={(e) => setBpMaintainProp(e.target.checked)}
+                      />
+                      Keep image proportions
+                    </label>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files[0];
+                        if (!f) return;
+                        setBpImage(f);
+                      }}
+                      className="border rounded-md px-2 py-1 text-xs"
+                    />
+                    <button
+                      onClick={() => setBpRotation((r) => (r + 90) % 360)}
+                      className="px-3 py-1 border rounded-md bg-white text-slate-700"
+                    >
+                      Rotate 90°
+                    </button>
+                  </div>
+
+                  <canvas
+                    ref={bpRef}
+                    className="w-full h-auto border border-dashed border-slate-300 rounded-md bg-slate-50"
+                  />
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                    <div className="space-y-1">
+                      <p>
+                        Size:{" "}
+                        <span className="font-semibold">
+                          {bpSize.label}
+                        </span>{" "}
+                        · Qty:{" "}
+                        <span className="font-semibold">{bpQty}</span>
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Area / sheet: {bpAreaPerSheetSqFt.toFixed(2)} sq ft · PSF: $
+                        {bpPsf.toFixed(2)} · Per sheet: $
+                        {bpPerSheet.toFixed(2)}
+                      </p>
+                      <p className="text-base font-semibold text-slate-900">
+                        Estimated total: ${bpTotal.toFixed(2)}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        Tier rule is editable in Admin per size (PSF + quantity
+                        breaks).
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={downloadBlueprintPDF}
+                        className="px-4 py-2 rounded-full bg-blue-600 text-white text-sm shadow-sm hover:bg-blue-700"
+                      >
+                        Download Blueprint PDF
+                      </button>
+                      <button
+                        onClick={orderBlueprintJob}
+                        className="px-4 py-2 rounded-full bg-emerald-600 text-white text-sm shadow-sm hover:bg-emerald-700"
+                      >
+                        Order Blueprints (Email)
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
               </div>
             )}
 
@@ -2869,6 +3196,163 @@
                       </div>
                     </div>
                   </div>
+                {/* BLUEPRINT PRICING */}
+                <div className="border-t pt-4 text-xs">
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-sm mb-1">
+                        Blueprint Pricing (20lb Plain Bond Only)
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Edit price per square foot (PSF) and the sheet-quantity breaks for each blueprint size.
+                        Tier 4 is always open-ended (everything above Tier 3).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setBpPricing(buildInitialBlueprintPricing())}
+                      className="px-3 py-1.5 rounded-full bg-slate-800 text-white"
+                    >
+                      Reset blueprint defaults
+                    </button>
+                  </div>
+
+                  <div className="mt-3 overflow-auto max-h-80 border rounded">
+                    <table className="min-w-full text-[11px]">
+                      <thead className="bg-gray-100">
+                        <tr>
+                          <th className="px-2 py-1 text-left">Size</th>
+                          <th className="px-2 py-1 text-right">Area (sq ft)</th>
+
+                          <th className="px-2 py-1 text-right">Tier 1 max qty</th>
+                          <th className="px-2 py-1 text-right">Tier 1 PSF</th>
+
+                          <th className="px-2 py-1 text-right">Tier 2 max qty</th>
+                          <th className="px-2 py-1 text-right">Tier 2 PSF</th>
+
+                          <th className="px-2 py-1 text-right">Tier 3 max qty</th>
+                          <th className="px-2 py-1 text-right">Tier 3 PSF</th>
+
+                          <th className="px-2 py-1 text-right">Tier 4+ PSF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {BLUEPRINT_SIZES.map((s) => {
+                          const area = (s.w * s.h) / 144;
+                          const cfg = (bpPricing || {})[s.key] || {};
+                          const tiers = Array.isArray(cfg.tiers) ? cfg.tiers : [];
+                          const t0 = tiers[0] || { maxQty: "", psf: 0 };
+                          const t1 = tiers[1] || { maxQty: "", psf: 0 };
+                          const t2 = tiers[2] || { maxQty: "", psf: 0 };
+                          const t3 = tiers[3] || { maxQty: null, psf: 0 };
+
+                          const updateTier = (tierIdx, patch) => {
+                            setBpPricing((prev) => {
+                              const next = { ...(prev || {}) };
+                              const cur = next[s.key] || { tiers: [] };
+                              const curTiers = Array.isArray(cur.tiers) ? [...cur.tiers] : [];
+                              while (curTiers.length < 4) curTiers.push({ maxQty: null, psf: 0 });
+                              curTiers[tierIdx] = { ...curTiers[tierIdx], ...patch };
+                              // keep tier 4 open-ended
+                              curTiers[3] = { ...curTiers[3], maxQty: null };
+                              next[s.key] = { ...cur, tiers: curTiers };
+                              return next;
+                            });
+                          };
+
+                          return (
+                            <tr key={s.key} className="border-t">
+                              <td className="px-2 py-1">{s.label}</td>
+                              <td className="px-2 py-1 text-right">{area.toFixed(2)}</td>
+
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  value={t0.maxQty ?? ""}
+                                  onChange={(e) =>
+                                    updateTier(0, { maxQty: +e.target.value || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Number(t0.psf) || 0}
+                                  onChange={(e) =>
+                                    updateTier(0, { psf: Number(e.target.value) || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  value={t1.maxQty ?? ""}
+                                  onChange={(e) =>
+                                    updateTier(1, { maxQty: +e.target.value || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Number(t1.psf) || 0}
+                                  onChange={(e) =>
+                                    updateTier(1, { psf: Number(e.target.value) || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  value={t2.maxQty ?? ""}
+                                  onChange={(e) =>
+                                    updateTier(2, { maxQty: +e.target.value || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Number(t2.psf) || 0}
+                                  onChange={(e) =>
+                                    updateTier(2, { psf: Number(e.target.value) || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+
+                              <td className="px-2 py-1 text-right">
+                                <span className="text-slate-500">+</span>
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Number(t3.psf) || 0}
+                                  onChange={(e) =>
+                                    updateTier(3, { psf: Number(e.target.value) || 0 })
+                                  }
+                                  className="border rounded px-1 py-0.5 w-20 text-right"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
                 </div>
               </section>
             )}
