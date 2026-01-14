@@ -404,6 +404,10 @@
         const [quoteDocPages, setQuoteDocPages] = useState(0);
         const [quoteDocDuplex, setQuoteDocDuplex] = useState(true);
 
+        // Quick Quote filters
+        const [quotePaperKey, setQuotePaperKey] = useState("28lb");
+        const [quoteShowAllPapers, setQuoteShowAllPapers] = useState(false);
+
         // Large-format state (simple version)
         const [lfWidth, setLfWidth] = useState(24); // in
         const [lfHeight, setLfHeight] = useState(36); // in
@@ -1479,7 +1483,9 @@
 
         const computeQuickQuoteRows = () => {
           const rows = [];
-          const sizes = ["8.5x11", "11x17"];
+          const sizes = quoteShowAllPapers
+            ? Object.keys(PRESET_SHEETS).filter((k) => k !== "custom")
+            : SHEET_KEYS_FOR_PAPER[quotePaperKey] || [];
 
           sizes.forEach((sk) => {
             const [sW, sH] = PRESET_SHEETS[sk];
@@ -1535,7 +1541,113 @@
           return rows.sort((a, b) => a.total - b.total);
         };
 
-        const quoteRows = computeQuickQuoteRows();
+        
+        const printQuickQuote = () => {
+          const rows = computeQuickQuoteRows();
+          if (!rows.length) {
+            alert("Nothing to print yet. Enter your quote details first.");
+            return;
+          }
+
+          const paperLabel = (key) =>
+            (PAPER_TYPES.find((p) => p.key === key) || {}).label || key;
+
+          const now = new Date();
+          const headerTitle = "Print Quote";
+          const selectedPaperText = quoteShowAllPapers
+            ? "All paper types"
+            : paperLabel(quotePaperKey);
+
+          const tableHeaders = quoteShowAllPapers
+            ? ["Paper", "Sheet", "Prints/Sheet", "Sheets", "Front/Back per Sheet", "Total"]
+            : ["Sheet", "Prints/Sheet", "Sheets", "Front/Back per Sheet", "Total"];
+
+          const rowHtml = rows
+            .map((r) => {
+              const cols = [];
+              if (quoteShowAllPapers) cols.push(`<td>${r.paperLabel}</td>`);
+              cols.push(
+                `<td>${r.sheetKey}</td>`,
+                `<td style="text-align:right">${r.printsPer}</td>`,
+                `<td style="text-align:right">${r.sheets}</td>`,
+                `<td style="text-align:right">$${r.perSheetFront.toFixed(4)} / $${r.perSheetBack.toFixed(4)}</td>`,
+                `<td style="text-align:right"><b>$${r.total.toFixed(2)}</b></td>`
+              );
+              return `<tr>${cols.join("")}</tr>`;
+            })
+            .join("");
+
+          const best = rows.slice().sort((a, b) => a.total - b.total)[0];
+
+          const w = window.open("", "_blank", "width=900,height=700");
+          if (!w) return;
+
+          w.document.write(`
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${headerTitle}</title>
+<style>
+  body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:24px; color:#0f172a;}
+  .muted{color:#64748b;}
+  h1{margin:0 0 6px; font-size:20px;}
+  .meta{margin:0 0 18px; font-size:12px;}
+  .box{border:1px solid #e2e8f0; border-radius:12px; padding:14px; margin:12px 0;}
+  table{width:100%; border-collapse:collapse; font-size:12px;}
+  th, td{border-bottom:1px solid #e2e8f0; padding:8px 8px; vertical-align:top;}
+  th{text-align:left; background:#f8fafc;}
+  .right{text-align:right;}
+  .best{background:#ecfdf5;}
+  .kpi{display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;}
+  .kpi .k{border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; min-width:150px;}
+  .kpi .t{font-size:11px; color:#64748b; font-weight:700;}
+  .kpi .v{margin-top:6px; font-size:14px; font-weight:800;}
+  @media print { .noPrint{display:none;} body{margin:0.5in;} }
+</style>
+</head>
+<body>
+  <h1>Customer Quote</h1>
+  <p class="meta muted">
+    Date: ${now.toLocaleString()}<br/>
+    Print size: ${quoteWidth}" × ${quoteHeight}" &nbsp;•&nbsp; Quantity: ${quoteQty}<br/>
+    Paper: ${selectedPaperText}<br/>
+    Front: ${quoteFrontColorMode.toUpperCase()}${quoteBackEnabled ? " \u00A0\u2022\u00A0 Back: " + quoteBackColorMode.toUpperCase() : ""}<br/>
+    ${quoteDocPages > 0 ? `Document pages: ${quoteDocPages}${quoteDocDuplex ? " (duplex)" : ""}` : ""}
+  </p>
+
+  <div class="box">
+    <div style="font-weight:800;margin-bottom:8px">Best option</div>
+    <div class="kpi">
+      <div class="k"><div class="t">Sheet</div><div class="v">${best.sheetKey}</div></div>
+      ${quoteShowAllPapers ? `<div class="k"><div class="t">Paper</div><div class="v">${best.paperLabel}</div></div>` : ""}
+      <div class="k"><div class="t">Total</div><div class="v">$${best.total.toFixed(2)}</div></div>
+    </div>
+  </div>
+
+  <div class="box">
+    <div style="font-weight:800;margin-bottom:8px">Price breakdown</div>
+    <table>
+      <thead>
+        <tr>${tableHeaders.map(h=>`<th>${h}</th>`).join("")}</tr>
+      </thead>
+      <tbody>
+        ${rowHtml}
+      </tbody>
+    </table>
+  </div>
+
+  <button class="noPrint" onclick="window.print()" style="padding:10px 14px;border:0;border-radius:10px;background:#0f172a;color:white;font-weight:700;cursor:pointer">Print</button>
+</body>
+</html>
+          `);
+          w.document.close();
+          w.focus();
+          // Allow the window to render before printing (some browsers need this)
+          setTimeout(() => w.print(), 250);
+        };
+
+const quoteRows = computeQuickQuoteRows();
         const bestQuote = quoteRows[0] || null;
 
         const docSheetsNeeded =
@@ -2325,9 +2437,14 @@
                     </h2>
                     <p className="text-xs text-slate-500 max-w-xl">
                       Enter a print size and quantity, and we’ll show
-                      pricing across all supported sheet sizes and
-                      paper types, using your current markup and
-                      discounts.
+                      pricing for your selected paper type (or all paper types if enabled), using your current markup and discounts.
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      Showing:{" "}
+                      {quoteShowAllPapers
+                        ? "All paper types"
+                        : (PAPER_TYPES.find((p) => p.key === quotePaperKey) || {})
+                            .label}
                     </p>
                     {quoteBackEnabled && (
                       <p className="text-xs text-amber-600">
@@ -2337,6 +2454,43 @@
                     )}
                   </div>
                   <div className="flex flex-wrap gap-3 text-sm">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600">
+                        Paper type
+                      </label>
+                      <select
+                        value={quotePaperKey}
+                        onChange={(e) => setQuotePaperKey(e.target.value)}
+                        className="border rounded-md px-2 py-1 text-sm"
+                      >
+                        {PAPER_TYPES.map((pt) => (
+                          <option key={pt.key} value={pt.key}>
+                            {pt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="mt-1 flex items-center gap-2 text-[11px] text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={quoteShowAllPapers}
+                          onChange={(e) =>
+                            setQuoteShowAllPapers(e.target.checked)
+                          }
+                        />
+                        Show all paper types
+                      </label>
+                    </div>
+
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={printQuickQuote}
+                        className="px-3 py-2 rounded-full bg-slate-800 text-white text-sm shadow-sm hover:bg-slate-900"
+                      >
+                        Print Quote
+                      </button>
+                    </div>
+
                     <div>
                       <label className="block text-xs font-medium text-slate-600">
                         Width (in)
@@ -2498,9 +2652,11 @@
                   <table className="min-w-full text-[11px]">
                     <thead className="bg-slate-100">
                       <tr>
-                        <th className="px-2 py-1 text-left">
-                          Paper Type
-                        </th>
+                        {quoteShowAllPapers && (
+                          <th className="px-2 py-1 text-left">
+                            Paper Type
+                          </th>
+                        )}
                         <th className="px-2 py-1 text-left">
                           Sheet Size
                         </th>
@@ -2546,9 +2702,11 @@
                                 : "bg-white")
                             }
                           >
-                            <td className="px-2 py-1">
-                              {row.paperLabel}
-                            </td>
+                            {quoteShowAllPapers && (
+                              <td className="px-2 py-1">
+                                {row.paperLabel}
+                              </td>
+                            )}
                             <td className="px-2 py-1">
                               {row.sheetKey}
                             </td>
