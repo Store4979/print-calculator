@@ -132,7 +132,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script type="text/babel">
-      const { useState, useEffect, useRef } = React;
+      const { useState, useEffect, useRef, useMemo } = React;
       const { jsPDF } = window.jspdf;
 
       // ---------- CONSTANTS ----------
@@ -463,7 +463,13 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         });
 
         // Sheet images
-        const [frontImage, setFrontImage] = useState(null);
+        const [frontImage, setFrontImage] = useState(null); // legacy single upload (still supported)
+        const [frontFiles, setFrontFiles] = useState([]);   // multi-upload: [{id, file, name, rotation, qty}]
+        const [copiesPerFile, setCopiesPerFile] = useState(1); // default qty for NEW uploads (and optional apply-all)
+        const [autoQtyFromFiles, setAutoQtyFromFiles] = useState(true);
+        const [selectedFrontId, setSelectedFrontId] = useState(null);
+        const [frontPreviewPage, setFrontPreviewPage] = useState(0);
+
         const [backImage, setBackImage] = useState(null);
         const [frontRotation, setFrontRotation] = useState(0);
         const [backRotation, setBackRotation] = useState(0);
@@ -583,11 +589,22 @@ const [lfPaperKey, setLfPaperKey] = useState(() => {
 
         // Canvases
         const frontRef = useRef(null);
+        const frontPlacementsRef = useRef([]);
         const backRef = useRef(null);
         const lfRef = useRef(null);
         const bpRef = useRef(null);
+        // If enabled, automatically set Quantity = sum(per-file qty)
+        useEffect(() => {
+          if (!autoQtyFromFiles) return;
+          const total = (frontFiles || []).reduce((sum, it) => {
+            const q = Math.max(0, Number(it?.qty) || 0);
+            return sum + q;
+          }, 0);
+          if (!total) return;
+          setPrints((p) => ({ ...p, quantity: Math.max(1, total) }));
+        }, [frontFiles, autoQtyFromFiles]);
 
-        // -------- LOAD FROM localStorage + pricing.json --------
+// -------- LOAD FROM localStorage + pricing.json --------
 
         useEffect(() => {
           (async () => {
@@ -1030,6 +1047,82 @@ useEffect(() => {
             (Number(prints.quantity) || 0) / Math.max(1, printsPerSheet)
           )
         );
+        const frontSlotInfo = { cols: 0, rows: 0, perSheet: printsPerSheet };
+        // --- Multi-file preview paging (front) ---
+        // When multi-files are used, each file can have its own rotation.
+        // Rotation should rotate the *print box* on the sheet (swap W/H) and therefore affects how many fit per sheet.
+        // We compute total pages via a simple greedy pack (row-by-row) that supports mixed rotations.
+        const frontTotalPrints = (frontFiles && frontFiles.length)
+          ? (frontFiles || []).reduce((s, it) => s + Math.max(0, Number(it?.qty) || 0), 0)
+          : Math.max(0, Number(prints.quantity) || 0);
+
+        const frontTotalPages = useMemo(() => {
+          if (!(frontFiles && frontFiles.length)) return 1;
+
+          const bleedIn = showBleed ? BLEED_IN : 0;
+          const targetWIn = Math.max(0.1, Number(prints.width) || 0) + bleedIn * 2;
+          const targetHIn = Math.max(0.1, Number(prints.height) || 0) + bleedIn * 2;
+          const innerWIn = orientedWIn - 2 * MARGIN_IN;
+          const innerHIn = orientedHIn - 2 * MARGIN_IN;
+          if (innerWIn <= 0 || innerHIn <= 0) return 1;
+
+          const placeDims = (rotDeg) => {
+            const r = ((Number(rotDeg) || 0) % 360 + 360) % 360;
+            const swap = r === 90 || r === 270;
+            return swap ? [targetHIn, targetWIn] : [targetWIn, targetHIn];
+          };
+
+          let pageCount = 1;
+          let x = 0;
+          let y = 0;
+          let rowH = 0;
+
+          const newRow = () => {
+            y = y + rowH + SPACING_IN;
+            x = 0;
+            rowH = 0;
+          };
+
+          const newPage = () => {
+            pageCount += 1;
+            x = 0;
+            y = 0;
+            rowH = 0;
+          };
+
+          for (const it of (frontFiles || [])) {
+            const q = Math.max(0, Number(it?.qty) || 0);
+            const [w, h] = placeDims(it?.rotation);
+            for (let i = 0; i < q; i++) {
+              const wNeed = w + (x > 0 ? SPACING_IN : 0);
+              if (x > 0 && x + wNeed > innerWIn) {
+                newRow();
+              }
+              if (y + h > innerHIn) {
+                newPage();
+              }
+              rowH = Math.max(rowH, h);
+              x = x + wNeed;
+            }
+          }
+
+          return Math.max(1, pageCount);
+        }, [frontFiles, prints.width, prints.height, orientedWIn, orientedHIn, showBleed]);
+
+        // Clamp page index when totals change
+        useEffect(() => {
+          setFrontPreviewPage((p) => {
+            const maxP = Math.max(0, frontTotalPages - 1);
+            if (p < 0) return 0;
+            if (p > maxP) return maxP;
+            return p;
+          });
+        }, [frontTotalPages]);
+
+        // Reset to page 1 when layout inputs change significantly
+        useEffect(() => {
+          setFrontPreviewPage(0);
+        }, [sheetKey, orientation, customSize?.w, customSize?.h, prints.width, prints.height, showBleed, frontFiles.length]);
 
         const currentPaper =
           paperTypes.find((pt) => pt.key === paperKey) || paperTypes[0];
@@ -1072,160 +1165,272 @@ useEffect(() => {
         const totalPrice = perSheetTotal * sheetsNeeded * discountFactor;
 
         // -------- DRAW FRONT/BACK CANVAS --------
+        const drawSheet = (canvas, imageInput, rotationDeg, pageIndex = 0, placementsRef = null) => {
+          return new Promise((resolve) => {
+            if (!canvas) return resolve();
+            const ctx = canvas.getContext("2d");
 
-        const drawSheet = (canvas, imageFile, rotationDeg) => {
-          if (!canvas) return;
-          const ctx = canvas.getContext("2d");
+            const wPx = inchesToPx(orientedWIn);
+            const hPx = inchesToPx(orientedHIn);
+            canvas.width = wPx;
+            canvas.height = hPx;
 
-          const wPx = inchesToPx(orientedWIn);
-          const hPx = inchesToPx(orientedHIn);
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, wPx, hPx);
 
-          canvas.width = wPx;
-          canvas.height = hPx;
+            // Normalize inputs:
+            // - Array input: either [{id,file,name,rotation,qty}] or File[]
+            // - Single input: File
+            let items = [];
+            if (Array.isArray(imageInput)) {
+              items = (imageInput || []).filter(Boolean).map((it, idx) => {
+                if (it && it.file) {
+                  return {
+                    id: String(it.id ?? `f_${idx}`),
+                    file: it.file,
+                    name: it.name ?? it.file?.name ?? `File ${idx + 1}`,
+                    rotation: Number(it.rotation) || 0,
+                    qty: Math.max(0, Number(it.qty) || 0)
+                  };
+                }
+                return {
+                  id: `legacy_${idx}`,
+                  file: it,
+                  name: it?.name ?? `File ${idx + 1}`,
+                  rotation: 0,
+                  qty: 0
+                };
+              });
+            } else if (imageInput) {
+              items = [{
+                id: "single",
+                file: imageInput,
+                name: imageInput?.name ?? "Image",
+                rotation: 0,
+                qty: Math.max(0, Number(prints.quantity) || 0)
+              }];
+            }
 
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, wPx, hPx);
+            if (!items.length) {
+              if (placementsRef) placementsRef.current = [];
+              return resolve();
+            }
 
-          if (!imageFile) return;
+            const marginPx = inchesToPx(MARGIN_IN);
+            const spacingPx = inchesToPx(SPACING_IN);
+            const bleedPx = showBleed ? inchesToPx(BLEED_IN) : 0;
 
-          const marginPx = inchesToPx(MARGIN_IN);
-          const spacingPx = inchesToPx(SPACING_IN);
-          const bleedPx = showBleed ? inchesToPx(BLEED_IN) : 0;
+            const baseTargetWPx = inchesToPx(prints.width) + bleedPx * 2;
+            const baseTargetHPx = inchesToPx(prints.height) + bleedPx * 2;
 
-          const targetWPx = inchesToPx(prints.width) + bleedPx * 2;
-          const targetHPx = inchesToPx(prints.height) + bleedPx * 2;
-
-          const img = new Image();
-          img.onload = () => {
-            // Compute columns & rows including bleed box
             const innerW = wPx - 2 * marginPx;
             const innerH = hPx - 2 * marginPx;
-            if (innerW <= 0 || innerH <= 0) return;
+            if (innerW <= 0 || innerH <= 0) {
+              if (placementsRef) placementsRef.current = [];
+              return resolve();
+            }
 
-            const cols = Math.max(
-              1,
-              Math.floor((innerW + spacingPx) / (targetWPx + spacingPx))
-            );
-            const rows = Math.max(
-              1,
-              Math.floor((innerH + spacingPx) / (targetHPx + spacingPx))
-            );
+            const totalPrintsFromItems = (items || []).reduce((s, it) => s + Math.max(0, Number(it.qty) || 0), 0);
+            const totalPrints = totalPrintsFromItems > 0 ? totalPrintsFromItems : Math.max(0, Number(prints.quantity) || 0);
+            if (!totalPrints) {
+              if (placementsRef) placementsRef.current = [];
+              return resolve();
+            }
 
-            const totalW =
-              cols * targetWPx + (cols - 1) * spacingPx;
-            const totalH =
-              rows * targetHPx + (rows - 1) * spacingPx;
+            const loadImage = (file) =>
+              new Promise((resolveImg) => {
+                try {
+                  const img = new Image();
+                  const url = URL.createObjectURL(file);
+                  img.onload = () => resolveImg({ img, url });
+                  img.onerror = () => {
+                    try { URL.revokeObjectURL(url); } catch {}
+                    resolveImg(null);
+                  };
+                  img.src = url;
+                } catch {
+                  resolveImg(null);
+                }
+              });
 
-            const offX = marginPx + (innerW - totalW) / 2;
-            const offY = marginPx + (innerH - totalH) / 2;
+            Promise.all(items.map((it) => loadImage(it.file))).then((loaded) => {
+              const loadedMap = new Map();
+              (loaded || []).forEach((res, idx) => {
+                if (!res) return;
+                loadedMap.set(items[idx].id, { ...res, item: items[idx] });
+              });
 
-            let placed = 0;
-            let firstX = null;
-            let firstY = null;
-            let firstW = null;
-            let firstH = null;
+              if (!loadedMap.size) {
+                if (placementsRef) placementsRef.current = [];
+                return resolve();
+              }
 
-            for (let r = 0; r < rows && placed < prints.quantity; r++) {
-              for (let c = 0; c < cols && placed < prints.quantity; c++) {
-                const x = offX + c * (targetWPx + spacingPx);
-                const y = offY + r * (targetHPx + spacingPx);
+              const normRot = (deg) => {
+                const r = ((Number(deg) || 0) % 360 + 360) % 360;
+                return r;
+              };
+              const isSwap = (deg) => {
+                const r = normRot(deg);
+                return r === 90 || r === 270;
+              };
 
-                if (firstX == null) {
-                  firstX = x;
-                  firstY = y;
-                  firstW = targetWPx;
-                  firstH = targetHPx;
+              // Build a "virtual" sequence of print instances in order (A... then B..., based on per-file qty).
+              const sequence = [];
+              if (totalPrintsFromItems > 0) {
+                for (const it of items) {
+                  const q = Math.max(0, Number(it.qty) || 0);
+                  for (let i = 0; i < q; i++) sequence.push(it);
+                }
+              } else {
+                // Fallback: repeat items round-robin using prints.quantity
+                for (let i = 0; i < totalPrints; i++) sequence.push(items[i % items.length]);
+              }
+
+              // Pack placements row-by-row (supports mixed rotations and therefore mixed box W/H).
+              // We only keep placements for the requested pageIndex, but we still simulate pagination.
+              let page = 0;
+              let x = 0;
+              let y = 0;
+              let rowH = 0;
+
+              const pagePlacements = [];
+
+              const pushPlacement = (it, x0, y0, boxW, boxH) => {
+                pagePlacements.push({ x: x0, y: y0, w: boxW, h: boxH, fileId: it.id });
+              };
+
+              const newRow = () => {
+                y = y + rowH + spacingPx;
+                x = 0;
+                rowH = 0;
+              };
+              const newPage = () => {
+                page += 1;
+                x = 0;
+                y = 0;
+                rowH = 0;
+              };
+
+              for (let i = 0; i < sequence.length; i++) {
+                const it = sequence[i];
+                const swap = isSwap(it.rotation);
+                const boxW = swap ? baseTargetHPx : baseTargetWPx;
+                const boxH = swap ? baseTargetWPx : baseTargetHPx;
+
+                const wNeed = boxW + (x > 0 ? spacingPx : 0);
+                if (x > 0 && x + wNeed > innerW) {
+                  newRow();
+                }
+                if (y + boxH > innerH) {
+                  newPage();
                 }
 
-                ctx.save();
-                // Draw cut box (target area including bleed)
+                // stop once we've passed the requested page and have already collected it
+                if (page > pageIndex) break;
+
+                if (page === pageIndex) {
+                  const pxX = marginPx + x + (x > 0 ? spacingPx : 0);
+                  const pxY = marginPx + y;
+                  pushPlacement(it, pxX, pxY, boxW, boxH);
+                }
+
+                rowH = Math.max(rowH, boxH);
+                x = x + wNeed;
+              }
+
+              // Center the used area within the inner box (nice look)
+              if (pagePlacements.length) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const p of pagePlacements) {
+                  minX = Math.min(minX, p.x);
+                  minY = Math.min(minY, p.y);
+                  maxX = Math.max(maxX, p.x + p.w);
+                  maxY = Math.max(maxY, p.y + p.h);
+                }
+                const usedW = maxX - minX;
+                const usedH = maxY - minY;
+                const desiredMinX = marginPx + (innerW - usedW) / 2;
+                const desiredMinY = marginPx + (innerH - usedH) / 2;
+                const dx = desiredMinX - minX;
+                const dy = desiredMinY - minY;
+                for (const p of pagePlacements) {
+                  p.x += dx;
+                  p.y += dy;
+                }
+              }
+
+              // Draw
+              for (const p of pagePlacements) {
+                const loadedObj = loadedMap.get(p.fileId);
+                const chosen = loadedObj?.img;
+                const it = loadedObj?.item;
+                if (!chosen || !it) continue;
+
                 if (showCutLines) {
+                  ctx.save();
                   ctx.strokeStyle = "#000";
                   ctx.lineWidth = 1;
-                  ctx.strokeRect(x, y, targetWPx, targetHPx);
+                  ctx.strokeRect(p.x, p.y, p.w, p.h);
+                  ctx.restore();
                 }
 
-                // Draw image inside bleed box, rotated
-                ctx.translate(
-                  x + targetWPx / 2,
-                  y + targetHPx / 2
-                );
-                const rad = (rotationDeg * Math.PI) / 180;
+                const contentW = p.w - bleedPx * 2;
+                const contentH = p.h - bleedPx * 2;
+
+                ctx.save();
+                ctx.translate(p.x + p.w / 2, p.y + p.h / 2);
+
+                // Rotate image for this file. This is intended to rotate the whole print placement,
+                // so we swap the print box (above) and rotate the artwork accordingly.
+                const rad = (((Number(rotationDeg) || 0) + (Number(it.rotation) || 0)) * Math.PI) / 180;
                 ctx.rotate(rad);
 
-                const contentW = targetWPx - bleedPx * 2;
-                const contentH = targetHPx - bleedPx * 2;
+                ctx.beginPath();
+                ctx.rect(-contentW / 2, -contentH / 2, contentW, contentH);
+                ctx.clip();
 
-                let drawW = contentW;
-                let drawH = (img.height / img.width) * contentW;
-                if (drawH < contentH) {
+                // If this file is rotated, allow stretching to exactly fill the target size (as requested).
+                let drawW, drawH;
+                const perFileRot = normRot(it.rotation);
+                if (perFileRot !== 0) {
+                  drawW = contentW;
                   drawH = contentH;
-                  drawW = (img.width / img.height) * contentH;
+                } else {
+                  // cover fit (preserve aspect)
+                  drawW = contentW;
+                  drawH = (chosen.height / chosen.width) * contentW;
+                  if (drawH < contentH) {
+                    drawH = contentH;
+                    drawW = (chosen.width / chosen.height) * contentH;
+                  }
                 }
 
-                ctx.drawImage(
-                  img,
-                  -contentW / 2,
-                  -contentH / 2,
-                  contentW,
-                  contentH
-                );
-
-                // If grayscale (for B/W preview), apply a simple overlay
-                if (frontColorMode === "bw" || backColorMode === "bw") {
-                  // handled outside per side; here we just draw color,
-                  // but to keep it simple we'll not apply grayscale at canvas level
-                }
-
+                ctx.drawImage(chosen, -drawW / 2, -drawH / 2, drawW, drawH);
                 ctx.restore();
-                placed++;
               }
-            }
 
-            // Measurement guides (from left/top edges to first image)
-            if (showGuides && firstX != null) {
-              const leftIn = (firstX / DPI).toFixed(2);
-              const topIn = (firstY / DPI).toFixed(2);
+              if (placementsRef) placementsRef.current = pagePlacements;
 
-              ctx.strokeStyle = "red";
-              ctx.fillStyle = "red";
-              ctx.lineWidth = 1;
-              ctx.font = "12px sans-serif";
+              // Cleanup URLs
+              for (const v of loadedMap.values()) {
+                try { URL.revokeObjectURL(v.url); } catch {}
+              }
 
-              // Horizontal guide
-              ctx.beginPath();
-              ctx.moveTo(0, firstY + firstH + 20);
-              ctx.lineTo(firstX, firstY + firstH + 20);
-              ctx.stroke();
-              const leftText = leftIn + " in";
-              const leftWidth = ctx.measureText(leftText).width;
-              ctx.fillText(
-                leftText,
-                firstX / 2 - leftWidth / 2,
-                firstY + firstH + 15
-              );
-
-              // Vertical guide
-              ctx.beginPath();
-              ctx.moveTo(firstX + firstW + 20, 0);
-              ctx.lineTo(firstX + firstW + 20, firstY);
-              ctx.stroke();
-              const topText = topIn + " in";
-              ctx.fillText(
-                topText,
-                firstX + firstW + 25,
-                firstY / 2 + 4
-              );
-            }
-          };
-          img.src = URL.createObjectURL(imageFile);
+              resolve({ placements: pagePlacements });
+            });
+          });
         };
 
+
+
         useEffect(() => {
-          drawSheet(frontRef.current, frontImage, frontRotation);
+          drawSheet(frontRef.current, (frontFiles?.length ? frontFiles : frontImage), frontRotation, frontPreviewPage, frontPlacementsRef);
         }, [
+          frontFiles,
+          copiesPerFile,
           frontImage,
           frontRotation,
+          frontPreviewPage,
           sheetKey,
           orientation,
           customSize,
@@ -1237,7 +1442,7 @@ useEffect(() => {
 
         useEffect(() => {
           if (showBack) {
-            drawSheet(backRef.current, backImage, backRotation);
+            drawSheet(backRef.current, backImage, backRotation, 0, null);
           }
         }, [
           backImage,
@@ -1412,8 +1617,7 @@ useEffect(() => {
         }, [lfImage, lfWidth, lfHeight, lfMaintainProp, lfRotation]);
 
         // -------- PDF EXPORTS --------
-
-        const downloadSheetPDF = () => {
+        const downloadSheetPDF = async () => {
           if (!frontRef.current) return;
 
           const pdfW = orientedWIn;
@@ -1425,13 +1629,31 @@ useEffect(() => {
             format: [pdfW, pdfH]
           });
 
-          const frontData = frontRef.current.toDataURL("image/png", 1.0);
-          doc.addImage(frontData, "PNG", 0, 0, pdfW, pdfH);
+          // Render EVERY sheet page (multi-file layouts can span multiple pages).
+          const pages = Math.max(1, Number(frontTotalPages) || 1);
+          const input = (frontFiles?.length ? frontFiles : frontImage);
 
-          if (showBack && backRef.current && backImage) {
-            doc.addPage([pdfW, pdfH], orientation);
-            const backData = backRef.current.toDataURL("image/png", 1.0);
-            doc.addImage(backData, "PNG", 0, 0, pdfW, pdfH);
+          // Pre-render back (same for all sheets) once, if used
+          let backData = null;
+          if (showBack && backImage) {
+            const backCanvas = document.createElement("canvas");
+            await drawSheet(backCanvas, backImage, backRotation, 0, null);
+            backData = backCanvas.toDataURL("image/png", 1.0);
+          }
+
+          for (let p = 0; p < pages; p++) {
+            const c = document.createElement("canvas");
+            await drawSheet(c, input, frontRotation, p, null);
+            const data = c.toDataURL("image/png", 1.0);
+
+            if (p > 0) doc.addPage([pdfW, pdfH], orientation);
+            doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
+
+            // If duplex/back is enabled, add the matching back page for EACH sheet
+            if (backData) {
+              doc.addPage([pdfW, pdfH], orientation);
+              doc.addImage(backData, "PNG", 0, 0, pdfW, pdfH);
+            }
           }
 
           doc.save("print_preview.pdf");
@@ -2223,6 +2445,32 @@ const quoteRows = computeQuickQuoteRows();
 
         // ---------- UI ----------
 
+
+        const handleFrontCanvasClick = (e) => {
+          const canvas = frontRef.current;
+          if (!canvas) return;
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = canvas.width / Math.max(1, rect.width);
+          const scaleY = canvas.height / Math.max(1, rect.height);
+          const x = (e.clientX - rect.left) * scaleX;
+          const y = (e.clientY - rect.top) * scaleY;
+
+          const placements = frontPlacementsRef.current || [];
+          const hit = placements.find((p) => x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h);
+          if (hit?.fileId) setSelectedFrontId(hit.fileId);
+        };
+
+        const handleFrontCanvasWheel = (e) => {
+          if (!frontFiles?.length) return;
+          if (frontTotalPages <= 1) return;
+          e.preventDefault();
+          const dir = e.deltaY > 0 ? 1 : -1;
+          setFrontPreviewPage((p) => {
+            const next = p + dir;
+            const maxP = Math.max(0, frontTotalPages - 1);
+            return Math.max(0, Math.min(maxP, next));
+          });
+        };
         return (
           <div className="space-y-6 pb-10">
             <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -2524,25 +2772,241 @@ const quoteRows = computeQuickQuoteRows();
                       <input
                         type="file"
                         accept="image/*"
+                        multiple
                         onChange={(e) => {
-                          const f = e.target.files[0];
-                          if (!f) return;
-                          setFrontImage(f);
+                          const files = Array.from(e.target.files || []);
+                          if (!files.length) return;
+                          const defaultQty = Math.max(1, Number(copiesPerFile) || 1);
+                          const newItems = files.map((file) => ({
+                            id: `f_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+                            file,
+                            name: file.name,
+                            rotation: 0,
+                            qty: defaultQty
+                          }));
+                          setFrontFiles((prev) => {
+                            const next = [...(prev || []), ...newItems];
+                            return next;
+                          });
+                          setFrontImage(files[0]); // legacy single-image support
+                          // auto-select first new item if nothing selected
+                          setSelectedFrontId((cur) => cur || newItems[0]?.id || null);
+                          e.target.value = "";
                         }}
                         className="border rounded-md px-2 py-1 text-xs"
                       />
-                      <button
-                        onClick={() =>
-                          setFrontRotation((r) => (r + 90) % 360)
-                        }
-                        className="px-3 py-1 border rounded-md bg-white text-slate-700"
-                      >
-                        Rotate 90°
-                      </button>
-                    </div>
 
+                      <div className="w-full flex flex-wrap items-center gap-2">
+                        <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                          <span>Default qty (new files)</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={copiesPerFile}
+                            onChange={(e) =>
+                              setCopiesPerFile(Math.max(1, +e.target.value || 1))
+                            }
+                            className="border rounded-md px-2 py-1 text-xs w-24 text-right"
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          disabled={!frontFiles.length}
+                          onClick={() => {
+                            const q = Math.max(1, Number(copiesPerFile) || 1);
+                            setFrontFiles((prev) => (prev || []).map((it) => ({ ...it, qty: q })));
+                          }}
+                          className="px-2 py-1 border rounded-md bg-white text-slate-700 disabled:opacity-50"
+                          title="Apply default qty to all uploaded files"
+                        >
+                          Apply qty to all
+                        </button>
+
+                        <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={autoQtyFromFiles}
+                            onChange={(e) => setAutoQtyFromFiles(e.target.checked)}
+                          />
+                          Auto-set overall quantity from files
+                        </label>
+
+                        {frontFiles.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFrontFiles([]);
+                              setSelectedFrontId(null);
+                              setFrontImage(null);
+                            }}
+                            className="px-2 py-1 border rounded-md bg-white text-slate-700"
+                          >
+                            Clear files ({frontFiles.length})
+                          </button>
+                        )}
+                      </div>
+
+                      {/* File list + per-file controls */}
+                      {frontFiles.length > 0 && (
+                        <div className="w-full space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            {frontFiles.slice(0, 18).map((it) => (
+                              <button
+                                key={it.id}
+                                type="button"
+                                onClick={() => setSelectedFrontId(it.id)}
+                                className={
+                                  "inline-flex items-center gap-2 px-2 py-1 rounded-full border text-[11px] bg-white max-w-full " +
+                                  (selectedFrontId === it.id
+                                    ? "border-blue-400 bg-blue-50"
+                                    : "border-slate-200")
+                                }
+                                title={it.name}
+                              >
+                                <span className="max-w-[160px] truncate">{it.name}</span>
+                                <span className="text-slate-500">×{Math.max(0, Number(it.qty) || 0)}</span>
+                                <span className="text-slate-500">{(Number(it.rotation) || 0)}°</span>
+                                <span
+                                  className="text-red-500"
+                                  title="Remove"
+                                  onClick={(ev) => {
+                                    ev.preventDefault();
+                                    ev.stopPropagation();
+                                    setFrontFiles((prev) => {
+                                      const next = (prev || []).filter((x) => x.id !== it.id);
+                                      // keep selection sane
+                                      if (selectedFrontId === it.id) {
+                                        setSelectedFrontId(next[0]?.id || null);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  ✕
+                                </span>
+                              </button>
+                            ))}
+                            {frontFiles.length > 18 && (
+                              <span className="text-[11px] text-slate-500">
+                                +{frontFiles.length - 18} more
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] text-slate-500">
+                              Click a print on the preview (or a pill above) to select a file.
+                            </span>
+
+                            {(() => {
+                              const sel = frontFiles.find((f) => f.id === selectedFrontId);
+                              if (!sel) return null;
+                              return (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[11px] text-slate-600">Selected:</span>
+                                  <span className="text-[11px] font-semibold text-slate-800 max-w-[220px] truncate" title={sel.name}>{sel.name}</span>
+
+                                  <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                                    <span>Qty</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={Math.max(0, Number(sel.qty) || 0)}
+                                      onChange={(e) => {
+                                        const v = Math.max(0, Number(e.target.value) || 0);
+                                        setFrontFiles((prev) => (prev || []).map((x) => x.id === sel.id ? { ...x, qty: v } : x));
+                                      }}
+                                      className="border rounded-md px-2 py-1 text-xs w-20 text-right"
+                                    />
+                                  </label>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setFrontFiles((prev) =>
+                                        (prev || []).map((x) =>
+                                          x.id === sel.id
+                                            ? { ...x, rotation: ((Number(x.rotation) || 0) + 90) % 360 }
+                                            : x
+                                        )
+                                      )
+                                    }
+                                    className="px-2 py-1 border rounded-md bg-white text-slate-700"
+                                  >
+                                    Rotate selected 90°
+                                  </button>
+                                </div>
+                              );
+                            })()}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (frontFiles.length) {
+                                  // Rotate all uploaded files
+                                  setFrontFiles((prev) =>
+                                    (prev || []).map((x) => ({
+                                      ...x,
+                                      rotation: ((Number(x.rotation) || 0) + 90) % 360
+                                    }))
+                                  );
+                                } else {
+                                  // Legacy single file
+                                  setFrontRotation((r) => (r + 90) % 360);
+                                }
+                              }}
+                              className="px-2 py-1 border rounded-md bg-white text-slate-700"
+                            >
+                              Rotate all 90°
+                            </button>
+                          </div>
+
+                          {/* Paging controls */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] text-slate-500">
+                              Layout: {frontSlotInfo.cols}×{frontSlotInfo.rows} = {frontSlotInfo.perSheet}/sheet · Total prints: {frontTotalPrints}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={frontTotalPages <= 1 || frontPreviewPage <= 0}
+                                onClick={() => setFrontPreviewPage((p) => Math.max(0, p - 1))}
+                                className="px-2 py-1 border rounded-md bg-white text-slate-700 disabled:opacity-50"
+                              >
+                                Prev
+                              </button>
+                              <span className="text-[11px] text-slate-600">
+                                Page {frontPreviewPage + 1} of {frontTotalPages}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={frontTotalPages <= 1 || frontPreviewPage >= frontTotalPages - 1}
+                                onClick={() => setFrontPreviewPage((p) => Math.min(frontTotalPages - 1, p + 1))}
+                                className="px-2 py-1 border rounded-md bg-white text-slate-700 disabled:opacity-50"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Legacy single-image rotate */}
+                      {!frontFiles.length && (
+                        <button
+                          onClick={() => setFrontRotation((r) => (r + 90) % 360)}
+                          className="px-3 py-1 border rounded-md bg-white text-slate-700"
+                        >
+                          Rotate 90°
+                        </button>
+                      )}
+                    </div>
                     <canvas
                       ref={frontRef}
+                      onClick={handleFrontCanvasClick}
+                      onWheel={handleFrontCanvasWheel}
+                      style={{ cursor: frontFiles.length ? "pointer" : "default" }}
                       className="w-full h-auto border border-dashed border-slate-300 rounded-md bg-slate-50"
                     />
                     <p className="text-[11px] text-slate-500">
