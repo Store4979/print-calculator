@@ -1,4 +1,104 @@
 {
+  "paperTypes": [
+    {
+      "key": "28lb",
+      "label": "28 LB Paper"
+    },
+    {
+      "key": "20lb",
+      "label": "20 LB Paper"
+    },
+    {
+      "key": "80c",
+      "label": "80 LB Cardstock Cover"
+    },
+    {
+      "key": "110c",
+      "label": "110 LB Cardstock Cover"
+    },
+    {
+      "key": "80t",
+      "label": "80 LB Text Gloss"
+    },
+    {
+      "key": "100t",
+      "label": "100 LB Text Gloss"
+    },
+    {
+      "key": "14pt",
+      "label": "14PT Gloss"
+    },
+    {
+      "key": "18pt",
+      "label": "18PT Gloss"
+    }
+  ],
+  "sheetKeysForPaper": {
+    "28lb": [
+      "8.5x11",
+      "11x17"
+    ],
+    "20lb": [
+      "8.5x11",
+      "11x17"
+    ],
+    "80c": [
+      "8.5x11",
+      "11x17"
+    ],
+    "110c": [
+      "8.5x11",
+      "11x17"
+    ],
+    "80t": [
+      "8.5x11",
+      "11x17"
+    ],
+    "100t": [
+      "8.5x11",
+      "11x17"
+    ],
+    "14pt": [
+      "12x18"
+    ],
+    "18pt": [
+      "12x18"
+    ]
+  },
+  "lfPaperTypes": [
+    {
+      "key": "hp_gloss_photo",
+      "label": "HP Universal Instant-dry Gloss Photo Paper"
+    },
+    {
+      "key": "plain_20lb",
+      "label": "20lb Plain Bond Paper"
+    },
+    {
+      "key": "lexjet_46_bond",
+      "label": "LexJet #46 Bright White Bond Paper"
+    },
+    {
+      "key": "lexjet_thrifty_banner",
+      "label": "LexJet TOUGHcoat ThriftyBanner"
+    },
+    {
+      "key": "lexjet_polypro",
+      "label": "LexJet TOUGHcoat Matte Polypropylene v2"
+    },
+    {
+      "key": "fredrix_canvas",
+      "label": "Fredrix 777VWR Vivid Matte Canvas"
+    },
+    {
+      "key": "hp_adhesive_polypro",
+      "label": "HP Everyday Adhesive Matte Polypropylene"
+    },
+    {
+      "key": "hp_translucent_bond",
+      "label": "HP Translucent Bond Paper"
+    }
+  ],
   "sheetPricing": {
     "28lb": {
       "8.5x11": {
@@ -102,12 +202,6 @@
     }
   },
   "lfPricing": {
-    "hp_super_matte": {
-      "baseCostColor": 0.85,
-      "baseCostBW": 0,
-      "priceColor": 7.65,
-      "priceBW": 0
-    },
     "hp_gloss_photo": {
       "baseCostColor": 0.74,
       "baseCostBW": 0,
@@ -381,7 +475,6 @@
     "18pt": "350"
   },
   "lfMarkupPerPaper": {
-    "hp_super_matte": 800,
     "hp_gloss_photo": 800,
     "plain_20lb": 800,
     "lexjet_46_bond": 800,
