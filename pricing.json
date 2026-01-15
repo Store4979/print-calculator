@@ -157,6 +157,188 @@
       "priceBW": 0
     }
   },
+  "blueprintPricing": {
+    "11x17": {
+      "tiers": [
+        {
+          "maxQty": 50,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 150,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 400,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "12x18": {
+      "tiers": [
+        {
+          "maxQty": 50,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 150,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 400,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "17x22": {
+      "tiers": [
+        {
+          "maxQty": 33,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 100,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 266,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "18x24": {
+      "tiers": [
+        {
+          "maxQty": 33,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 100,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 266,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "22x34": {
+      "tiers": [
+        {
+          "maxQty": 16,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 50,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 133,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "24x36": {
+      "tiers": [
+        {
+          "maxQty": 16,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 50,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 133,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "30x42": {
+      "tiers": [
+        {
+          "maxQty": 11,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 33,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 88,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "34x44": {
+      "tiers": [
+        {
+          "maxQty": 9,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 27,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 72,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "36x48": {
+      "tiers": [
+        {
+          "maxQty": 8,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 25,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 66,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    }
+  },
   "sheetQtyDiscounts": [
     {
       "minSheets": 50,
