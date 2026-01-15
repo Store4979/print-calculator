@@ -149,7 +149,7 @@
         custom: null
       };
 
-      const PAPER_TYPES = [
+      const DEFAULT_PAPER_TYPES = [
         { key: "28lb", label: "28 LB Paper" },
         { key: "20lb", label: "20 LB Paper" },
         { key: "80c", label: "80 LB Cardstock Cover" },
@@ -161,7 +161,7 @@
       ];
 
       // Which sheet sizes each paper type supports
-      const SHEET_KEYS_FOR_PAPER = {
+      const DEFAULT_SHEET_KEYS_FOR_PAPER = {
         "28lb": ["8.5x11", "11x17"],
         "20lb": ["8.5x11", "11x17"],
         "80c": ["8.5x11", "11x17"],
@@ -173,7 +173,7 @@
       };
 
       // Large-format paper types: keys MUST match pricing.json
-      const LF_PAPER_TYPES = [
+      const DEFAULT_LF_PAPER_TYPES = [
         { key: "hp_super_matte", label: "HP Super Heavyweight Plus Matte Paper" },
         { key: "hp_gloss_photo", label: "HP Universal Instant-dry Gloss Photo Paper" },
         { key: "plain_20lb", label: "20lb Plain Bond Paper" },
@@ -240,40 +240,99 @@
       const LS_MARKUP_PER_PAPER_KEY = "printcalc_markup_per_paper_v1";
       const LS_LF_MARKUP_PER_PAPER_KEY = "printcalc_lf_markup_per_paper_v1";
       const LS_BP_PRICING_KEY = "printcalc_blueprint_pricing_v1";
+const LS_PAPER_TYPES_KEY = "printcalc_paper_types_v1";
+const LS_SHEET_KEYS_FOR_PAPER_KEY = "printcalc_sheet_keys_for_paper_v1";
+const LS_LF_PAPER_TYPES_KEY = "printcalc_lf_paper_types_v1";
 
       // ---------- HELPERS ----------
 
       const inchesToPx = (inches) => Math.round(inches * DPI);
 
-      // Sheet pricing internal shape: baseCostColor/baseCostBW + priceColor/priceBW
-      const buildInitialPricing = () => {
-        const pricing = {};
-        PAPER_TYPES.forEach((pt) => {
-          pricing[pt.key] = {};
-          (SHEET_KEYS_FOR_PAPER[pt.key] || []).forEach((sheetKey) => {
-            pricing[pt.key][sheetKey] = {
-              baseCostColor: 0,
-              baseCostBW: 0,
-              priceColor: 0,
-              priceBW: 0
-            };
-          });
-        });
-        return pricing;
-      };
+const safeParseJson = (raw, fallback) => {
+  try {
+    const v = JSON.parse(raw);
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
 
-      const buildInitialLfPricing = () => {
-        const lf = {};
-        LF_PAPER_TYPES.forEach((pt) => {
-          lf[pt.key] = {
-            baseCostColor: 0, // per sq ft
-            baseCostBW: 0, // per sq ft
-            priceColor: 0,
-            priceBW: 0
-          };
-        });
-        return lf;
+const sanitizeKey = (s) =>
+  String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "paper";
+
+const uniqueKey = (base, existingKeys) => {
+  let k = sanitizeKey(base);
+  if (!existingKeys.has(k)) return k;
+  let i = 2;
+  while (existingKeys.has(`${k}_${i}`)) i++;
+  return `${k}_${i}`;
+};
+
+const loadPaperTypes = () => {
+  const raw = window.localStorage.getItem(LS_PAPER_TYPES_KEY);
+  const loaded = raw ? safeParseJson(raw, null) : null;
+  if (Array.isArray(loaded) && loaded.length) return loaded;
+  return DEFAULT_PAPER_TYPES;
+};
+
+const loadSheetKeysForPaper = (paperTypes) => {
+  const raw = window.localStorage.getItem(LS_SHEET_KEYS_FOR_PAPER_KEY);
+  const loaded = raw ? safeParseJson(raw, null) : null;
+  if (loaded && typeof loaded === "object") return loaded;
+  // default mapping based on the bundled defaults
+  const map = {};
+  (paperTypes || DEFAULT_PAPER_TYPES).forEach((pt) => {
+    map[pt.key] = DEFAULT_SHEET_KEYS_FOR_PAPER[pt.key] || ["8.5x11"];
+  });
+  return map;
+};
+
+const loadLfPaperTypes = () => {
+  const raw = window.localStorage.getItem(LS_LF_PAPER_TYPES_KEY);
+  const loaded = raw ? safeParseJson(raw, null) : null;
+  if (Array.isArray(loaded) && loaded.length) return loaded;
+  return DEFAULT_LF_PAPER_TYPES;
+};
+
+      // Sheet pricing internal shape: baseCostColor/baseCostBW + priceColor/priceBW
+const buildInitialPricingFrom = (paperTypes, sheetKeysForPaper) => {
+  const pricing = {};
+  (paperTypes || []).forEach((pt) => {
+    pricing[pt.key] = {};
+    (sheetKeysForPaper?.[pt.key] || []).forEach((sheetKey) => {
+      pricing[pt.key][sheetKey] = {
+        baseCostColor: 0,
+        baseCostBW: 0,
+        priceColor: 0,
+        priceBW: 0
       };
+    });
+  });
+  return pricing;
+};
+
+const buildInitialPricing = () =>
+  buildInitialPricingFrom(DEFAULT_PAPER_TYPES, DEFAULT_SHEET_KEYS_FOR_PAPER);
+
+      const buildInitialLfPricingFrom = (lfPaperTypes) => {
+  const lf = {};
+  (lfPaperTypes || []).forEach((pt) => {
+    lf[pt.key] = {
+      baseCostColor: 0, // per sq ft
+      baseCostBW: 0, // per sq ft
+      priceColor: 0,
+      priceBW: 0
+    };
+  });
+  return lf;
+};
+
+const buildInitialLfPricing = () =>
+  buildInitialLfPricingFrom(DEFAULT_LF_PAPER_TYPES);
 
       // normalizeEntry: support old shapes and pricing.json shape
       const normalizeEntry = (entry = {}) => {
@@ -414,23 +473,41 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         const [showBleed, setShowBleed] = useState(false);
         const [showCutLines, setShowCutLines] = useState(true);
 
-        const [paperKey, setPaperKey] = useState("28lb");
+        const [paperTypes, setPaperTypes] = useState(loadPaperTypes);
+const [sheetKeysForPaper, setSheetKeysForPaper] = useState(() =>
+  loadSheetKeysForPaper(loadPaperTypes())
+);
+
+const [paperKey, setPaperKey] = useState(() => {
+  const pts = loadPaperTypes();
+  return (pts && pts[0] ? pts[0].key : DEFAULT_PAPER_TYPES[0].key);
+});
         const [frontColorMode, setFrontColorMode] = useState("color"); // 'color' | 'bw'
         const [backColorMode, setBackColorMode] = useState("bw");
 
         // Pricing state
-        const [pricing, setPricing] = useState(buildInitialPricing);
-        const [lfPricing, setLfPricing] = useState(buildInitialLfPricing);
+        const [pricing, setPricing] = useState(() =>
+  buildInitialPricingFrom(
+    loadPaperTypes(),
+    loadSheetKeysForPaper(loadPaperTypes())
+  )
+);
+const [lfPricing, setLfPricing] = useState(() =>
+  buildInitialLfPricingFrom(loadLfPaperTypes())
+);
+
         const [markupPerPaper, setMarkupPerPaper] = useState(() => {
-          const init = {};
-          PAPER_TYPES.forEach((pt) => (init[pt.key] = 0));
-          return init;
-        });
+  const init = {};
+  const pts = loadPaperTypes();
+  (pts || []).forEach((pt) => (init[pt.key] = 0));
+  return init;
+});
         const [lfMarkupPerPaper, setLfMarkupPerPaper] = useState(() => {
-          const init = {};
-          LF_PAPER_TYPES.forEach((pt) => (init[pt.key] = 0));
-          return init;
-        });
+  const init = {};
+  const pts = loadLfPaperTypes();
+  (pts || []).forEach((pt) => (init[pt.key] = 0));
+  return init;
+});
 
         const [quantityDiscounts, setQuantityDiscounts] = useState([
           { minSheets: 0, discountPercent: 0 }
@@ -461,6 +538,18 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         const [isAdmin, setIsAdmin] = useState(false);
         const [showAdmin, setShowAdmin] = useState(false);
 
+        // Admin: add/remove paper types
+        const [newPaperLabel, setNewPaperLabel] = useState("");
+        const [newPaperKey, setNewPaperKey] = useState("");
+        const [newPaperSheets, setNewPaperSheets] = useState({
+          "8.5x11": true,
+          "11x17": true,
+          "12x18": false
+        });
+        const [newLfLabel, setNewLfLabel] = useState("");
+        const [newLfKey, setNewLfKey] = useState("");
+
+
         // Quick quote state
         const [quoteWidth, setQuoteWidth] = useState(5);
         const [quoteHeight, setQuoteHeight] = useState(7);
@@ -473,13 +562,17 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         const [quoteDocDuplex, setQuoteDocDuplex] = useState(true);
 
         // Quick Quote filters
-        const [quotePaperKey, setQuotePaperKey] = useState("28lb");
+        const [quotePaperKey, setQuotePaperKey] = useState(() => paperKey);
         const [quoteShowAllPapers, setQuoteShowAllPapers] = useState(false);
 
         // Large-format state (simple version)
         const [lfWidth, setLfWidth] = useState(24); // in
         const [lfHeight, setLfHeight] = useState(36); // in
-        const [lfPaperKey, setLfPaperKey] = useState(LF_PAPER_TYPES[0].key);
+        const [lfPaperTypes, setLfPaperTypes] = useState(loadLfPaperTypes);
+const [lfPaperKey, setLfPaperKey] = useState(() => {
+  const pts = loadLfPaperTypes();
+  return (pts && pts[0] ? pts[0].key : DEFAULT_LF_PAPER_TYPES[0].key);
+});
         const [lfColorMode, setLfColorMode] = useState("color");
         const [lfMaintainProp, setLfMaintainProp] = useState(true);
         const [lfImage, setLfImage] = useState(null);
@@ -522,8 +615,57 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
                 LS_BP_PRICING_KEY
               );
 
-              if (lsPricing) setPricing(JSON.parse(lsPricing));
-              if (lsLfPricing) setLfPricing(JSON.parse(lsLfPricing));
+if (lsPricing) {
+  const parsed = JSON.parse(lsPricing);
+  setPricing(parsed);
+
+  // If pricing has paper keys not in our list, merge them in
+  const existing = new Set((paperTypes || []).map((p) => p.key));
+  const extras = Object.keys(parsed || {})
+    .filter((k) => !existing.has(k))
+    .map((k) => ({ key: k, label: k }));
+  if (extras.length) {
+    const merged = [...(paperTypes || []), ...extras];
+    setPaperTypes(merged);
+    window.localStorage.setItem(
+      LS_PAPER_TYPES_KEY,
+      JSON.stringify(merged)
+    );
+  }
+
+  // infer sizes per paper if missing
+  setSheetKeysForPaper((prev) => {
+    const next = { ...(prev || {}) };
+    Object.keys(parsed || {}).forEach((pk) => {
+      if (!next[pk] || next[pk].length === 0) {
+        next[pk] = Object.keys(parsed[pk] || {});
+      }
+    });
+    window.localStorage.setItem(
+      LS_SHEET_KEYS_FOR_PAPER_KEY,
+      JSON.stringify(next)
+    );
+    return next;
+  });
+}
+
+if (lsLfPricing) {
+  const parsedLf = JSON.parse(lsLfPricing);
+  setLfPricing(parsedLf);
+
+  const existing = new Set((lfPaperTypes || []).map((p) => p.key));
+  const extras = Object.keys(parsedLf || {})
+    .filter((k) => !existing.has(k))
+    .map((k) => ({ key: k, label: k }));
+  if (extras.length) {
+    const merged = [...(lfPaperTypes || []), ...extras];
+    setLfPaperTypes(merged);
+    window.localStorage.setItem(
+      LS_LF_PAPER_TYPES_KEY,
+      JSON.stringify(merged)
+    );
+  }
+}
               if (lsQty) setQuantityDiscounts(JSON.parse(lsQty));
               if (lsLfQty) setLfQuantityDiscounts(JSON.parse(lsLfQty));
               if (lsBack) setBackSideFactor(parseFloat(lsBack) || 0.5);
@@ -547,6 +689,75 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
               if (resp.ok) {
                 const json = await resp.json();
 
+// Optional paper type lists (so you can add/remove types)
+if (Array.isArray(json.paperTypes) && json.paperTypes.length) {
+  setPaperTypes(json.paperTypes);
+  window.localStorage.setItem(
+    LS_PAPER_TYPES_KEY,
+    JSON.stringify(json.paperTypes)
+  );
+} else if (json.sheetPricing && typeof json.sheetPricing === "object") {
+  // If pricing has paper keys not in our list, merge them in
+  const existing = new Set((paperTypes || []).map((p) => p.key));
+  const extras = Object.keys(json.sheetPricing)
+    .filter((k) => !existing.has(k))
+    .map((k) => ({ key: k, label: k }));
+  if (extras.length) {
+    const merged = [...(paperTypes || []), ...extras];
+    setPaperTypes(merged);
+    window.localStorage.setItem(
+      LS_PAPER_TYPES_KEY,
+      JSON.stringify(merged)
+    );
+  }
+}
+
+if (json.sheetKeysForPaper && typeof json.sheetKeysForPaper === "object") {
+  setSheetKeysForPaper(json.sheetKeysForPaper);
+  window.localStorage.setItem(
+    LS_SHEET_KEYS_FOR_PAPER_KEY,
+    JSON.stringify(json.sheetKeysForPaper)
+  );
+} else if (json.sheetPricing && typeof json.sheetPricing === "object") {
+  // infer size keys per paper from sheetPricing
+  const inferred = {};
+  Object.keys(json.sheetPricing).forEach((pk) => {
+    inferred[pk] = Object.keys(json.sheetPricing[pk] || {});
+  });
+  setSheetKeysForPaper((prev) => {
+    const next = { ...(prev || {}) };
+    Object.keys(inferred).forEach((pk) => {
+      if (!next[pk] || next[pk].length === 0) next[pk] = inferred[pk];
+    });
+    window.localStorage.setItem(
+      LS_SHEET_KEYS_FOR_PAPER_KEY,
+      JSON.stringify(next)
+    );
+    return next;
+  });
+}
+
+if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
+  setLfPaperTypes(json.lfPaperTypes);
+  window.localStorage.setItem(
+    LS_LF_PAPER_TYPES_KEY,
+    JSON.stringify(json.lfPaperTypes)
+  );
+} else if (json.lfPricing && typeof json.lfPricing === "object") {
+  const existing = new Set((lfPaperTypes || []).map((p) => p.key));
+  const extras = Object.keys(json.lfPricing)
+    .filter((k) => !existing.has(k))
+    .map((k) => ({ key: k, label: k }));
+  if (extras.length) {
+    const merged = [...(lfPaperTypes || []), ...extras];
+    setLfPaperTypes(merged);
+    window.localStorage.setItem(
+      LS_LF_PAPER_TYPES_KEY,
+      JSON.stringify(merged)
+    );
+  }
+}
+
                 // Sheet pricing
                 if (json.sheetPricing) {
                   setPricing(json.sheetPricing);
@@ -558,7 +769,11 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
 
                 // Large format pricing
                 if (json.lfPricing) {
-                  const mergedLf = buildInitialLfPricing();
+                  const mergedLf = buildInitialLfPricingFrom(
+                    Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length
+                      ? json.lfPaperTypes
+                      : lfPaperTypes
+                  );
                   for (const k in json.lfPricing) {
                     if (mergedLf[k]) {
                       mergedLf[k] = { ...mergedLf[k], ...json.lfPricing[k] };
@@ -729,6 +944,55 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
           );
         }, [lfMarkupPerPaper]);
 
+useEffect(() => {
+  window.localStorage.setItem(
+    LS_PAPER_TYPES_KEY,
+    JSON.stringify(paperTypes)
+  );
+}, [paperTypes]);
+
+useEffect(() => {
+  window.localStorage.setItem(
+    LS_SHEET_KEYS_FOR_PAPER_KEY,
+    JSON.stringify(sheetKeysForPaper)
+  );
+}, [sheetKeysForPaper]);
+
+useEffect(() => {
+  window.localStorage.setItem(
+    LS_LF_PAPER_TYPES_KEY,
+    JSON.stringify(lfPaperTypes)
+  );
+}, [lfPaperTypes]);
+
+
+// Keep markup maps in sync when paper types are added/removed
+useEffect(() => {
+  setMarkupPerPaper((prev) => {
+    const next = { ...(prev || {}) };
+    (paperTypes || []).forEach((pt) => {
+      if (next[pt.key] == null) next[pt.key] = 0;
+    });
+    Object.keys(next).forEach((k) => {
+      if (!(paperTypes || []).some((p) => p.key === k)) delete next[k];
+    });
+    return next;
+  });
+}, [paperTypes]);
+
+useEffect(() => {
+  setLfMarkupPerPaper((prev) => {
+    const next = { ...(prev || {}) };
+    (lfPaperTypes || []).forEach((pt) => {
+      if (next[pt.key] == null) next[pt.key] = 0;
+    });
+    Object.keys(next).forEach((k) => {
+      if (!(lfPaperTypes || []).some((p) => p.key === k)) delete next[k];
+    });
+    return next;
+  });
+}, [lfPaperTypes]);
+
         useEffect(() => {
           window.localStorage.setItem(
             LS_BP_PRICING_KEY,
@@ -768,8 +1032,8 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         );
 
         const currentPaper =
-          PAPER_TYPES.find((pt) => pt.key === paperKey) || PAPER_TYPES[0];
-        const comboAllowed = (SHEET_KEYS_FOR_PAPER[paperKey] || []).includes(
+          paperTypes.find((pt) => pt.key === paperKey) || paperTypes[0];
+        const comboAllowed = (sheetKeysForPaper[paperKey] || []).includes(
           sheetKey
         );
 
@@ -1485,8 +1749,209 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
           });
         };
 
+
+const getPresetSheetKeys = () =>
+  Object.keys(PRESET_SHEETS).filter((k) => k !== "custom");
+
+const handleAddPaperType = () => {
+  const label = (newPaperLabel || "").trim() || "New Paper Type";
+  const baseKey = (newPaperKey || "").trim() || label;
+  const existing = new Set((paperTypes || []).map((p) => p.key));
+  const key = uniqueKey(baseKey, existing);
+
+  const chosenSheets = getPresetSheetKeys().filter(
+    (sk) => !!newPaperSheets[sk]
+  );
+  const sheets =
+    chosenSheets.length > 0 ? chosenSheets : ["8.5x11"];
+
+  const nextPaperTypes = [...(paperTypes || []), { key, label }];
+  setPaperTypes(nextPaperTypes);
+
+  setSheetKeysForPaper((prev) => ({
+    ...(prev || {}),
+    [key]: sheets
+  }));
+
+  setPricing((prev) => {
+    const next = { ...(prev || {}) };
+    next[key] = {};
+    sheets.forEach((sk) => {
+      next[key][sk] = {
+        baseCostColor: 0,
+        baseCostBW: 0,
+        priceColor: 0,
+        priceBW: 0
+      };
+    });
+    return next;
+  });
+
+  setMarkupPerPaper((prev) => ({ ...(prev || {}), [key]: 0 }));
+
+  setPaperKey(key);
+  setQuotePaperKey(key);
+
+  setNewPaperLabel("");
+  setNewPaperKey("");
+};
+
+const handleRemovePaperType = (key) => {
+  if (!key) return;
+  if ((paperTypes || []).length <= 1) {
+    alert("You must keep at least one paper type.");
+    return;
+  }
+  if (
+    !confirm(
+      `Remove paper type "${key}"? This will delete its pricing entries.`
+    )
+  )
+    return;
+
+  const nextPaperTypes = (paperTypes || []).filter(
+    (p) => p.key !== key
+  );
+  setPaperTypes(nextPaperTypes);
+
+  setSheetKeysForPaper((prev) => {
+    const next = { ...(prev || {}) };
+    delete next[key];
+    return next;
+  });
+
+  setPricing((prev) => {
+    const next = { ...(prev || {}) };
+    delete next[key];
+    return next;
+  });
+
+  setMarkupPerPaper((prev) => {
+    const next = { ...(prev || {}) };
+    delete next[key];
+    return next;
+  });
+
+  if (paperKey === key) setPaperKey(nextPaperTypes[0].key);
+  if (quotePaperKey === key) setQuotePaperKey(nextPaperTypes[0].key);
+};
+
+const handleUpdatePaperLabel = (key, label) => {
+  const next = (paperTypes || []).map((p) =>
+    p.key === key ? { ...p, label } : p
+  );
+  setPaperTypes(next);
+};
+
+const handleTogglePaperSheet = (paperKeyToEdit, sheetKeyToToggle) => {
+  setSheetKeysForPaper((prev) => {
+    const next = { ...(prev || {}) };
+    const current = new Set(next[paperKeyToEdit] || []);
+    if (current.has(sheetKeyToToggle)) current.delete(sheetKeyToToggle);
+    else current.add(sheetKeyToToggle);
+
+    const arr = Array.from(current);
+    // must keep at least one size
+    if (arr.length === 0) return prev;
+
+    next[paperKeyToEdit] = arr;
+
+    // also ensure pricing has matching entries
+    setPricing((pPrev) => {
+      const pNext = { ...(pPrev || {}) };
+      if (!pNext[paperKeyToEdit]) pNext[paperKeyToEdit] = {};
+      // add new
+      arr.forEach((sk) => {
+        if (!pNext[paperKeyToEdit][sk]) {
+          pNext[paperKeyToEdit][sk] = {
+            baseCostColor: 0,
+            baseCostBW: 0,
+            priceColor: 0,
+            priceBW: 0
+          };
+        }
+      });
+      // remove old
+      Object.keys(pNext[paperKeyToEdit]).forEach((sk) => {
+        if (!currentHas(arr, sk)) delete pNext[paperKeyToEdit][sk];
+      });
+      return pNext;
+    });
+
+    return next;
+  });
+};
+
+const currentHas = (arr, v) => arr.includes(v);
+
+const handleAddLfPaperType = () => {
+  const label =
+    (newLfLabel || "").trim() || "New LF Paper Type";
+  const baseKey = (newLfKey || "").trim() || label;
+  const existing = new Set((lfPaperTypes || []).map((p) => p.key));
+  const key = uniqueKey(baseKey, existing);
+
+  const nextLfPaperTypes = [...(lfPaperTypes || []), { key, label }];
+  setLfPaperTypes(nextLfPaperTypes);
+
+  setLfPricing((prev) => ({
+    ...(prev || {}),
+    [key]: { baseCostColor: 0, baseCostBW: 0, priceColor: 0, priceBW: 0 }
+  }));
+
+  setLfMarkupPerPaper((prev) => ({ ...(prev || {}), [key]: 0 }));
+
+  setLfPaperKey(key);
+
+  setNewLfLabel("");
+  setNewLfKey("");
+};
+
+const handleRemoveLfPaperType = (key) => {
+  if (!key) return;
+  if ((lfPaperTypes || []).length <= 1) {
+    alert("You must keep at least one large format paper type.");
+    return;
+  }
+  if (
+    !confirm(
+      `Remove large format paper type "${key}"? This will delete its pricing entries.`
+    )
+  )
+    return;
+
+  const nextLfPaperTypes = (lfPaperTypes || []).filter(
+    (p) => p.key !== key
+  );
+  setLfPaperTypes(nextLfPaperTypes);
+
+  setLfPricing((prev) => {
+    const next = { ...(prev || {}) };
+    delete next[key];
+    return next;
+  });
+
+  setLfMarkupPerPaper((prev) => {
+    const next = { ...(prev || {}) };
+    delete next[key];
+    return next;
+  });
+
+  if (lfPaperKey === key) setLfPaperKey(nextLfPaperTypes[0].key);
+};
+
+const handleUpdateLfPaperLabel = (key, label) => {
+  const next = (lfPaperTypes || []).map((p) =>
+    p.key === key ? { ...p, label } : p
+  );
+  setLfPaperTypes(next);
+};
+
         const exportPricingJson = () => {
           const data = {
+            paperTypes,
+            sheetKeysForPaper,
+            lfPaperTypes,
             sheetPricing: pricing,
             lfPricing,
             blueprintPricing: bpPricing,
@@ -1515,6 +1980,29 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
           reader.onload = (e) => {
             try {
               const json = JSON.parse(e.target.result);
+
+// Optional paper type lists (so you can add/remove types)
+if (Array.isArray(json.paperTypes) && json.paperTypes.length) {
+  setPaperTypes(json.paperTypes);
+  window.localStorage.setItem(
+    LS_PAPER_TYPES_KEY,
+    JSON.stringify(json.paperTypes)
+  );
+}
+if (json.sheetKeysForPaper && typeof json.sheetKeysForPaper === "object") {
+  setSheetKeysForPaper(json.sheetKeysForPaper);
+  window.localStorage.setItem(
+    LS_SHEET_KEYS_FOR_PAPER_KEY,
+    JSON.stringify(json.sheetKeysForPaper)
+  );
+}
+if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
+  setLfPaperTypes(json.lfPaperTypes);
+  window.localStorage.setItem(
+    LS_LF_PAPER_TYPES_KEY,
+    JSON.stringify(json.lfPaperTypes)
+  );
+}
 
               if (json.sheetPricing) setPricing(json.sheetPricing);
               if (json.lfPricing) setLfPricing(json.lfPricing);
@@ -1557,19 +2045,19 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
           const sizes = quoteShowAllPapers
             ? Array.from(
                 new Set(
-                  PAPER_TYPES.flatMap((pt) =>
+                  paperTypes.flatMap((pt) =>
                     Object.keys(PRESET_SHEETS)
                       .filter((k) => k !== "custom")
                       .filter((sk) =>
-                        (SHEET_KEYS_FOR_PAPER[pt.key] || []).includes(sk)
+                        (sheetKeysForPaper[pt.key] || []).includes(sk)
                       )
                   )
                 )
               )
-            : SHEET_KEYS_FOR_PAPER[quotePaperKey] || [];
+            : sheetKeysForPaper[quotePaperKey] || [];
 
           const paperKeys = quoteShowAllPapers
-            ? PAPER_TYPES.map((pt) => pt.key)
+            ? paperTypes.map((pt) => pt.key)
             : [quotePaperKey];
 
           sizes.forEach((sk) => {
@@ -1577,9 +2065,9 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
             const bestFit = computeBestImposition(sW, sH, quoteWidth, quoteHeight);
 
             paperKeys.forEach((paperKey) => {
-              const pt = PAPER_TYPES.find((p) => p.key === paperKey);
+              const pt = paperTypes.find((p) => p.key === paperKey);
               if (!pt) return;
-              if (!(SHEET_KEYS_FOR_PAPER[paperKey] || []).includes(sk)) return;
+              if (!(sheetKeysForPaper[paperKey] || []).includes(sk)) return;
 
               const entry = normalizeEntry((pricing[paperKey] || {})[sk] || {});
               if (!entry.priceColor && !entry.priceBW) return;
@@ -1626,7 +2114,7 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
           }
 
           const paperLabel = (key) =>
-            (PAPER_TYPES.find((p) => p.key === key) || {}).label || key;
+            (paperTypes.find((p) => p.key === key) || {}).label || key;
 
           const now = new Date();
           const headerTitle = "Print Quote";
@@ -1934,7 +2422,7 @@ const quoteRows = computeQuickQuoteRows();
                         Paper Type
                       </span>
                       <div className="flex flex-wrap gap-2">
-                        {PAPER_TYPES.map((opt) => (
+                        {paperTypes.map((opt) => (
                           <button
                             key={opt.key}
                             type="button"
@@ -2248,7 +2736,7 @@ const quoteRows = computeQuickQuoteRows();
                         }
                         className="border rounded-md px-2 py-1 text-sm"
                       >
-                        {LF_PAPER_TYPES.map((p) => (
+                        {lfPaperTypes.map((p) => (
                           <option key={p.key} value={p.key}>
                             {p.label}
                           </option>
@@ -2519,7 +3007,7 @@ const quoteRows = computeQuickQuoteRows();
                       Showing:{" "}
                       {quoteShowAllPapers
                         ? "All paper types"
-                        : (PAPER_TYPES.find((p) => p.key === quotePaperKey) || {})
+                        : (paperTypes.find((p) => p.key === quotePaperKey) || {})
                             .label}
                     </p>
                     {quoteBackEnabled && (
@@ -2539,7 +3027,7 @@ const quoteRows = computeQuickQuoteRows();
                         onChange={(e) => setQuotePaperKey(e.target.value)}
                         className="border rounded-md px-2 py-1 text-sm"
                       >
-                        {PAPER_TYPES.map((pt) => (
+                        {paperTypes.map((pt) => (
                           <option key={pt.key} value={pt.key}>
                             {pt.label}
                           </option>
@@ -2869,6 +3357,211 @@ const quoteRows = computeQuickQuoteRows();
                   </label>
                 </div>
 
+{/* Manage Paper Types */}
+<div className="space-y-4">
+  <h3 className="font-semibold text-sm">
+    Manage Paper Types
+  </h3>
+  <p className="text-[11px] text-slate-500">
+    Add/remove paper types for <span className="font-semibold">Sheets</span> and <span className="font-semibold">Large Format</span>. Keys are used in <code>pricing.json</code>.
+  </p>
+
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    {/* Sheet paper types */}
+    <div className="border rounded-xl p-3 bg-slate-50/60 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="font-semibold text-xs">Sheets</h4>
+        <span className="text-[11px] text-slate-500">
+          {paperTypes.length} type{paperTypes.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      <div className="space-y-2">
+        {paperTypes.map((pt) => (
+          <div key={pt.key} className="border rounded-lg p-2 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-slate-500">Key:</span>
+                <code className="text-[11px]">{pt.key}</code>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleRemovePaperType(pt.key)}
+                className="px-2 py-0.5 rounded-md border bg-slate-100 text-[11px]"
+                title="Remove paper type"
+              >
+                Remove
+              </button>
+            </div>
+
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 items-center">
+              <label className="text-[11px] text-slate-600">
+                Label
+                <input
+                  type="text"
+                  value={pt.label}
+                  onChange={(e) =>
+                    handleUpdatePaperLabel(pt.key, e.target.value)
+                  }
+                  className="mt-1 w-full border rounded px-2 py-1 text-xs"
+                />
+              </label>
+
+              <div className="text-[11px] text-slate-600">
+                Sizes
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {getPresetSheetKeys().map((sk) => (
+                    <label key={sk} className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={(sheetKeysForPaper[pt.key] || []).includes(sk)}
+                        onChange={() => handleTogglePaperSheet(pt.key, sk)}
+                      />
+                      <span>{sk}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">
+                  (Keep at least one size enabled)
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="border rounded-lg p-2 bg-white space-y-2">
+        <div className="font-semibold text-[11px]">Add new sheet paper type</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <label className="text-[11px] text-slate-600">
+            Label
+            <input
+              type="text"
+              value={newPaperLabel}
+              onChange={(e) => setNewPaperLabel(e.target.value)}
+              placeholder="e.g., 24 LB Paper"
+              className="mt-1 w-full border rounded px-2 py-1 text-xs"
+            />
+          </label>
+          <label className="text-[11px] text-slate-600">
+            Key (optional)
+            <input
+              type="text"
+              value={newPaperKey}
+              onChange={(e) => setNewPaperKey(e.target.value)}
+              placeholder="auto from label"
+              className="mt-1 w-full border rounded px-2 py-1 text-xs"
+            />
+          </label>
+        </div>
+        <div className="text-[11px] text-slate-600">
+          Sizes
+          <div className="mt-1 flex flex-wrap gap-2">
+            {getPresetSheetKeys().map((sk) => (
+              <label key={sk} className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={!!newPaperSheets[sk]}
+                  onChange={(e) =>
+                    setNewPaperSheets((prev) => ({
+                      ...(prev || {}),
+                      [sk]: e.target.checked
+                    }))
+                  }
+                />
+                <span>{sk}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleAddPaperType}
+          className="px-3 py-1.5 rounded-full bg-slate-800 text-white text-xs"
+        >
+          Add sheet paper type
+        </button>
+      </div>
+    </div>
+
+    {/* Large format paper types */}
+    <div className="border rounded-xl p-3 bg-slate-50/60 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="font-semibold text-xs">Large Format</h4>
+        <span className="text-[11px] text-slate-500">
+          {lfPaperTypes.length} type{lfPaperTypes.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      <div className="space-y-2">
+        {lfPaperTypes.map((pt) => (
+          <div key={pt.key} className="border rounded-lg p-2 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-slate-500">Key:</span>
+                <code className="text-[11px]">{pt.key}</code>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleRemoveLfPaperType(pt.key)}
+                className="px-2 py-0.5 rounded-md border bg-slate-100 text-[11px]"
+                title="Remove large format paper type"
+              >
+                Remove
+              </button>
+            </div>
+
+            <label className="mt-2 block text-[11px] text-slate-600">
+              Label
+              <input
+                type="text"
+                value={pt.label}
+                onChange={(e) =>
+                  handleUpdateLfPaperLabel(pt.key, e.target.value)
+                }
+                className="mt-1 w-full border rounded px-2 py-1 text-xs"
+              />
+            </label>
+          </div>
+        ))}
+      </div>
+
+      <div className="border rounded-lg p-2 bg-white space-y-2">
+        <div className="font-semibold text-[11px]">Add new large format paper type</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <label className="text-[11px] text-slate-600">
+            Label
+            <input
+              type="text"
+              value={newLfLabel}
+              onChange={(e) => setNewLfLabel(e.target.value)}
+              placeholder="e.g., New Banner Material"
+              className="mt-1 w-full border rounded px-2 py-1 text-xs"
+            />
+          </label>
+          <label className="text-[11px] text-slate-600">
+            Key (optional)
+            <input
+              type="text"
+              value={newLfKey}
+              onChange={(e) => setNewLfKey(e.target.value)}
+              placeholder="auto from label"
+              className="mt-1 w-full border rounded px-2 py-1 text-xs"
+            />
+          </label>
+        </div>
+        <button
+          type="button"
+          onClick={handleAddLfPaperType}
+          className="px-3 py-1.5 rounded-full bg-slate-800 text-white text-xs"
+        >
+          Add large format paper type
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
                 {/* Sheet Base Costs Table */}
                 <div className="mb-4 text-xs">
                   <h3 className="font-semibold text-sm mb-1">
@@ -2904,8 +3597,8 @@ const quoteRows = computeQuickQuoteRows();
                         </tr>
                       </thead>
                       <tbody>
-                        {PAPER_TYPES.map((pt) =>
-                          (SHEET_KEYS_FOR_PAPER[pt.key] || []).map(
+                        {paperTypes.map((pt) =>
+                          (sheetKeysForPaper[pt.key] || []).map(
                             (sk) => {
                               const raw =
                                 (pricing[pt.key] || {})[sk] || {};
@@ -3012,7 +3705,7 @@ const quoteRows = computeQuickQuoteRows();
                       Sheet Markups (%)
                     </h3>
                     <div className="space-y-2">
-                      {PAPER_TYPES.map((pt) => (
+                      {paperTypes.map((pt) => (
                         <div
                           key={pt.key}
                           className="flex items-center justify-between gap-2"
@@ -3208,7 +3901,7 @@ const quoteRows = computeQuickQuoteRows();
                           </tr>
                         </thead>
                         <tbody>
-                          {LF_PAPER_TYPES.map((pt) => {
+                          {lfPaperTypes.map((pt) => {
                             const entry = normalizeEntry(
                               lfPricing[pt.key] || {}
                             );
@@ -3320,7 +4013,7 @@ const quoteRows = computeQuickQuoteRows();
                       <h4 className="font-semibold text-xs">
                         Large Format Markup (% per paper)
                       </h4>
-                      {LF_PAPER_TYPES.map((pt) => (
+                      {lfPaperTypes.map((pt) => (
                         <div
                           key={pt.key}
                           className="flex items-center justify-between gap-2"
