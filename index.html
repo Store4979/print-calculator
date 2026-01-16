@@ -1047,7 +1047,6 @@ useEffect(() => {
             (Number(prints.quantity) || 0) / Math.max(1, printsPerSheet)
           )
         );
-        const frontSlotInfo = { cols: 0, rows: 0, perSheet: printsPerSheet };
         // --- Multi-file preview paging (front) ---
         // When multi-files are used, each file can have its own rotation.
         // Rotation should rotate the *print box* on the sheet (swap W/H) and therefore affects how many fit per sheet.
@@ -1066,11 +1065,7 @@ useEffect(() => {
           const innerHIn = orientedHIn - 2 * MARGIN_IN;
           if (innerWIn <= 0 || innerHIn <= 0) return 1;
 
-          const placeDims = (rotDeg) => {
-            const r = ((Number(rotDeg) || 0) % 360 + 360) % 360;
-            const swap = r === 90 || r === 270;
-            return swap ? [targetHIn, targetWIn] : [targetWIn, targetHIn];
-          };
+          const placeDims = () => [targetWIn, targetHIn];
 
           let pageCount = 1;
           let x = 0;
@@ -1108,6 +1103,13 @@ useEffect(() => {
 
           return Math.max(1, pageCount);
         }, [frontFiles, prints.width, prints.height, orientedWIn, orientedHIn, showBleed]);
+
+        const frontSlotInfo = useMemo(() => {
+          const bleedIn = showBleed ? BLEED_IN : 0;
+          const targetWIn = Math.max(0.1, Number(prints.width) || 0) + bleedIn * 2;
+          const targetHIn = Math.max(0.1, Number(prints.height) || 0) + bleedIn * 2;
+          return computeGridFit(orientedWIn, orientedHIn, targetWIn, targetHIn);
+        }, [orientedWIn, orientedHIn, prints.width, prints.height, showBleed]);
 
         // Clamp page index when totals change
         useEffect(() => {
@@ -1286,7 +1288,7 @@ useEffect(() => {
                 for (let i = 0; i < totalPrints; i++) sequence.push(items[i % items.length]);
               }
 
-              // Pack placements row-by-row (supports mixed rotations and therefore mixed box W/H).
+              // Pack placements row-by-row. Rotation does NOT affect placement size; it only rotates the artwork inside the fixed target box.
               // We only keep placements for the requested pageIndex, but we still simulate pagination.
               let page = 0;
               let x = 0;
@@ -1313,9 +1315,8 @@ useEffect(() => {
 
               for (let i = 0; i < sequence.length; i++) {
                 const it = sequence[i];
-                const swap = isSwap(it.rotation);
-                const boxW = swap ? baseTargetHPx : baseTargetWPx;
-                const boxH = swap ? baseTargetWPx : baseTargetHPx;
+                const boxW = baseTargetWPx;
+                const boxH = baseTargetHPx;
 
                 const wNeed = boxW + (x > 0 ? spacingPx : 0);
                 if (x > 0 && x + wNeed > innerW) {
@@ -1380,21 +1381,23 @@ useEffect(() => {
                 ctx.save();
                 ctx.translate(p.x + p.w / 2, p.y + p.h / 2);
 
-                // Rotate image for this file. This is intended to rotate the whole print placement,
-                // so we swap the print box (above) and rotate the artwork accordingly.
-                const rad = (((Number(rotationDeg) || 0) + (Number(it.rotation) || 0)) * Math.PI) / 180;
-                ctx.rotate(rad);
-
+                // Clip to the *unrotated* target box so rotating an image never changes the box position or layout.
                 ctx.beginPath();
                 ctx.rect(-contentW / 2, -contentH / 2, contentW, contentH);
                 ctx.clip();
+
+                // Rotate only the artwork for this file (box stays fixed).
+                const rad = (((Number(rotationDeg) || 0) + (Number(it.rotation) || 0)) * Math.PI) / 180;
+                ctx.rotate(rad);
 
                 // If this file is rotated, allow stretching to exactly fill the target size (as requested).
                 let drawW, drawH;
                 const perFileRot = normRot(it.rotation);
                 if (perFileRot !== 0) {
-                  drawW = contentW;
-                  drawH = contentH;
+                  // Keep the target box fixed. For 90°/270° rotations, swap draw dimensions so the rotated artwork still fills the box.
+                  const swapDims = perFileRot === 90 || perFileRot === 270;
+                  drawW = swapDims ? contentH : contentW;
+                  drawH = swapDims ? contentW : contentH;
                 } else {
                   // cover fit (preserve aspect)
                   drawW = contentW;
