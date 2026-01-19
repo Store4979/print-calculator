@@ -2661,6 +2661,147 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
         };
 
         
+
+
+        const openQuotePrintWindow = (title, innerHtml) => {
+          const now = new Date();
+          const w = window.open("", "_blank", "width=900,height=700");
+          if (!w) return;
+          w.document.write(`
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${title}</title>
+<style>
+  body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:24px; color:#0f172a;}
+  .muted{color:#64748b;}
+  h1{margin:0 0 6px; font-size:20px;}
+  .meta{margin:0 0 18px; font-size:12px;}
+  .box{border:1px solid #e2e8f0; border-radius:12px; padding:14px; margin:12px 0;}
+  table{width:100%; border-collapse:collapse; font-size:12px;}
+  th, td{border-bottom:1px solid #e2e8f0; padding:8px 8px; vertical-align:top;}
+  th{text-align:left; background:#f8fafc;}
+  .right{text-align:right;}
+  .headRow{display:flex;align-items:center;gap:14px;}
+  .logo{width:144px;height:auto;object-fit:contain;}
+  .storeName{font-weight:900;font-size:14px; margin-bottom:2px;}
+  .storeLine{font-size:11px;color:#334155; line-height:1.2;}
+  .rule{margin:10px 0 0;border-top:1px solid #e2e8f0;}
+  @media print { .noPrint{display:none;} body{margin:0.5in;} }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="headRow">
+      <img class="logo" src="${UPS_LOGO_DATA_URL}" alt="The UPS Store"/>
+      <div>
+        <div class="storeName">${UPS_STORE.name}</div>
+        <div class="storeLine">${UPS_STORE.address}</div>
+        <div class="storeLine">Phone: ${UPS_STORE.phone} · Email: ${UPS_STORE.email}</div>
+      </div>
+    </div>
+    <div class="rule"></div>
+  </div>
+  <p class="meta muted">Date: ${now.toLocaleString()}</p>
+  ${innerHtml}
+  <button class="noPrint" onclick="window.print()" style="padding:10px 14px;border:0;border-radius:10px;background:#0f172a;color:white;font-weight:700;cursor:pointer">Print</button>
+</body>
+</html>`);
+          w.document.close();
+          w.focus();
+          setTimeout(() => w.print(), 250);
+        };
+
+        const printLargeFormatQuote = () => {
+          const pt = (lfPaperTypes || []).find((p) => p.key === lfPaperKey) || { label: lfPaperKey };
+          const areaSqFt = (Number(lfWidth) || 0) * (Number(lfHeight) || 0) / 144;
+          const entry = normalizeEntry(lfPricing[lfPaperKey] || {});
+          const basePerSqFt = (lfColorMode === 'color') ? (Number(entry.priceColor) || 0) : (Number(entry.priceBW) || 0);
+          const base = basePerSqFt * areaSqFt;
+          const addons =
+            (lfGrommets ? (lfAddonPricing.grommets || 0) : 0) +
+            (lfFoamCore ? (lfAddonPricing.foamCore || 0) : 0) +
+            (lfCoroSign ? (lfAddonPricing.coroSign || 0) : 0);
+          const subtotal = base + addons;
+          const discFactor = getLfDiscountFactor(areaSqFt);
+          const discPct = Math.max(0, Math.round((1 - discFactor) * 100));
+          const total = subtotal * discFactor;
+
+          const addonsList = [
+            lfGrommets ? 'Grommets' : null,
+            lfFoamCore ? 'Foam Core Mount' : null,
+            lfCoroSign ? 'Coro Sign' : null
+          ].filter(Boolean);
+
+          openQuotePrintWindow('Large Format Quote', `
+            <h1>Customer Quote</h1>
+            <div class="box">
+              <div style="font-weight:800;margin-bottom:8px">Large Format Printing</div>
+              <table>
+                <tbody>
+                  <tr><th>Paper</th><td>${pt.label}</td></tr>
+                  <tr><th>Size</th><td>${Number(lfWidth)||0}" × ${Number(lfHeight)||0}"</td></tr>
+                  <tr><th>Area</th><td>${areaSqFt.toFixed(2)} sq ft</td></tr>
+                  <tr><th>Color</th><td>${(lfColorMode || 'color').toUpperCase()}</td></tr>
+                  <tr><th>Add-ons</th><td>${addonsList.length ? addonsList.join(', ') : 'None'}</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="box">
+              <div style="font-weight:800;margin-bottom:8px">Estimate</div>
+              <table>
+                <tbody>
+                  <tr><th>Base rate</th><td class="right">$${basePerSqFt.toFixed(2)} / sq ft</td></tr>
+                  <tr><th>Base (rate × area)</th><td class="right">$${base.toFixed(2)}</td></tr>
+                  <tr><th>Add-ons</th><td class="right">$${addons.toFixed(2)}</td></tr>
+                  <tr><th>Subtotal</th><td class="right">$${subtotal.toFixed(2)}</td></tr>
+                  <tr><th>Quantity discount</th><td class="right">${discPct ? discPct + '%' : '0%'}</td></tr>
+                  <tr><th><b>Estimated total</b></th><td class="right"><b>$${total.toFixed(2)}</b></td></tr>
+                </tbody>
+              </table>
+            </div>
+          `);
+        };
+
+        const printBlueprintQuote = () => {
+          const size = (BLUEPRINT_SIZES || []).find((s) => s.key === bpSizeKey) || BLUEPRINT_SIZES[0];
+          const qty = Math.max(0, Number(bpQty) || 0);
+          const areaPerSqFt = (Number(size.w) * Number(size.h)) / 144;
+          const tier = getBlueprintTier(bpSizeKey, qty);
+          const psf = Number(tier.psf) || 0;
+          const perSheet = psf * areaPerSqFt;
+          const total = perSheet * qty;
+
+          openQuotePrintWindow('Blueprint Quote', `
+            <h1>Customer Quote</h1>
+            <div class="box">
+              <div style="font-weight:800;margin-bottom:8px">Blueprint Printing</div>
+              <table>
+                <tbody>
+                  <tr><th>Paper</th><td>20 LB Plain Bond</td></tr>
+                  <tr><th>Size</th><td>${size.label}</td></tr>
+                  <tr><th>Quantity</th><td>${qty}</td></tr>
+                  <tr><th>Area / sheet</th><td>${areaPerSqFt.toFixed(2)} sq ft</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="box">
+              <div style="font-weight:800;margin-bottom:8px">Estimate</div>
+              <table>
+                <tbody>
+                  <tr><th>Rate</th><td class="right">$${psf.toFixed(2)} / sq ft</td></tr>
+                  <tr><th>Per sheet</th><td class="right">$${perSheet.toFixed(2)}</td></tr>
+                  <tr><th><b>Estimated total</b></th><td class="right"><b>$${total.toFixed(2)}</b></td></tr>
+                </tbody>
+              </table>
+              <div class="muted" style="font-size:11px;margin-top:8px">Pricing tiers are editable in Admin per size (PSF + quantity breaks).</div>
+            </div>
+          `);
+        };
+
         const printQuickQuote = () => {
           const rows = computeQuickQuoteRows();
           if (!rows.length) {
@@ -2722,10 +2863,26 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
   .kpi .k{border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; min-width:150px;}
   .kpi .t{font-size:11px; color:#64748b; font-weight:700;}
   .kpi .v{margin-top:6px; font-size:14px; font-weight:800;}
+  .headRow{display:flex;align-items:center;gap:14px;}
+  .logo{width:144px;height:auto;object-fit:contain;}
+  .storeName{font-weight:900;font-size:14px; margin-bottom:2px;}
+  .storeLine{font-size:11px;color:#334155; line-height:1.2;}
+  .rule{margin:10px 0 0;border-top:1px solid #e2e8f0;}
   @media print { .noPrint{display:none;} body{margin:0.5in;} }
 </style>
 </head>
 <body>
+  <div class="head">
+    <div class="headRow">
+      <img class="logo" src="${UPS_LOGO_DATA_URL}" alt="The UPS Store"/>
+      <div>
+        <div class="storeName">${UPS_STORE.name}</div>
+        <div class="storeLine">${UPS_STORE.address}</div>
+        <div class="storeLine">Phone: ${UPS_STORE.phone} · Email: ${UPS_STORE.email}</div>
+      </div>
+    </div>
+    <div class="rule"></div>
+  </div>
   <h1>Customer Quote</h1>
   <p class="meta muted">
     Date: ${now.toLocaleString()}<br/>
@@ -4107,6 +4264,94 @@ const quoteRows = computeQuickQuoteRows();
                     .
                   </div>
                 )}
+
+
+                <div className="grid md:grid-cols-2 gap-4 pt-2">
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-800">Quick Quote (Large Format)</div>
+                        <div className="text-[11px] text-slate-500">Estimate large format jobs by size, paper, color, and add-ons.</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={printLargeFormatQuote}
+                        className="px-3 py-2 rounded-full bg-slate-800 text-white text-xs shadow-sm hover:bg-slate-900"
+                      >
+                        Print Quote
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 text-xs">
+                      <div>
+                        <label className="block font-medium text-slate-600">Width (in)</label>
+                        <input type="number" value={lfWidth} onChange={(e)=>setLfWidth(+e.target.value||0)} className="border rounded-md px-2 py-1 text-xs w-24" />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-600">Height (in)</label>
+                        <input type="number" value={lfHeight} onChange={(e)=>setLfHeight(+e.target.value||0)} className="border rounded-md px-2 py-1 text-xs w-24" />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-600">Paper</label>
+                        <select value={lfPaperKey} onChange={(e)=>setLfPaperKey(e.target.value)} className="border rounded-md px-2 py-1 text-xs">
+                          {lfPaperTypes.map((pt)=>(<option key={pt.key} value={pt.key}>{pt.label}</option>))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-600">Color</label>
+                        <select value={lfColorMode} onChange={(e)=>setLfColorMode(e.target.value)} className="border rounded-md px-2 py-1 text-xs">
+                          <option value="color">Color</option>
+                          <option value="bw">B/W</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 text-[11px] text-slate-700">
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={lfGrommets} onChange={(e)=>setLfGrommets(e.target.checked)} />Grommets</label>
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={lfFoamCore} onChange={(e)=>setLfFoamCore(e.target.checked)} />Foam Core</label>
+                      <label className="flex items-center gap-2"><input type="checkbox" checked={lfCoroSign} onChange={(e)=>setLfCoroSign(e.target.checked)} />Coro</label>
+                    </div>
+
+                    <div className="text-xs text-slate-700">
+                      <div>Area: <span className="font-semibold">{lfAreaSqFt.toFixed(2)} sq ft</span></div>
+                      <div>Estimated total: <span className="font-semibold">${lfTotalWithDiscount.toFixed(2)}</span></div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-800">Quick Quote (Blueprints)</div>
+                        <div className="text-[11px] text-slate-500">Blueprints are 20 LB plain bond with admin-editable PSF tiers per size.</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={printBlueprintQuote}
+                        className="px-3 py-2 rounded-full bg-slate-800 text-white text-xs shadow-sm hover:bg-slate-900"
+                      >
+                        Print Quote
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3 text-xs">
+                      <div>
+                        <label className="block font-medium text-slate-600">Size</label>
+                        <select value={bpSizeKey} onChange={(e)=>setBpSizeKey(e.target.value)} className="border rounded-md px-2 py-1 text-xs">
+                          {BLUEPRINT_SIZES.map((s)=>(<option key={s.key} value={s.key}>{s.label}</option>))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-600">Quantity</label>
+                        <input type="number" value={bpQty} onChange={(e)=>setBpQty(+e.target.value||0)} className="border rounded-md px-2 py-1 text-xs w-24" />
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-slate-700">
+                      <div>Per sheet: <span className="font-semibold">${bpPerSheet.toFixed(2)}</span></div>
+                      <div>Estimated total: <span className="font-semibold">${bpTotal.toFixed(2)}</span></div>
+                    </div>
+                  </div>
+                </div>
               </section>
             )}
 
