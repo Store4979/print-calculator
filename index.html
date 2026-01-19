@@ -1901,18 +1901,31 @@ const downloadSheetPDF = async () => {
   let exportInput = (frontFiles?.length ? frontFiles : frontImage);
 
   if (frontFiles?.length) {
-    // Only show each file once (sample), but paginate if there are more files than fit on a single sheet.
-    const nonZero = (frontFiles || []).filter((f) => (Number(f?.qty) || 0) > 0);
-    const baseList = (nonZero.length ? nonZero : (frontFiles || []).slice(0, 1))
-      .map((f) => ({ ...f, qty: 1 }));
+    // Decide how many preview pages to include and what to render on them.
+    // Rules:
+    //  - Always include the order sheet.
+    //  - For a single-design job (one uploaded file), export ONE preview page, but it should be FULLY populated
+    //    according to that file's quantity (so it matches the on-screen preview).
+    //  - For multiple different files, export enough pages to show each file at least once.
 
-    exportInput = baseList;
+    const nonZero = (frontFiles || []).filter((f) => (Number(f?.qty) || 0) > 0);
+    const workingList = nonZero.length ? nonZero : (frontFiles || []).filter(Boolean);
 
     const bleedIn = showBleed ? BLEED_IN : 0;
     const targetWIn = Math.max(0.1, Number(prints.width) || 0) + bleedIn * 2;
     const targetHIn = Math.max(0.1, Number(prints.height) || 0) + bleedIn * 2;
     const cap = Math.max(1, (computeGridFit(orientedWIn, orientedHIn, targetWIn, targetHIn)?.count) || 1);
-    exportPages = Math.max(1, Math.ceil(baseList.length / cap));
+
+    if (workingList.length <= 1) {
+      // Single file: keep its real qty so page 1 matches the UI preview (e.g., 2-up shows both copies).
+      exportInput = workingList.length ? workingList : (frontFiles || []).slice(0, 1);
+      exportPages = 1;
+    } else {
+      // Multi-file: generate a sample list where each file appears once, and paginate only if needed.
+      const baseList = workingList.map((f) => ({ ...f, qty: 1 }));
+      exportInput = baseList;
+      exportPages = Math.max(1, Math.ceil(baseList.length / cap));
+    }
   }
 
   // Pre-render back (same for all sheets) once, if used
