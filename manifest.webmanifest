@@ -1,7 +1,7 @@
 {
   "name": "Print Calculator",
   "short_name": "PrintCalc",
-  "start_url": "./index_mobile_optimized_plus.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0b1220",
