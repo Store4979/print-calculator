@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <title>Print Price Calculator</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <script src="https://cdn.tailwindcss.com"></script>
   
   <style>
@@ -145,6 +147,8 @@
 
 
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#0b1220" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -662,8 +666,7 @@ const [lfPricing, setLfPricing] = useState(() =>
 
             // Quote preferences
             if (typeof ui?.quotePaperKey === "string") setQuotePaperKey(ui.quotePaperKey);
-            if (typeof ui?.quoteSize === "string") setQuoteSize(ui.quoteSize);
-            if (ui?.quoteFrontColorMode === "color" || ui?.quoteFrontColorMode === "bw") {
+if (ui?.quoteFrontColorMode === "color" || ui?.quoteFrontColorMode === "bw") {
               setQuoteFrontColorMode(ui.quoteFrontColorMode);
             }
             if (ui?.quoteBackColorMode === "color" || ui?.quoteBackColorMode === "bw") {
@@ -682,8 +685,7 @@ const [lfPricing, setLfPricing] = useState(() =>
             const ui = {
               viewMode,
               quotePaperKey,
-              quoteSize,
-              quoteFrontColorMode,
+quoteFrontColorMode,
               quoteBackColorMode,
               quoteQty,
             };
@@ -691,7 +693,7 @@ const [lfPricing, setLfPricing] = useState(() =>
           } catch (e) {
             // ignore
           }
-        }, [viewMode, quotePaperKey, quoteSize, quoteFrontColorMode, quoteBackColorMode, quoteQty]);
+        }, [viewMode, quotePaperKey, quoteFrontColorMode, quoteBackColorMode, quoteQty]);
 
 // Admin: add/remove paper types
         const [newPaperLabel, setNewPaperLabel] = useState("");
