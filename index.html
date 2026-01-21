@@ -107,7 +107,7 @@
     tbody tr{ border-color: rgba(255,255,255,.10) !important; }
 
     /* Canvas blocks */
-    canvas{ background: rgba(0,0,0,.10) !important; border-color: rgba(255,255,255,.18) !important; }
+    canvas{ background: rgba(0,0,0,.10) !important; border-color: rgba(255,255,255,.18) !important; max-width:100%; height:auto; }
 
     /* Small code blocks */
     code{
@@ -141,6 +141,13 @@
           border-bottom: 1px solid rgba(15,23,42,0.08);
         }
         input, select, textarea { font-size: 16px; }
+        input[type="number"], input[type="text"], input[type="tel"]{
+          font-size:18px !important;
+          min-height:50px;
+          padding:12px 14px !important;
+        }
+        button{ min-height:44px; }
+
       }
 
     </style>
@@ -152,7 +159,7 @@
     <meta name="theme-color" content="#0b1220" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icon-192.png" />
 
   </head>
@@ -177,7 +184,11 @@
         email: 'store4979@theupsstore.com'
       };
 
-      const UPS_LOGO_DATA_URL = "assets/logo.png";
+      const UPS_LOGO_DATA_URL = "/assets/logo.png";
+
+      const getUpsLogoAbsUrl = () => new URL(UPS_LOGO_DATA_URL, window.location.origin).href;
+      // For jsPDF we need a DATA URL (base64). Loaded once at runtime.
+      let UPS_LOGO_PDF_DATA_URL = null;
 
 
       // ---------- CONSTANTS ----------
@@ -352,6 +363,16 @@ const LS_LF_PAPER_TYPES_KEY = "printcalc_lf_paper_types_v1";
       // ---------- HELPERS ----------
 
       const inchesToPx = (inches) => Math.round(inches * DPI);
+      // Mobile/tablet canvases can fail with very large pixel dimensions.
+      // Use a smaller DPI + clamp for large-format/blueprint PREVIEWS.
+      const PREVIEW_DPI = 60;
+      const clampCanvasPx = (wPx, hPx, maxDim = 3000) => {
+        const hardMax = 4096; // common iOS max canvas dimension
+        const maxAllowed = Math.min(maxDim, hardMax);
+        const scale = Math.min(1, maxAllowed / Math.max(1, wPx, hPx));
+        return { w: Math.max(1, Math.floor(wPx * scale)), h: Math.max(1, Math.floor(hPx * scale)), scale };
+      };
+      const inchesToPreviewPx = (inches) => Math.round(inches * PREVIEW_DPI);
 
 const safeParseJson = (raw, fallback) => {
   try {
@@ -560,6 +581,32 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         const [sheetKey, setSheetKey] = useState("8.5x11");
         const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 });
         const [orientation, setOrientation] = useState("portrait");
+
+
+const [logoReady, setLogoReady] = useState(false);
+
+useEffect(() => {
+  (async () => {
+    try {
+      const res = await fetch(UPS_LOGO_DATA_URL, { cache: "no-store" });
+      const blob = await res.blob();
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+      // Ensure PNG/JPG data URL for jsPDF addImage
+      if (typeof dataUrl === "string" && dataUrl.startsWith("data:image")) {
+        UPS_LOGO_PDF_DATA_URL = dataUrl;
+        setLogoReady(true);
+      }
+    } catch (e) {
+      console.warn("Could not load logo for PDF embedding:", e);
+      setLogoReady(false);
+    }
+  })();
+}, []);
 
         const [prints, setPrints] = useState({
           width: 5,
@@ -1686,8 +1733,10 @@ useEffect(() => {
           if (!canvas) return;
           const ctx = canvas.getContext("2d");
 
-          const wPx = inchesToPx(bpWidth);
-          const hPx = inchesToPx(bpHeight);
+          const baseWPx = inchesToPreviewPx(bpWidth);
+
+          const baseHPx = inchesToPreviewPx(bpHeight);
+          const { w: wPx, h: hPx } = clampCanvasPx(baseWPx, baseHPx, 3200);
 
           canvas.width = wPx;
           canvas.height = hPx;
@@ -1730,8 +1779,10 @@ useEffect(() => {
           if (!canvas) return;
           const ctx = canvas.getContext("2d");
 
-          const wPx = inchesToPx(lfWidth);
-          const hPx = inchesToPx(lfHeight);
+          const baseWPx = inchesToPreviewPx(lfWidth);
+
+          const baseHPx = inchesToPreviewPx(lfHeight);
+          const { w: wPx, h: hPx } = clampCanvasPx(baseWPx, baseHPx, 3200);
 
           canvas.width = wPx;
           canvas.height = hPx;
@@ -1784,7 +1835,9 @@ const addOrderSheetPage = (doc, payload) => {
 
   // Logo
   try {
-    doc.addImage(UPS_LOGO_DATA_URL, 'PNG', 3.15, 0.55, 2.2, 2.2);
+    if (UPS_LOGO_PDF_DATA_URL) {
+    doc.addImage(UPS_LOGO_PDF_DATA_URL, 'PNG', 3.15, 0.55, 2.2, 2.2);
+  }
   } catch (e) {
     // If image fails, continue without blocking the PDF
     console.warn('Logo addImage failed:', e);
@@ -1917,7 +1970,26 @@ const addOrderSheetPage = (doc, payload) => {
 const downloadSheetPDF = async () => {
   if (!frontRef.current) return;
 
-  // --- Order sheet (letter) + then the actual preview pages ---
+  
+const savePdf = (doc, filename) => {
+  try {
+    // Prefer blob download (keeps the app page visible on iOS more reliably than doc.save()).
+    const blob = doc.output("blob");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) {
+    // Fallback
+    try { doc.save(filename); } catch {}
+  }
+};
+
+// --- Order sheet (letter) + then the actual preview pages ---
   const orderDoc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
 
   const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
@@ -2031,7 +2103,7 @@ const downloadSheetPDF = async () => {
     }
   }
 
-  orderDoc.save('print_preview_with_order_sheet.pdf');
+  savePdf(orderDoc, 'print_preview_with_order_sheet.pdf');
 };
 
 const downloadLfPDF = () => {
@@ -2067,7 +2139,7 @@ const downloadLfPDF = () => {
   orderDoc.addPage([pdfW, pdfH], orient);
   const data = lfRef.current.toDataURL('image/png', 1.0);
   orderDoc.addImage(data, 'PNG', 0, 0, pdfW, pdfH);
-  orderDoc.save('large_format_with_order_sheet.pdf');
+  savePdf(orderDoc, 'large_format_with_order_sheet.pdf');
 };
 
 const downloadBlueprintPDF = () => {
@@ -2101,7 +2173,7 @@ const downloadBlueprintPDF = () => {
   orderDoc.addPage([pdfW, pdfH], orient);
   const data = bpRef.current.toDataURL('image/png', 1.0);
   orderDoc.addImage(data, 'PNG', 0, 0, pdfW, pdfH);
-  orderDoc.save('blueprint_with_order_sheet.pdf');
+  savePdf(orderDoc, 'blueprint_with_order_sheet.pdf');
 };
 
         // -------- EMAIL ORDER (Netlify Function) --------
@@ -2774,7 +2846,7 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
 <body>
   <div class="head">
     <div class="headRow">
-      <img class="logo" src="${UPS_LOGO_DATA_URL}" alt="The UPS Store"/>
+      <img class="logo" src="${getUpsLogoAbsUrl()}" crossorigin="anonymous" alt="The UPS Store"/>
       <div>
         <div class="storeName">${UPS_STORE.name}</div>
         <div class="storeLine">${UPS_STORE.address}</div>
@@ -2899,8 +2971,8 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
             : paperLabel(quotePaperKey);
 
           const tableHeaders = quoteShowAllPapers
-            ? ["Paper", "Sheet", "Prints/Sheet", "Sheets", "Front/Back per Sheet", "Total"]
-            : ["Sheet", "Prints/Sheet", "Sheets", "Front/Back per Sheet", "Total"];
+            ? ["Paper", "Sheet", "Prints/Sheet", "Sheets", "Front/Back per Sheet", "Discounted / Sheet", "Total"]
+            : ["Sheet", "Prints/Sheet", "Sheets", "Front/Back per Sheet", "Discounted / Sheet", "Total"];
 
           const rowHtml = rows
             .map((r) => {
@@ -2911,6 +2983,12 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
                 `<td style="text-align:right">${r.printsPer}${r.layout ? `<div class='muted' style='font-size:11px;line-height:1.2;margin-top:2px'>${r.layout.cols}×${r.layout.rows} · sheet ${r.layout.sheetOrientation}${r.layout.printRotated ? ' · print rotated' : ''}</div>` : ''}</td>`,
                 `<td style="text-align:right">${r.sheets}</td>`,
                 `<td style="text-align:right">$${r.perSheetFront.toFixed(4)} / $${r.perSheetBack.toFixed(4)}</td>`,
+                (() => {
+                  const df = getSheetDiscountFactor(r.sheets);
+                  const per = (r.perSheetFront + r.perSheetBack) * df;
+                  const pct = Math.max(0, Math.round((1 - df) * 100));
+                  return `<td style="text-align:right">$${per.toFixed(4)}${pct ? `<div class="muted" style="font-size:11px;margin-top:2px">(${pct}% off)</div>` : ""}</td>`;
+                })(),
                 `<td style="text-align:right"><b>$${r.total.toFixed(2)}</b></td>`
               );
               return `<tr>${cols.join("")}</tr>`;
@@ -2954,7 +3032,7 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
 <body>
   <div class="head">
     <div class="headRow">
-      <img class="logo" src="${UPS_LOGO_DATA_URL}" alt="The UPS Store"/>
+      <img class="logo" src="${getUpsLogoAbsUrl()}" crossorigin="anonymous" alt="The UPS Store"/>
       <div>
         <div class="storeName">${UPS_STORE.name}</div>
         <div class="storeLine">${UPS_STORE.address}</div>
@@ -3087,7 +3165,24 @@ const quoteRows = computeQuickQuoteRows();
                       : "Show Admin"
                     : "Admin / Pricing"}
                 </button>
-              </div>
+              
+<div className="flex items-center gap-2">
+  <button
+    type="button"
+    className="px-3 py-1.5 text-xs rounded-full border bg-white text-slate-600"
+    onClick={() => { setViewMode("tool"); setShowAdmin(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+  >
+    Home
+  </button>
+  <button
+    type="button"
+    className="px-3 py-1.5 text-xs rounded-full border bg-white text-slate-600"
+    onClick={() => window.location.reload()}
+  >
+    Refresh
+  </button>
+</div>
+</div>
             </header>
 
 
