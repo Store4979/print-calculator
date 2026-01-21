@@ -117,8 +117,18 @@
 
     /* Improve overall spacing on small screens */
     @media (max-width: 640px){
-      #root{ padding-top: 18px !important; }
+      #root{ padding-top: 18px !important; padding-bottom: calc(18px + env(safe-area-inset-bottom)) !important; }
+      /* Prevent iOS zoom on focus & improve touch targets */
+      input, select, textarea{ font-size: 16px !important; }
+      .tap-target{ min-height: 44px !important; padding-top: .55rem !important; padding-bottom: .55rem !important; }
+      .mobile-card{ padding: 14px !important; }
+      .table-wrap{ overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
     }
+
+    /* Better touch behavior + hide scrollbars in horizontal tab rows */
+    *{ -webkit-tap-highlight-color: transparent; }
+    .no-scrollbar::-webkit-scrollbar{ display: none; }
+    .no-scrollbar{ scrollbar-width: none; }
   </style>
 
 </head>
@@ -2963,7 +2973,7 @@ const quoteRows = computeQuickQuoteRows();
         };
         return (
           <div className="space-y-6 pb-10">
-            <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <header className="md:static sticky top-0 z-20 -mx-4 px-4 py-3 md:px-0 md:py-0 flex flex-col md:flex-row md:items-center md:justify-between gap-3 backdrop-blur bg-[rgba(11,18,32,.72)] md:bg-transparent border-b border-white/10 md:border-0">
               <div>
                 <h1 className="text-2xl font-bold text-slate-800">
                   The UPS Store Print Layout & Pricing
@@ -2973,10 +2983,10 @@ const quoteRows = computeQuickQuoteRows();
                   in-store printing.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 overflow-x-auto table-wrap no-scrollbar -mx-1 px-1">
                 <button
                   className={
-                    "px-3 py-1.5 text-sm rounded-full border " +
+                    "px-4 py-2 text-sm tap-target whitespace-nowrap rounded-full border " +
                     (viewMode === "tool"
                       ? "bg-blue-600 text-white border-blue-600"
                       : "bg-white text-slate-700")
@@ -2987,7 +2997,7 @@ const quoteRows = computeQuickQuoteRows();
                 </button>
                 <button
                   className={
-                    "px-3 py-1.5 text-sm rounded-full border " +
+                    "px-4 py-2 text-sm tap-target whitespace-nowrap rounded-full border " +
                     (viewMode === "quote"
                       ? "bg-blue-600 text-white border-blue-600"
                       : "bg-white text-slate-700")
@@ -2999,7 +3009,7 @@ const quoteRows = computeQuickQuoteRows();
                 <button
                   type="button"
                   onClick={handleAdminClick}
-                  className="px-3 py-1.5 text-xs rounded-full border bg-white text-slate-600"
+                  className="px-4 py-2 text-sm tap-target whitespace-nowrap rounded-full border bg-white text-slate-600"
                 >
                   {isAdmin
                     ? showAdmin
@@ -3014,7 +3024,7 @@ const quoteRows = computeQuickQuoteRows();
             {viewMode === "tool" && (
               <div className="space-y-6">
                 {/* Controls row */}
-                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
+                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-4">
                   <div className="flex flex-wrap gap-4 items-end">
                     <div>
                       <label className="block text-xs font-medium text-slate-600">
@@ -3217,7 +3227,7 @@ const quoteRows = computeQuickQuoteRows();
                 {/* PREVIEW + CONTROLS */}
                 <section className="grid md:grid-cols-2 gap-6">
                   {/* FRONT */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-3">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-3">
                     <div className="flex items-center justify-between">
                       <h2 className="font-semibold text-slate-800 text-sm">
                         Front
@@ -3502,7 +3512,7 @@ const quoteRows = computeQuickQuoteRows();
                   </div>
 
                   {/* BACK */}
-                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-3">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <h2 className="font-semibold text-slate-800 text-sm">
@@ -3590,7 +3600,7 @@ const quoteRows = computeQuickQuoteRows();
                 </section>
 
                 {/* SUMMARY + ACTIONS */}
-                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-wrap items-center justify-between gap-4">
+                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card flex flex-wrap items-center justify-between gap-4">
                   <div className="space-y-1 text-sm">
                     <p>
                       <span className="text-slate-500">
@@ -3632,7 +3642,7 @@ const quoteRows = computeQuickQuoteRows();
                 </section>
 
                 {/* LARGE FORMAT SECTION */}
-                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
+                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="font-semibold text-slate-800 text-sm">
                       Large Format Printing
@@ -3822,7 +3832,7 @@ const quoteRows = computeQuickQuoteRows();
                   </div>
                 </section>
                 {/* BLUEPRINT SECTION */}
-                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
+                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="font-semibold text-slate-800 text-sm">
                       Blueprint Printing
@@ -3942,7 +3952,7 @@ const quoteRows = computeQuickQuoteRows();
 
             {/* QUICK QUOTE VIEW */}
             {viewMode === "quote" && (
-              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
+              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-4">
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
                   <div className="space-y-2">
                     <h2 className="font-semibold text-slate-800 text-sm">
@@ -4357,7 +4367,7 @@ const quoteRows = computeQuickQuoteRows();
 
             {/* ADMIN PANEL */}
             {isAdmin && showAdmin && (
-              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-6">
+              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 mobile-card space-y-6">
                 <h2 className="text-sm font-semibold text-slate-800">
                   Admin Pricing Panel
                 </h2>
