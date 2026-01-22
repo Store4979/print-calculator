@@ -168,7 +168,19 @@ input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
 
       }
 
-    </style>
+    
+
+/* Mobile/tablet numeric input comfort */
+@media (max-width: 768px){
+  input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"], input[type="text"]{
+    font-size: 18px;
+  }
+  input[type="number"]{
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+}
+</style>
 
 
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -197,6 +209,130 @@ input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
 </script>
 <script type="text/babel">
       const { useState, useEffect, useRef, useMemo } = React;
+
+// ---------- MOBILE-FRIENDLY INPUTS & PDF COMPRESSION HELPERS ----------
+
+// Smart numeric input: easier editing on phones/tablets (no iOS "stuck at 1" behavior)
+const SmartNumberInput = ({
+  label,
+  value,
+  onValue,
+  min = 0,
+  max = Infinity,
+  step = "any",
+  placeholder = "",
+  suffix = ""
+}) => {
+  const [raw, setRaw] = useState(value === null || value === undefined ? "" : String(value));
+
+  useEffect(() => {
+    // Keep raw in sync when value changes externally
+    const next = value === null || value === undefined ? "" : String(value);
+    if (next !== raw) setRaw(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const clamp = (n) => Math.max(min, Math.min(max, n));
+
+  const commit = (text) => {
+    const t = String(text ?? "").trim();
+    if (t === "") {
+      // Don't force a value while the user is editing; finalize on blur
+      return;
+    }
+    const n = parseFloat(t);
+    if (!Number.isFinite(n)) return;
+    onValue(clamp(n));
+  };
+
+  return (
+    <label className="block">
+      {label ? (
+        <div className="text-xs font-medium text-slate-600 mb-1">{label}</div>
+      ) : null}
+      <div className="relative">
+        <input
+          type="text"
+          inputMode="decimal"
+          pattern="[0-9]*[.,]?[0-9]*"
+          value={raw}
+          placeholder={placeholder}
+          onChange={(e) => {
+            const v = e.target.value.replace(/,/g, ".");
+            setRaw(v);
+            commit(v);
+          }}
+          onFocus={(e) => {
+            // Select all so it's easy to overwrite on mobile
+            requestAnimationFrame(() => e.target.select());
+          }}
+          onBlur={() => {
+            const t = raw.trim();
+            if (t === "") {
+              setRaw(String(min));
+              onValue(min);
+              return;
+            }
+            const n = parseFloat(t);
+            if (!Number.isFinite(n)) {
+              setRaw(String(min));
+              onValue(min);
+              return;
+            }
+            const c = clamp(n);
+            // Normalize display (avoid trailing ".")
+            setRaw(String(c));
+            onValue(c);
+          }}
+          className="w-28 sm:w-24 border rounded-md px-3 py-2 text-base sm:text-sm pr-10"
+          style={{ WebkitTextSizeAdjust: "100%" }}
+        />
+        {suffix ? (
+          <div className="absolute inset-y-0 right-8 flex items-center text-xs text-slate-500 pointer-events-none">
+            {suffix}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="absolute inset-y-0 right-1 my-1 px-2 rounded-md text-slate-500 hover:bg-slate-100 active:bg-slate-200"
+          onClick={() => {
+            setRaw("");
+            // Don't force min immediately; user can type
+          }}
+          aria-label="Clear"
+          title="Clear"
+        >
+          ×
+        </button>
+      </div>
+    </label>
+  );
+};
+
+// Downscale and compress canvases before embedding into PDFs for email (keeps payload under limits)
+const canvasToCompressedJpeg = (canvas, { maxDim = 1400, quality = 0.72 } = {}) => {
+  try {
+    const w = canvas.width;
+    const h = canvas.height;
+    if (!w || !h) return canvas.toDataURL("image/jpeg", quality);
+
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    if (scale >= 1) {
+      return canvas.toDataURL("image/jpeg", quality);
+    }
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * scale));
+    c.height = Math.max(1, Math.round(h * scale));
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", quality);
+  } catch (e) {
+    console.warn("canvasToCompressedJpeg failed:", e);
+    return canvas.toDataURL("image/jpeg", 0.7);
+  }
+};
       const { jsPDF } = window.jspdf;
 
       const UPS_STORE = {
@@ -2345,16 +2481,13 @@ const downloadBlueprintPDF = () => {
             format: [pdfW, pdfH]
           });
 
-          const frontData = frontRef.current.toDataURL("image/png", 1.0);
-          doc.addImage(frontData, "PNG", 0, 0, pdfW, pdfH);
+          const frontData = canvasToCompressedJpeg(frontRef.current, { maxDim: 1600, quality: 0.75 });
+          doc.addImage(frontData, "JPEG", 0, 0, pdfW, pdfH);
 
           if (showBack && backRef.current && backImage) {
             doc.addPage([pdfW, pdfH], orientation);
-            const backData = backRef.current.toDataURL(
-              "image/png",
-              1.0
-            );
-            doc.addImage(backData, "PNG", 0, 0, pdfW, pdfH);
+            const backData = canvasToCompressedJpeg(backRef.current, { maxDim: 1600, quality: 0.75 });
+            doc.addImage(backData, "JPEG", 0, 0, pdfW, pdfH);
           }
 
           const blob = doc.output("blob");
@@ -2375,8 +2508,8 @@ const downloadBlueprintPDF = () => {
             format: [pdfW, pdfH]
           });
 
-          const data = lfRef.current.toDataURL("image/png", 1.0);
-          doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
+          const data = canvasToCompressedJpeg(lfRef.current, { maxDim: 1800, quality: 0.72 });
+          doc.addImage(data, "JPEG", 0, 0, pdfW, pdfH);
           const blob = doc.output("blob");
           await sendOrderEmail("large-format", blob);
         };
@@ -2397,8 +2530,8 @@ const downloadBlueprintPDF = () => {
             format: [pdfW, pdfH]
           });
 
-          const data = bpRef.current.toDataURL("image/png", 1.0);
-          doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
+          const data = canvasToCompressedJpeg(bpRef.current, { maxDim: 1800, quality: 0.72 });
+          doc.addImage(data, "JPEG", 0, 0, pdfW, pdfH);
           const blob = doc.output("blob");
           await sendOrderEmail("blueprints", blob);
         };
@@ -4220,37 +4353,24 @@ const quoteRows = computeQuickQuoteRows();
                   </div>
 
                   <div className="flex flex-wrap gap-4 items-end text-sm">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600">
-                        Width (in)
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="36"
-                        value={lfWidth}
-                        onChange={(e) =>
-                          setLfWidth(
-                            Math.min(36, +e.target.value || 1)
-                          )
-                        }
-                        className="border rounded-md px-2 py-1 text-sm w-24"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600">
-                        Height (in)
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={lfHeight}
-                        onChange={(e) =>
-                          setLfHeight(+e.target.value || 1)
-                        }
-                        className="border rounded-md px-2 py-1 text-sm w-24"
-                      />
-                    </div>
+                    
+<SmartNumberInput
+  label="Width (in)"
+  value={lfWidth}
+  onValue={(v) => setLfWidth(Math.max(0.1, v))}
+  min={0.1}
+  max={999}
+  placeholder="e.g. 24"
+/>
+<SmartNumberInput
+  label="Height (in)"
+  value={lfHeight}
+  onValue={(v) => setLfHeight(Math.max(0.1, v))}
+  min={0.1}
+  max={999}
+  placeholder="e.g. 36"
+/>
+
                     <div>
                       <label className="block text-xs font-medium text-slate-600">
                         Paper Type
