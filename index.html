@@ -6,48 +6,65 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+  // Tailwind CDN theme extension (brand palette)
+  tailwind = window.tailwind || {};
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: {
+            teal: "#008198",
+            yellow: "#FFD100",
+            black: "#000000",
+            white: "#FFFFFF"
+          }
+        }
+      }
+    }
+  };
+</script>
+<script src="https://cdn.tailwindcss.com"></script>
   
   <style>
     :root{
-      --bg:#0b1220;
-      --panel:#0f1b33;
-      --panel2:#0c162b;
-      --card:#0f2346;
-      --text:#e9eefb;
-      --muted:#a9b7d6;
-      --line:rgba(255,255,255,.12);
-      --accent:#67d4ff;
-      --accent2:#8bffcc;
-      --danger:#ff6b6b;
-      --ok:#47d18c;
-      --shadow: 0 18px 50px rgba(0,0,0,.35);
-      --radius:18px;
-      --radius2:14px;
-      --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
-    }
+  --bg:#FFFFFF;
+  --panel:#FFFFFF;
+  --panel2:#FFFFFF;
+  --card:#FFFFFF;
+  --text:#000000;
+  --muted:rgba(0,0,0,.62);
+  --line:rgba(0,0,0,.12);
+  --accent:#008198;
+  --accent2:#FFD100;
+  --danger:#d32f2f;
+  --ok:#008198;
+  --shadow: 0 12px 32px rgba(0,0,0,.14);
+  --radius:18px;
+  --radius2:14px;
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
 
     html, body { height: 100%; }
-    body{
-      margin:0;
-      font-family:var(--font);
-      color:var(--text);
-      background:
-        radial-gradient(1000px 600px at 10% -10%, rgba(103,212,255,.18), transparent 55%),
-        radial-gradient(900px 600px at 110% 10%, rgba(139,255,204,.10), transparent 55%),
-        radial-gradient(800px 500px at 45% 110%, rgba(103,212,255,.08), transparent 60%),
-        var(--bg) !important;
-    }
+    html, body { height: 100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  background: var(--bg) !important;
+}
 
     /* --- Tailwind utility overrides (theme swap) --- */
-    .bg-slate-50{ background: transparent !important; }
-    .bg-slate-50\/60{ background: rgba(255,255,255,.04) !important; }
-    .bg-slate-100{ background: rgba(255,255,255,.06) !important; }
-    .bg-gray-100{ background: rgba(255,255,255,.06) !important; }
+    .bg-slate-50{ background: #f8fafc !important; }
+    .bg-slate-50\/60{ background: rgba(248,250,252,.6) !important; }
+    .bg-slate-100{ background: #f1f5f9 !important; }
+    .bg-gray-100{ background: #f1f5f9 !important; }
     .bg-white{
-      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03)) !important;
-      border: 1px solid var(--line) !important;
-    }
+  background: #ffffff !important;
+  border: 1px solid var(--line) !important;
+}
+
 
     .text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700{ color: var(--muted) !important; }
     .text-slate-800, .text-slate-900{ color: var(--text) !important; }
@@ -62,57 +79,58 @@
     .rounded-full{ border-radius: 999px !important; }
 
     /* Inputs / selects */
-    input, select, textarea{
-      background: rgba(0,0,0,.18) !important;
-      border-color: rgba(255,255,255,.14) !important;
-      color: var(--text) !important;
-      outline: none !important;
-    }
-    input::placeholder, textarea::placeholder{ color: rgba(169,183,214,.7) !important; }
-    input:disabled, select:disabled, textarea:disabled{ opacity: .55 !important; }
+input, select, textarea{
+  background: #ffffff !important;
+  border-color: rgba(0,0,0,.18) !important;
+  color: var(--text) !important;
+  outline: none !important;
+}
+input::placeholder, textarea::placeholder{ color: rgba(0,0,0,.45) !important; }
+input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
+
 
     /* Buttons */
     .bg-blue-600{
-      background: linear-gradient(135deg, rgba(103,212,255,.85), rgba(139,255,204,.70)) !important;
-      border-color: transparent !important;
-    }
-    .hover\:bg-blue-700:hover{
-      filter: brightness(1.05);
-    }
+  background: var(--accent) !important;
+  border-color: transparent !important;
+}
+
+    .hover\:bg-blue-700:hover{ filter: brightness(0.92); }
     .bg-emerald-600{
-      background: linear-gradient(135deg, rgba(71,209,140,.95), rgba(103,212,255,.55)) !important;
-      border-color: transparent !important;
-    }
-    .hover\:bg-emerald-700:hover{
-      filter: brightness(1.05);
-    }
-    .bg-slate-800{ background: rgba(255,255,255,.10) !important; }
-    .text-white{ color: #07101d !important; }
-    .bg-slate-800.text-white{ color: var(--text) !important; }
-    .bg-slate-800:hover{ background: rgba(255,255,255,.14) !important; }
+  background: var(--accent2) !important;
+  border-color: transparent !important;
+  color: #000000 !important;
+}
+
+    .hover\:bg-emerald-700:hover{ filter: brightness(0.93); }
+    .bg-slate-800{ background: #000000 !important; }
+    .text-white{ color: #ffffff !important; }
+.bg-slate-800.text-white{ color: #ffffff !important; }
+
+    .bg-slate-800:hover{ filter: brightness(1.10); }
 
     /* “Selected pill” buttons in the UI */
-    .bg-blue-50{ background: rgba(103,212,255,.12) !important; }
-    .border-blue-400{ border-color: rgba(103,212,255,.40) !important; }
-    .text-blue-700{ color: var(--text) !important; }
+    .bg-blue-50{ background: rgba(255,209,0,.22) !important; }
+    .border-blue-400{ border-color: rgba(255,209,0,.75) !important; }
+    .text-blue-700{ color: #000000 !important; }
 
     /* Recommendation / best row highlight */
-    .bg-emerald-50\/60{ background: rgba(71,209,140,.10) !important; }
-    .border-emerald-200{ border-color: rgba(71,209,140,.30) !important; }
+    .bg-emerald-50\/60{ background: rgba(0,129,152,.10) !important; }
+    .border-emerald-200{ border-color: rgba(0,129,152,.30) !important; }
     .text-emerald-900{ color: var(--text) !important; }
 
     /* Table */
     table{ color: var(--text) !important; }
-    thead{ color: var(--muted) !important; }
-    tbody tr{ border-color: rgba(255,255,255,.10) !important; }
+    thead{ color: rgba(0,0,0,.62) !important; }
+    tbody tr{ border-color: rgba(0,0,0,.08) !important; }
 
     /* Canvas blocks */
-    canvas{ background: rgba(0,0,0,.10) !important; border-color: rgba(255,255,255,.18) !important; max-width:100%; height:auto; }
+    canvas{ background: #ffffff !important; border-color: rgba(0,0,0,.14) !important; max-width:100%; height:auto; }
 
     /* Small code blocks */
     code{
-      background: rgba(0,0,0,.25) !important;
-      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,209,0,.18) !important;
+      border: 1px solid rgba(0,0,0,.10);
       padding: 2px 6px;
       border-radius: 10px;
     }
@@ -191,7 +209,32 @@
       let UPS_LOGO_PDF_DATA_URL = null;
 
 
-      // ---------- CONSTANTS ----------
+      
+      // Ensure the logo is available as a base64 DATA URL for jsPDF.
+      async function ensureLogoPdfDataUrl() {
+        if (UPS_LOGO_PDF_DATA_URL && typeof UPS_LOGO_PDF_DATA_URL === "string" && UPS_LOGO_PDF_DATA_URL.startsWith("data:image")) {
+          return UPS_LOGO_PDF_DATA_URL;
+        }
+        try {
+          const res = await fetch(getUpsLogoAbsUrl(), { cache: "reload" });
+          const blob = await res.blob();
+          const dataUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = reject;
+            r.readAsDataURL(blob);
+          });
+          if (typeof dataUrl === "string" && dataUrl.startsWith("data:image")) {
+            UPS_LOGO_PDF_DATA_URL = dataUrl;
+            return UPS_LOGO_PDF_DATA_URL;
+          }
+        } catch (e) {
+          console.warn("ensureLogoPdfDataUrl failed:", e);
+        }
+        return null;
+      }
+
+// ---------- CONSTANTS ----------
 
       const DPI = 300;
       const MARGIN_IN = 0.1;
@@ -578,6 +621,12 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
 
       function PriceCalculatorApp() {
         const [viewMode, setViewMode] = useState("tool"); // 'tool' | 'quote'
+        const [layoutPage, setLayoutPage] = useState(() => {
+          try { return localStorage.getItem("layoutPage") || "paper"; } catch (e) { return "paper"; }
+        });
+        useEffect(() => {
+          try { localStorage.setItem("layoutPage", layoutPage); } catch (e) {}
+        }, [layoutPage]);
         const [sheetKey, setSheetKey] = useState("8.5x11");
         const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 });
         const [orientation, setOrientation] = useState("portrait");
@@ -1969,6 +2018,8 @@ const addOrderSheetPage = (doc, payload) => {
 
 const downloadSheetPDF = async () => {
   if (!frontRef.current) return;
+  // Make sure logo is embedded in PDFs even on slow mobile connections
+  await ensureLogoPdfDataUrl();
 
   
 const savePdf = (doc, filename) => {
@@ -2826,22 +2877,148 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
 <meta charset="utf-8" />
 <title>${title}</title>
 <style>
-  body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:24px; color:#0f172a;}
-  .muted{color:#64748b;}
-  h1{margin:0 0 6px; font-size:20px;}
-  .meta{margin:0 0 18px; font-size:12px;}
-  .box{border:1px solid #e2e8f0; border-radius:12px; padding:14px; margin:12px 0;}
-  table{width:100%; border-collapse:collapse; font-size:12px;}
-  th, td{border-bottom:1px solid #e2e8f0; padding:8px 8px; vertical-align:top;}
-  th{text-align:left; background:#f8fafc;}
-  .right{text-align:right;}
-  .headRow{display:flex;align-items:center;gap:14px;}
-  .logo{width:144px;height:auto;object-fit:contain;}
-  .storeName{font-weight:900;font-size:14px; margin-bottom:2px;}
-  .storeLine{font-size:11px;color:#334155; line-height:1.2;}
-  .rule{margin:10px 0 0;border-top:1px solid #e2e8f0;}
-  @media print { .noPrint{display:none;} body{margin:0.5in;} }
-</style>
+    :root{
+  --bg:#FFFFFF;
+  --panel:#FFFFFF;
+  --panel2:#FFFFFF;
+  --card:#FFFFFF;
+  --text:#000000;
+  --muted:rgba(0,0,0,.62);
+  --line:rgba(0,0,0,.12);
+  --accent:#008198;
+  --accent2:#FFD100;
+  --danger:#d32f2f;
+  --ok:#008198;
+  --shadow: 0 12px 32px rgba(0,0,0,.14);
+  --radius:18px;
+  --radius2:14px;
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+
+    html, body { height: 100%; }
+    html, body { height: 100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  background: var(--bg) !important;
+}
+
+    /* --- Tailwind utility overrides (theme swap) --- */
+    .bg-slate-50{ background: #f8fafc !important; }
+    .bg-slate-50\/60{ background: rgba(248,250,252,.6) !important; }
+    .bg-slate-100{ background: #f1f5f9 !important; }
+    .bg-gray-100{ background: #f1f5f9 !important; }
+    .bg-white{
+  background: #ffffff !important;
+  border: 1px solid var(--line) !important;
+}
+
+
+    .text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700{ color: var(--muted) !important; }
+    .text-slate-800, .text-slate-900{ color: var(--text) !important; }
+
+    .border-slate-100, .border-slate-200, .border-slate-300, .border-gray-100, .border{ border-color: var(--line) !important; }
+    .border-dashed{ border-style: dashed !important; }
+
+    .shadow-sm{ box-shadow: var(--shadow) !important; }
+    .rounded-2xl{ border-radius: var(--radius) !important; }
+    .rounded-xl{ border-radius: var(--radius2) !important; }
+    .rounded-md{ border-radius: 12px !important; }
+    .rounded-full{ border-radius: 999px !important; }
+
+    /* Inputs / selects */
+input, select, textarea{
+  background: #ffffff !important;
+  border-color: rgba(0,0,0,.18) !important;
+  color: var(--text) !important;
+  outline: none !important;
+}
+input::placeholder, textarea::placeholder{ color: rgba(0,0,0,.45) !important; }
+input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
+
+
+    /* Buttons */
+    .bg-blue-600{
+  background: var(--accent) !important;
+  border-color: transparent !important;
+}
+
+    .hover\:bg-blue-700:hover{ filter: brightness(0.92); }
+    .bg-emerald-600{
+  background: var(--accent2) !important;
+  border-color: transparent !important;
+  color: #000000 !important;
+}
+
+    .hover\:bg-emerald-700:hover{ filter: brightness(0.93); }
+    .bg-slate-800{ background: #000000 !important; }
+    .text-white{ color: #ffffff !important; }
+.bg-slate-800.text-white{ color: #ffffff !important; }
+
+    .bg-slate-800:hover{ filter: brightness(1.10); }
+
+    /* “Selected pill” buttons in the UI */
+    .bg-blue-50{ background: rgba(255,209,0,.22) !important; }
+    .border-blue-400{ border-color: rgba(255,209,0,.75) !important; }
+    .text-blue-700{ color: #000000 !important; }
+
+    /* Recommendation / best row highlight */
+    .bg-emerald-50\/60{ background: rgba(0,129,152,.10) !important; }
+    .border-emerald-200{ border-color: rgba(0,129,152,.30) !important; }
+    .text-emerald-900{ color: var(--text) !important; }
+
+    /* Table */
+    table{ color: var(--text) !important; }
+    thead{ color: rgba(0,0,0,.62) !important; }
+    tbody tr{ border-color: rgba(0,0,0,.08) !important; }
+
+    /* Canvas blocks */
+    canvas{ background: #ffffff !important; border-color: rgba(0,0,0,.14) !important; max-width:100%; height:auto; }
+
+    /* Small code blocks */
+    code{
+      background: rgba(255,209,0,.18) !important;
+      border: 1px solid rgba(0,0,0,.10);
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+
+    /* Improve overall spacing on small screens */
+    @media (max-width: 640px){
+      #root{ padding-top: 18px !important; }
+    }
+  
+      /* ---- Mobile polish additions ---- */
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+      .table-wrap{
+        overflow-x:auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      @media (max-width: 768px){
+        .mobile-sticky-top{
+          position: sticky;
+          top: 0;
+          z-index: 30;
+          backdrop-filter: blur(12px);
+          background: rgba(255,255,255,0.85);
+          border-bottom: 1px solid rgba(15,23,42,0.08);
+        }
+        input, select, textarea { font-size: 16px; }
+        input[type="number"], input[type="text"], input[type="tel"]{
+          font-size:18px !important;
+          min-height:50px;
+          padding:12px 14px !important;
+        }
+        button{ min-height:44px; }
+
+      }
+
+    </style>
 </head>
 <body>
   <div class="head">
@@ -3007,27 +3184,148 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
 <meta charset="utf-8" />
 <title>${headerTitle}</title>
 <style>
-  body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin:24px; color:#0f172a;}
-  .muted{color:#64748b;}
-  h1{margin:0 0 6px; font-size:20px;}
-  .meta{margin:0 0 18px; font-size:12px;}
-  .box{border:1px solid #e2e8f0; border-radius:12px; padding:14px; margin:12px 0;}
-  table{width:100%; border-collapse:collapse; font-size:12px;}
-  th, td{border-bottom:1px solid #e2e8f0; padding:8px 8px; vertical-align:top;}
-  th{text-align:left; background:#f8fafc;}
-  .right{text-align:right;}
-  .best{background:#ecfdf5;}
-  .kpi{display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;}
-  .kpi .k{border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; min-width:150px;}
-  .kpi .t{font-size:11px; color:#64748b; font-weight:700;}
-  .kpi .v{margin-top:6px; font-size:14px; font-weight:800;}
-  .headRow{display:flex;align-items:center;gap:14px;}
-  .logo{width:144px;height:auto;object-fit:contain;}
-  .storeName{font-weight:900;font-size:14px; margin-bottom:2px;}
-  .storeLine{font-size:11px;color:#334155; line-height:1.2;}
-  .rule{margin:10px 0 0;border-top:1px solid #e2e8f0;}
-  @media print { .noPrint{display:none;} body{margin:0.5in;} }
-</style>
+    :root{
+  --bg:#FFFFFF;
+  --panel:#FFFFFF;
+  --panel2:#FFFFFF;
+  --card:#FFFFFF;
+  --text:#000000;
+  --muted:rgba(0,0,0,.62);
+  --line:rgba(0,0,0,.12);
+  --accent:#008198;
+  --accent2:#FFD100;
+  --danger:#d32f2f;
+  --ok:#008198;
+  --shadow: 0 12px 32px rgba(0,0,0,.14);
+  --radius:18px;
+  --radius2:14px;
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+
+    html, body { height: 100%; }
+    html, body { height: 100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  background: var(--bg) !important;
+}
+
+    /* --- Tailwind utility overrides (theme swap) --- */
+    .bg-slate-50{ background: #f8fafc !important; }
+    .bg-slate-50\/60{ background: rgba(248,250,252,.6) !important; }
+    .bg-slate-100{ background: #f1f5f9 !important; }
+    .bg-gray-100{ background: #f1f5f9 !important; }
+    .bg-white{
+  background: #ffffff !important;
+  border: 1px solid var(--line) !important;
+}
+
+
+    .text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700{ color: var(--muted) !important; }
+    .text-slate-800, .text-slate-900{ color: var(--text) !important; }
+
+    .border-slate-100, .border-slate-200, .border-slate-300, .border-gray-100, .border{ border-color: var(--line) !important; }
+    .border-dashed{ border-style: dashed !important; }
+
+    .shadow-sm{ box-shadow: var(--shadow) !important; }
+    .rounded-2xl{ border-radius: var(--radius) !important; }
+    .rounded-xl{ border-radius: var(--radius2) !important; }
+    .rounded-md{ border-radius: 12px !important; }
+    .rounded-full{ border-radius: 999px !important; }
+
+    /* Inputs / selects */
+input, select, textarea{
+  background: #ffffff !important;
+  border-color: rgba(0,0,0,.18) !important;
+  color: var(--text) !important;
+  outline: none !important;
+}
+input::placeholder, textarea::placeholder{ color: rgba(0,0,0,.45) !important; }
+input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
+
+
+    /* Buttons */
+    .bg-blue-600{
+  background: var(--accent) !important;
+  border-color: transparent !important;
+}
+
+    .hover\:bg-blue-700:hover{ filter: brightness(0.92); }
+    .bg-emerald-600{
+  background: var(--accent2) !important;
+  border-color: transparent !important;
+  color: #000000 !important;
+}
+
+    .hover\:bg-emerald-700:hover{ filter: brightness(0.93); }
+    .bg-slate-800{ background: #000000 !important; }
+    .text-white{ color: #ffffff !important; }
+.bg-slate-800.text-white{ color: #ffffff !important; }
+
+    .bg-slate-800:hover{ filter: brightness(1.10); }
+
+    /* “Selected pill” buttons in the UI */
+    .bg-blue-50{ background: rgba(255,209,0,.22) !important; }
+    .border-blue-400{ border-color: rgba(255,209,0,.75) !important; }
+    .text-blue-700{ color: #000000 !important; }
+
+    /* Recommendation / best row highlight */
+    .bg-emerald-50\/60{ background: rgba(0,129,152,.10) !important; }
+    .border-emerald-200{ border-color: rgba(0,129,152,.30) !important; }
+    .text-emerald-900{ color: var(--text) !important; }
+
+    /* Table */
+    table{ color: var(--text) !important; }
+    thead{ color: rgba(0,0,0,.62) !important; }
+    tbody tr{ border-color: rgba(0,0,0,.08) !important; }
+
+    /* Canvas blocks */
+    canvas{ background: #ffffff !important; border-color: rgba(0,0,0,.14) !important; max-width:100%; height:auto; }
+
+    /* Small code blocks */
+    code{
+      background: rgba(255,209,0,.18) !important;
+      border: 1px solid rgba(0,0,0,.10);
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+
+    /* Improve overall spacing on small screens */
+    @media (max-width: 640px){
+      #root{ padding-top: 18px !important; }
+    }
+  
+      /* ---- Mobile polish additions ---- */
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+      .table-wrap{
+        overflow-x:auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      @media (max-width: 768px){
+        .mobile-sticky-top{
+          position: sticky;
+          top: 0;
+          z-index: 30;
+          backdrop-filter: blur(12px);
+          background: rgba(255,255,255,0.85);
+          border-bottom: 1px solid rgba(15,23,42,0.08);
+        }
+        input, select, textarea { font-size: 16px; }
+        input[type="number"], input[type="text"], input[type="tel"]{
+          font-size:18px !important;
+          min-height:50px;
+          padding:12px 14px !important;
+        }
+        button{ min-height:44px; }
+
+      }
+
+    </style>
 </head>
 <body>
   <div class="head">
@@ -3077,8 +3375,21 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
           `);
           w.document.close();
           w.focus();
-          // Allow the window to render before printing (some browsers need this)
-          setTimeout(() => w.print(), 250);
+          // Print after the logo finishes loading (important on iOS/slow connections)
+          try {
+            const img = w.document.querySelector('img.logo');
+            const go = () => setTimeout(() => { try { w.print(); } catch {} }, 200);
+            if (img && !img.complete) {
+              img.addEventListener('load', go);
+              img.addEventListener('error', go);
+              // fallback in case events don't fire
+              setTimeout(go, 1200);
+            } else {
+              go();
+            }
+          } catch (e) {
+            setTimeout(() => { try { w.print(); } catch {} }, 400);
+          }
         };
 
 const quoteRows = computeQuickQuoteRows();
@@ -3232,6 +3543,56 @@ const quoteRows = computeQuickQuoteRows();
             {/* MAIN TOOL VIEW */}
             {viewMode === "tool" && (
               <div className="space-y-6">
+                {/* Layout Pages */}
+                <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-3">
+                  <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                    <button
+                      type="button"
+                      onClick={() => { setLayoutPage("paper"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      className={
+                        "h-10 px-4 rounded-xl border text-sm font-semibold whitespace-nowrap " +
+                        (layoutPage === "paper"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-slate-700 border-slate-200")
+                      }
+                    >
+                      Paper Printing
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLayoutPage("large"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      className={
+                        "h-10 px-4 rounded-xl border text-sm font-semibold whitespace-nowrap " +
+                        (layoutPage === "large"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-slate-700 border-slate-200")
+                      }
+                    >
+                      Large Format
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLayoutPage("blueprint"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      className={
+                        "h-10 px-4 rounded-xl border text-sm font-semibold whitespace-nowrap " +
+                        (layoutPage === "blueprint"
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-slate-700 border-slate-200")
+                      }
+                    >
+                      Blueprints
+                    </button>
+
+                    <div className="ml-auto flex items-center gap-2">
+                      <span className="hidden sm:inline text-xs text-slate-500 whitespace-nowrap">
+                        Switch sections without scrolling
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                {layoutPage === "paper" && (
+                  <>
                 {/* Controls row */}
                 <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
                   <div className="flex flex-wrap gap-4 items-end">
@@ -3850,7 +4211,12 @@ const quoteRows = computeQuickQuoteRows();
                   </div>
                 </section>
 
-                {/* LARGE FORMAT SECTION */}
+                {/* LARGE FORMAT SECTION */}                  </>
+                )}
+
+                {layoutPage === "large" && (
+                  <>
+
                 <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="font-semibold text-slate-800 text-sm">
@@ -4040,7 +4406,12 @@ const quoteRows = computeQuickQuoteRows();
                     </div>
                   </div>
                 </section>
-                {/* BLUEPRINT SECTION */}
+                {/* BLUEPRINT SECTION */}                  </>
+                )}
+
+                {layoutPage === "blueprint" && (
+                  <>
+
                 <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="font-semibold text-slate-800 text-sm">
@@ -4155,6 +4526,9 @@ const quoteRows = computeQuickQuoteRows();
                     </div>
                   </div>
                 </section>
+
+                  </>
+                )}
 
               </div>
             )}
