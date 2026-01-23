@@ -2428,13 +2428,73 @@ const downloadBlueprintPDF = () => {
               user: { name, email, phone }
             };
 
-            const payload = {
-              subject: "PRINT JOB",
-              to: "store4979@theupsstore.com",
-              jobType,
-              details,
-              pdfBase64
-            };
+// ---- BUILD NORMALIZED ORDER FOR EMAIL ----
+const paperItems = [];
+const largeFormatItems = [];
+const blueprintItems = [];
+
+/* PAPER PRINTING */
+if (jobType === "sheets") {
+  paperItems.push({
+    name: "Standard Printing",
+    specs: `${sheetKey} • ${paperKey} • ${frontColorMode.toUpperCase()}${showBack ? " / " + backColorMode.toUpperCase() : ""}`,
+    qty: sheetsNeeded,
+    unitPrice: Number(totalPrice) / Math.max(1, sheetsNeeded),
+    total: Number(totalPrice)
+  });
+}
+
+/* LARGE FORMAT */
+if (jobType === "large-format") {
+  largeFormatItems.push({
+    name: "Large Format Print",
+    specs: `${lfWidth}" × ${lfHeight}" • ${lfPaperKey} • ${lfColorMode.toUpperCase()}`,
+    qty: 1,
+    unitPrice: Number(lfTotalWithDiscount),
+    total: Number(lfTotalWithDiscount)
+  });
+}
+
+/* BLUEPRINTS */
+if (jobType === "blueprints") {
+  blueprintItems.push({
+    name: "Blueprint Printing",
+    specs: `${bpWidth}" × ${bpHeight}" • ${bpQty} sheets • B/W`,
+    qty: bpQty,
+    unitPrice: Number(bpTotal) / Math.max(1, bpQty),
+    total: Number(bpTotal)
+  });
+}
+
+const order = {
+  orderId: `JOB-${Date.now()}`,
+  customerName: name || "Walk-In",
+  phone,
+  email,
+  dueDate: "ASAP",
+  notes: "",
+  subtotal:
+    Number(totalPrice || 0) +
+    Number(lfTotalWithDiscount || 0) +
+    Number(bpTotal || 0),
+  discountPct: 0,
+  discountAmt: 0,
+  total:
+    Number(totalPrice || 0) +
+    Number(lfTotalWithDiscount || 0) +
+    Number(bpTotal || 0),
+  paperItems,
+  largeFormatItems,
+  blueprintItems
+};
+
+const payload = {
+  subject: "Print Order – Store 4979",
+  to: "store4979@theupsstore.com",
+  order,
+  pdfBase64
+};
+
 
             const resp = await fetch(
               "/.netlify/functions/send-print-job",
