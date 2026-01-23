@@ -523,9 +523,6 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
 
       function PriceCalculatorApp() {
         const [viewMode, setViewMode] = useState("tool"); // 'tool' | 'quote'
-        const [attachOrderSheet, setAttachOrderSheet] = useState(() => {
-          try { return localStorage.getItem("attachOrderSheet") === "1"; } catch { return true; }
-        });
         const [sheetKey, setSheetKey] = useState("8.5x11");
         const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 });
         const [orientation, setOrientation] = useState("portrait");
@@ -668,12 +665,7 @@ const [lfPaperKey, setLfPaperKey] = useState(() => {
         const lfRef = useRef(null);
         const bpRef = useRef(null);
         // If enabled, automatically set Quantity = sum(per-file qty)
-        
         useEffect(() => {
-          try { localStorage.setItem("attachOrderSheet", attachOrderSheet ? "1" : "0"); } catch {}
-        }, [attachOrderSheet]);
-
-useEffect(() => {
           if (!autoQtyFromFiles) return;
           const total = (frontFiles || []).reduce((sum, it) => {
             const q = Math.max(0, Number(it?.qty) || 0);
@@ -2034,185 +2026,249 @@ const downloadBlueprintPDF = () => {
 
         // -------- EMAIL ORDER (Netlify Function) --------
 
-        const sendOrderEmail = async (jobType, pdfBlob) => {
-          try {
-            const reader = new FileReader();
-            const base64 = await new Promise((resolve, reject) => {
-              reader.onloadend = () => resolve(reader.result);
-              reader.onerror = reject;
-              reader.readAsDataURL(pdfBlob);
-            });
+        // -------- EMAIL ORDER (Netlify Function) --------
 
-            const prefix = "data:application/pdf;base64,";
-            const pdfBase64 = base64.startsWith(prefix)
-              ? base64.slice(prefix.length)
-              : base64;
+// Convert a Blob -> base64 PDF string (no data: prefix)
+const blobToPdfBase64 = (blob) =>
+  new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result || "";
+        const prefix = "data:application/pdf;base64,";
+        resolve(
+          typeof base64 === "string" && base64.startsWith(prefix)
+            ? base64.slice(prefix.length)
+            : base64
+        );
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      reject(e);
+    }
+  });
 
-            console.log("pdfBase64 length (client):", pdfBase64.length);
+const sendOrderEmail = async (jobType, pdfBlob) => {
+  try {
+    // Ensure logo is available for the order sheet attachment
+    await ensureLogoPdfDataUrl();
 
-            // Safety: Netlify body size limit ~10MB => ~7.5MB raw => ~10MB base64
-            const MAX_LEN = 10 * 1024 * 1024;
-            if (pdfBase64.length > MAX_LEN) {
-              alert(
-                "The generated PDF is too large to send automatically. Please download it and email manually."
-              );
-              return false;
-            }
+    // 1) Main print-ready PDF (user's artwork)
+    const pdfBase64 = await blobToPdfBase64(pdfBlob);
+    console.log("pdfBase64 length (client):", pdfBase64.length);
 
-            const name = window.prompt("Your name (for the order)?") || "";
-            const email =
-              window.prompt("Your email (for confirmation)?") || "";
-            const phone =
-              window.prompt("Your phone number (optional)?") || "";
+    // 2) Build the ORDER SHEET PDF (Letter 8.5×11) as a separate attachment
+    let orderSheetPdfBase64 = "";
+    try {
+      const orderSheetDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
 
-            const details = {
-              jobType,
-              sheet: {
-                sheetKey,
-                orientation,
-                prints,
-                paperKey,
-                frontColorMode,
-                backColorMode,
-                showBack,
-                sheetsNeeded,
-                totalPrice: totalPrice.toFixed(2)
-              },
-              largeFormat: {
-                width: lfWidth,
-                height: lfHeight,
-                paperKey: lfPaperKey,
-                colorMode: lfColorMode,
-                addons: {
-                  grommets: lfGrommets,
-                  foamCore: lfFoamCore,
-                  coroSign: lfCoroSign
-                },
-                lfTotal: lfTotalWithDiscount.toFixed(2)
-              },
-              blueprints: {
-                size: bpSizeKey,
-                width: bpWidth,
-                height: bpHeight,
-                qty: bpQty,
-                paperKey: "plain_20lb",
-                colorMode: "bw",
-                psf: Number(bpPsf || 0).toFixed(4),
-                areaPerSheetSqFt: bpAreaPerSheetSqFt.toFixed(3),
-                totalSqFt: bpTotalSqFt.toFixed(3),
-                total: bpTotal.toFixed(2)
-              },
-              user: { name, email, phone }
-            };
+      if (jobType === "sheets") {
+        const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
+        const isCustom = sheetKey === "custom";
+        const sheetW = isCustom
+          ? customSize.w
+          : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
+        const sheetH = isCustom
+          ? customSize.h
+          : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
 
-            
-            // Optional: generate a separate 8.5x11 Print Order Sheet PDF attachment
-            let orderSheetPdfBase64 = null;
-            if (attachOrderSheet) {
-              try {
-                await ensureLogoPdfDataUrl();
-                const { jsPDF } = window.jspdf;
+        const totalPrintQty = (frontFiles && frontFiles.length)
+          ? frontFiles.reduce((sum, f) => sum + (Number(f.qty) || 0), 0)
+          : (Number(prints.quantity) || 0);
 
-                const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+        const details = [
+          { label: "Paper selected:", value: currentPaper.label },
+          { label: "Base sheet size:", value: `${sheetW}×${sheetH} in${isCustom ? " (custom)" : ""}` },
+          { label: "Sheet orientation:", value: orientation },
+          { label: "Target size:", value: `${Number(prints.width) || 0}×${Number(prints.height) || 0} in` },
+          { label: "Prints per sheet:", value: `${Math.max(1, printsPerSheet)} (grid: ${frontSlotInfo?.cols || 0}×${frontSlotInfo?.rows || 0})` },
+          { label: "Total prints:", value: totalPrintQty },
+          { label: `Sheets needed (${sheetW}×${sheetH}):`, value: sheetsNeeded },
+          { label: "Front color:", value: (frontColorMode === "bw" ? "B/W" : "Color") },
+          ...(showBack ? [{ label: "Back color:", value: (backColorMode === "bw" ? "B/W" : "Color") }] : []),
+        ];
 
-                // Build order-sheet content based on selected job type
-                if (jobType === "sheets") {
-                  const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
-                  const isCustom = sheetKey === "custom";
-                  const sheetW = isCustom ? customSize.w : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
-                  const sheetH = isCustom ? customSize.h : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
+        const subtotal = (Number(perSheetTotal) || 0) * (Number(sheetsNeeded) || 0);
+        const discPct = Math.max(0, (1 - (Number(discountFactor) || 1)) * 100);
+        const discAmt = Math.max(0, subtotal - (Number(totalPrice) || 0));
 
-                  const totalPrintQty = (frontFiles && frontFiles.length)
-                    ? frontFiles.reduce((sum, f) => sum + (Number(f.qty) || 0), 0)
-                    : (Number(prints.quantity) || 0);
+        const totals = [
+          { label: "Per-sheet cost:", value: `$${Number(perSheetTotal || 0).toFixed(2)}` },
+          { label: "Subtotal:", value: `$${Number(subtotal || 0).toFixed(2)}` },
+          ...(discPct > 0.0001 ? [{ label: `Qty discount (${discPct.toFixed(1)}%):`, value: `-$${Number(discAmt || 0).toFixed(2)}` }] : []),
+          { label: "Estimated total:", value: `$${Number(totalPrice || 0).toFixed(2)}` },
+        ];
 
-                  const detailsArr = [
-                    { label: "Paper selected:", value: currentPaper.label },
-                    { label: "Base sheet size:", value: `${sheetW}×${sheetH} in${isCustom ? " (custom)" : ""}` },
-                    { label: "Sheet orientation:", value: orientation },
-                    { label: "Target size:", value: `${Number(prints.width) || 0}×${Number(prints.height) || 0} in` },
-                    { label: "Total prints:", value: totalPrintQty },
-                    { label: `Sheets needed (${sheetW}×${sheetH}):`, value: sheetsNeeded },
-                    { label: "Front/Back:", value: showBack ? "Double-sided" : "Single-sided" },
-                    { label: "Color mode:", value: `${String(frontColorMode || "").toUpperCase()}${showBack ? " / " + String(backColorMode || "").toUpperCase() : ""}` },
-                  ];
+        const files = (frontFiles && frontFiles.length)
+          ? frontFiles.map((f, i) => {
+              const rot = (Number(f.rotation) || 0) % 360;
+              return `${i + 1}. ${f.name || "file"}  —  qty: ${Number(f.qty) || 0}${rot ? `  •  rotate: ${rot}°` : ""}`;
+            })
+          : (frontImage ? [frontImage.name || "uploaded image"] : []);
 
-                  const subtotal = (Number(perSheetTotal) || 0) * (Number(sheetsNeeded) || 0);
-                  const discPct = Math.max(0, (1 - (Number(discountFactor) || 1)) * 100);
-                  const discAmt = Math.max(0, subtotal - (Number(totalPrice) || 0));
+        const barcodeValue = getPaperBarcode(currentPaper.label, sheetW, sheetH);
 
-                  const totalsArr = [
-                    { label: "Per-sheet cost:", value: `$${Number(perSheetTotal || 0).toFixed(2)}` },
-                    { label: "Subtotal:", value: `$${Number(subtotal || 0).toFixed(2)}` },
-                    ...(discPct > 0.0001 ? [{ label: `Qty discount (${discPct.toFixed(1)}%):`, value: `-$${Number(discAmt || 0).toFixed(2)}` }] : []),
-                    { label: "Estimated total:", value: `$${Number(totalPrice || 0).toFixed(2)}` },
-                  ];
+        addOrderSheetPage(orderSheetDoc, {
+          jobType: "Sheets / Photos",
+          details,
+          totals,
+          files,
+          barcodeValue
+        });
+      } else if (jobType === "large-format") {
+        const lfPaper = lfPaperTypes.find((p) => p.key === lfPaperKey) || { label: lfPaperKey };
 
-                  const filesArr = (frontFiles && frontFiles.length)
-                    ? frontFiles.map((f, i) => {
-                        const rot = (Number(f.rotation) || 0) % 360;
-                        return `${i + 1}. ${f.name || "file"} — qty: ${Number(f.qty) || 0}${rot ? ` • rotate: ${rot}°` : ""}`;
-                      })
-                    : (frontImage ? [frontImage.name || "uploaded image"] : []);
+        const details = [
+          { label: "Paper selected:", value: lfPaper.label },
+          { label: "Size:", value: `${lfWidth}×${lfHeight} in` },
+          { label: "Orientation:", value: (lfWidth >= lfHeight ? "landscape" : "portrait") },
+          { label: "Color mode:", value: (lfColorMode === "bw" ? "B/W" : "Color") },
+          { label: "Add-ons:", value: [lfGrommets ? "Grommets" : null, lfFoamCore ? "Foam Core" : null, lfCoroSign ? "Coro Sign" : null].filter(Boolean).join(", ") || "None" },
+        ];
 
-                  const barcodeValue = getPaperBarcode(currentPaper.label, sheetW, sheetH);
+        const totals = [
+          { label: "Estimated total:", value: `$${Number(lfTotalWithDiscount || 0).toFixed(2)}` }
+        ];
 
-                  addOrderSheetPage(orderDoc, {
-                    jobType: "Sheets / Photos",
-                    details: detailsArr,
-                    totals: totalsArr,
-                    files: filesArr,
-                    barcodeValue
-                  });
-                } else if (jobType === "large-format") {
-                  const lfDetails = [
-                    { label: "Size:", value: `${Number(lfWidth) || 0}×${Number(lfHeight) || 0} in` },
-                    { label: "Paper:", value: (DEFAULT_LF_PAPER_TYPES.find(p => p.key === lfPaperKey)?.label || lfPaperKey) },
-                    { label: "Color mode:", value: String(lfColorMode || "").toUpperCase() },
-                    { label: "Add-ons:", value: [lfGrommets ? "Grommets" : null, lfFoamCore ? "Foam Core" : null, lfCoroSign ? "Coroplast" : null].filter(Boolean).join(", ") || "None" }
-                  ];
-                  const lfTotals = [
-                    { label: "Estimated total:", value: `$${Number(lfTotalWithDiscount || 0).toFixed(2)}` }
-                  ];
-                  const lfFiles = lfImage ? [lfImage.name || "uploaded image"] : [];
-                  addOrderSheetPage(orderDoc, { jobType: "Large Format", details: lfDetails, totals: lfTotals, files: lfFiles, barcodeValue: null });
-                } else if (jobType === "blueprints") {
-                  const bpDetails = [
-                    { label: "Size:", value: `${Number(bpWidth) || 0}×${Number(bpHeight) || 0} in` },
-                    { label: "Quantity:", value: `${Number(bpQty) || 0}` },
-                    { label: "Paper:", value: "20lb Plain Bond" },
-                    { label: "Color mode:", value: "B/W" },
-                    { label: "Total Sq Ft:", value: `${Number(bpTotalSqFt || 0).toFixed(3)}` },
-                  ];
-                  const bpTotals = [
-                    { label: "Estimated total:", value: `$${Number(bpTotal || 0).toFixed(2)}` }
-                  ];
-                  const bpFiles = bpImage ? [bpImage.name || "uploaded image"] : [];
-                  addOrderSheetPage(orderDoc, { jobType: "Blueprints", details: bpDetails, totals: bpTotals, files: bpFiles, barcodeValue: null });
-                }
+        addOrderSheetPage(orderSheetDoc, {
+          jobType: "Large Format",
+          details,
+          totals,
+          files: lfImage ? [lfImage.name || "uploaded image"] : []
+        });
+      } else if (jobType === "blueprints") {
+        const sizeObj = BLUEPRINT_SIZES.find((s) => s.key === bpSizeKey) || { label: bpSizeKey };
 
-                const orderBlob = orderDoc.output("blob");
-                const orderB64 = await new Promise((resolve, reject) => {
-                  const r = new FileReader();
-                  r.onloadend = () => resolve(r.result);
-                  r.onerror = reject;
-                  r.readAsDataURL(orderBlob);
-                });
-                const pfx = "data:application/pdf;base64,";
-                orderSheetPdfBase64 = String(orderB64).startsWith(pfx) ? String(orderB64).slice(pfx.length) : String(orderB64);
-              } catch (e) {
-                console.warn("Order sheet generation failed:", e);
-                orderSheetPdfBase64 = null;
-              }
-            }
+        const details = [
+          { label: "Paper selected:", value: "20lb plain bond" },
+          { label: "Blueprint size:", value: sizeObj.label },
+          { label: "Quantity (sheets):", value: bpQty },
+          { label: "Orientation:", value: (bpWidth >= bpHeight ? "landscape" : "portrait") },
+        ];
 
-const payload = {
+        const totals = [
+          { label: "Estimated total:", value: `$${Number(bpTotal || 0).toFixed(2)}` }
+        ];
+
+        addOrderSheetPage(orderSheetDoc, {
+          jobType: "Blueprints",
+          details,
+          totals,
+          files: bpImage ? [bpImage.name || "uploaded image"] : []
+        });
+      }
+
+      const orderSheetBlob = orderSheetDoc.output("blob");
+      orderSheetPdfBase64 = await blobToPdfBase64(orderSheetBlob);
+      console.log("orderSheetPdfBase64 length (client):", orderSheetPdfBase64.length);
+    } catch (e) {
+      console.warn("Order sheet generation failed; continuing without it.", e);
+      orderSheetPdfBase64 = "";
+    }
+
+    // Safety: Netlify body size limit ~10MB => ~7.5MB raw => ~10MB base64
+    const MAX_LEN = 10 * 1024 * 1024;
+    const combinedLen = (pdfBase64?.length || 0) + (orderSheetPdfBase64?.length || 0);
+    if (combinedLen > MAX_LEN) {
+      alert(
+        "The generated PDFs are too large to send automatically. Please download the PDF(s) and email manually."
+      );
+      return false;
+    }
+
+    const name = window.prompt("Your name (for the order)?") || "";
+    const email =
+      window.prompt("Your email (for confirmation)?") || "";
+    const phone =
+      window.prompt("Your phone number (optional)?") || "";
+
+    const details = {
+      jobType,
+      sheet: {
+        sheetKey,
+        orientation,
+        prints,
+        paperKey,
+        frontColorMode,
+        backColorMode,
+        showBack,
+        sheetsNeeded,
+        totalPrice: totalPrice.toFixed(2)
+      },
+      largeFormat: {
+        width: lfWidth,
+        height: lfHeight,
+        paperKey: lfPaperKey,
+        colorMode: lfColorMode,
+        addons: {
+          grommets: lfGrommets,
+          foamCore: lfFoamCore,
+          coroSign: lfCoroSign
+        },
+        lfTotal: lfTotalWithDiscount.toFixed(2)
+      },
+      blueprints: {
+        size: bpSizeKey,
+        width: bpWidth,
+        height: bpHeight,
+        qty: bpQty,
+        paperKey: "plain_20lb",
+        colorMode: "bw",
+        psf: Number(bpPsf || 0).toFixed(4),
+        areaPerSheetSqFt: bpAreaPerSheetSqFt.toFixed(3),
+        totalSqFt: bpTotalSqFt.toFixed(3),
+        total: bpTotal.toFixed(2)
+      },
+      user: { name, email, phone }
+    };
+
+    const payload = {
+      subject: "PRINT JOB",
+      to: "store4979@theupsstore.com",
+      jobType,
+      details,
+      pdfBase64,
+      // ✅ second attachment (order sheet)
+      orderSheetPdfBase64
+    };
+
+    const resp = await fetch(
+      "/.netlify/functions/send-print-job",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (!resp.ok) {
+      console.error("Server error:", resp.status);
+      alert(
+        "Could not send order automatically. Please download the PDF and email it to store4979@theupsstore.com."
+      );
+      return false;
+    }
+    alert(
+      "Order sent! We'll receive your job details by email shortly."
+    );
+    return true;
+  } catch (err) {
+    console.error("sendOrderEmail error:", err);
+    alert(
+      "Could not send order automatically. Please download the PDF and email it to store4979@theupsstore.com."
+    );
+    return false;
+  }
+};
+            const payload = {
               subject: "PRINT JOB",
               to: "store4979@theupsstore.com",
               jobType,
               details,
-              pdfBase64,
-              orderSheetPdfBase64
+              pdfBase64
             };
 
             const resp = await fetch(
@@ -3732,15 +3788,6 @@ const quoteRows = computeQuickQuoteRows();
                     >
                       Download Preview (PDF)
                     </button>
-
-                    <label className="flex items-center gap-2 text-xs text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={attachOrderSheet}
-                        onChange={(e) => setAttachOrderSheet(e.target.checked)}
-                      />
-                      Attach Print Order Sheet (PDF)
-                    </label>
                     <button
                       onClick={orderSheetJob}
                       className="px-4 py-2 rounded-full bg-emerald-600 text-white text-sm shadow-sm hover:bg-emerald-700"
