@@ -523,6 +523,9 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
 
       function PriceCalculatorApp() {
         const [viewMode, setViewMode] = useState("tool"); // 'tool' | 'quote'
+        const [attachOrderSheet, setAttachOrderSheet] = useState(() => {
+          try { return localStorage.getItem("attachOrderSheet") === "1"; } catch { return true; }
+        });
         const [sheetKey, setSheetKey] = useState("8.5x11");
         const [customSize, setCustomSize] = useState({ w: 8.5, h: 11 });
         const [orientation, setOrientation] = useState("portrait");
@@ -665,7 +668,12 @@ const [lfPaperKey, setLfPaperKey] = useState(() => {
         const lfRef = useRef(null);
         const bpRef = useRef(null);
         // If enabled, automatically set Quantity = sum(per-file qty)
+        
         useEffect(() => {
+          try { localStorage.setItem("attachOrderSheet", attachOrderSheet ? "1" : "0"); } catch {}
+        }, [attachOrderSheet]);
+
+useEffect(() => {
           if (!autoQtyFromFiles) return;
           const total = (frontFiles || []).reduce((sum, it) => {
             const q = Math.max(0, Number(it?.qty) || 0);
@@ -2026,140 +2034,32 @@ const downloadBlueprintPDF = () => {
 
         // -------- EMAIL ORDER (Netlify Function) --------
 
-        const blobToPdfBase64 = async (blob) => {
-          const reader = new FileReader();
-          const base64 = await new Promise((resolve, reject) => {
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-          const prefix = "data:application/pdf;base64,";
-          return (typeof base64 === "string" && base64.startsWith(prefix))
-            ? base64.slice(prefix.length)
-            : base64;
-        };
-
-        const buildOrderSheetBlobForJobType = async (jobType) => {
-          // Ensure the logo is embedded for PDFs (mobile-safe)
-          try { await ensureLogoPdfDataUrl(); } catch (e) {}
-
-          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
-
-          if (jobType === "sheets") {
-            const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
-            const isCustom = sheetKey === "custom";
-            const sheetW = isCustom ? customSize.w : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
-            const sheetH = isCustom ? customSize.h : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
-
-            const totalPrintQty = (frontFiles && frontFiles.length)
-              ? frontFiles.reduce((sum, f) => sum + (Number(f.qty) || 0), 0)
-              : (Number(prints.quantity) || 0);
-
-            const detailsArr = [
-              { label: "Paper selected:", value: currentPaper.label },
-              { label: "Base sheet size:", value: `${sheetW}×${sheetH} in${isCustom ? " (custom)" : ""}` },
-              { label: "Sheet orientation:", value: orientation },
-              { label: "Target size:", value: `${Number(prints.width) || 0}×${Number(prints.height) || 0} in` },
-              { label: "Prints per sheet:", value: `${Math.max(1, printsPerSheet)} (grid: ${frontSlotInfo?.cols || 0}×${frontSlotInfo?.rows || 0})` },
-              { label: "Total prints:", value: totalPrintQty },
-              { label: `Sheets needed (${sheetW}×${sheetH}):`, value: sheetsNeeded },
-              { label: "Front color:", value: frontColorMode },
-              ...(showBack ? [{ label: "Back side:", value: `Yes (${backColorMode})` }] : [{ label: "Back side:", value: "No" }]),
-            ];
-
-            const subtotal = (Number(perSheetTotal) || 0) * (Number(sheetsNeeded) || 0);
-            const discPct = Math.max(0, (1 - (Number(discountFactor) || 1)) * 100);
-            const discAmt = Math.max(0, subtotal - (Number(totalPrice) || 0));
-
-            const totalsArr = [
-              { label: "Per-sheet cost:", value: `$${Number(perSheetTotal || 0).toFixed(2)}` },
-              { label: "Subtotal:", value: `$${Number(subtotal || 0).toFixed(2)}` },
-              ...(discPct > 0.0001 ? [{ label: `Qty discount (${discPct.toFixed(1)}%):`, value: `-$${Number(discAmt || 0).toFixed(2)}` }] : []),
-              { label: "Estimated total:", value: `$${Number(totalPrice || 0).toFixed(2)}` },
-            ];
-
-            const filesArr = (frontFiles && frontFiles.length)
-              ? frontFiles.map((f, i) => {
-                  const rot = (Number(f.rotation) || 0) % 360;
-                  return `${i + 1}. ${f.name || "file"}  —  qty: ${Number(f.qty) || 0}${rot ? `  •  rotate: ${rot}°` : ""}`;
-                })
-              : (frontImage ? [frontImage.name || "uploaded image"] : []);
-
-            const barcodeValue = getPaperBarcode(currentPaper.label, sheetW, sheetH);
-
-            addOrderSheetPage(orderDoc, {
-              jobType: "Sheets / Photos",
-              details: detailsArr,
-              totals: totalsArr,
-              files: filesArr,
-              barcodeValue
-            });
-          } else if (jobType === "large-format") {
-            const paperObj = lfPaperTypes.find((p) => p.key === lfPaperKey) || { label: lfPaperKey };
-            const detailsArr = [
-              { label: "Paper selected:", value: paperObj.label },
-              { label: "Size:", value: `${Number(lfWidth) || 0}×${Number(lfHeight) || 0} in` },
-              { label: "Color:", value: lfColorMode },
-              { label: "Grommets:", value: lfGrommets ? "Yes" : "No" },
-              { label: "Foam core mount:", value: lfFoamCore ? "Yes" : "No" },
-              { label: "Coroplast sign:", value: lfCoroSign ? "Yes" : "No" },
-            ];
-            const totalsArr = [{ label: "Estimated total:", value: `$${Number(lfTotalWithDiscount || 0).toFixed(2)}` }];
-            addOrderSheetPage(orderDoc, {
-              jobType: "Large Format",
-              details: detailsArr,
-              totals: totalsArr,
-              files: lfImage ? [lfImage.name || "uploaded image"] : []
-            });
-          } else if (jobType === "blueprints") {
-            const sizeObj = BLUEPRINT_SIZES.find((s) => s.key === bpSizeKey) || { label: bpSizeKey };
-            const detailsArr = [
-              { label: "Paper selected:", value: "20lb plain bond" },
-              { label: "Blueprint size:", value: sizeObj.label },
-              { label: "Custom size:", value: `${Number(bpWidth) || 0}×${Number(bpHeight) || 0} in` },
-              { label: "Quantity (sheets):", value: bpQty },
-              { label: "Orientation:", value: (bpWidth >= bpHeight ? "landscape" : "portrait") },
-            ];
-            const totalsArr = [{ label: "Estimated total:", value: `$${Number(bpTotal || 0).toFixed(2)}` }];
-            addOrderSheetPage(orderDoc, {
-              jobType: "Blueprints",
-              details: detailsArr,
-              totals: totalsArr,
-              files: bpImage ? [bpImage.name || "uploaded image"] : []
-            });
-          } else {
-            addOrderSheetPage(orderDoc, {
-              jobType: String(jobType || "Print Job"),
-              details: [],
-              totals: [],
-              files: []
-            });
-          }
-
-          return orderDoc.output("blob");
-        };
-
-
-        const sendOrderEmail = async (jobType, jobPdfBlob, orderSheetBlob = null) => {
+        const sendOrderEmail = async (jobType, pdfBlob) => {
           try {
-            const jobPdfBase64 = await blobToPdfBase64(jobPdfBlob);
-            const orderSheetPdfBase64 = orderSheetBlob ? await blobToPdfBase64(orderSheetBlob) : null;
+            const reader = new FileReader();
+            const base64 = await new Promise((resolve, reject) => {
+              reader.onloadend = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(pdfBlob);
+            });
 
-            // Safety: Netlify body size limit ~10MB for JSON body (base64 grows ~33%)
+            const prefix = "data:application/pdf;base64,";
+            const pdfBase64 = base64.startsWith(prefix)
+              ? base64.slice(prefix.length)
+              : base64;
+
+            console.log("pdfBase64 length (client):", pdfBase64.length);
+
+            // Safety: Netlify body size limit ~10MB => ~7.5MB raw => ~10MB base64
             const MAX_LEN = 10 * 1024 * 1024;
-            const combinedLen = (jobPdfBase64?.length || 0) + (orderSheetPdfBase64?.length || 0);
-            console.log("jobPdfBase64 length (client):", jobPdfBase64?.length || 0);
-            console.log("orderSheetPdfBase64 length (client):", orderSheetPdfBase64?.length || 0);
-            console.log("combined base64 length (client):", combinedLen);
-
-            if ((jobPdfBase64?.length || 0) > MAX_LEN || combinedLen > MAX_LEN) {
+            if (pdfBase64.length > MAX_LEN) {
               alert(
                 "The generated PDF is too large to send automatically. Please download it and email manually."
               );
               return false;
             }
 
-const name = window.prompt("Your name (for the order)?") || "";
+            const name = window.prompt("Your name (for the order)?") || "";
             const email =
               window.prompt("Your email (for confirmation)?") || "";
             const phone =
@@ -2205,14 +2105,114 @@ const name = window.prompt("Your name (for the order)?") || "";
               user: { name, email, phone }
             };
 
-            const payload = {
+            
+            // Optional: generate a separate 8.5x11 Print Order Sheet PDF attachment
+            let orderSheetPdfBase64 = null;
+            if (attachOrderSheet) {
+              try {
+                await ensureLogoPdfDataUrl();
+                const { jsPDF } = window.jspdf;
+
+                const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+
+                // Build order-sheet content based on selected job type
+                if (jobType === "sheets") {
+                  const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
+                  const isCustom = sheetKey === "custom";
+                  const sheetW = isCustom ? customSize.w : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
+                  const sheetH = isCustom ? customSize.h : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
+
+                  const totalPrintQty = (frontFiles && frontFiles.length)
+                    ? frontFiles.reduce((sum, f) => sum + (Number(f.qty) || 0), 0)
+                    : (Number(prints.quantity) || 0);
+
+                  const detailsArr = [
+                    { label: "Paper selected:", value: currentPaper.label },
+                    { label: "Base sheet size:", value: `${sheetW}×${sheetH} in${isCustom ? " (custom)" : ""}` },
+                    { label: "Sheet orientation:", value: orientation },
+                    { label: "Target size:", value: `${Number(prints.width) || 0}×${Number(prints.height) || 0} in` },
+                    { label: "Total prints:", value: totalPrintQty },
+                    { label: `Sheets needed (${sheetW}×${sheetH}):`, value: sheetsNeeded },
+                    { label: "Front/Back:", value: showBack ? "Double-sided" : "Single-sided" },
+                    { label: "Color mode:", value: `${String(frontColorMode || "").toUpperCase()}${showBack ? " / " + String(backColorMode || "").toUpperCase() : ""}` },
+                  ];
+
+                  const subtotal = (Number(perSheetTotal) || 0) * (Number(sheetsNeeded) || 0);
+                  const discPct = Math.max(0, (1 - (Number(discountFactor) || 1)) * 100);
+                  const discAmt = Math.max(0, subtotal - (Number(totalPrice) || 0));
+
+                  const totalsArr = [
+                    { label: "Per-sheet cost:", value: `$${Number(perSheetTotal || 0).toFixed(2)}` },
+                    { label: "Subtotal:", value: `$${Number(subtotal || 0).toFixed(2)}` },
+                    ...(discPct > 0.0001 ? [{ label: `Qty discount (${discPct.toFixed(1)}%):`, value: `-$${Number(discAmt || 0).toFixed(2)}` }] : []),
+                    { label: "Estimated total:", value: `$${Number(totalPrice || 0).toFixed(2)}` },
+                  ];
+
+                  const filesArr = (frontFiles && frontFiles.length)
+                    ? frontFiles.map((f, i) => {
+                        const rot = (Number(f.rotation) || 0) % 360;
+                        return `${i + 1}. ${f.name || "file"} — qty: ${Number(f.qty) || 0}${rot ? ` • rotate: ${rot}°` : ""}`;
+                      })
+                    : (frontImage ? [frontImage.name || "uploaded image"] : []);
+
+                  const barcodeValue = getPaperBarcode(currentPaper.label, sheetW, sheetH);
+
+                  addOrderSheetPage(orderDoc, {
+                    jobType: "Sheets / Photos",
+                    details: detailsArr,
+                    totals: totalsArr,
+                    files: filesArr,
+                    barcodeValue
+                  });
+                } else if (jobType === "large-format") {
+                  const lfDetails = [
+                    { label: "Size:", value: `${Number(lfWidth) || 0}×${Number(lfHeight) || 0} in` },
+                    { label: "Paper:", value: (DEFAULT_LF_PAPER_TYPES.find(p => p.key === lfPaperKey)?.label || lfPaperKey) },
+                    { label: "Color mode:", value: String(lfColorMode || "").toUpperCase() },
+                    { label: "Add-ons:", value: [lfGrommets ? "Grommets" : null, lfFoamCore ? "Foam Core" : null, lfCoroSign ? "Coroplast" : null].filter(Boolean).join(", ") || "None" }
+                  ];
+                  const lfTotals = [
+                    { label: "Estimated total:", value: `$${Number(lfTotalWithDiscount || 0).toFixed(2)}` }
+                  ];
+                  const lfFiles = lfImage ? [lfImage.name || "uploaded image"] : [];
+                  addOrderSheetPage(orderDoc, { jobType: "Large Format", details: lfDetails, totals: lfTotals, files: lfFiles, barcodeValue: null });
+                } else if (jobType === "blueprints") {
+                  const bpDetails = [
+                    { label: "Size:", value: `${Number(bpWidth) || 0}×${Number(bpHeight) || 0} in` },
+                    { label: "Quantity:", value: `${Number(bpQty) || 0}` },
+                    { label: "Paper:", value: "20lb Plain Bond" },
+                    { label: "Color mode:", value: "B/W" },
+                    { label: "Total Sq Ft:", value: `${Number(bpTotalSqFt || 0).toFixed(3)}` },
+                  ];
+                  const bpTotals = [
+                    { label: "Estimated total:", value: `$${Number(bpTotal || 0).toFixed(2)}` }
+                  ];
+                  const bpFiles = bpImage ? [bpImage.name || "uploaded image"] : [];
+                  addOrderSheetPage(orderDoc, { jobType: "Blueprints", details: bpDetails, totals: bpTotals, files: bpFiles, barcodeValue: null });
+                }
+
+                const orderBlob = orderDoc.output("blob");
+                const orderB64 = await new Promise((resolve, reject) => {
+                  const r = new FileReader();
+                  r.onloadend = () => resolve(r.result);
+                  r.onerror = reject;
+                  r.readAsDataURL(orderBlob);
+                });
+                const pfx = "data:application/pdf;base64,";
+                orderSheetPdfBase64 = String(orderB64).startsWith(pfx) ? String(orderB64).slice(pfx.length) : String(orderB64);
+              } catch (e) {
+                console.warn("Order sheet generation failed:", e);
+                orderSheetPdfBase64 = null;
+              }
+            }
+
+const payload = {
               subject: "PRINT JOB",
               to: "store4979@theupsstore.com",
               jobType,
               details,
-              jobPdfBase64,
-              pdfBase64: jobPdfBase64,
-              ...(orderSheetPdfBase64 ? { orderSheetPdfBase64 } : {})
+              pdfBase64,
+              orderSheetPdfBase64
             };
 
             const resp = await fetch(
@@ -2273,8 +2273,7 @@ const name = window.prompt("Your name (for the order)?") || "";
           }
 
           const blob = doc.output("blob");
-          const orderSheetBlob = attachOrderSheetEmail ? await buildOrderSheetBlobForJobType("sheets") : null;
-          await sendOrderEmail("sheets", blob, orderSheetBlob);
+          await sendOrderEmail("sheets", blob);
         };
 
         const orderLargeFormatJob = async () => {
@@ -2294,8 +2293,7 @@ const name = window.prompt("Your name (for the order)?") || "";
           const data = lfRef.current.toDataURL("image/png", 1.0);
           doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
           const blob = doc.output("blob");
-          const orderSheetBlob = attachOrderSheetEmail ? await buildOrderSheetBlobForJobType("large-format") : null;
-          await sendOrderEmail("large-format", blob, orderSheetBlob);
+          await sendOrderEmail("large-format", blob);
         };
 
 
@@ -2317,8 +2315,7 @@ const name = window.prompt("Your name (for the order)?") || "";
           const data = bpRef.current.toDataURL("image/png", 1.0);
           doc.addImage(data, "PNG", 0, 0, pdfW, pdfH);
           const blob = doc.output("blob");
-          const orderSheetBlob = attachOrderSheetEmail ? await buildOrderSheetBlobForJobType("blueprints") : null;
-          await sendOrderEmail("blueprints", blob, orderSheetBlob);
+          await sendOrderEmail("blueprints", blob);
         };
 
         // -------- ADMIN ACTIONS --------
@@ -3728,24 +3725,22 @@ const quoteRows = computeQuickQuoteRows();
                       {totalPrice.toFixed(2)}
                     </p>
                   </div>
-                  
-                    <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 select-none">
-                      <input
-                        type="checkbox"
-                        checked={attachOrderSheetEmail}
-                        onChange={(e) => setAttachOrderSheetEmail(e.target.checked)}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                      Attach Print Order Sheet (PDF)
-                    </label>
-
-                    <div className="flex flex-wrap gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <button
                       onClick={downloadSheetPDF}
                       className="px-4 py-2 rounded-full bg-blue-600 text-white text-sm shadow-sm hover:bg-blue-700"
                     >
                       Download Preview (PDF)
                     </button>
+
+                    <label className="flex items-center gap-2 text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={attachOrderSheet}
+                        onChange={(e) => setAttachOrderSheet(e.target.checked)}
+                      />
+                      Attach Print Order Sheet (PDF)
+                    </label>
                     <button
                       onClick={orderSheetJob}
                       className="px-4 py-2 rounded-full bg-emerald-600 text-white text-sm shadow-sm hover:bg-emerald-700"
@@ -3929,28 +3924,6 @@ const quoteRows = computeQuickQuoteRows();
                         {lfTotalWithDiscount.toFixed(2)}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-3">
-                    <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 select-none">
-                      <input
-                        type="checkbox"
-                        checked={attachOrderSheetEmail}
-                        onChange={(e) => setAttachOrderSheetEmail(e.target.checked)}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                      Attach Print Order Sheet (PDF)
-                    </label>
-
-                    <div className="flex flex-wrap gap-3">
-                    <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 select-none">
-                      <input
-                        type="checkbox"
-                        checked={attachOrderSheetEmail}
-                        onChange={(e) => setAttachOrderSheetEmail(e.target.checked)}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                      Attach Print Order Sheet (PDF)
-                    </label>
-
                     <div className="flex flex-wrap gap-3">
                       <button
                         onClick={downloadLfPDF}
