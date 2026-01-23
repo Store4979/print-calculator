@@ -1,46 +1,71 @@
-/* Simple offline-first service worker for Print Calculator */
-const CACHE_NAME = "printcalc-cache-v1";
-const PRECACHE_URLS = [
-  "./",
-  "./index_mobile_optimized_plus.html",
-  "./manifest.webmanifest",
-  "./sw.js",
-  "./icon-192.png",
-  "./icon-512.png",
-  "./assets/logo.png"
+/* sw.js — simple app-shell cache with safe updates */
+const CACHE = "print-app-v13";
+const CORE = [
+  "/",
+  "/index.html",
+  "/manifest.webmanifest",
+  "/icon-192.png",
+  "/icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)).then(() => self.skipWaiting())
+    (async () => {
+      const cache = await caches.open(CACHE);
+      await cache.addAll(CORE);
+      self.skipWaiting();
+    })()
   );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((k) => (k === CACHE_NAME ? null : caches.delete(k))))
-    ).then(() => self.clients.claim())
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => (k === CACHE ? null : caches.delete(k))));
+      self.clients.claim();
+    })()
   );
 });
 
+// Network-first for navigations so new index.html is picked up after deploy
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  const url = new URL(req.url);
 
-  // Only handle same-origin requests
-  if (url.origin !== self.location.origin) return;
+  // Always bypass cache for the service worker itself
+  if (new URL(req.url).pathname === "/sw.js") return;
 
+  if (req.mode === "navigate") {
+    event.respondWith(
+      (async () => {
+        try {
+          const fresh = await fetch(req);
+          const cache = await caches.open(CACHE);
+          cache.put("/index.html", fresh.clone());
+          return fresh;
+        } catch (e) {
+          const cached = await caches.match("/index.html");
+          return cached || Response.error();
+        }
+      })()
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for static assets
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
+    (async () => {
+      const cached = await caches.match(req);
+      const fetchPromise = fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
+          if (res && res.ok) {
+            caches.open(CACHE).then((cache) => cache.put(req, res.clone()));
+          }
           return res;
         })
-        .catch(() => caches.match("./index_mobile_optimized_plus.html"));
-    })
+        .catch(() => cached);
+
+      return cached || fetchPromise;
+    })()
   );
 });
