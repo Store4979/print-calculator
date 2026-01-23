@@ -248,7 +248,7 @@ exports.handler = async (event) => {
 
   console.log("Parsed body keys:", Object.keys(body));
 
-  const { subject, to, pdfBase64 } = body;
+  const { subject, to, pdfBase64, jobPdfBase64, orderSheetPdfBase64 } = body;
 
   // SMTP env vars
   const missingEnv = [];
@@ -291,17 +291,30 @@ exports.handler = async (event) => {
       attachments: [],
     };
 
-    if (pdfBase64) {
-      // Accept either raw base64 or full data URL
-      const raw = String(pdfBase64).replace(/^data:application\/pdf;base64,/, "");
+    // Attach PDFs (job file + order sheet). Support legacy pdfBase64 as the job PDF.
+    const jobRawSrc = jobPdfBase64 || pdfBase64;
+    if (jobRawSrc) {
+      const raw = String(jobRawSrc).replace(/^data:application\/pdf;base64,/, "");
       mailOptions.attachments.push({
-        filename: `Print-Order-${order.orderId || "job"}.pdf`,
+        filename: `Print-Ready-${order.orderId || "job"}.pdf`,
         content: Buffer.from(raw, "base64"),
         contentType: "application/pdf",
       });
-      console.log("PDF attachment bytes:", Buffer.byteLength(raw, "base64"));
+      console.log("Job PDF attachment bytes:", Buffer.byteLength(raw, "base64"));
     } else {
-      console.warn("No pdfBase64 provided; sending email without PDF attachment.");
+      console.warn("No job PDF provided; sending email without print-ready attachment.");
+    }
+
+    if (orderSheetPdfBase64) {
+      const raw2 = String(orderSheetPdfBase64).replace(/^data:application\/pdf;base64,/, "");
+      mailOptions.attachments.push({
+        filename: `Print-Order-Sheet-${order.orderId || "job"}.pdf`,
+        content: Buffer.from(raw2, "base64"),
+        contentType: "application/pdf",
+      });
+      console.log("Order sheet PDF attachment bytes:", Buffer.byteLength(raw2, "base64"));
+    } else {
+      console.warn("No orderSheetPdfBase64 provided; sending email without order sheet attachment.");
     }
 
     const info = await transporter.sendMail(mailOptions);
