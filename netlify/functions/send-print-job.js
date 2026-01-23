@@ -1,43 +1,113 @@
 // netlify/functions/send-print-job.js
-// Professional internal + optional customer confirmation email with branding, deep link, and (optional) inline logo.
-// Drop-in replacement for your existing function.
-
 const nodemailer = require("nodemailer");
 
-// ---------- helpers ----------
 const money = (n) =>
   Number(n || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 const esc = (s) =>
-  String(s ?? "").replace(/[<>&"]/g, (c) =>
-    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c])
-  );
+  String(s ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
-// Accept either a raw base64 string OR a data URL like "data:image/png;base64,...."
-function normalizeBase64Image(input) {
-  if (!input) return null;
-  const s = String(input).trim();
-  const m = s.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-  if (m) return { mime: m[1], b64: m[2] };
-  // Heuristic default to png if no data-url header
-  return { mime: "image/png", b64: s.replace(/\s/g, "") };
-}
+/**
+ * Normalize incoming payload into a single `order` shape.
+ * Supports BOTH:
+ *  - New payload: { order, deepLinkUrl, ... }
+ *  - Old payload: { jobType, details, ... } (we infer line items)
+ */
+function normalizeOrder(body) {
+  const deepLinkUrl = body.deepLinkUrl || "";
+  const provided = body.order && typeof body.order === "object" ? body.order : null;
 
-function normalizePdfBase64(input) {
-  if (!input) return null;
-  const s = String(input).trim();
-  const m = s.match(/^data:application\/pdf;base64,(.+)$/);
-  return (m ? m[1] : s).replace(/\s/g, "");
+  if (provided) {
+    return { order: provided, deepLinkUrl };
+  }
+
+  const { jobType, details = {} } = body;
+  const user = (details && details.user) || {};
+  const sheet = (details && details.sheet) || {};
+  const lf = (details && details.largeFormat) || {};
+  const bp = (details && details.blueprints) || {};
+
+  const orderId = `JOB-${Date.now()}`;
+  const paperItems = [];
+  const largeFormatItems = [];
+  const blueprintItems = [];
+
+  if (jobType === "sheets" || jobType === "sheet" || jobType === "paper") {
+    const total = Number(sheet.totalPrice || 0);
+    const qty = Number(sheet.sheetsNeeded || 0);
+    paperItems.push({
+      name: "Paper Printing",
+      sku: sheet.paperKey || "",
+      specs: `${sheet.sheetKey || ""} • ${sheet.paperKey || ""} • ${(sheet.frontColorMode || "").toUpperCase()}${sheet.showBack ? " / " + String(sheet.backColorMode || "").toUpperCase() : ""}`,
+      qty,
+      unitPrice: qty > 0 ? total / qty : total,
+      total
+    });
+  }
+
+  if (jobType === "large-format" || jobType === "largeFormat") {
+    const total = Number(lf.lfTotal || 0);
+    const addons = lf.addons || {};
+    const addonList = [
+      addons.grommets ? "Grommets" : null,
+      addons.foamCore ? "Foam Core" : null,
+      addons.coroSign ? "Coro Sign" : null,
+    ].filter(Boolean);
+
+    largeFormatItems.push({
+      name: "Large Format",
+      sku: lf.paperKey || "",
+      specs: `${Number(lf.width) || 0}" × ${Number(lf.height) || 0}" • ${lf.paperKey || ""} • ${String(lf.colorMode || "").toUpperCase()}${addonList.length ? " • " + addonList.join(", ") : ""}`,
+      qty: 1,
+      unitPrice: total,
+      total
+    });
+  }
+
+  if (jobType === "blueprints" || jobType === "blueprint") {
+    const total = Number(bp.total || 0);
+    const qty = Number(bp.qty || 0);
+    blueprintItems.push({
+      name: "Blueprints",
+      sku: bp.paperKey || "plain_20lb",
+      specs: `${bp.size || ""} • ${Number(bp.width) || 0}" × ${Number(bp.height) || 0}" • ${(bp.colorMode || "bw").toUpperCase()}`,
+      qty,
+      unitPrice: qty > 0 ? total / qty : total,
+      total
+    });
+  }
+
+  const subtotal =
+    paperItems.reduce((s, i) => s + (Number(i.total) || 0), 0) +
+    largeFormatItems.reduce((s, i) => s + (Number(i.total) || 0), 0) +
+    blueprintItems.reduce((s, i) => s + (Number(i.total) || 0), 0);
+
+  const order = {
+    orderId,
+    customerName: user.name || "Walk-In",
+    phone: user.phone || "",
+    email: user.email || "",
+    dueDate: "ASAP",
+    fulfillment: "Pickup",
+    notes: "",
+    subtotal,
+    discountPct: 0,
+    discountAmt: 0,
+    total: subtotal,
+    paperItems,
+    largeFormatItems,
+    blueprintItems
+  };
+
+  return { order, deepLinkUrl };
 }
 
 function renderItemsTable(title, items) {
   if (!Array.isArray(items) || items.length === 0) return "";
   return `
     <div style="margin-top:18px;">
-      <div style="font-size:15px;font-weight:900;color:#000000;margin:0 0 8px 0;">
-        ${esc(title)}
-      </div>
-      <table style="width:100%;border-collapse:collapse;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
+      <div style="font-size:15px;font-weight:900;color:#000000;margin:0 0 8px 0;">${esc(title)}</div>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
         <thead>
           <tr style="background:#F8FAFC;">
             <th style="text-align:left;padding:10px;border-bottom:1px solid #E5E7EB;">Item</th>
@@ -48,43 +118,25 @@ function renderItemsTable(title, items) {
           </tr>
         </thead>
         <tbody>
-          ${items
-            .map(
-              (it) => `
+          ${items.map((it) => `
             <tr>
               <td style="padding:10px;border-bottom:1px solid #E5E7EB;">
-                <div style="font-weight:800;color:#000000;">${esc(it.name || "Item")}</div>
-                ${
-                  it.sku
-                    ? `<div style="font-size:12px;color:#374151;">SKU: ${esc(
-                        it.sku
-                      )}</div>`
-                    : ""
-                }
+                <div style="font-weight:800;color:#000000;">${esc(it.name || "")}</div>
+                ${it.sku ? `<div style="font-size:12px;color:#374151;">SKU: ${esc(it.sku)}</div>` : ""}
               </td>
-              <td style="padding:10px;border-bottom:1px solid #E5E7EB;color:#111827;">
-                ${esc(it.specs || "")}
-              </td>
-              <td style="padding:10px;border-bottom:1px solid #E5E7EB;text-align:right;">${esc(
-                it.qty ?? ""
-              )}</td>
-              <td style="padding:10px;border-bottom:1px solid #E5E7EB;text-align:right;">${money(
-                it.unitPrice
-              )}</td>
-              <td style="padding:10px;border-bottom:1px solid #E5E7EB;text-align:right;font-weight:900;">${money(
-                it.total
-              )}</td>
-            </tr>`
-            )
-            .join("")}
+              <td style="padding:10px;border-bottom:1px solid #E5E7EB;color:#111827;">${esc(it.specs || "")}</td>
+              <td style="padding:10px;border-bottom:1px solid #E5E7EB;text-align:right;">${esc(it.qty)}</td>
+              <td style="padding:10px;border-bottom:1px solid #E5E7EB;text-align:right;">${money(it.unitPrice)}</td>
+              <td style="padding:10px;border-bottom:1px solid #E5E7EB;text-align:right;font-weight:900;">${money(it.total)}</td>
+            </tr>
+          `).join("")}
         </tbody>
       </table>
     </div>
   `;
 }
 
-// ---------- templates ----------
-function buildInternalEmail({ store, order, deepLinkUrl, logoCid }) {
+function buildInternalEmail({ order, deepLinkUrl, store }) {
   const paperItems = order.paperItems || [];
   const largeFormatItems = order.largeFormatItems || [];
   const blueprintItems = order.blueprintItems || [];
@@ -92,60 +144,35 @@ function buildInternalEmail({ store, order, deepLinkUrl, logoCid }) {
   const subtotal = Number(order.subtotal || 0);
   const discountPct = Number(order.discountPct || 0);
   const discountAmt = Number(order.discountAmt || 0);
-  const total = Number(order.total || subtotal - discountAmt);
+  const total = Number(order.total || (subtotal - discountAmt));
 
-  const headerTitle = `${store?.name || "The UPS Store"} – Print Order`;
-  const orderId = order.orderId || order.jobId || "";
+  const headerTitle = `${store.name} – Print Order`;
+  const orderId = order.orderId || "";
 
-  const logoHtml = logoCid
-    ? `<img src="cid:${esc(
-        logoCid
-      )}" alt="Logo" style="height:34px; width:auto; display:block;" />`
+  const button = deepLinkUrl
+    ? `<a href="${esc(deepLinkUrl)}" style="display:inline-block;margin-top:10px;background:#008198;color:#FFFFFF;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:800;">Open Job in App</a>`
     : "";
 
   const html = `
   <div style="font-family:Arial,Helvetica,sans-serif;background:#FFFFFF;padding:18px;">
-    <div style="max-width:820px;margin:0 auto;border:1px solid #E5E7EB;border-radius:14px;overflow:hidden;">
-
-      <!-- Brand Header -->
+    <div style="max-width:860px;margin:0 auto;border:1px solid #E5E7EB;border-radius:14px;overflow:hidden;">
       <div style="background:#008198;padding:16px 18px;">
-        <div style="display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;">
-          <div>
-            <div style="font-size:18px;font-weight:900;color:#FFFFFF;">${esc(
-              headerTitle
-            )}</div>
-            <div style="font-size:13px;color:#FFFFFF;opacity:.95;margin-top:4px;">
-              ${
-                orderId
-                  ? `Order ID: <b>${esc(orderId)}</b>`
-                  : `Order ID: <b>N/A</b>`
-              }
-              ${
-                store?.storeId ? ` • Store: <b>${esc(store.storeId)}</b>` : ""
-              }
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:12px;">
-            ${logoHtml}
-          </div>
+        <div style="font-size:18px;font-weight:900;color:#FFFFFF;">${esc(headerTitle)}</div>
+        <div style="font-size:13px;color:#FFFFFF;opacity:.95;margin-top:4px;">
+          ${orderId ? `Order ID: <b style="background:#FFD100;color:#000000;padding:2px 8px;border-radius:999px;">${esc(orderId)}</b> • ` : ""}
+          ${esc(store.address)}
         </div>
+        ${button}
       </div>
 
       <div style="padding:18px;">
-        <!-- Big ID pill -->
-        <div style="display:inline-block;background:#FFD100;color:#000000;font-weight:900;padding:8px 12px;border-radius:999px;margin-bottom:12px;">
-          ${orderId ? `JOB: ${esc(orderId)}` : "JOB: N/A"}
-        </div>
-
-        <!-- Summary -->
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
-          <div style="flex:1;min-width:260px;border:1px solid #E5E7EB;border-radius:12px;">
+          <div style="flex:1;min-width:280px;border:1px solid #E5E7EB;border-radius:12px;">
             <div style="padding:10px 12px;background:#FFD100;font-weight:900;color:#000000;border-bottom:1px solid #E5E7EB;">
               Order Summary
             </div>
             <table style="width:100%;border-collapse:collapse;">
-              ${order.customerName ? `<tr><td style="padding:6px 10px;font-weight:700;">Customer</td><td style="padding:6px 10px;">${esc(order.customerName)}</td></tr>` : ""}
-              ${order.company ? `<tr><td style="padding:6px 10px;font-weight:700;">Company</td><td style="padding:6px 10px;">${esc(order.company)}</td></tr>` : ""}
+              <tr><td style="padding:6px 10px;font-weight:700;">Customer</td><td style="padding:6px 10px;">${esc(order.customerName || "")}</td></tr>
               ${order.phone ? `<tr><td style="padding:6px 10px;font-weight:700;">Phone</td><td style="padding:6px 10px;">${esc(order.phone)}</td></tr>` : ""}
               ${order.email ? `<tr><td style="padding:6px 10px;font-weight:700;">Email</td><td style="padding:6px 10px;">${esc(order.email)}</td></tr>` : ""}
               ${order.dueDate ? `<tr><td style="padding:6px 10px;font-weight:700;">Due</td><td style="padding:6px 10px;">${esc(order.dueDate)}</td></tr>` : ""}
@@ -154,200 +181,54 @@ function buildInternalEmail({ store, order, deepLinkUrl, logoCid }) {
             </table>
           </div>
 
-          <div style="flex:1;min-width:260px;border:1px solid #E5E7EB;border-radius:12px;">
+          <div style="flex:1;min-width:280px;border:1px solid #E5E7EB;border-radius:12px;">
             <div style="padding:10px 12px;background:#F8FAFC;font-weight:900;color:#000000;border-bottom:1px solid #E5E7EB;">
               Pricing
             </div>
             <table style="width:100%;border-collapse:collapse;">
-              <tr>
-                <td style="padding:8px 12px;color:#000000;font-weight:700;">Subtotal</td>
-                <td style="padding:8px 12px;text-align:right;">${money(subtotal)}</td>
-              </tr>
-              <tr>
-                <td style="padding:8px 12px;color:#000000;font-weight:700;">
-                  Discount ${discountPct ? `(${Number(discountPct).toFixed(0)}%)` : ""}
-                </td>
-                <td style="padding:8px 12px;text-align:right;">-${money(discountAmt)}</td>
-              </tr>
-              <tr>
-                <td style="padding:10px 12px;color:#000000;font-weight:900;border-top:1px solid #E5E7EB;">Total</td>
-                <td style="padding:10px 12px;text-align:right;font-weight:900;border-top:1px solid #E5E7EB;">${money(total)}</td>
-              </tr>
+              <tr><td style="padding:8px 12px;font-weight:700;">Subtotal</td><td style="padding:8px 12px;text-align:right;">${money(subtotal)}</td></tr>
+              <tr><td style="padding:8px 12px;font-weight:700;">Discount ${discountPct ? `(${discountPct}%)` : ""}</td><td style="padding:8px 12px;text-align:right;">-${money(discountAmt)}</td></tr>
+              <tr><td style="padding:10px 12px;font-weight:900;border-top:1px solid #E5E7EB;">Total</td><td style="padding:10px 12px;text-align:right;font-weight:900;border-top:1px solid #E5E7EB;">${money(total)}</td></tr>
             </table>
-
-            ${
-              deepLinkUrl
-                ? `<div style="padding:10px 12px;border-top:1px solid #E5E7EB;">
-                    <a href="${esc(
-                      deepLinkUrl
-                    )}" style="display:inline-block;background:#008198;color:#FFFFFF;text-decoration:none;font-weight:900;padding:10px 12px;border-radius:10px;">
-                      Open Job in App
-                    </a>
-                  </div>`
-                : ""
-            }
           </div>
         </div>
 
-        <!-- Line Items (only include what was selected) -->
         ${renderItemsTable("Paper Printing", paperItems)}
         ${renderItemsTable("Large Format", largeFormatItems)}
         ${renderItemsTable("Blueprints", blueprintItems)}
 
-        <!-- Attachments -->
         <div style="margin-top:18px;border-top:1px solid #E5E7EB;padding-top:14px;">
           <div style="font-size:14px;font-weight:900;color:#000000;margin-bottom:6px;">Attachments</div>
           <ul style="margin:0;padding-left:18px;color:#111827;">
             <li>Print Order Sheet (PDF)</li>
           </ul>
           <div style="font-size:12px;color:#374151;margin-top:10px;">
-            If anything looks off, reply to this email or call the store at ${esc(
-              store?.phone || ""
-            )}.
+            Store phone: ${esc(store.phone)} • Email: ${esc(store.email)}
           </div>
         </div>
       </div>
     </div>
+  </div>`;
+  const text =
+`PRINT ORDER
+Order ID: ${orderId}
+Customer: ${order.customerName || ""}
+Phone: ${order.phone || ""}
+Email: ${order.email || ""}
 
-    <div style="max-width:820px;margin:10px auto 0;color:#6B7280;font-size:11px;line-height:1.4;">
-      Internal print job notification generated by the Print App.
-    </div>
-  </div>
-  `;
+Subtotal: ${money(subtotal)}
+Discount: -${money(discountAmt)}${discountPct ? ` (${discountPct}%)` : ""}
+Total: ${money(total)}
 
-  const text = [
-    `${store?.name || "The UPS Store"} – Print Order`,
-    orderId ? `Order ID: ${orderId}` : "Order ID: N/A",
-    store?.storeId ? `Store: ${store.storeId}` : "",
-    "",
-    "ORDER SUMMARY",
-    order.customerName ? `Customer: ${order.customerName}` : "",
-    order.company ? `Company: ${order.company}` : "",
-    order.phone ? `Phone: ${order.phone}` : "",
-    order.email ? `Email: ${order.email}` : "",
-    order.dueDate ? `Due: ${order.dueDate}` : "",
-    order.fulfillment ? `Pickup/Delivery: ${order.fulfillment}` : "",
-    order.notes ? `Notes: ${order.notes}` : "",
-    "",
-    "PRICING",
-    `Subtotal: ${money(subtotal)}`,
-    `Discount: -${money(discountAmt)}${discountPct ? ` (${Number(discountPct).toFixed(0)}%)` : ""}`,
-    `Total: ${money(total)}`,
-    deepLinkUrl ? `\nOpen Job: ${deepLinkUrl}` : "",
-    "",
-    "ATTACHMENTS",
-    "- Print Order Sheet (PDF)",
-  ]
-    .filter(Boolean)
-    .join("\n");
+Paper items: ${paperItems.length}
+Large format items: ${largeFormatItems.length}
+Blueprint items: ${blueprintItems.length}
 
+Attachment: Print Order Sheet (PDF)
+${deepLinkUrl ? `Open Job: ${deepLinkUrl}` : ""}`;
   return { html, text };
 }
 
-function buildCustomerEmail({ store, order, deepLinkUrl, logoCid }) {
-  const paperItems = order.paperItems || [];
-  const largeFormatItems = order.largeFormatItems || [];
-  const blueprintItems = order.blueprintItems || [];
-
-  const subtotal = Number(order.subtotal || 0);
-  const discountAmt = Number(order.discountAmt || 0);
-  const total = Number(order.total || subtotal - discountAmt);
-
-  const orderId = order.orderId || order.jobId || "";
-
-  const logoHtml = logoCid
-    ? `<img src="cid:${esc(
-        logoCid
-      )}" alt="Logo" style="height:32px; width:auto; display:block;" />`
-    : "";
-
-  const allItems = [...paperItems, ...largeFormatItems, ...blueprintItems];
-
-  const html = `
-  <div style="font-family:Arial,Helvetica,sans-serif;background:#FFFFFF;padding:18px;">
-    <div style="max-width:820px;margin:0 auto;border:1px solid #E5E7EB;border-radius:14px;overflow:hidden;">
-      <div style="background:#008198;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <div style="color:#FFFFFF;">
-          <div style="font-size:18px;font-weight:900;margin:0;">${esc(
-            store?.name || "The UPS Store"
-          )}</div>
-          <div style="font-size:13px;opacity:.95;margin-top:4px;">Your print request has been received.</div>
-        </div>
-        ${logoHtml}
-      </div>
-
-      <div style="padding:18px;">
-        <div style="display:inline-block;background:#FFD100;color:#000000;font-weight:900;padding:8px 12px;border-radius:999px;margin-bottom:12px;">
-          ${orderId ? `Order ID: ${esc(orderId)}` : "Order Received"}
-        </div>
-
-        <div style="font-size:14px;color:#111827;line-height:1.5;">
-          Hi${order.customerName ? ` ${esc(order.customerName)}` : ""},<br/>
-          Thanks for your order! Below is a summary of your print request.
-        </div>
-
-        <div style="margin-top:14px;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;">
-          <div style="padding:10px 12px;background:#F8FAFC;font-weight:900;color:#000000;border-bottom:1px solid #E5E7EB;">
-            Summary
-          </div>
-          <div style="padding:12px;">
-            ${order.dueDate ? `<div><b>Due:</b> ${esc(order.dueDate)}</div>` : ""}
-            ${order.fulfillment ? `<div><b>Pickup/Delivery:</b> ${esc(order.fulfillment)}</div>` : ""}
-            ${store?.phone ? `<div><b>Store phone:</b> ${esc(store.phone)}</div>` : ""}
-            <div style="margin-top:10px;"><b>Total:</b> ${money(total)}</div>
-            ${discountAmt ? `<div style="color:#374151;">Includes discount: -${money(discountAmt)}</div>` : ""}
-          </div>
-        </div>
-
-        ${renderItemsTable("Your Items", allItems)}
-
-        ${
-          deepLinkUrl
-            ? `<div style="margin-top:16px;">
-                <a href="${esc(
-                  deepLinkUrl
-                )}" style="display:inline-block;background:#008198;color:#FFFFFF;text-decoration:none;font-weight:900;padding:10px 12px;border-radius:10px;">
-                  View Order
-                </a>
-              </div>`
-            : ""
-        }
-
-        <div style="margin-top:18px;border-top:1px solid #E5E7EB;padding-top:14px;font-size:12px;color:#374151;line-height:1.5;">
-          We’ll contact you if we have any questions. If you need to update your order, reply to this email or call the store.
-        </div>
-      </div>
-    </div>
-  </div>
-  `;
-
-  const text = [
-    `${store?.name || "The UPS Store"}`,
-    "Your print request has been received.",
-    orderId ? `Order ID: ${orderId}` : "",
-    order.dueDate ? `Due: ${order.dueDate}` : "",
-    order.fulfillment ? `Pickup/Delivery: ${order.fulfillment}` : "",
-    store?.phone ? `Store phone: ${store.phone}` : "",
-    "",
-    `Total: ${money(total)}`,
-    discountAmt ? `Discount: -${money(discountAmt)}` : "",
-    "",
-    "Items:",
-    ...allItems.map(
-      (it) =>
-        `- ${it.name || "Item"} | ${it.specs || ""} | Qty ${it.qty ?? ""} | Total ${money(
-          it.total
-        )}`
-    ),
-    deepLinkUrl ? `\nView Order: ${deepLinkUrl}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return { html, text };
-}
-
-// ---------- main handler ----------
 exports.handler = async (event) => {
   console.log("send-print-job invoked", { httpMethod: event.httpMethod });
 
@@ -356,66 +237,24 @@ exports.handler = async (event) => {
   }
 
   let body = {};
+  const rawBody = event.body || "";
   try {
-    body = JSON.parse(event.body || "{}");
+    console.log("Raw body length:", rawBody.length);
+    body = rawBody ? JSON.parse(rawBody) : {};
   } catch (err) {
     console.error("JSON parse failed:", err);
     body = {};
   }
 
-  // Backwards compatibility with your old payload:
-  // { subject, to, jobType, details, pdfBase64 }
-  // New payload:
-  // { subject, to, order, pdfBase64, deepLinkUrl, sendCustomerConfirmation, customerTo, emailLogoBase64, store }
-  const {
-    subject,
-    to,
-    jobType,
-    details,
-    order: orderIn,
-    pdfBase64,
-    deepLinkUrl,
-    sendCustomerConfirmation,
-    customerTo,
-    emailLogoBase64,
-    store: storeIn,
-  } = body;
+  console.log("Parsed body keys:", Object.keys(body));
 
-  const store = {
-    name: storeIn?.name || process.env.STORE_NAME || "The UPS Store",
-    storeId: storeIn?.storeId || process.env.STORE_ID || "4979",
-    phone: storeIn?.phone || process.env.STORE_PHONE || "",
-    addressLine: storeIn?.addressLine || process.env.STORE_ADDRESS || "",
-  };
+  const { subject, to, pdfBase64 } = body;
 
-  const order =
-    orderIn && typeof orderIn === "object"
-      ? orderIn
-      : {
-          orderId: details?.orderId || details?.jobId || "",
-          customerName: details?.customerName || details?.name || "",
-          company: details?.company || "",
-          phone: details?.phone || "",
-          email: details?.email || "",
-          dueDate: details?.dueDate || "",
-          fulfillment: details?.fulfillment || "",
-          notes: details?.notes || "",
-          subtotal: details?.subtotal || 0,
-          discountPct: details?.discountPct || 0,
-          discountAmt: details?.discountAmt || 0,
-          total: details?.total || 0,
-          paperItems: details?.paperItems || [],
-          largeFormatItems: details?.largeFormatItems || [],
-          blueprintItems: details?.blueprintItems || [],
-          jobType: jobType || details?.jobType || "",
-        };
-
-  // Check SMTP env vars
+  // SMTP env vars
   const missingEnv = [];
   ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"].forEach((key) => {
     if (!process.env[key]) missingEnv.push(key);
   });
-
   if (missingEnv.length) {
     console.error("Missing SMTP env vars:", missingEnv.join(", "));
     return {
@@ -424,110 +263,53 @@ exports.handler = async (event) => {
     };
   }
 
-  const logo = normalizeBase64Image(emailLogoBase64 || process.env.EMAIL_LOGO_BASE64);
-  const logoCid = logo ? "storelogo@printapp" : null;
-  const pdfB64 = normalizePdfBase64(pdfBase64);
+  // Normalize order
+  const STORE = {
+    name: process.env.STORE_NAME || "The UPS Store",
+    address: process.env.STORE_ADDRESS || "4352 Bay Road, Saginaw MI 48603",
+    phone: process.env.STORE_PHONE || "989.790.9701",
+    email: process.env.STORE_EMAIL || "store4979@theupsstore.com",
+  };
+
+  const { order, deepLinkUrl } = normalizeOrder(body);
+  const { html, text } = buildInternalEmail({ order, deepLinkUrl, store: STORE });
 
   try {
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 587),
       secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
 
-    const orderId = order.orderId || order.jobId || "";
-    const internalSubject =
-      subject ||
-      `Print Order – ${order.customerName || "Walk-In"}${orderId ? ` – ${orderId}` : ""} – Store ${store.storeId}`;
-
-    // INTERNAL email
-    const internalTpl = buildInternalEmail({ store, order, deepLinkUrl, logoCid });
-
-    const internalMail = {
+    const mailOptions = {
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: to || "store4979@theupsstore.com",
-      subject: internalSubject,
-      html: internalTpl.html,
-      text: internalTpl.text,
+      to: to || STORE.email,
+      subject: subject || `Print Order – ${order.orderId || ""}`,
+      html,
+      text,
       attachments: [],
     };
 
-    if (logo && logoCid) {
-      internalMail.attachments.push({
-        filename: "logo.png",
-        content: Buffer.from(logo.b64, "base64"),
-        contentType: logo.mime,
-        cid: logoCid,
-      });
-    }
-
-    if (pdfB64) {
-      internalMail.attachments.push({
-        filename: `Print-Order-${orderId || "job"}.pdf`,
-        content: Buffer.from(pdfB64, "base64"),
+    if (pdfBase64) {
+      // Accept either raw base64 or full data URL
+      const raw = String(pdfBase64).replace(/^data:application\/pdf;base64,/, "");
+      mailOptions.attachments.push({
+        filename: `Print-Order-${order.orderId || "job"}.pdf`,
+        content: Buffer.from(raw, "base64"),
         contentType: "application/pdf",
       });
+      console.log("PDF attachment bytes:", Buffer.byteLength(raw, "base64"));
+    } else {
+      console.warn("No pdfBase64 provided; sending email without PDF attachment.");
     }
 
-    const internalInfo = await transporter.sendMail(internalMail);
-    console.log("Internal mail sent OK:", internalInfo && internalInfo.messageId);
-
-    // Optional CUSTOMER email
-    let customerResult = null;
-    const shouldSendCustomer =
-      Boolean(sendCustomerConfirmation) && Boolean(customerTo || order.email);
-
-    if (shouldSendCustomer) {
-      const custRecipient = customerTo || order.email;
-
-      const customerTpl = buildCustomerEmail({ store, order, deepLinkUrl, logoCid });
-
-      const customerMail = {
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: custRecipient,
-        subject: `Order Confirmation${orderId ? ` – ${orderId}` : ""} – ${store.name}`,
-        html: customerTpl.html,
-        text: customerTpl.text,
-        attachments: [],
-      };
-
-      if (logo && logoCid) {
-        customerMail.attachments.push({
-          filename: "logo.png",
-          content: Buffer.from(logo.b64, "base64"),
-          contentType: logo.mime,
-          cid: logoCid,
-        });
-      }
-
-      // Optional: attach the PDF to customer as well IF you want.
-      // Turn this on by setting SEND_CUSTOMER_PDF=true in Netlify env.
-      if (process.env.SEND_CUSTOMER_PDF === "true" && pdfB64) {
-        customerMail.attachments.push({
-          filename: `Order-Summary-${orderId || "job"}.pdf`,
-          content: Buffer.from(pdfB64, "base64"),
-          contentType: "application/pdf",
-        });
-      }
-
-      const customerInfo = await transporter.sendMail(customerMail);
-      console.log("Customer mail sent OK:", customerInfo && customerInfo.messageId);
-
-      customerResult = { ok: true, id: customerInfo.messageId, to: custRecipient };
-    }
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Mail sent OK:", info && info.messageId);
 
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        message: "Email(s) sent",
-        internal: { id: internalInfo.messageId, to: internalMail.to },
-        customer: customerResult,
-      }),
+      body: JSON.stringify({ ok: true, message: "Email sent", id: info.messageId }),
     };
   } catch (err) {
     console.error("Unhandled send-print-job error:", err);
