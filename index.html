@@ -2357,25 +2357,32 @@ const downloadBlueprintPDF = () => {
 
         // -------- EMAIL ORDER (Netlify Function) --------
 
-        const sendOrderEmail = async (jobType, pdfBlob) => {
+        const sendOrderEmail = async (jobType, jobPdfBlob, orderSheetBlob) => {
           try {
-            const reader = new FileReader();
-            const base64 = await new Promise((resolve, reject) => {
-              reader.onloadend = () => resolve(reader.result);
-              reader.onerror = reject;
-              reader.readAsDataURL(pdfBlob);
+            const blobToB64 = (blob) => new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onloadend = () => resolve(r.result);
+              r.onerror = reject;
+              r.readAsDataURL(blob);
             });
 
             const prefix = "data:application/pdf;base64,";
-            const pdfBase64 = base64.startsWith(prefix)
-              ? base64.slice(prefix.length)
-              : base64;
 
-            console.log("pdfBase64 length (client):", pdfBase64.length);
+            const jobB64Full = await blobToB64(jobPdfBlob);
+            const jobPdfBase64 = jobB64Full.startsWith(prefix) ? jobB64Full.slice(prefix.length) : jobB64Full;
+
+            let orderSheetPdfBase64 = null;
+            if (orderSheetBlob) {
+              const sheetB64Full = await blobToB64(orderSheetBlob);
+              orderSheetPdfBase64 = sheetB64Full.startsWith(prefix) ? sheetB64Full.slice(prefix.length) : sheetB64Full;
+            }
+
+            console.log("jobPdfBase64 length (client):", jobPdfBase64.length);
+            if (orderSheetPdfBase64) console.log("orderSheetPdfBase64 length (client):", orderSheetPdfBase64.length);
 
             // Safety: Netlify body size limit ~10MB => ~7.5MB raw => ~10MB base64
             const MAX_LEN = 10 * 1024 * 1024;
-            if (pdfBase64.length > MAX_LEN) {
+            if (jobPdfBase64.length > MAX_LEN) {
               alert(
                 "The generated PDF is too large to send automatically. Please download it and email manually."
               );
@@ -2512,7 +2519,8 @@ const payload = {
   // Backwards-compatibility (safe to keep):
   jobType,
   details,
-  pdfBase64
+  jobPdfBase64,
+  orderSheetPdfBase64
 };
 
             const resp = await fetch(
@@ -2569,8 +2577,44 @@ const payload = {
             doc.addImage(backData, "JPEG", 0, 0, pdfW, pdfH);
           }
 
-          const blob = doc.output("blob");
-          await sendOrderEmail("sheets", blob);
+          const jobBlob = doc.output("blob");
+          // Build a Letter-size order sheet PDF (separate attachment)
+          await ensureLogoPdfDataUrl();
+          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+
+          const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
+          const isCustom = sheetKey === "custom";
+          const sheetW = isCustom ? customSize.w : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
+          const sheetH = isCustom ? customSize.h : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
+
+          const details = [
+            { label: "Paper selected:", value: currentPaper.label },
+            { label: "Base sheet size:", value: `${sheetW}×${sheetH} in${isCustom ? " (custom)" : ""}` },
+            { label: "Sheet orientation:", value: orientation },
+            { label: "Target size:", value: `${Number(prints.width) || 0}×${Number(prints.height) || 0} in` },
+            { label: "Prints per sheet:", value: `${Math.max(1, printsPerSheet)} (grid: ${frontSlotInfo?.cols || 0}×${frontSlotInfo?.rows || 0})` },
+            { label: "Total prints:", value: totalPrintQty },
+            { label: `Sheets needed (${sheetW}×${sheetH}):`, value: sheetsNeeded },
+            { label: "Sides:", value: showBack ? "Front + Back" : "Single-sided" },
+            { label: "Color:", value: showBack ? `${frontColorMode.toUpperCase()} / ${backColorMode.toUpperCase()}` : frontColorMode.toUpperCase() },
+          ];
+
+          const totals = [
+            { label: "Discounted / sheet:", value: `$${((Number(totalPrice||0) / Math.max(1, sheetsNeeded)) || Number(perSheetTotal||0)).toFixed(2)}` },
+            { label: "Subtotal:", value: `$${Number(subtotal || 0).toFixed(2)}` },
+            ...(discPct > 0.0001 ? [{ label: `Qty discount (${discPct.toFixed(1)}%):`, value: `-$${Number(discAmt || 0).toFixed(2)}` }] : []),
+            { label: "Estimated total:", value: `$${Number(totalPrice || 0).toFixed(2)}` },
+          ];
+
+          addOrderSheetPage(orderDoc, {
+            jobType: "Paper Printing",
+            details,
+            totals,
+            files: frontImage ? [frontImage.name || "front image"] : []
+          });
+
+          const orderSheetBlob = orderDoc.output("blob");
+          await sendOrderEmail("sheets", jobBlob, orderSheetBlob);
         };
 
         const orderLargeFormatJob = async () => {
@@ -2589,8 +2633,30 @@ const payload = {
 
           const data = canvasToCompressedJpeg(lfRef.current, { maxDim: 1800, quality: 0.72 });
           doc.addImage(data, "JPEG", 0, 0, pdfW, pdfH);
-          const blob = doc.output("blob");
-          await sendOrderEmail("large-format", blob);
+          const jobBlob = doc.output("blob");
+          // Build a Letter-size order sheet PDF (separate attachment)
+          await ensureLogoPdfDataUrl();
+          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+
+          const lfPaper = lfPaperTypes.find((p) => p.key === lfPaperKey) || { label: lfPaperKey };
+          const details = [
+            { label: "Paper selected:", value: lfPaper.label },
+            { label: "Size:", value: `${lfWidth}×${lfHeight} in` },
+            { label: "Orientation:", value: lfWidth >= lfHeight ? "landscape" : "portrait" },
+            { label: "Color:", value: lfColorMode === "bw" ? "B/W" : "Color" },
+            { label: "Add-ons:", value: [lfGrommets ? "Grommets" : null, lfFoamCore ? "Foam Core" : null, lfCoroSign ? "Coro Sign" : null].filter(Boolean).join(", ") || "None" },
+          ];
+          const totals = [
+            { label: "Estimated total:", value: `$${Number(lfTotalWithDiscount || 0).toFixed(2)}` }
+          ];
+          addOrderSheetPage(orderDoc, {
+            jobType: "Large Format",
+            details,
+            totals,
+            files: lfImage ? [lfImage.name || "uploaded image"] : []
+          });
+          const orderSheetBlob = orderDoc.output("blob");
+          await sendOrderEmail("large-format", jobBlob, orderSheetBlob);
         };
 
 
@@ -2611,8 +2677,29 @@ const payload = {
 
           const data = canvasToCompressedJpeg(bpRef.current, { maxDim: 1800, quality: 0.72 });
           doc.addImage(data, "JPEG", 0, 0, pdfW, pdfH);
-          const blob = doc.output("blob");
-          await sendOrderEmail("blueprints", blob);
+          const jobBlob = doc.output("blob");
+          // Build a Letter-size order sheet PDF (separate attachment)
+          await ensureLogoPdfDataUrl();
+          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+
+          const details = [
+            { label: "Size:", value: `${bpWidth}×${bpHeight} in` },
+            { label: "Quantity:", value: bpQty },
+            { label: "Scale:", value: bpScale || "100%" },
+            { label: "Copies:", value: bpCopies || 1 },
+            { label: "Folds:", value: bpFold ? "Yes" : "No" },
+          ];
+          const totals = [
+            { label: "Estimated total:", value: `$${Number(bpTotal || 0).toFixed(2)}` }
+          ];
+          addOrderSheetPage(orderDoc, {
+            jobType: "Blueprints",
+            details,
+            totals,
+            files: bpFile ? [bpFile.name || "uploaded file"] : []
+          });
+          const orderSheetBlob = orderDoc.output("blob");
+          await sendOrderEmail("blueprints", jobBlob, orderSheetBlob);
         };
 
         // -------- ADMIN ACTIONS --------
