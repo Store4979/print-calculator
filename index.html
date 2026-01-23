@@ -2428,73 +2428,92 @@ const downloadBlueprintPDF = () => {
               user: { name, email, phone }
             };
 
-// ---- BUILD NORMALIZED ORDER FOR EMAIL ----
+            // ---- Build a normalized order object so the email is clean and only includes what was selected ----
+const orderId = `JOB-${Date.now()}`;
+
 const paperItems = [];
 const largeFormatItems = [];
 const blueprintItems = [];
 
-/* PAPER PRINTING */
 if (jobType === "sheets") {
+  const unit = Number(sheetsNeeded || 0) > 0
+    ? (Number(totalPrice || 0) / Number(sheetsNeeded || 1))
+    : Number(totalPrice || 0);
+
   paperItems.push({
-    name: "Standard Printing",
+    name: "Paper Printing",
+    sku: paperKey || "",
     specs: `${sheetKey} • ${paperKey} • ${frontColorMode.toUpperCase()}${showBack ? " / " + backColorMode.toUpperCase() : ""}`,
-    qty: sheetsNeeded,
-    unitPrice: Number(totalPrice) / Math.max(1, sheetsNeeded),
-    total: Number(totalPrice)
+    qty: Number(sheetsNeeded || 0),
+    unitPrice: Number(unit || 0),
+    total: Number(totalPrice || 0)
   });
 }
 
-/* LARGE FORMAT */
 if (jobType === "large-format") {
+  const addons = [
+    lfGrommets ? "Grommets" : null,
+    lfFoamCore ? "Foam Core" : null,
+    lfCoroSign ? "Coro Sign" : null
+  ].filter(Boolean);
+
   largeFormatItems.push({
-    name: "Large Format Print",
-    specs: `${lfWidth}" × ${lfHeight}" • ${lfPaperKey} • ${lfColorMode.toUpperCase()}`,
+    name: "Large Format",
+    sku: lfPaperKey || "",
+    specs: `${Number(lfWidth) || 0}" × ${Number(lfHeight) || 0}" • ${lfPaperKey} • ${lfColorMode.toUpperCase()}${addons.length ? " • " + addons.join(", ") : ""}`,
     qty: 1,
-    unitPrice: Number(lfTotalWithDiscount),
-    total: Number(lfTotalWithDiscount)
+    unitPrice: Number(lfTotalWithDiscount || 0),
+    total: Number(lfTotalWithDiscount || 0)
   });
 }
 
-/* BLUEPRINTS */
 if (jobType === "blueprints") {
+  const sizeObj = (BLUEPRINT_SIZES || []).find(s => s.key === bpSizeKey) || { label: bpSizeKey };
+
   blueprintItems.push({
-    name: "Blueprint Printing",
-    specs: `${bpWidth}" × ${bpHeight}" • ${bpQty} sheets • B/W`,
-    qty: bpQty,
-    unitPrice: Number(bpTotal) / Math.max(1, bpQty),
-    total: Number(bpTotal)
+    name: "Blueprints",
+    sku: "plain_20lb",
+    specs: `${sizeObj.label} • ${Number(bpWidth) || 0}" × ${Number(bpHeight) || 0}" • B/W`,
+    qty: Number(bpQty || 0),
+    unitPrice: Number(bpQty || 0) > 0
+      ? (Number(bpTotal || 0) / Number(bpQty || 1))
+      : Number(bpTotal || 0),
+    total: Number(bpTotal || 0)
   });
 }
+
+const subtotal =
+  (paperItems.reduce((s, i) => s + (Number(i.total) || 0), 0)) +
+  (largeFormatItems.reduce((s, i) => s + (Number(i.total) || 0), 0)) +
+  (blueprintItems.reduce((s, i) => s + (Number(i.total) || 0), 0));
 
 const order = {
-  orderId: `JOB-${Date.now()}`,
+  orderId,
   customerName: name || "Walk-In",
   phone,
   email,
   dueDate: "ASAP",
+  fulfillment: "Pickup",
   notes: "",
-  subtotal:
-    Number(totalPrice || 0) +
-    Number(lfTotalWithDiscount || 0) +
-    Number(bpTotal || 0),
+  subtotal: Number(subtotal || 0),
   discountPct: 0,
   discountAmt: 0,
-  total:
-    Number(totalPrice || 0) +
-    Number(lfTotalWithDiscount || 0) +
-    Number(bpTotal || 0),
+  total: Number(subtotal || 0),
   paperItems,
   largeFormatItems,
   blueprintItems
 };
 
 const payload = {
-  subject: "Print Order – Store 4979",
+  subject: `Print Order – ${order.customerName} – ${orderId}`,
   to: "store4979@theupsstore.com",
+  deepLinkUrl: `${window.location.origin}${window.location.pathname}?job=${encodeURIComponent(orderId)}`,
   order,
+  // Backwards-compatibility (safe to keep):
+  jobType,
+  details,
   pdfBase64
 };
-
 
             const resp = await fetch(
               "/.netlify/functions/send-print-job",
