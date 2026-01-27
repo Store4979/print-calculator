@@ -2587,29 +2587,13 @@ const payload = {
           const sheetW = isCustom ? customSize.w : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
           const sheetH = isCustom ? customSize.h : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
 
-          // Compute quantities/totals locally to avoid scope/ReferenceErrors
-          const totalPrintQtyLocal = (typeof frontFiles !== "undefined" && frontFiles && frontFiles.length)
-            ? frontFiles.reduce((sum, f) => sum + (Number(f && f.qty) || 0), 0)
-            : (Number(prints && prints.quantity) || 0);
-
-          const subtotalLocal = (Number(perSheetTotal) || 0) * (Number(sheetsNeeded) || 0);
-          const discPctLocal = Math.max(0, (1 - (Number(discountFactor) || 1)) * 100);
-          const discAmtLocal = Math.max(0, subtotalLocal - (Number(totalPrice) || 0));
-
-          const filesLocal = (typeof frontFiles !== "undefined" && frontFiles && frontFiles.length)
-            ? frontFiles.map((f, i) => {
-                const rot = (Number(f && f.rotation) || 0) % 360;
-                return `${i + 1}. ${(f && f.name) || "file"} — qty: ${Number(f && f.qty) || 0}${rot ? ` • rotate: ${rot}°` : ""}`;
-              })
-            : ((typeof frontImage !== "undefined" && frontImage) ? [frontImage.name || "uploaded image"] : []);
-
           const details = [
             { label: "Paper selected:", value: currentPaper.label },
             { label: "Base sheet size:", value: `${sheetW}×${sheetH} in${isCustom ? " (custom)" : ""}` },
             { label: "Sheet orientation:", value: orientation },
             { label: "Target size:", value: `${Number(prints.width) || 0}×${Number(prints.height) || 0} in` },
             { label: "Prints per sheet:", value: `${Math.max(1, printsPerSheet)} (grid: ${frontSlotInfo?.cols || 0}×${frontSlotInfo?.rows || 0})` },
-            { label: "Total prints:", value: totalPrintQtyLocal },
+            { label: "Total prints:", value: totalPrintQty },
             { label: `Sheets needed (${sheetW}×${sheetH}):`, value: sheetsNeeded },
             { label: "Sides:", value: showBack ? "Front + Back" : "Single-sided" },
             { label: "Color:", value: showBack ? `${frontColorMode.toUpperCase()} / ${backColorMode.toUpperCase()}` : frontColorMode.toUpperCase() },
@@ -2617,16 +2601,20 @@ const payload = {
 
           const totals = [
             { label: "Discounted / sheet:", value: `$${((Number(totalPrice||0) / Math.max(1, sheetsNeeded)) || Number(perSheetTotal||0)).toFixed(2)}` },
-            { label: "Subtotal:", value: `$${Number(subtotalLocal || 0).toFixed(2)}` },
-            ...(discPctLocal > 0.0001 ? [{ label: `Qty discount (${discPctLocal.toFixed(1)}%):`, value: `-$${Number(discAmtLocal || 0).toFixed(2)}` }] : []),
+            { label: "Subtotal:", value: `$${Number(subtotal || 0).toFixed(2)}` },
+            ...(discPct > 0.0001 ? [{ label: `Qty discount (${discPct.toFixed(1)}%):`, value: `-$${Number(discAmt || 0).toFixed(2)}` }] : []),
             { label: "Estimated total:", value: `$${Number(totalPrice || 0).toFixed(2)}` },
           ];
+
+          const barcodeValue = getPaperBarcode(currentPaper.label, sheetW, sheetH);
 
           addOrderSheetPage(orderDoc, {
             jobType: "Paper Printing",
             details,
             totals,
-            files: filesLocal });
+            files: frontImage ? [frontImage.name || "front image"] : [],
+            barcodeValue
+          });
 
           const orderSheetBlob = orderDoc.output("blob");
           await sendOrderEmail("sheets", jobBlob, orderSheetBlob);
