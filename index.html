@@ -2176,10 +2176,6 @@ const savePdf = (doc, filename) => {
   const sheetW = isCustom ? customSize.w : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][0] : 8.5);
   const sheetH = isCustom ? customSize.h : (PRESET_SHEETS[sheetKey] ? PRESET_SHEETS[sheetKey][1] : 11);
 
-          const totalPrintQty = (frontFiles && frontFiles.length)
-            ? frontFiles.reduce((sum, f) => sum + (Number(f.qty) || 0), 0)
-            : (Number(prints && prints.quantity) || 0);
-
   const totalPrintQty = (frontFiles && frontFiles.length)
     ? frontFiles.reduce((sum, f) => sum + (Number(f.qty) || 0), 0)
     : (Number(prints.quantity) || 0);
