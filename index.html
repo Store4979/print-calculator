@@ -2555,12 +2555,40 @@ const payload = {
         };
 
         const orderSheetJob = async () => {
+          try {
           if (!frontRef.current) {
             alert("Please upload a front image first.");
             return;
           }
-          const pdfW = orientedWIn;
-          const pdfH = orientedHIn;
+
+          let pdfW = Number(orientedWIn);
+          let pdfH = Number(orientedHIn);
+
+          // Fallback: if oriented sizes haven't computed for some reason, derive from selected sheet size.
+          if (!Number.isFinite(pdfW) || !Number.isFinite(pdfH) || pdfW <= 0 || pdfH <= 0) {
+            const isCustom = sheetKey === "custom";
+            const baseW = isCustom
+              ? Number(customSize.w || 8.5)
+              : (PRESET_SHEETS[sheetKey] ? Number(PRESET_SHEETS[sheetKey][0]) : 8.5);
+            const baseH = isCustom
+              ? Number(customSize.h || 11)
+              : (PRESET_SHEETS[sheetKey] ? Number(PRESET_SHEETS[sheetKey][1]) : 11);
+
+            pdfW = baseW;
+            pdfH = baseH;
+
+            if (orientation === "landscape" && pdfH > pdfW) {
+              const t = pdfW; pdfW = pdfH; pdfH = t;
+            }
+            if (orientation === "portrait" && pdfW > pdfH) {
+              const t = pdfW; pdfW = pdfH; pdfH = t;
+            }
+          }
+
+          if (!Number.isFinite(pdfW) || !Number.isFinite(pdfH) || pdfW <= 0 || pdfH <= 0) {
+            alert("Please select a valid size before ordering.");
+            return;
+          }
 
           const doc = new jsPDF({
             orientation,
@@ -2615,6 +2643,10 @@ const payload = {
 
           const orderSheetBlob = orderDoc.output("blob");
           await sendOrderEmail("sheets", jobBlob, orderSheetBlob);
+          } catch (err) {
+            console.error("orderSheetJob failed:", err);
+            alert("Something went wrong while preparing the order email. Please try Download Preview, then Order Prints again.");
+          }
         };
 
         const orderLargeFormatJob = async () => {
