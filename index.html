@@ -201,6 +201,7 @@ input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script>
@@ -211,6 +212,54 @@ input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
       const { useState, useEffect, useRef, useMemo } = React;
 
 // ---------- MOBILE-FRIENDLY INPUTS & PDF COMPRESSION HELPERS ----------
+
+  // ---------- PDF UPLOAD HELPERS (PDF -> PNG) ----------
+  // pdf.js is loaded globally as window.pdfjsLib
+  try {
+    if (window.pdfjsLib?.GlobalWorkerOptions) {
+      // Use the same CDN path for worker
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js";
+    }
+  } catch {}
+
+  const isPdfFile = (f) => {
+    if (!f) return false;
+    const name = String(f.name || "").toLowerCase();
+    return f.type === "application/pdf" || name.endsWith(".pdf");
+  };
+
+  const pdfFileToPngFile = async (file, pageNum = 1, scale = 2) => {
+    const lib = window.pdfjsLib;
+    if (!lib) throw new Error("pdf.js not loaded");
+    const ab = await file.arrayBuffer();
+    const pdf = await lib.getDocument({ data: ab }).promise;
+    const safePage = Math.min(Math.max(1, Number(pageNum) || 1), pdf.numPages || 1);
+    const page = await pdf.getPage(safePage);
+    const viewport = page.getViewport({ scale: Math.max(0.5, Number(scale) || 2) });
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1.0));
+    if (!blob) throw new Error("Could not rasterize PDF");
+    const baseName = (file.name || "upload").replace(/\.pdf$/i, "");
+    return new File([blob], `${baseName}_p${safePage}.png`, { type: "image/png" });
+  };
+
+  const normalizeUploadFile = async (file) => {
+    if (!file) return null;
+    if (isPdfFile(file)) {
+      // Default to page 1 for now
+      return await pdfFileToPngFile(file, 1, 2);
+    }
+    return file;
+  };
+
 
 // Smart numeric input: easier editing on phones/tablets (no iOS "stuck at 1" behavior)
 const SmartNumberInput = ({
@@ -1797,6 +1846,115 @@ useEffect(() => {
         };
 
 
+        const drawBackFromPlacements = (canvas, backFile, rotationDeg, placements) => {
+          return new Promise(async (resolve) => {
+            try {
+              if (!canvas || !backFile || !placements || !placements.length) {
+                if (canvas) {
+                  const ctx0 = canvas.getContext("2d");
+                  if (ctx0) {
+                    ctx0.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx0.fillStyle = "#ffffff";
+                    ctx0.fillRect(0, 0, canvas.width, canvas.height);
+                  }
+                }
+                return resolve();
+              }
+
+              // Match the same sheet sizing logic as drawSheet
+              const isCustom = sheetKey === "custom";
+              const base = isCustom ? [customSize.w, customSize.h] : (PRESET_SHEETS[sheetKey] || [8.5, 11]);
+              const baseWIn = base[0];
+              const baseHIn = base[1];
+              const oriented = orientation === "landscape" ? [Math.max(baseWIn, baseHIn), Math.min(baseWIn, baseHIn)] : [Math.min(baseWIn, baseHIn), Math.max(baseWIn, baseHIn)];
+              const wIn = oriented[0];
+              const hIn = oriented[1];
+
+              const wPx = Math.max(1, Math.round(wIn * PREVIEW_DPI));
+              const hPx = Math.max(1, Math.round(hIn * PREVIEW_DPI));
+              canvas.width = wPx;
+              canvas.height = hPx;
+
+              const ctx = canvas.getContext("2d");
+              if (!ctx) return resolve();
+
+              // white background
+              ctx.clearRect(0, 0, wPx, hPx);
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(0, 0, wPx, hPx);
+
+              // margin/spacing guides (same as drawSheet)
+              const marginPx = Math.round(0.1 * PREVIEW_DPI);
+              const spacingPx = Math.round(0.05 * PREVIEW_DPI);
+              const bleedPx = showBleed ? Math.round(BLEED_IN * PREVIEW_DPI) : 0;
+
+              if (showGuides) {
+                ctx.save();
+                ctx.strokeStyle = "rgba(0,0,0,.18)";
+                ctx.setLineDash([6, 4]);
+                ctx.lineWidth = 2;
+                ctx.strokeRect(marginPx, marginPx, wPx - marginPx * 2, hPx - marginPx * 2);
+                ctx.restore();
+              }
+
+              // Load back artwork
+              const img = new Image();
+              const url = URL.createObjectURL(backFile);
+              await new Promise((res) => {
+                img.onload = () => res(true);
+                img.onerror = () => res(false);
+                img.src = url;
+              });
+
+              const normRot = (deg) => (((Number(deg) || 0) % 360) + 360) % 360;
+
+              // Draw each placement using identical crop/clip rules as front
+              for (const p of placements) {
+                if (!p) continue;
+
+                if (showCutLines) {
+                  ctx.save();
+                  ctx.strokeStyle = "#000";
+                  ctx.lineWidth = 1;
+                  ctx.strokeRect(p.x, p.y, p.w, p.h);
+                  ctx.restore();
+                }
+
+                const contentW = p.w - bleedPx * 2;
+                const contentH = p.h - bleedPx * 2;
+
+                ctx.save();
+                ctx.translate(p.x + p.w / 2, p.y + p.h / 2);
+
+                ctx.beginPath();
+                ctx.rect(-contentW / 2, -contentH / 2, contentW, contentH);
+                ctx.clip();
+
+                const rad = (normRot(rotationDeg) * Math.PI) / 180;
+                ctx.rotate(rad);
+
+                // cover fit
+                let drawW = contentW;
+                let drawH = (img.height / img.width) * contentW;
+                if (drawH < contentH) {
+                  drawH = contentH;
+                  drawW = (img.width / img.height) * contentH;
+                }
+
+                ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+                ctx.restore();
+              }
+
+              try { URL.revokeObjectURL(url); } catch {}
+              resolve();
+            } catch (e) {
+              console.warn("drawBackFromPlacements failed:", e);
+              resolve();
+            }
+          });
+        };
+
+
 
         useEffect(() => {
           drawSheet(frontRef.current, (frontFiles?.length ? frontFiles : frontImage), frontRotation, frontPreviewPage, frontPlacementsRef);
@@ -1816,12 +1974,20 @@ useEffect(() => {
         ]);
 
         useEffect(() => {
-          if (showBack) {
-            drawSheet(backRef.current, backImage, backRotation, 0, null);
+          if (showBack && backImage) {
+            const placements = frontPlacementsRef?.current || [];
+            if (placements && placements.length) {
+              drawBackFromPlacements(backRef.current, backImage, backRotation, placements);
+            } else {
+              drawSheet(backRef.current, backImage, backRotation, 0, null);
+            }
           }
         }, [
           backImage,
           backRotation,
+          frontPreviewPage,
+          frontFiles,
+          copiesPerFile,
           sheetKey,
           orientation,
           customSize,
@@ -2259,24 +2425,21 @@ const savePdf = (doc, filename) => {
     }
   }
 
-  // Pre-render back (same for all sheets) once, if used
-  let backData = null;
-  if (showBack && backImage) {
-    const backCanvas = document.createElement('canvas');
-    await drawSheet(backCanvas, backImage, backRotation, 0, null);
-    backData = backCanvas.toDataURL('image/png', 1.0);
-  }
 
   for (let p = 0; p < exportPages; p++) {
     const c = document.createElement('canvas');
-    await drawSheet(c, exportInput, frontRotation, p, null);
+    const frontRes = await drawSheet(c, exportInput, frontRotation, p, null);
+    const placements = frontRes?.placements || [];
     const data = c.toDataURL('image/png', 1.0);
 
     // Add a new page with the actual output size/orientation
     orderDoc.addPage([pdfW, pdfH], isLandscape ? 'landscape' : 'portrait');
     orderDoc.addImage(data, 'PNG', 0, 0, pdfW, pdfH);
 
-    if (backData) {
+    if (showBack && backImage && placements.length) {
+      const backCanvas = document.createElement('canvas');
+      await drawBackFromPlacements(backCanvas, backImage, backRotation, placements);
+      const backData = backCanvas.toDataURL('image/png', 1.0);
       orderDoc.addPage([pdfW, pdfH], isLandscape ? 'landscape' : 'portrait');
       orderDoc.addImage(backData, 'PNG', 0, 0, pdfW, pdfH);
     }
@@ -4143,11 +4306,15 @@ const quoteRows = computeQuickQuoteRows();
                     <div className="flex flex-wrap items-center gap-3 text-xs">
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,application/pdf"
                         multiple
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          if (!files.length) return;
+                        onChange={async (e) => {
+                          const filesRaw = Array.from(e.target.files || []);
+                          if (!filesRaw.length) return;
+
+                          // Support PDF uploads by rasterizing page 1 to PNG
+                          const files = (await Promise.all(filesRaw.map((f) => normalizeUploadFile(f)))).filter(Boolean);
+
                           const defaultQty = Math.max(1, Number(copiesPerFile) || 1);
                           const newItems = files.map((file) => ({
                             id: `f_${Date.now()}_${Math.random().toString(16).slice(2)}`,
@@ -4444,11 +4611,14 @@ const quoteRows = computeQuickQuoteRows();
                         <div className="flex flex-wrap items-center gap-3 text-xs">
                           <input
                             type="file"
-                            accept="image/*"
-                            onChange={(e) => {
-                              const f = e.target.files[0];
+                            accept="image/*,application/pdf"
+                            onChange={async (e) => {
+                              const fRaw = e.target.files[0];
+                              if (!fRaw) return;
+                              const f = await normalizeUploadFile(fRaw);
                               if (!f) return;
                               setBackImage(f);
+                              e.target.value = "";
                             }}
                             className="border rounded-md px-2 py-1 text-xs"
                           />
@@ -4613,11 +4783,14 @@ const quoteRows = computeQuickQuoteRows();
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <input
                       type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const f = e.target.files[0];
+                      accept="image/*,application/pdf"
+                      onChange={async (e) => {
+                        const fRaw = e.target.files[0];
+                        if (!fRaw) return;
+                        const f = await normalizeUploadFile(fRaw);
                         if (!f) return;
                         setLfImage(f);
+                        e.target.value = "";
                       }}
                       className="border rounded-md px-2 py-1 text-xs"
                     />
@@ -4760,11 +4933,14 @@ const quoteRows = computeQuickQuoteRows();
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <input
                       type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const f = e.target.files[0];
+                      accept="image/*,application/pdf"
+                      onChange={async (e) => {
+                        const fRaw = e.target.files[0];
+                        if (!fRaw) return;
+                        const f = await normalizeUploadFile(fRaw);
                         if (!f) return;
                         setBpImage(f);
+                        e.target.value = "";
                       }}
                       className="border rounded-md px-2 py-1 text-xs"
                     />
