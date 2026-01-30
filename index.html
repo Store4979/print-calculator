@@ -1010,6 +1010,7 @@ const [lfPaperKey, setLfPaperKey] = useState(() => {
         // Canvases
         const frontRef = useRef(null);
         const frontPlacementsRef = useRef([]);
+        const [frontLayoutVersion, setFrontLayoutVersion] = useState(0);
         const backRef = useRef(null);
         const lfRef = useRef(null);
         const bpRef = useRef(null);
@@ -1781,7 +1782,14 @@ useEffect(() => {
                 }
               }
 
-              // Draw
+              
+              // Snap placement coordinates to whole pixels to prevent sub-pixel drift between front/back renders
+              for (const p of pagePlacements) {
+                p.x = Math.round(p.x);
+                p.y = Math.round(p.y);
+              }
+
+// Draw
               for (const p of pagePlacements) {
                 const loadedObj = loadedMap.get(p.fileId);
                 const chosen = loadedObj?.img;
@@ -1870,8 +1878,12 @@ useEffect(() => {
               const wIn = oriented[0];
               const hIn = oriented[1];
 
-              const wPx = Math.max(1, Math.round(wIn * PREVIEW_DPI));
-              const hPx = Math.max(1, Math.round(hIn * PREVIEW_DPI));
+              // IMPORTANT:
+              // Placements coming from drawSheet are in the same pixel-space as drawSheet's canvas.
+              // drawSheet sizes its canvas using inchesToPx(...) which uses the high-res DPI constant.
+              // If we use PREVIEW_DPI here, the back side will not line up and will appear shifted/scaled.
+              const wPx = Math.max(1, Math.round(wIn * DPI));
+              const hPx = Math.max(1, Math.round(hIn * DPI));
               canvas.width = wPx;
               canvas.height = hPx;
 
@@ -1884,9 +1896,9 @@ useEffect(() => {
               ctx.fillRect(0, 0, wPx, hPx);
 
               // margin/spacing guides (same as drawSheet)
-              const marginPx = Math.round(0.1 * PREVIEW_DPI);
-              const spacingPx = Math.round(0.05 * PREVIEW_DPI);
-              const bleedPx = showBleed ? Math.round(BLEED_IN * PREVIEW_DPI) : 0;
+              const marginPx = inchesToPx(MARGIN_IN);
+              const spacingPx = inchesToPx(SPACING_IN);
+              const bleedPx = showBleed ? inchesToPx(BLEED_IN) : 0;
 
               if (showGuides) {
                 ctx.save();
@@ -1908,8 +1920,16 @@ useEffect(() => {
 
               const normRot = (deg) => (((Number(deg) || 0) % 360) + 360) % 360;
 
-              // Draw each placement using identical crop/clip rules as front
-              for (const p of placements) {
+              // Back-side alignment:
+              // Use the exact same placement boxes as the FRONT.
+              // IMPORTANT: do NOT reflow, re-center, or scale independently here.
+              const backPlacements = placements.map((p) => {
+                if (!p) return p;
+                return { ...p, x: Math.round(p.x), y: Math.round(p.y) };
+              });
+
+// Draw each placement using identical crop/clip rules as front
+              for (const p of backPlacements) {
                 if (!p) continue;
 
                 if (showCutLines) {
@@ -1957,7 +1977,17 @@ useEffect(() => {
 
 
         useEffect(() => {
-          drawSheet(frontRef.current, (frontFiles?.length ? frontFiles : frontImage), frontRotation, frontPreviewPage, frontPlacementsRef);
+          let cancelled = false;
+          Promise.resolve(
+            drawSheet(frontRef.current, (frontFiles?.length ? frontFiles : frontImage), frontRotation, frontPreviewPage, frontPlacementsRef)
+          )
+            .then(() => {
+              if (cancelled) return;
+              // Trigger dependent back render only after the front placements are refreshed.
+              setFrontLayoutVersion((v) => v + 1);
+            })
+            .catch(() => {});
+          return () => { cancelled = true; };
         }, [
           frontFiles,
           copiesPerFile,
@@ -1986,6 +2016,7 @@ useEffect(() => {
           backImage,
           backRotation,
           frontPreviewPage,
+          frontLayoutVersion,
           frontFiles,
           copiesPerFile,
           sheetKey,
