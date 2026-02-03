@@ -1,0 +1,493 @@
+{
+  "paperTypes": [
+    {
+      "key": "28lb",
+      "label": "28 LB Paper"
+    },
+    {
+      "key": "20lb",
+      "label": "20 LB Paper"
+    },
+    {
+      "key": "80c",
+      "label": "80 LB Cardstock Cover"
+    },
+    {
+      "key": "110c",
+      "label": "110 LB Cardstock Cover"
+    },
+    {
+      "key": "80t",
+      "label": "80 LB Text Gloss"
+    },
+    {
+      "key": "100t",
+      "label": "100 LB Text Gloss"
+    },
+    {
+      "key": "14pt",
+      "label": "14PT Gloss"
+    },
+    {
+      "key": "18pt",
+      "label": "18PT Gloss"
+    }
+  ],
+  "sheetKeysForPaper": {
+    "28lb": [
+      "8.5x11",
+      "11x17"
+    ],
+    "20lb": [
+      "8.5x11",
+      "11x17"
+    ],
+    "80c": [
+      "8.5x11",
+      "11x17"
+    ],
+    "110c": [
+      "8.5x11",
+      "11x17"
+    ],
+    "80t": [
+      "8.5x11",
+      "11x17"
+    ],
+    "100t": [
+      "8.5x11",
+      "11x17"
+    ],
+    "14pt": [
+      "12x18"
+    ],
+    "18pt": [
+      "12x18"
+    ]
+  },
+  "lfPaperTypes": [
+    {
+      "key": "hp_gloss_photo",
+      "label": "HP Universal Instant-dry Gloss Photo Paper"
+    },
+    {
+      "key": "plain_20lb",
+      "label": "20lb Plain Bond Paper"
+    },
+    {
+      "key": "lexjet_46_bond",
+      "label": "LexJet #46 Bright White Bond Paper"
+    },
+    {
+      "key": "lexjet_thrifty_banner",
+      "label": "LexJet TOUGHcoat ThriftyBanner"
+    },
+    {
+      "key": "lexjet_polypro",
+      "label": "LexJet TOUGHcoat Matte Polypropylene v2"
+    },
+    {
+      "key": "fredrix_canvas",
+      "label": "Fredrix 777VWR Vivid Matte Canvas"
+    },
+    {
+      "key": "hp_adhesive_polypro",
+      "label": "HP Everyday Adhesive Matte Polypropylene"
+    },
+    {
+      "key": "hp_translucent_bond",
+      "label": "HP Translucent Bond Paper"
+    }
+  ],
+  "sheetPricing": {
+    "28lb": {
+      "8.5x11": {
+        "baseCostColor": 0.063,
+        "baseCostBW": 0.0269,
+        "priceColor": 0.504,
+        "priceBW": 0.2152
+      },
+      "11x17": {
+        "baseCostColor": 0.113,
+        "baseCostBW": 0.07690000000000001,
+        "priceColor": 0.904,
+        "priceBW": 0.6152
+      }
+    },
+    "20lb": {
+      "8.5x11": {
+        "baseCostColor": 0.051,
+        "baseCostBW": 0.0149,
+        "priceColor": 0.357,
+        "priceBW": 0.1043
+      },
+      "11x17": {
+        "baseCostColor": 0.08299999999999999,
+        "baseCostBW": 0.0469,
+        "priceColor": 0.581,
+        "priceBW": 0.3283
+      }
+    },
+    "80c": {
+      "8.5x11": {
+        "baseCostColor": 0.093,
+        "baseCostBW": 0.056900000000000006,
+        "priceColor": 0.651,
+        "priceBW": 0.3983
+      },
+      "11x17": {
+        "baseCostColor": 0.148,
+        "baseCostBW": 0.1119,
+        "priceColor": 1.036,
+        "priceBW": 0.7833
+      }
+    },
+    "110c": {
+      "8.5x11": {
+        "baseCostColor": 0.21300000000000002,
+        "baseCostBW": 0.1769,
+        "priceColor": 1.491,
+        "priceBW": 1.2383
+      },
+      "11x17": {
+        "baseCostColor": 0.363,
+        "baseCostBW": 0.3269,
+        "priceColor": 2.541,
+        "priceBW": 2.2883
+      }
+    },
+    "80t": {
+      "8.5x11": {
+        "baseCostColor": 0.093,
+        "baseCostBW": 0.056900000000000006,
+        "priceColor": 0.651,
+        "priceBW": 0.3983
+      },
+      "11x17": {
+        "baseCostColor": 0.133,
+        "baseCostBW": 0.0969,
+        "priceColor": 0.931,
+        "priceBW": 0.6783
+      }
+    },
+    "100t": {
+      "8.5x11": {
+        "baseCostColor": 0.103,
+        "baseCostBW": 0.0669,
+        "priceColor": 0.721,
+        "priceBW": 0.4683
+      },
+      "11x17": {
+        "baseCostColor": 0.16299999999999998,
+        "baseCostBW": 0.12689999999999999,
+        "priceColor": 1.141,
+        "priceBW": 0.8883
+      }
+    },
+    "14pt": {
+      "12x18": {
+        "baseCostColor": 0.473,
+        "baseCostBW": 0.4369,
+        "priceColor": 1.892,
+        "priceBW": 1.7476
+      }
+    },
+    "18pt": {
+      "12x18": {
+        "baseCostColor": 0.613,
+        "baseCostBW": 0.5769,
+        "priceColor": 2.7585,
+        "priceBW": 2.596
+      }
+    }
+  },
+  "lfPricing": {
+    "hp_gloss_photo": {
+      "baseCostColor": 0.74,
+      "baseCostBW": 0,
+      "priceColor": 6.66,
+      "priceBW": 0
+    },
+    "plain_20lb": {
+      "baseCostColor": 0.28,
+      "baseCostBW": 0,
+      "priceColor": 2.52,
+      "priceBW": 0
+    },
+    "lexjet_46_bond": {
+      "baseCostColor": 0.53,
+      "baseCostBW": 0,
+      "priceColor": 4.77,
+      "priceBW": 0
+    },
+    "lexjet_thrifty_banner": {
+      "baseCostColor": 1.32,
+      "baseCostBW": 0,
+      "priceColor": 11.88,
+      "priceBW": 0
+    },
+    "lexjet_polypro": {
+      "baseCostColor": 0.78,
+      "baseCostBW": 0,
+      "priceColor": 7.02,
+      "priceBW": 0
+    },
+    "fredrix_canvas": {
+      "baseCostColor": 1.63,
+      "baseCostBW": 0,
+      "priceColor": 14.67,
+      "priceBW": 0
+    },
+    "hp_adhesive_polypro": {
+      "baseCostColor": 0.94,
+      "baseCostBW": 0,
+      "priceColor": 8.46,
+      "priceBW": 0
+    },
+    "hp_translucent_bond": {
+      "baseCostColor": 0.42,
+      "baseCostBW": 0,
+      "priceColor": 3.78,
+      "priceBW": 0
+    }
+  },
+  "blueprintPricing": {
+    "11x17": {
+      "tiers": [
+        {
+          "maxQty": 50,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 150,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 400,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "12x18": {
+      "tiers": [
+        {
+          "maxQty": 50,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 150,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 400,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "17x22": {
+      "tiers": [
+        {
+          "maxQty": 33,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 100,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 266,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "18x24": {
+      "tiers": [
+        {
+          "maxQty": 33,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 100,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 266,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "22x34": {
+      "tiers": [
+        {
+          "maxQty": 16,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 50,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 133,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "24x36": {
+      "tiers": [
+        {
+          "maxQty": 16,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 50,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 133,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "30x42": {
+      "tiers": [
+        {
+          "maxQty": 11,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 33,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 88,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "34x44": {
+      "tiers": [
+        {
+          "maxQty": 9,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 27,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 72,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    },
+    "36x48": {
+      "tiers": [
+        {
+          "maxQty": 8,
+          "psf": 1.13
+        },
+        {
+          "maxQty": 25,
+          "psf": 0.56
+        },
+        {
+          "maxQty": 66,
+          "psf": 0.48
+        },
+        {
+          "maxQty": null,
+          "psf": 0.41
+        }
+      ]
+    }
+  },
+  "sheetQtyDiscounts": [
+    {
+      "minSheets": 50,
+      "discountPercent": 10
+    },
+    {
+      "minSheets": 150,
+      "discountPercent": 15
+    },
+    {
+      "minSheets": 250,
+      "discountPercent": 20
+    },
+    {
+      "minSheets": 350,
+      "discountPercent": 25
+    },
+    {
+      "minSheets": 450,
+      "discountPercent": 30
+    },
+    {
+      "minSheets": 550,
+      "discountPercent": 35
+    },
+    {
+      "minSheets": 650,
+      "discountPercent": 40
+    }
+  ],
+  "lfQtyDiscounts": [],
+  "sheetMarkupPerPaper": {
+    "28lb": "700",
+    "20lb": "600",
+    "80c": "600",
+    "110c": "600",
+    "80t": "600",
+    "100t": "600",
+    "14pt": "300",
+    "18pt": "350"
+  },
+  "lfMarkupPerPaper": {
+    "hp_gloss_photo": 800,
+    "plain_20lb": 800,
+    "lexjet_46_bond": 800,
+    "lexjet_thrifty_banner": 800,
+    "lexjet_polypro": 800,
+    "fredrix_canvas": 800,
+    "hp_adhesive_polypro": 800,
+    "hp_translucent_bond": 800
+  },
+  "backSideFactor": 0.5,
+  "lfAddonPricing": {
+    "grommets": 0,
+    "foamCore": 0,
+    "coroSign": 0
+  }
+}
