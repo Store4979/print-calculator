@@ -1,0 +1,326 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- Production polish & mobile ergonomics --- */
+:root { color-scheme: light; }
+:root.dark { color-scheme: dark; }
+
+/* iOS Safari: avoid zooming inputs on focus */
+input, select, textarea { font-size: 16px; }
+
+/* Better tap targets on mobile for form controls */
+@media (max-width: 640px) {
+  input, select, textarea { min-height: 44px; }
+}
+
+/* Button micro-interaction (haptic-like) */
+.button-press {
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+.button-press:active {
+  transform: scale(0.98);
+  opacity: 0.92;
+}
+
+/* Focus glow for numeric entry clarity */
+.input-glow:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25);
+}
+:root.dark .input-glow:focus {
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.18);
+}
+
+/* Smooth scrolling for stepper jumps */
+html { scroll-behavior: smooth; }
+
+/* --- Legacy styles pulled from the previous static build --- */
+    :root{
+  --bg:#FFFFFF;
+  --panel:#FFFFFF;
+  --panel2:#FFFFFF;
+  --card:#FFFFFF;
+  --text:#000000;
+  --muted:rgba(0,0,0,.62);
+  --line:rgba(0,0,0,.12);
+  --accent:#008198;
+  --accent2:#FFD100;
+  --danger:#d32f2f;
+  --ok:#008198;
+  --shadow: 0 12px 32px rgba(0,0,0,.14);
+  --radius:18px;
+  --radius2:14px;
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+
+    html, body { height: 100%; }
+    html, body { height: 100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  color:var(--text);
+  background: var(--bg) !important;
+}
+
+    /* --- Tailwind utility overrides (theme swap) --- */
+    .bg-slate-50{ background: #f8fafc !important; }
+    .bg-slate-50\/60{ background: rgba(248,250,252,.6) !important; }
+    .bg-slate-100{ background: #f1f5f9 !important; }
+    .bg-gray-100{ background: #f1f5f9 !important; }
+    .bg-white{
+  background: #ffffff !important;
+  border: 1px solid var(--line) !important;
+}
+
+
+    .text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700{ color: var(--muted) !important; }
+    .text-slate-800, .text-slate-900{ color: var(--text) !important; }
+
+    .border-slate-100, .border-slate-200, .border-slate-300, .border-gray-100, .border{ border-color: var(--line) !important; }
+    .border-dashed{ border-style: dashed !important; }
+
+    .shadow-sm{ box-shadow: var(--shadow) !important; }
+    .rounded-2xl{ border-radius: var(--radius) !important; }
+    .rounded-xl{ border-radius: var(--radius2) !important; }
+    .rounded-md{ border-radius: 12px !important; }
+    .rounded-full{ border-radius: 999px !important; }
+
+    /* Inputs / selects */
+input, select, textarea{
+  background: #ffffff !important;
+  border-color: rgba(0,0,0,.18) !important;
+  color: var(--text) !important;
+  outline: none !important;
+}
+input::placeholder, textarea::placeholder{ color: rgba(0,0,0,.45) !important; }
+input:disabled, select:disabled, textarea:disabled{ opacity: .60 !important; }
+
+
+    /* Buttons */
+    .bg-blue-600{
+  background: var(--accent) !important;
+  border-color: transparent !important;
+}
+
+    .hover\:bg-blue-700:hover{ filter: brightness(0.92); }
+    .bg-emerald-600{
+  background: var(--accent2) !important;
+  border-color: transparent !important;
+  color: #000000 !important;
+}
+
+    .hover\:bg-emerald-700:hover{ filter: brightness(0.93); }
+    .bg-slate-800{ background: #000000 !important; }
+    .text-white{ color: #ffffff !important; }
+.bg-slate-800.text-white{ color: #ffffff !important; }
+
+    .bg-slate-800:hover{ filter: brightness(1.10); }
+
+    /* “Selected pill” buttons in the UI */
+    .bg-blue-50{ background: rgba(255,209,0,.22) !important; }
+    .border-blue-400{ border-color: rgba(255,209,0,.75) !important; }
+    .text-blue-700{ color: #000000 !important; }
+
+    /* Recommendation / best row highlight */
+    .bg-emerald-50\/60{ background: rgba(0,129,152,.10) !important; }
+    .border-emerald-200{ border-color: rgba(0,129,152,.30) !important; }
+    .text-emerald-900{ color: var(--text) !important; }
+
+    /* Table */
+    table{ color: var(--text) !important; }
+    thead{ color: rgba(0,0,0,.62) !important; }
+    tbody tr{ border-color: rgba(0,0,0,.08) !important; }
+
+    /* Canvas blocks */
+    canvas{ background: #ffffff !important; border-color: rgba(0,0,0,.14) !important; max-width:100%; height:auto; }
+
+    /* Small code blocks */
+    code{
+      background: rgba(255,209,0,.18) !important;
+      border: 1px solid rgba(0,0,0,.10);
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+
+    /* Improve overall spacing on small screens */
+    @media (max-width: 640px){
+      #root{ padding-top: 18px !important; }
+    }
+  
+      /* ---- Mobile polish additions ---- */
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+      .table-wrap{
+        overflow-x:auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      @media (max-width: 768px){
+        .mobile-sticky-top{
+          position: sticky;
+          top: 0;
+          z-index: 30;
+          backdrop-filter: blur(12px);
+          background: rgba(255,255,255,0.85);
+          border-bottom: 1px solid rgba(15,23,42,0.08);
+        }
+        input, select, textarea { font-size: 16px; }
+        input[type="number"], input[type="text"], input[type="tel"]{
+          font-size:18px !important;
+          min-height:50px;
+          padding:12px 14px !important;
+        }
+        button{ min-height:44px; }
+
+      }
+
+    
+
+/* Mobile/tablet numeric input comfort */
+@media (max-width: 768px){
+  input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"], input[type="text"]{
+    font-size: 18px;
+  }
+  input[type="number"]{
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+}
+
+/* ---------- Modern App UI Enhancements (UI-only) ---------- */
+:root{
+  --glass: rgba(255,255,255,.68);
+  --glass2: rgba(255,255,255,.82);
+  --glassBorder: rgba(0,0,0,.10);
+  --blur: 14px;
+  --ring: 0 0 0 4px rgba(0,129,152,.14);
+  --shadow2: 0 18px 50px rgba(0,0,0,.16);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --glass: rgba(16,18,22,.58);
+    --glass2: rgba(16,18,22,.78);
+    --glassBorder: rgba(255,255,255,.12);
+    --shadow2: 0 18px 50px rgba(0,0,0,.40);
+  }
+}
+.app-shell{
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(0,129,152,.20), transparent 60%),
+              radial-gradient(900px 500px at 90% 10%, rgba(255,209,0,.22), transparent 55%),
+              radial-gradient(900px 600px at 30% 110%, rgba(0,129,152,.18), transparent 60%),
+              var(--bg);
+  min-height: 100vh;
+}
+.glass{
+  background: var(--glass) !important;
+  border: 1px solid var(--glassBorder) !important;
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+  box-shadow: var(--shadow2);
+}
+.surface{
+  background: var(--glass2) !important;
+  border: 1px solid var(--glassBorder) !important;
+  -webkit-backdrop-filter: blur(calc(var(--blur) - 4px));
+  backdrop-filter: blur(calc(var(--blur) - 4px));
+}
+.btn-press{
+  transition: transform .10s ease, filter .20s ease, box-shadow .20s ease;
+}
+.btn-press:active{ transform: scale(.98); }
+.focus-ring:focus{ outline: none !important; box-shadow: var(--ring) !important; }
+.kbd-hint{
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line);
+  background: rgba(0,0,0,.04);
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.stepper{
+  position: relative;
+}
+.stepper .step-dot{
+  width: 9px; height: 9px; border-radius: 999px;
+  background: rgba(0,0,0,.18);
+}
+.stepper .step-dot.active{ background: var(--accent); }
+.stepper .step-line{
+  height: 2px; background: rgba(0,0,0,.10); flex: 1;
+}
+.tabbar{
+  border-top: 1px solid var(--glassBorder);
+  background: var(--glass) !important;
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+}
+.tabbar .indicator{
+  position:absolute;
+  top: 8px;
+  height: 44px;
+  border-radius: 16px;
+  background: rgba(0,129,152,.16);
+  border: 1px solid rgba(0,129,152,.22);
+  transition: left .22s ease, width .22s ease;
+}
+.tabbar button{
+  height: 56px;
+  border-radius: 18px;
+  transition: transform .12s ease, background .2s ease;
+}
+.tabbar button:active{ transform: scale(.98); }
+.icon{
+  width: 20px; height: 20px;
+  opacity: .82;
+}
+.tabbar .active .icon{ opacity: 1; }
+.no-scrollbar::-webkit-scrollbar{ display:none; }
+.no-scrollbar{ -ms-overflow-style:none; scrollbar-width:none; }
+
+
+      /* ---- Preview workspace / sticky tool drawer ---- */
+      .preview-stage{
+        display:flex;
+        flex-direction:column;
+        gap:10px;
+      }
+      .tool-drawer{
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        backdrop-filter: blur(12px);
+        background: rgba(255,255,255,0.82);
+        border: 1px solid rgba(15,23,42,0.10);
+        border-radius: 16px;
+        padding: 10px;
+      }
+      .preview-viewport{
+        overflow:auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 14px;
+        border: 1px solid rgba(15,23,42,0.10);
+        background: rgba(248,250,252,0.7);
+        max-height: 60vh;
+        padding: 10px;
+      }
+      @media (max-width: 768px){
+        .preview-viewport{ max-height: 52vh; }
+      }
+
+  
+    /* Mobile input ergonomics */
+    @media (max-width: 640px) {
+      input, select, textarea, button { font-size: 16px; }
+      input[type="number"], input[type="text"], input[type="tel"], input[type="email"]{
+        min-height: 44px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+      }
+    }
+    /* Optional: reduce iOS number spinners where shown */
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
