@@ -123,37 +123,41 @@ const canvasToCompressedJpeg = (canvas, { maxDim = 1400, quality = 0.72 } = {}) 
     return canvas.toDataURL("image/jpeg", 0.7);
   }
 };
-      // jsPDF is provided via the UMD script tag in index.html (window.jspdf.jsPDF).
-      // Guard here so the app fails gracefully if the script is blocked.
-      const jsPDF = window?.jspdf?.jsPDF;
-      if (!jsPDF) {
-        throw new Error(
-          "jsPDF failed to load. Ensure the jsPDF UMD script is included before the app bundle (window.jspdf.jsPDF)."
-        );
-      }
 
-      const UPS_STORE = {
-        name: 'The UPS Store',
-        address: '4352 Bay Road, Saginaw MI 48603',
-        phone: '989.790.9701',
-        email: 'store4979@theupsstore.com'
-      };
+// jsPDF is provided via the UMD script tag in index.html (window.jspdf.jsPDF).
+// Use this accessor at the moment you generate a PDF, rather than at module init,
+// so the app never crashes on load if the script is delayed/blocked.
+const getJsPDF = () => {
+  const jsPDF = window?.jspdf?.jsPDF;
+  if (!jsPDF) {
+    throw new Error(
+      "jsPDF failed to load. Ensure the jsPDF UMD script is included before the app bundle (window.jspdf.jsPDF)."
+    );
+  }
+  return jsPDF;
+};
 
-      const UPS_LOGO_DATA_URL = (window.UPS_LOGO_DATA_URL || "");
+const UPS_STORE = {
+  name: "The UPS Store",
+  address: "4352 Bay Road, Saginaw MI 48603",
+  phone: "989.790.9701",
+  email: "store4979@theupsstore.com",
+};
 
-      const getUpsLogoAbsUrl = () => UPS_LOGO_DATA_URL;
-      // For jsPDF we need a DATA URL (base64). Loaded once at runtime.
-      let UPS_LOGO_PDF_DATA_URL = UPS_LOGO_DATA_URL;
+const UPS_LOGO_DATA_URL = window.UPS_LOGO_DATA_URL || "";
+const getUpsLogoAbsUrl = () => UPS_LOGO_DATA_URL;
 
+// For jsPDF we need a DATA URL (base64). Loaded once at runtime.
+let UPS_LOGO_PDF_DATA_URL = UPS_LOGO_DATA_URL;
 
-      
-      // Ensure the logo is available as a base64 DATA URL for jsPDF.
-      async function ensureLogoPdfDataUrl() {
-        // Logo is embedded as a data URL for reliable mobile PDF/print rendering.
-        // No network fetch required (critical for iOS/PWA PDF generation).
-        UPS_LOGO_PDF_DATA_URL = UPS_LOGO_DATA_URL;
-        return UPS_LOGO_PDF_DATA_URL;
-      }
+// Ensure the logo is available as a base64 DATA URL for jsPDF.
+async function ensureLogoPdfDataUrl() {
+  // Logo is embedded as a data URL for reliable mobile PDF/print rendering.
+  // No network fetch required (critical for iOS/PWA PDF generation).
+  UPS_LOGO_PDF_DATA_URL = UPS_LOGO_DATA_URL;
+  return UPS_LOGO_PDF_DATA_URL;
+}
+
 
 // ---------- CONSTANTS ----------
 
@@ -2143,7 +2147,7 @@ const savePdf = (doc, filename) => {
 };
 
 // --- Order sheet (letter) + then the actual preview pages ---
-  const orderDoc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  const orderDoc = new (getJsPDF())({ orientation: 'portrait', unit: 'in', format: 'letter' });
 
   const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
   const isCustom = sheetKey === 'custom';
@@ -2262,7 +2266,7 @@ const savePdf = (doc, filename) => {
 const downloadLfPDF = () => {
   if (!lfRef.current) return;
 
-  const orderDoc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  const orderDoc = new (getJsPDF())({ orientation: 'portrait', unit: 'in', format: 'letter' });
   const lfPaper = lfPaperTypes.find((p) => p.key === lfPaperKey) || { label: lfPaperKey };
 
   const details = [
@@ -2298,7 +2302,7 @@ const downloadLfPDF = () => {
 const downloadBlueprintPDF = () => {
   if (!bpRef.current) return;
 
-  const orderDoc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+  const orderDoc = new (getJsPDF())({ orientation: 'portrait', unit: 'in', format: 'letter' });
   const sizeObj = BLUEPRINT_SIZES.find((s) => s.key === bpSizeKey) || { label: bpSizeKey };
 
   const details = [
@@ -2536,7 +2540,7 @@ const payload = {
           const pdfW = orientedWIn;
           const pdfH = orientedHIn;
 
-          const doc = new jsPDF({
+          const doc = new (getJsPDF())({
             orientation,
             unit: "in",
             format: [pdfW, pdfH]
@@ -2554,7 +2558,7 @@ const payload = {
           const jobBlob = doc.output("blob");
           // Build a Letter-size order sheet PDF (separate attachment)
           await ensureLogoPdfDataUrl();
-          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+          const orderDoc = new (getJsPDF())({ orientation: "portrait", unit: "in", format: "letter" });
 
           const currentPaper = paperTypes.find((p) => p.key === paperKey) || { label: paperKey };
           const isCustom = sheetKey === "custom";
@@ -2599,7 +2603,7 @@ const payload = {
           const pdfW = lfWidth;
           const pdfH = lfHeight;
 
-          const doc = new jsPDF({
+          const doc = new (getJsPDF())({
             orientation: pdfW >= pdfH ? "landscape" : "portrait",
             unit: "in",
             format: [pdfW, pdfH]
@@ -2610,7 +2614,7 @@ const payload = {
           const jobBlob = doc.output("blob");
           // Build a Letter-size order sheet PDF (separate attachment)
           await ensureLogoPdfDataUrl();
-          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+          const orderDoc = new (getJsPDF())({ orientation: "portrait", unit: "in", format: "letter" });
 
           const lfPaper = lfPaperTypes.find((p) => p.key === lfPaperKey) || { label: lfPaperKey };
           const details = [
@@ -2643,7 +2647,7 @@ const payload = {
           const pdfW = bpWidth;
           const pdfH = bpHeight;
 
-          const doc = new jsPDF({
+          const doc = new (getJsPDF())({
             orientation: pdfW >= pdfH ? "landscape" : "portrait",
             unit: "in",
             format: [pdfW, pdfH]
@@ -2654,7 +2658,7 @@ const payload = {
           const jobBlob = doc.output("blob");
           // Build a Letter-size order sheet PDF (separate attachment)
           await ensureLogoPdfDataUrl();
-          const orderDoc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
+          const orderDoc = new (getJsPDF())({ orientation: "portrait", unit: "in", format: "letter" });
 
           const details = [
             { label: "Size:", value: `${bpWidth}×${bpHeight} in` },
