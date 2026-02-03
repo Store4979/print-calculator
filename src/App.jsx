@@ -849,50 +849,6 @@ const [lfPricing, setLfPricing] = useState(() =>
 
         
 
-        // ---- UI persistence (mobile-friendly: remembers last view + quote inputs) ----
-        const LS_UI_KEY = "printcalc_ui_v1";
-
-        useEffect(() => {
-          try {
-            const raw = localStorage.getItem(LS_UI_KEY);
-            if (!raw) return;
-            const ui = JSON.parse(raw);
-
-            if (ui?.viewMode === "tool" || ui?.viewMode === "quote") {
-              setViewMode(ui.viewMode);
-            }
-
-            // Quote preferences
-            if (typeof ui?.quotePaperKey === "string") setQuotePaperKey(ui.quotePaperKey);
-if (ui?.quoteFrontColorMode === "color" || ui?.quoteFrontColorMode === "bw") {
-              setQuoteFrontColorMode(ui.quoteFrontColorMode);
-            }
-            if (ui?.quoteBackColorMode === "color" || ui?.quoteBackColorMode === "bw") {
-              setQuoteBackColorMode(ui.quoteBackColorMode);
-            }
-            if (Number.isFinite(ui?.quoteQty)) setQuoteQty(ui.quoteQty);
-
-            // Don't persist admin auth (security). Only remember whether admin panel was open *while* admin is authenticated.
-          } catch (e) {
-            // ignore
-          }
-        }, []);
-
-        useEffect(() => {
-          try {
-            const ui = {
-              viewMode,
-              quotePaperKey,
-quoteFrontColorMode,
-              quoteBackColorMode,
-              quoteQty,
-            };
-            localStorage.setItem(LS_UI_KEY, JSON.stringify(ui));
-          } catch (e) {
-            // ignore
-          }
-        }, [viewMode, quotePaperKey, quoteFrontColorMode, quoteBackColorMode, quoteQty]);
-
 // Admin: add/remove paper types
         const [newPaperLabel, setNewPaperLabel] = useState("");
         const [newPaperKey, setNewPaperKey] = useState("");
@@ -919,6 +875,51 @@ quoteFrontColorMode,
         // Quick Quote filters
         const [quotePaperKey, setQuotePaperKey] = useState(() => paperKey);
         const [quoteShowAllPapers, setQuoteShowAllPapers] = useState(false);
+
+        // ---- UI persistence (mobile-friendly: remembers last view + quote inputs) ----
+        // IMPORTANT: this block must come AFTER quote state declarations.
+        // Otherwise production builds can throw a TDZ error ("Cannot access before initialization")
+        // because dependency arrays are evaluated immediately.
+        const LS_UI_KEY = "printcalc_ui_v1";
+
+        useEffect(() => {
+          try {
+            const raw = localStorage.getItem(LS_UI_KEY);
+            if (!raw) return;
+            const ui = JSON.parse(raw);
+
+            if (ui?.viewMode === "tool" || ui?.viewMode === "quote") {
+              setViewMode(ui.viewMode);
+            }
+
+            // Quote preferences
+            if (typeof ui?.quotePaperKey === "string") setQuotePaperKey(ui.quotePaperKey);
+            if (ui?.quoteFrontColorMode === "color" || ui?.quoteFrontColorMode === "bw") {
+              setQuoteFrontColorMode(ui.quoteFrontColorMode);
+            }
+            if (ui?.quoteBackColorMode === "color" || ui?.quoteBackColorMode === "bw") {
+              setQuoteBackColorMode(ui.quoteBackColorMode);
+            }
+            if (Number.isFinite(ui?.quoteQty)) setQuoteQty(ui.quoteQty);
+          } catch (e) {
+            // ignore
+          }
+        }, []);
+
+        useEffect(() => {
+          try {
+            const ui = {
+              viewMode,
+              quotePaperKey,
+              quoteFrontColorMode,
+              quoteBackColorMode,
+              quoteQty,
+            };
+            localStorage.setItem(LS_UI_KEY, JSON.stringify(ui));
+          } catch (e) {
+            // ignore
+          }
+        }, [viewMode, quotePaperKey, quoteFrontColorMode, quoteBackColorMode, quoteQty]);
 
         // Large-format state (simple version)
         const [lfWidth, setLfWidth] = useState(24); // in
