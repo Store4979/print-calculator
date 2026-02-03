@@ -590,6 +590,40 @@ const computeBestImposition = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         );
       }
 
+// ---------- PDF UPLOAD SUPPORT (pdf.js via CDN) ----------
+// Allows users to upload PDFs; the app will rasterize page 1 to a PNG
+// so the existing layout-preview / placement logic continues to work.
+const isPdfFile = (file) => {
+  const name = (file?.name || "").toLowerCase();
+  return file?.type === "application/pdf" || name.endsWith(".pdf");
+};
+
+const pdfFileToPngFile = async (file, pageNum = 1, scale = 2) => {
+  const lib = window.pdfjsLib;
+  if (!lib) throw new Error("pdf.js not loaded (window.pdfjsLib)");
+  const ab = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: ab }).promise;
+  const safePage = Math.min(Math.max(1, Number(pageNum) || 1), pdf.numPages || 1);
+  const page = await pdf.getPage(safePage);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext("2d");
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1));
+  if (!blob) throw new Error("Failed to create PNG blob from PDF");
+  const baseName = (file.name || "upload").replace(/\.pdf$/i, "");
+  return new File([blob], `${baseName}-p${safePage}.png`, { type: "image/png" });
+};
+
+const normalizeUploadFileForPreview = async (file) => {
+  if (isPdfFile(file)) {
+    return await pdfFileToPngFile(file, 1, 2);
+  }
+  return file;
+};
+
 function PriceCalculatorApp() {
         const [viewMode, setViewMode] = useState("tool"); // 'tool' | 'quote'
         const [layoutPage, setLayoutPage] = useState(() => {
@@ -4209,26 +4243,30 @@ const quoteRows = computeQuickQuoteRows();
                     <div className="flex flex-wrap items-center gap-3 text-xs">
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,application/pdf"
                         multiple
                         onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          if (!files.length) return;
-                          const defaultQty = Math.max(1, Number(copiesPerFile) || 1);
-                          const newItems = files.map((file) => ({
-                            id: `f_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-                            file,
-                            name: file.name,
-                            rotation: 0,
-                            qty: defaultQty
-                          }));
-                          setFrontFiles((prev) => {
-                            const next = [...(prev || []), ...newItems];
-                            return next;
+                          const picked = Array.from(e.target.files || []);
+                          if (!picked.length) return;
+
+                          (async () => {
+                            const files = await Promise.all(picked.map(normalizeUploadFileForPreview));
+                            const defaultQty = Math.max(1, Number(copiesPerFile) || 1);
+                            const newItems = files.map((file) => ({
+                              id: `f_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+                              file,
+                              name: file.name,
+                              rotation: 0,
+                              qty: defaultQty
+                            }));
+                            setFrontFiles((prev) => ([...(prev || []), ...newItems]));
+                            setFrontImage(files[0]); // legacy single-image support
+                            setSelectedFrontId((cur) => cur || newItems[0]?.id || null);
+                          })().catch((err) => {
+                            console.error(err);
+                            alert("Could not load one of the uploaded files. If it's a PDF, make sure the PDF isn't password-protected.");
                           });
-                          setFrontImage(files[0]); // legacy single-image support
-                          // auto-select first new item if nothing selected
-                          setSelectedFrontId((cur) => cur || newItems[0]?.id || null);
+
                           e.target.value = "";
                         }}
                         className="border rounded-md px-2 py-1 text-xs"
@@ -4650,11 +4688,20 @@ const quoteRows = computeQuickQuoteRows();
                         <div className="flex flex-wrap items-center gap-3 text-xs">
                           <input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,application/pdf"
                             onChange={(e) => {
-                              const f = e.target.files[0];
-                              if (!f) return;
-                              setBackImage(f);
+                              const picked = e.target.files?.[0];
+                              if (!picked) return;
+
+                              (async () => {
+                                const file = await normalizeUploadFileForPreview(picked);
+                                setBackImage(file);
+                              })().catch((err) => {
+                                console.error(err);
+                                alert("Could not load that file. If it's a PDF, make sure it isn't password-protected.");
+                              });
+
+                              e.target.value = "";
                             }}
                             className="border rounded-md px-2 py-1 text-xs"
                           />
@@ -4878,11 +4925,20 @@ const quoteRows = computeQuickQuoteRows();
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,application/pdf"
                       onChange={(e) => {
-                        const f = e.target.files[0];
-                        if (!f) return;
-                        setLfImage(f);
+                        const picked = e.target.files?.[0];
+                        if (!picked) return;
+
+                        (async () => {
+                          const file = await normalizeUploadFileForPreview(picked);
+                          setLfImage(file);
+                        })().catch((err) => {
+                          console.error(err);
+                          alert("Could not load that file. If it's a PDF, make sure it isn't password-protected.");
+                        });
+
+                        e.target.value = "";
                       }}
                       className="border rounded-md px-2 py-1 text-xs"
                     />
@@ -5025,11 +5081,20 @@ const quoteRows = computeQuickQuoteRows();
                   <div className="flex flex-wrap items-center gap-3 text-xs">
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,application/pdf"
                       onChange={(e) => {
-                        const f = e.target.files[0];
-                        if (!f) return;
-                        setBpImage(f);
+                        const picked = e.target.files?.[0];
+                        if (!picked) return;
+
+                        (async () => {
+                          const file = await normalizeUploadFileForPreview(picked);
+                          setBpImage(file);
+                        })().catch((err) => {
+                          console.error(err);
+                          alert("Could not load that file. If it's a PDF, make sure it isn't password-protected.");
+                        });
+
+                        e.target.value = "";
                       }}
                       className="border rounded-md px-2 py-1 text-xs"
                     />
