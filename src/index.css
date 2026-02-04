@@ -1,342 +1,495 @@
 /* ============================================
-   ENHANCED PRINT ORDERING APP STYLES
-   ULTRA-SPECIFIC VERSION TO OVERRIDE INLINE STYLES
+   PRINT CALCULATOR - COMPLETE MERGED STYLES
+   Includes Tailwind + Legacy UI Components
    ============================================ */
 
-/* CSS Variables - Set TWICE for maximum priority */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   CSS VARIABLES
+   ============================================ */
 :root {
-  --bg: #FFFFFF !important;
-  --panel: #FFFFFF !important;
-  --text: #000000 !important;
-  --muted: rgba(0, 0, 0, 0.62) !important;
-  --line: rgba(0, 0, 0, 0.12) !important;
-  --accent: #008198 !important;
-  --accent2: #FFD100 !important;
-  --accent-hover: #006B82 !important;
-  --surface-elevated: #FAFBFC !important;
-  --success: #059669 !important;
-  --warning: #F59E0B !important;
-  --error: #DC2626 !important;
-  --radius-sm: 8px !important;
-  --radius-md: 12px !important;
-  --radius-lg: 20px !important;
-  --radius: 20px !important;
-  --radius2: 12px !important;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.08) !important;
-  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.12) !important;
-  --shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.08) !important;
-  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  --bg: #FFFFFF;
+  --panel: #FFFFFF;
+  --panel2: #FFFFFF;
+  --card: #FFFFFF;
+  --text: #000000;
+  --muted: rgba(0,0,0,.62);
+  --line: rgba(0,0,0,.12);
+  --accent: #008198;
+  --accent2: #FFD100;
+  --accent-hover: #006B82;
+  --danger: #d32f2f;
+  --ok: #008198;
+  --success: #059669;
+  --warning: #F59E0B;
+  --error: #DC2626;
+  --shadow: 0 12px 32px rgba(0,0,0,.14);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.12);
+  --radius: 18px;
+  --radius2: 14px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* Glass effect variables */
+  --glass: rgba(255,255,255,.68);
+  --glass2: rgba(255,255,255,.82);
+  --glassBorder: rgba(0,0,0,.10);
+  --blur: 14px;
+  --ring: 0 0 0 4px rgba(0,129,152,.14);
+  --shadow2: 0 18px 50px rgba(0,0,0,.16);
 }
 
-/* Base Styles */
+/* ============================================
+   BASE STYLES
+   ============================================ */
 * {
-  box-sizing: border-box !important;
+  box-sizing: border-box;
 }
 
-html,
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 body {
-  margin: 0 !important;
-  padding: 0 !important;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif !important;
-  -webkit-font-smoothing: antialiased !important;
-  -moz-osx-font-smoothing: grayscale !important;
-  background: var(--bg) !important;
-  color: var(--text) !important;
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ============================================
-   ULTRA-SPECIFIC CARD OVERRIDES
+   APP SHELL - Gradient Background
    ============================================ */
-
-/* Target ALL possible card selectors with high specificity */
-section.bg-white,
-div.bg-white,
-.bg-white.rounded-2xl,
-.bg-white.shadow-sm,
-section.bg-white.rounded-2xl,
-section.bg-white.shadow-sm,
-section.bg-white.rounded-2xl.shadow-sm,
-div.bg-white.rounded-2xl,
-div.bg-white.shadow-sm,
-div.bg-white.rounded-2xl.shadow-sm,
-section.bg-white.rounded-2xl.shadow-sm.border,
-div.space-y-6 > section.bg-white,
-div.space-y-6 > div.bg-white {
-  background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%) !important;
-  border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  border-radius: 20px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.08) !important;
-  padding: 1.5rem !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-/* Hover effects for cards */
-section.bg-white:hover,
-div.bg-white.rounded-2xl:hover,
-section.bg-white.rounded-2xl:hover {
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.12) !important;
-  transform: translateY(-2px) !important;
+.app-shell {
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(0,129,152,.20), transparent 60%),
+              radial-gradient(900px 500px at 90% 10%, rgba(255,209,0,.22), transparent 55%),
+              radial-gradient(900px 600px at 30% 110%, rgba(0,129,152,.18), transparent 60%),
+              var(--bg);
+  min-height: 100vh;
 }
 
 /* ============================================
-   BUTTON OVERRIDES - ULTRA SPECIFIC
+   GLASS & SURFACE EFFECTS
    ============================================ */
-
-button.bg-blue-600,
-button.bg-blue-600.hover\:bg-blue-700,
-.bg-blue-600,
-button[class*="bg-blue"] {
-  background: linear-gradient(135deg, #008198 0%, #006B82 100%) !important;
-  border: none !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(0, 129, 152, 0.3) !important;
-  border-radius: 12px !important;
-  padding: 0.625rem 1.25rem !important;
-  font-weight: 600 !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+.glass {
+  background: var(--glass) !important;
+  border: 1px solid var(--glassBorder) !important;
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+  box-shadow: var(--shadow2);
 }
 
-button.bg-blue-600:hover,
-button.bg-blue-600.hover\:bg-blue-700:hover,
-.bg-blue-600:hover {
-  background: linear-gradient(135deg, #006B82 0%, #005B6E 100%) !important;
-  transform: translateY(-1px) !important;
-  box-shadow: 0 4px 12px rgba(0, 129, 152, 0.4) !important;
-}
-
-button.bg-emerald-600,
-.bg-emerald-600 {
-  background: linear-gradient(135deg, #FFD100 0%, #FFC700 100%) !important;
-  border: none !important;
-  color: #000000 !important;
-  box-shadow: 0 2px 8px rgba(255, 209, 0, 0.3) !important;
-  border-radius: 12px !important;
-  font-weight: 600 !important;
-}
-
-button.bg-emerald-600:hover,
-.bg-emerald-600:hover {
-  background: linear-gradient(135deg, #FFC700 0%, #FFB700 100%) !important;
-  transform: translateY(-1px) !important;
-  box-shadow: 0 4px 12px rgba(255, 209, 0, 0.4) !important;
+.surface {
+  background: var(--glass2) !important;
+  border: 1px solid var(--glassBorder) !important;
+  -webkit-backdrop-filter: blur(calc(var(--blur) - 4px));
+  backdrop-filter: blur(calc(var(--blur) - 4px));
 }
 
 /* ============================================
-   ROUNDED CORNERS - ULTRA SPECIFIC
+   BUTTON PRESS EFFECT
    ============================================ */
-
-.rounded-2xl,
-section.rounded-2xl,
-div.rounded-2xl,
-.bg-white.rounded-2xl {
-  border-radius: 20px !important;
+.btn-press {
+  transition: transform .10s ease, filter .20s ease, box-shadow .20s ease;
 }
 
-.rounded-xl,
-section.rounded-xl,
-div.rounded-xl {
-  border-radius: 12px !important;
+.btn-press:active {
+  transform: scale(.98);
 }
 
-.rounded-md,
-.rounded-lg,
-button.rounded-md,
-button.rounded-lg,
-input.rounded-md,
-select.rounded-md {
-  border-radius: 12px !important;
-}
-
-.rounded-full,
-button.rounded-full {
-  border-radius: 999px !important;
-}
-
-/* ============================================
-   SHADOWS - ULTRA SPECIFIC
-   ============================================ */
-
-.shadow-sm,
-section.shadow-sm,
-div.shadow-sm,
-.bg-white.shadow-sm,
-section.bg-white.shadow-sm,
-div.bg-white.shadow-sm {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.08) !important;
-}
-
-/* ============================================
-   INPUT STYLES
-   ============================================ */
-
-input,
-input[type="text"],
-input[type="number"],
-input[type="email"],
-select,
-textarea {
-  background: #ffffff !important;
-  border: 1.5px solid rgba(0, 0, 0, 0.12) !important;
-  border-radius: 12px !important;
-  color: var(--text) !important;
-  padding: 0.625rem 0.875rem !important;
-  font-size: 0.9375rem !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-input:focus,
-select:focus,
-textarea:focus {
+.focus-ring:focus {
   outline: none !important;
-  border-color: #008198 !important;
+  box-shadow: var(--ring) !important;
+}
+
+/* ============================================
+   KEYBOARD HINT BADGE
+   ============================================ */
+.kbd-hint {
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line);
+  background: rgba(0,0,0,.04);
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+/* ============================================
+   STEPPER COMPONENT
+   ============================================ */
+.stepper {
+  position: relative;
+}
+
+.stepper .step-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.18);
+  flex-shrink: 0;
+}
+
+.stepper .step-dot.active {
+  background: var(--accent);
+}
+
+.stepper .step-line {
+  height: 2px;
+  background: rgba(0,0,0,.10);
+  flex: 1;
+  min-width: 20px;
+}
+
+/* ============================================
+   TABBAR (Mobile Navigation)
+   ============================================ */
+.tabbar {
+  border-top: 1px solid var(--glassBorder);
+  background: var(--glass) !important;
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+}
+
+.tabbar .indicator {
+  position: absolute;
+  top: 8px;
+  height: 44px;
+  border-radius: 16px;
+  background: rgba(0,129,152,.16);
+  border: 1px solid rgba(0,129,152,.22);
+  transition: left .22s ease, width .22s ease;
+}
+
+.tabbar button {
+  height: 56px;
+  border-radius: 18px;
+  transition: transform .12s ease, background .2s ease;
+}
+
+.tabbar button:active {
+  transform: scale(.98);
+}
+
+.tabbar .active .icon {
+  opacity: 1;
+}
+
+.icon {
+  width: 20px;
+  height: 20px;
+  opacity: .82;
+}
+
+/* ============================================
+   PREVIEW WORKSPACE
+   ============================================ */
+.preview-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-drawer {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(12px);
+  background: rgba(255,255,255,0.82);
+  border: 1px solid rgba(15,23,42,0.10);
+  border-radius: 16px;
+  padding: 10px;
+}
+
+.preview-viewport {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 14px;
+  border: 1px solid rgba(15,23,42,0.10);
+  background: rgba(248,250,252,0.7);
+  max-height: 60vh;
+  padding: 10px;
+}
+
+@media (max-width: 768px) {
+  .preview-viewport {
+    max-height: 52vh;
+  }
+}
+
+/* ============================================
+   NO SCROLLBAR UTILITY
+   ============================================ */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ============================================
+   TABLE WRAP (Mobile Scroll)
+   ============================================ */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ============================================
+   INPUT GLOW EFFECT
+   ============================================ */
+.input-glow:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(0, 129, 152, 0.1);
+}
+
+/* ============================================
+   TAILWIND UTILITY OVERRIDES
+   ============================================ */
+
+/* Backgrounds */
+.bg-slate-50 { background: #f8fafc !important; }
+.bg-slate-50\/60 { background: rgba(248,250,252,.6) !important; }
+.bg-slate-100 { background: #f1f5f9 !important; }
+.bg-gray-100 { background: #f1f5f9 !important; }
+.bg-white {
+  background: #ffffff !important;
+}
+
+/* Text colors */
+.text-slate-400, .text-slate-500, .text-slate-600, .text-slate-700 { 
+  color: var(--muted) !important; 
+}
+.text-slate-800, .text-slate-900 { 
+  color: var(--text) !important; 
+}
+
+/* Borders */
+.border-slate-100, .border-slate-200, .border-slate-300, .border-gray-100 { 
+  border-color: var(--line) !important; 
+}
+.border-dashed { 
+  border-style: dashed !important; 
+}
+
+/* Shadows */
+.shadow-sm { 
+  box-shadow: var(--shadow-md) !important; 
+}
+
+/* Border radius */
+.rounded-2xl { border-radius: var(--radius) !important; }
+.rounded-xl { border-radius: var(--radius2) !important; }
+.rounded-md { border-radius: 12px !important; }
+.rounded-full { border-radius: 999px !important; }
+
+/* ============================================
+   FORM ELEMENTS
+   ============================================ */
+input, select, textarea {
+  background: #ffffff !important;
+  border: 1.5px solid rgba(0,0,0,.12) !important;
+  border-radius: 12px !important;
+  color: var(--text) !important;
+  outline: none !important;
+  transition: var(--transition);
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important;
   box-shadow: 0 0 0 3px rgba(0, 129, 152, 0.1) !important;
 }
 
-input::placeholder,
-textarea::placeholder {
-  color: rgba(0, 0, 0, 0.45) !important;
+input::placeholder, textarea::placeholder { 
+  color: rgba(0,0,0,.45) !important; 
+}
+
+input:disabled, select:disabled, textarea:disabled { 
+  opacity: .60 !important; 
+}
+
+/* Remove number spinners */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+input[type=number] { 
+  -moz-appearance: textfield; 
 }
 
 /* ============================================
-   BACKGROUNDS
+   BUTTONS
    ============================================ */
-
-.bg-slate-50,
-div.bg-slate-50,
-section.bg-slate-50 {
-  background: #FAFBFC !important;
+.bg-blue-600 {
+  background: var(--accent) !important;
+  border-color: transparent !important;
+  color: #ffffff !important;
 }
 
-.bg-slate-100,
-.bg-gray-100,
-div.bg-slate-100,
-div.bg-gray-100 {
-  background: #f1f5f9 !important;
+.hover\:bg-blue-700:hover { 
+  filter: brightness(0.92); 
 }
 
-.bg-slate-50\/60 {
-  background: rgba(248, 250, 252, 0.6) !important;
-}
-
-/* ============================================
-   TEXT COLORS
-   ============================================ */
-
-.text-slate-900 {
+.bg-emerald-600 {
+  background: var(--accent2) !important;
+  border-color: transparent !important;
   color: #000000 !important;
 }
 
-.text-slate-800 {
-  color: #1a1a1a !important;
+.hover\:bg-emerald-700:hover { 
+  filter: brightness(0.93); 
 }
 
-.text-slate-700,
-.text-slate-600 {
-  color: rgba(0, 0, 0, 0.7) !important;
+.bg-slate-800 { 
+  background: #000000 !important; 
 }
 
-.text-slate-500 {
-  color: rgba(0, 0, 0, 0.62) !important;
+.text-white { 
+  color: #ffffff !important; 
 }
 
-.text-slate-400 {
-  color: rgba(0, 0, 0, 0.5) !important;
+.bg-slate-800.text-white { 
+  color: #ffffff !important; 
 }
 
-.text-blue-700 {
-  color: #006B82 !important;
+.bg-slate-800:hover { 
+  filter: brightness(1.10); 
 }
 
-.text-emerald-600,
-.text-green-600 {
-  color: #059669 !important;
+/* Selected pill buttons */
+.bg-blue-50 { 
+  background: rgba(0,129,152,.12) !important; 
 }
 
-/* ============================================
-   BORDERS
-   ============================================ */
-
-.border,
-.border-slate-100,
-.border-slate-200,
-.border-slate-300,
-.border-gray-100 {
-  border-color: rgba(0, 0, 0, 0.12) !important;
+.border-blue-400 { 
+  border-color: var(--accent) !important; 
 }
 
-.border-dashed {
-  border-style: dashed !important;
+.text-blue-700 { 
+  color: var(--accent) !important; 
 }
 
-.border-blue-400 {
-  border-color: #008198 !important;
+/* Recommendation highlight */
+.bg-emerald-50\/60 { 
+  background: rgba(0,129,152,.10) !important; 
 }
 
-/* ============================================
-   SELECTED/ACTIVE STATES
-   ============================================ */
-
-.bg-blue-50 {
-  background: rgba(0, 129, 152, 0.1) !important;
-  border-color: #008198 !important;
+.border-emerald-200 { 
+  border-color: rgba(0,129,152,.30) !important; 
 }
 
-button[class*="bg-blue-50"],
-.bg-blue-50.border-blue-400 {
-  background: rgba(0, 129, 152, 0.1) !important;
-  border-color: #008198 !important;
+.text-emerald-900 { 
+  color: var(--text) !important; 
 }
 
 /* ============================================
-   MOBILE NAVIGATION
+   TABLES
    ============================================ */
-
-nav.fixed.bottom-0,
-.tabbar-enhanced {
-  background: linear-gradient(to top, 
-    rgba(255, 255, 255, 0.98) 0%, 
-    rgba(255, 255, 255, 0.95) 100%) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-  border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.04) !important;
+table { 
+  color: var(--text) !important; 
 }
 
-nav button[data-tab] {
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+thead { 
+  color: rgba(0,0,0,.62) !important; 
 }
 
-nav button[data-tab].active {
-  color: #008198 !important;
-}
-
-nav button[data-tab]:active {
-  transform: scale(0.95) !important;
+tbody tr { 
+  border-color: rgba(0,0,0,.08) !important; 
 }
 
 /* ============================================
    CANVAS
    ============================================ */
-
-canvas {
-  border-radius: 12px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+canvas { 
+  background: #ffffff !important; 
+  border-color: rgba(0,0,0,.14) !important; 
+  max-width: 100%; 
+  height: auto;
+  border-radius: 12px;
 }
 
-canvas.border-dashed {
-  border: 2px dashed rgba(0, 0, 0, 0.12) !important;
+/* ============================================
+   CODE BLOCKS
+   ============================================ */
+code {
+  background: rgba(255,209,0,.18) !important;
+  border: 1px solid rgba(0,0,0,.10);
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+/* ============================================
+   MOBILE STICKY TOP
+   ============================================ */
+@media (max-width: 768px) {
+  .mobile-sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    backdrop-filter: blur(12px);
+    background: rgba(255,255,255,0.85);
+    border-bottom: 1px solid rgba(15,23,42,0.08);
+  }
+}
+
+/* ============================================
+   MOBILE INPUT ERGONOMICS
+   ============================================ */
+@media (max-width: 640px) {
+  input, select, textarea, button { 
+    font-size: 16px !important; 
+  }
+  
+  input[type="number"], 
+  input[type="text"], 
+  input[type="tel"], 
+  input[type="email"] {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  
+  #root { 
+    padding-top: 18px !important; 
+  }
+}
+
+@media (max-width: 768px) {
+  input[type="number"], 
+  input[inputmode="decimal"], 
+  input[inputmode="numeric"], 
+  input[type="text"] {
+    font-size: 18px !important;
+  }
+  
+  input[type="number"] {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    min-height: 50px;
+  }
+  
+  button { 
+    min-height: 44px; 
+  }
 }
 
 /* ============================================
    ANIMATIONS
    ============================================ */
-
 @keyframes slideInUp {
   from {
     opacity: 0;
@@ -349,97 +502,33 @@ canvas.border-dashed {
 }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes skeleton-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ============================================
-   TRANSITIONS
+   SMOOTH SCROLL & SELECTION
    ============================================ */
-
-button,
-a,
-.btn-press {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-button:hover:not(:disabled),
-a:hover {
-  transform: translateY(-1px) !important;
-}
-
-button:active:not(:disabled),
-a:active {
-  transform: scale(0.98) !important;
-}
-
-button:disabled {
-  opacity: 0.5 !important;
-  cursor: not-allowed !important;
-}
-
-/* ============================================
-   RESPONSIVE
-   ============================================ */
-
-@media (max-width: 768px) {
-  section.bg-white,
-  div.bg-white.rounded-2xl {
-    padding: 1rem !important;
-    border-radius: 16px !important;
-  }
-
-  input,
-  select,
-  textarea {
-    font-size: 16px !important;
-  }
-}
-
-/* ============================================
-   UTILITY CLASSES
-   ============================================ */
-
-.no-scrollbar::-webkit-scrollbar {
-  display: none !important;
-}
-
-.no-scrollbar {
-  -ms-overflow-style: none !important;
-  scrollbar-width: none !important;
-}
-
-*:focus-visible {
-  outline: 2px solid #008198 !important;
-  outline-offset: 2px !important;
-}
-
 html {
-  scroll-behavior: smooth !important;
+  scroll-behavior: smooth;
 }
 
 ::selection {
-  background: rgba(0, 129, 152, 0.2) !important;
-  color: #000 !important;
+  background: rgba(0, 129, 152, 0.2);
+  color: #000;
+}
+
+/* ============================================
+   FOCUS VISIBLE
+   ============================================ */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ============================================
    PRINT STYLES
    ============================================ */
-
 @media print {
   nav,
   button:not(.print-keep),
@@ -451,35 +540,36 @@ html {
     background: white !important;
   }
 
-  section.bg-white,
-  div.bg-white {
+  .glass, .surface {
+    background: white !important;
+    backdrop-filter: none !important;
     box-shadow: none !important;
     border: 1px solid #e0e0e0 !important;
   }
 }
 
 /* ============================================
-   DARK MODE (Optional)
+   DARK MODE SUPPORT (Optional)
    ============================================ */
-
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f0f0f !important;
-    --panel: #1a1a1a !important;
-    --text: #ffffff !important;
-    --muted: rgba(255, 255, 255, 0.62) !important;
-    --line: rgba(255, 255, 255, 0.12) !important;
-    --surface-elevated: #262626 !important;
+    --bg: #0f0f0f;
+    --panel: #1a1a1a;
+    --text: #ffffff;
+    --muted: rgba(255, 255, 255, 0.62);
+    --line: rgba(255, 255, 255, 0.12);
+    --glass: rgba(16,18,22,.58);
+    --glass2: rgba(16,18,22,.78);
+    --glassBorder: rgba(255,255,255,.12);
+    --shadow2: 0 18px 50px rgba(0,0,0,.40);
   }
 
   body {
-    background: #0f0f0f !important;
-    color: #ffffff !important;
+    background: #0f0f0f;
+    color: #ffffff;
   }
 
-  section.bg-white,
-  div.bg-white,
-  .bg-white {
+  .bg-white, .glass, .surface {
     background: linear-gradient(145deg, #1a1a1a 0%, #262626 100%) !important;
     border-color: rgba(255, 255, 255, 0.08) !important;
   }
@@ -490,9 +580,7 @@ html {
     background: #262626 !important;
   }
 
-  input,
-  select,
-  textarea {
+  input, select, textarea {
     background: #1a1a1a !important;
     border-color: rgba(255, 255, 255, 0.12) !important;
     color: #ffffff !important;
