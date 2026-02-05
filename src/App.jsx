@@ -161,10 +161,14 @@ async function ensureLogoPdfDataUrl() {
 
 // ---------- CONSTANTS ----------
 
-     const DPI = 300;
+      const DPI = 300;
+      const MARGIN_IN = 0.1;
+      const SPACING_IN = 0.05;
+      const BLEED_IN = 0.125;
+      
+      // Default values for editable preview settings (used in Admin UI)
       const DEFAULT_MARGIN_IN = 0.1;
       const DEFAULT_SPACING_IN = 0.05;
-      const BLEED_IN = 0.125;
 
       const PRESET_SHEETS = {
         "8.5x11": [8.5, 11],
@@ -458,8 +462,8 @@ const buildInitialLfPricing = () =>
       const computePrintsPerSheet = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         if (printWIn <= 0 || printHIn <= 0) return 1;
 
-        const margin = previewMargin;
-        const spacing = previewSpacing;
+        const margin = MARGIN_IN;
+        const spacing = SPACING_IN;
 
         const innerW = sheetWIn - 2 * margin;
         const innerH = sheetHIn - 2 * margin;
@@ -481,8 +485,8 @@ const buildInitialLfPricing = () =>
 const computeGridFit = (sheetWIn, sheetHIn, printWIn, printHIn) => {
   if (printWIn <= 0 || printHIn <= 0) return { cols: 1, rows: 1, count: 1 };
 
-  const margin = previewMargin;
-  const spacing = previewSpacing;
+  const margin = MARGIN_IN;
+  const spacing = SPACING_IN;
 
   const innerW = sheetWIn - 2 * margin;
   const innerH = sheetHIn - 2 * margin;
