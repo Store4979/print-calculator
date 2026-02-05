@@ -1724,24 +1724,39 @@ useEffect(() => {
                 x = x + wNeed;
               }
 
-              // Center the used area within the inner box (nice look)
+               // FIXED: Use GRID-BASED centering for perfect front/back alignment
+              // Calculate centering based on the THEORETICAL FULL GRID, not actual placements.
+              // This ensures front and back pages always have identical positioning.
               if (pagePlacements.length) {
-                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                const boxW = baseTargetWPx;
+                const boxH = baseTargetHPx;
+                
+                // Calculate how many columns and rows fit in the grid
+                const gridCols = Math.max(1, Math.floor((innerW + spacingPx) / (boxW + spacingPx)));
+                const gridRows = Math.max(1, Math.floor((innerH + spacingPx) / (boxH + spacingPx)));
+                
+                // Calculate the total dimensions of the full grid
+                const totalGridW = gridCols * boxW + Math.max(0, gridCols - 1) * spacingPx;
+                const totalGridH = gridRows * boxH + Math.max(0, gridRows - 1) * spacingPx;
+                
+                // Calculate fixed offsets to center the grid within the printable area
+                const gridOffsetX = marginPx + (innerW - totalGridW) / 2;
+                const gridOffsetY = marginPx + (innerH - totalGridH) / 2;
+                
+                // Recalculate each placement position based on the fixed grid
+                // We need to determine which grid cell each placement belongs to
                 for (const p of pagePlacements) {
-                  minX = Math.min(minX, p.x);
-                  minY = Math.min(minY, p.y);
-                  maxX = Math.max(maxX, p.x + p.w);
-                  maxY = Math.max(maxY, p.y + p.h);
-                }
-                const usedW = maxX - minX;
-                const usedH = maxY - minY;
-                const desiredMinX = marginPx + (innerW - usedW) / 2;
-                const desiredMinY = marginPx + (innerH - usedH) / 2;
-                const dx = desiredMinX - minX;
-                const dy = desiredMinY - minY;
-                for (const p of pagePlacements) {
-                  p.x += dx;
-                  p.y += dy;
+                  // Find which column this placement is in (based on original x position)
+                  const origX = p.x - marginPx;
+                  const origY = p.y - marginPx;
+                  
+                  // Calculate column and row index
+                  const col = Math.round(origX / (boxW + spacingPx));
+                  const row = Math.round(origY / (boxH + spacingPx));
+                  
+                  // Apply fixed grid position
+                  p.x = gridOffsetX + col * (boxW + spacingPx);
+                  p.y = gridOffsetY + row * (boxH + spacingPx);
                 }
               }
 
