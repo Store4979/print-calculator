@@ -161,9 +161,9 @@ async function ensureLogoPdfDataUrl() {
 
 // ---------- CONSTANTS ----------
 
-      const DPI = 300;
-      const MARGIN_IN = 0.1;
-      const SPACING_IN = 0.05;
+     const DPI = 300;
+      const DEFAULT_MARGIN_IN = 0.1;
+      const DEFAULT_SPACING_IN = 0.05;
       const BLEED_IN = 0.125;
 
       const PRESET_SHEETS = {
@@ -327,6 +327,8 @@ async function ensureLogoPdfDataUrl() {
 const LS_PAPER_TYPES_KEY = "printcalc_paper_types_v1";
 const LS_SHEET_KEYS_FOR_PAPER_KEY = "printcalc_sheet_keys_for_paper_v1";
 const LS_LF_PAPER_TYPES_KEY = "printcalc_lf_paper_types_v1";
+const LS_PREVIEW_MARGIN_KEY = "printcalc_preview_margin_v1";
+const LS_PREVIEW_SPACING_KEY = "printcalc_preview_spacing_v1";
 
       // ---------- HELPERS ----------
 
@@ -456,8 +458,8 @@ const buildInitialLfPricing = () =>
       const computePrintsPerSheet = (sheetWIn, sheetHIn, printWIn, printHIn) => {
         if (printWIn <= 0 || printHIn <= 0) return 1;
 
-        const margin = MARGIN_IN;
-        const spacing = SPACING_IN;
+        const margin = previewMargin;
+        const spacing = previewSpacing;
 
         const innerW = sheetWIn - 2 * margin;
         const innerH = sheetHIn - 2 * margin;
@@ -479,8 +481,8 @@ const buildInitialLfPricing = () =>
 const computeGridFit = (sheetWIn, sheetHIn, printWIn, printHIn) => {
   if (printWIn <= 0 || printHIn <= 0) return { cols: 1, rows: 1, count: 1 };
 
-  const margin = MARGIN_IN;
-  const spacing = SPACING_IN;
+  const margin = previewMargin;
+  const spacing = previewSpacing;
 
   const innerW = sheetWIn - 2 * margin;
   const innerH = sheetHIn - 2 * margin;
@@ -831,6 +833,16 @@ const [lfPricing, setLfPricing] = useState(() =>
         ]);
 
         const [backSideFactor, setBackSideFactor] = useState(0.5);
+
+        // Preview layout settings (editable margin/spacing between images)
+        const [previewMargin, setPreviewMargin] = useState(() => {
+          const saved = window.localStorage.getItem(LS_PREVIEW_MARGIN_KEY);
+          return saved ? parseFloat(saved) : DEFAULT_MARGIN_IN;
+        });
+        const [previewSpacing, setPreviewSpacing] = useState(() => {
+          const saved = window.localStorage.getItem(LS_PREVIEW_SPACING_KEY);
+          return saved ? parseFloat(saved) : DEFAULT_SPACING_IN;
+        });
 
         const [lfAddonPricing, setLfAddonPricing] = useState({
           grommets: 0,
@@ -1273,13 +1285,23 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
                   );
                 }
 
-                // Blueprint pricing (large format - fixed sizes)
+               // Blueprint pricing (large format - fixed sizes)
                 if (json.blueprintPricing) {
                   setBpPricing(json.blueprintPricing);
                   window.localStorage.setItem(
                     LS_BP_PRICING_KEY,
                     JSON.stringify(json.blueprintPricing)
                   );
+                }
+
+                // Preview layout settings
+                if (typeof json.previewMargin === "number") {
+                  setPreviewMargin(json.previewMargin);
+                  window.localStorage.setItem(LS_PREVIEW_MARGIN_KEY, String(json.previewMargin));
+                }
+                if (typeof json.previewSpacing === "number") {
+                  setPreviewSpacing(json.previewSpacing);
+                  window.localStorage.setItem(LS_PREVIEW_SPACING_KEY, String(json.previewSpacing));
                 }
               }
             } catch (err) {
@@ -1310,6 +1332,16 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
           );
         }, [quantityDiscounts]);
 
+       // Autosave preview margin
+        useEffect(() => {
+          window.localStorage.setItem(LS_PREVIEW_MARGIN_KEY, String(previewMargin));
+        }, [previewMargin]);
+
+        // Autosave preview spacing
+        useEffect(() => {
+          window.localStorage.setItem(LS_PREVIEW_SPACING_KEY, String(previewSpacing));
+        }, [previewSpacing]);
+  
         useEffect(() => {
           window.localStorage.setItem(
             LS_LF_QTY_DISCOUNTS_KEY,
@@ -1446,8 +1478,8 @@ useEffect(() => {
           const bleedIn = showBleed ? BLEED_IN : 0;
           const targetWIn = Math.max(0.1, Number(prints.width) || 0) + bleedIn * 2;
           const targetHIn = Math.max(0.1, Number(prints.height) || 0) + bleedIn * 2;
-          const innerWIn = orientedWIn - 2 * MARGIN_IN;
-          const innerHIn = orientedHIn - 2 * MARGIN_IN;
+          const innerWIn = orientedWIn - 2 * previewMargin;
+          const innerHIn = orientedHIn - 2 * previewMargin;
           if (innerWIn <= 0 || innerHIn <= 0) return 1;
 
           const placeDims = () => [targetWIn, targetHIn];
@@ -1458,7 +1490,7 @@ useEffect(() => {
           let rowH = 0;
 
           const newRow = () => {
-            y = y + rowH + SPACING_IN;
+            y = y + rowH + previewSpacing;
             x = 0;
             rowH = 0;
           };
@@ -1474,7 +1506,7 @@ useEffect(() => {
             const q = Math.max(0, Number(it?.qty) || 0);
             const [w, h] = placeDims(it?.rotation);
             for (let i = 0; i < q; i++) {
-              const wNeed = w + (x > 0 ? SPACING_IN : 0);
+              const wNeed = w + (x > 0 ? previewSpacing : 0);
               if (x > 0 && x + wNeed > innerWIn) {
                 newRow();
               }
@@ -1487,7 +1519,7 @@ useEffect(() => {
           }
 
           return Math.max(1, pageCount);
-        }, [frontFiles, prints.width, prints.height, orientedWIn, orientedHIn, showBleed]);
+        }, [frontFiles, prints.width, prints.height, orientedWIn, orientedHIn, showBleed, previewMargin, previewSpacing]);
 
         const frontSlotInfo = useMemo(() => {
           const bleedIn = showBleed ? BLEED_IN : 0;
@@ -1603,8 +1635,8 @@ useEffect(() => {
               return resolve();
             }
 
-            const marginPx = inchesToPx(MARGIN_IN);
-            const spacingPx = inchesToPx(SPACING_IN);
+            const marginPx = inchesToPx(previewMargin);
+            const spacingPx = inchesToPx(previewSpacing);
             const bleedPx = showBleed ? inchesToPx(BLEED_IN) : 0;
 
             const baseTargetWPx = inchesToPx(prints.width) + bleedPx * 2;
@@ -3037,7 +3069,9 @@ const handleUpdateLfPaperLabel = (key, label) => {
             sheetMarkupPerPaper: markupPerPaper,
             lfMarkupPerPaper,
             backSideFactor,
-            lfAddonPricing
+            lfAddonPricing,
+            previewMargin,
+            previewSpacing
           };
           const blob = new Blob([JSON.stringify(data, null, 2)], {
             type: "application/json"
@@ -3103,6 +3137,16 @@ if (Array.isArray(json.lfPaperTypes) && json.lfPaperTypes.length) {
               if (typeof json.backSideFactor === "number")
                 setBackSideFactor(json.backSideFactor);
               if (json.lfAddonPricing) setLfAddonPricing(json.lfAddonPricing);
+
+              // Preview layout settings
+              if (typeof json.previewMargin === "number") {
+                setPreviewMargin(json.previewMargin);
+                window.localStorage.setItem(LS_PREVIEW_MARGIN_KEY, String(json.previewMargin));
+              }
+              if (typeof json.previewSpacing === "number") {
+                setPreviewSpacing(json.previewSpacing);
+                window.localStorage.setItem(LS_PREVIEW_SPACING_KEY, String(json.previewSpacing));
+              }
 
               alert("Pricing JSON imported.");
             } catch (err) {
@@ -5624,6 +5668,107 @@ const quoteRows = computeQuickQuoteRows();
                       }}
                     />
                   </label>
+                </div>
+
+                {/* Preview Layout Settings */}
+                <div className="space-y-4 border-t border-slate-200 pt-4 mt-4">
+                  <h3 className="font-semibold text-sm text-slate-800">
+                    📐 Preview Layout Settings
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Adjust the margin (edge buffer) and spacing (gap between images) in the preview canvas. Values are in inches.
+                  </p>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+                    {/* Margin Input */}
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <label className="block text-xs font-medium text-slate-700 mb-2">
+                        Edge Margin
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="1"
+                          value={previewMargin}
+                          onChange={(e) => setPreviewMargin(Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)))}
+                          className="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-20 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                        <span className="text-xs text-slate-600">inches</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
+                        <span>Current: <code className="bg-white px-1 rounded">{previewMargin.toFixed(3)}"</code></span>
+                        <span>•</span>
+                        <span>Default: <code className="bg-white px-1 rounded">{DEFAULT_MARGIN_IN}"</code></span>
+                      </div>
+                    </div>
+                    
+                    {/* Spacing Input */}
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <label className="block text-xs font-medium text-slate-700 mb-2">
+                        Image Spacing
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="1"
+                          value={previewSpacing}
+                          onChange={(e) => setPreviewSpacing(Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)))}
+                          className="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-20 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                        <span className="text-xs text-slate-600">inches</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
+                        <span>Current: <code className="bg-white px-1 rounded">{previewSpacing.toFixed(3)}"</code></span>
+                        <span>•</span>
+                        <span>Default: <code className="bg-white px-1 rounded">{DEFAULT_SPACING_IN}"</code></span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewMargin(DEFAULT_MARGIN_IN);
+                      setPreviewSpacing(DEFAULT_SPACING_IN);
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    ↺ Reset to defaults
+                  </button>
+                </div>
+
+                {/* Save All Settings Section */}
+                <div className="space-y-3 border-t border-green-200 pt-4 mt-4 bg-gradient-to-r from-green-50 to-emerald-50 -mx-4 px-4 py-4">
+                  <h3 className="font-semibold text-sm text-green-800 flex items-center gap-2">
+                    <span>💾</span> Save Settings Universally
+                  </h3>
+                  <p className="text-[11px] text-green-700">
+                    Export all current settings (pricing, paper types, discounts, layout settings) to a{" "}
+                    <code className="bg-white/70 px-1 rounded">pricing.json</code> file. 
+                    To apply these settings across all devices, place this file in your app's{" "}
+                    <code className="bg-white/70 px-1 rounded">public/</code> folder and redeploy.
+                  </p>
+                  
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={exportPricingJson}
+                      className="px-4 py-2 rounded-full bg-green-600 hover:bg-green-700 text-white font-medium text-sm shadow-sm transition-colors flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Download pricing.json
+                    </button>
+                    
+                    <span className="text-[11px] text-green-600">
+                      All settings will be included
+                    </span>
+                  </div>
                 </div>
 
 {/* Manage Paper Types */}
