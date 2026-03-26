@@ -1,11 +1,10 @@
 [build]
-  command = "npm install && npm run build"
+  command = "npx npm@9.8.1 install --registry https://registry.npmjs.org && npm run build"
   publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
-  NPM_VERSION = "10.8.2"
   MISE_DISABLE = "1"
 
 [[redirects]]
