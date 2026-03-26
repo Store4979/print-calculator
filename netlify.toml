@@ -5,7 +5,7 @@
 
 [build.environment]
   NODE_VERSION = "18"
-  NPM_VERSION = "10.8.2"
+  NPM_VERSION = "9.8.1"
   MISE_DISABLE = "1"
 
 [[redirects]]
