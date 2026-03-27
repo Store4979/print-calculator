@@ -6,6 +6,7 @@
 // ============================================================
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import BookletMaker, { BookletIcon } from "./BookletMaker.jsx";
 
 // ─── CONSTANTS ──────────────────────────────────────────────
 
