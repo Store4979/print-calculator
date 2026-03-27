@@ -61,20 +61,21 @@ async function loadPdfFromFile(file) {
 }
 
 /**
- * Render a PDF page to canvas, auto-rotating and FILLING the target slot.
- * Uses "cover" scaling: the page is scaled up to completely fill the slot,
- * then centered so any overflow is cropped equally from both sides.
- * This ensures no white borders appear around the content.
+ * Render a PDF page to canvas, auto-rotating and scaling to target slot.
+ * 
+ * Uses "fit" (contain) scaling by default: the entire page is visible within
+ * the slot, centered, with white bars if aspect ratios differ. No content
+ * is ever cropped. "fill" (cover) mode is available but crops overflow.
  * 
  * @param {Object} pdfDoc - PDF.js document
  * @param {number} pageNum - 1-based page number
  * @param {number} slotW - target slot width in pixels
  * @param {number} slotH - target slot height in pixels
  * @param {number} manualRotation - additional manual rotation (0, 90, 180, 270)
- * @param {string} fitMode - "fill" (cover/crop) or "fit" (contain/letterbox)
+ * @param {string} fitMode - "fit" (contain/no crop, default) or "fill" (cover/crop)
  * @returns {Object} { canvas, wasAutoRotated }
  */
-async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0, fitMode = "fill") {
+async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0, fitMode = "fit") {
   if (!pdfDoc || pageNum < 1 || pageNum > pdfDoc.numPages) {
     // Blank page
     const canvas = document.createElement("canvas");
@@ -200,7 +201,7 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
     
     let pageCanvas;
     if (entry) {
-      const result = await renderPageFitted(entry.doc, entry.pageNum, geom.w, geom.h, manualRot, "fill");
+      const result = await renderPageFitted(entry.doc, entry.pageNum, geom.w, geom.h, manualRot, "fit");
       pageCanvas = result.canvas;
     } else {
       pageCanvas = document.createElement("canvas");
@@ -330,7 +331,7 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fill");
+        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fit");
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
@@ -359,7 +360,7 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fill");
+        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fit");
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
