@@ -61,16 +61,20 @@ async function loadPdfFromFile(file) {
 }
 
 /**
- * Render a PDF page to canvas, auto-rotating and fitting to target slot.
+ * Render a PDF page to canvas, auto-rotating and FILLING the target slot.
+ * Uses "cover" scaling: the page is scaled up to completely fill the slot,
+ * then centered so any overflow is cropped equally from both sides.
+ * This ensures no white borders appear around the content.
  * 
  * @param {Object} pdfDoc - PDF.js document
  * @param {number} pageNum - 1-based page number
  * @param {number} slotW - target slot width in pixels
  * @param {number} slotH - target slot height in pixels
  * @param {number} manualRotation - additional manual rotation (0, 90, 180, 270)
+ * @param {string} fitMode - "fill" (cover/crop) or "fit" (contain/letterbox)
  * @returns {Object} { canvas, wasAutoRotated }
  */
-async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0) {
+async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0, fitMode = "fill") {
   if (!pdfDoc || pageNum < 1 || pageNum > pdfDoc.numPages) {
     // Blank page
     const canvas = document.createElement("canvas");
@@ -99,29 +103,19 @@ async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 
   
   const totalRotation = (autoRotate + manualRotation) % 360;
   
-  // Get viewport with rotation applied
+  // Get viewport with rotation applied at scale 1
   const rotatedVp = page.getViewport({ scale: 1, rotation: totalRotation });
   
-  // Scale to fit within slot
+  // Scale to FILL the slot (cover mode): use Math.max so the page
+  // completely covers the slot — any overflow gets cropped.
+  // Scale to FIT (contain mode): use Math.min — page fits inside with possible white bars.
   const scaleX = slotW / rotatedVp.width;
   const scaleY = slotH / rotatedVp.height;
-  const scale = Math.min(scaleX, scaleY);
+  const scale = fitMode === "fill" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
   
   const finalVp = page.getViewport({ scale, rotation: totalRotation });
   
-  // Create canvas at slot size, centered
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(slotW);
-  canvas.height = Math.round(slotH);
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  
-  // Center the rendered page within the slot
-  const offsetX = (slotW - finalVp.width) / 2;
-  const offsetY = (slotH - finalVp.height) / 2;
-  
-  // Render with offset using transform
+  // Render the page at the computed scale (may be larger than slot)
   const renderCanvas = document.createElement("canvas");
   renderCanvas.width = Math.round(finalVp.width);
   renderCanvas.height = Math.round(finalVp.height);
@@ -131,6 +125,18 @@ async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 
     viewport: finalVp,
   }).promise;
   
+  // Create output canvas at exact slot size
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(slotW);
+  canvas.height = Math.round(slotH);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Center the rendered page — if it's larger than the slot, the overflow
+  // is automatically cropped by the canvas boundary
+  const offsetX = (slotW - finalVp.width) / 2;
+  const offsetY = (slotH - finalVp.height) / 2;
   ctx.drawImage(renderCanvas, Math.round(offsetX), Math.round(offsetY));
   
   return { canvas, wasAutoRotated: autoRotate !== 0 };
@@ -156,8 +162,8 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
   const ctx = canvas.getContext("2d");
   const DPI = 150;
   // Sheet is landscape: width > height
-  const sheetPxW = Math.round(preset.sheetW * DPI);
-  const sheetPxH = Math.round(preset.sheetH * DPI);
+  const sheetPxW = Math.round(Math.max(preset.sheetW, preset.sheetH) * DPI);
+  const sheetPxH = Math.round(Math.min(preset.sheetW, preset.sheetH) * DPI);
   const halfW = sheetPxW / 2;
   
   canvas.width = sheetPxW;
@@ -173,8 +179,9 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
     ? [sig.front.left, sig.front.right]
     : [sig.back.left, sig.back.right];
   
-  const slotW = halfW - 8;
-  const slotH = sheetPxH - 8;
+  // Each page fills its entire half-sheet — edge to edge
+  const slotW = halfW;
+  const slotH = sheetPxH;
   
   for (let i = 0; i < 2; i++) {
     const bookletPageNum = pageSlots[i];
@@ -184,10 +191,9 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
     
     let pageCanvas;
     if (entry) {
-      const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot);
+      const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot, "fill");
       pageCanvas = result.canvas;
     } else {
-      // Blank page (padding)
       pageCanvas = document.createElement("canvas");
       pageCanvas.width = Math.round(slotW);
       pageCanvas.height = Math.round(slotH);
@@ -196,12 +202,23 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
       pctx.fillRect(0, 0, slotW, slotH);
     }
     
-    const offsetX = i * halfW + (halfW - pageCanvas.width) / 2;
-    const offsetY = (sheetPxH - pageCanvas.height) / 2;
+    // Place edge-to-edge at each half
+    const offsetX = i * halfW;
+    const offsetY = 0;
     ctx.drawImage(pageCanvas, offsetX, offsetY);
     
-    // Page label
+    // Page label (overlay on top of content)
     ctx.save();
+    // Semi-transparent background pill for readability
+    const labelY = sheetPxH - DPI * 0.28;
+    const labelCenterX = i * halfW + halfW / 2;
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    const pillW = DPI * 1.8;
+    const pillH = DPI * 0.26;
+    ctx.beginPath();
+    ctx.roundRect(labelCenterX - pillW / 2, labelY - pillH * 0.35, pillW, pillH, 4);
+    ctx.fill();
+    
     ctx.font = `bold ${Math.round(DPI * 0.1)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     
@@ -209,14 +226,14 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
     const label = isBlank ? "(blank)" : `Page ${bookletPageNum}`;
     const subLabel = !isBlank && entry ? entry.fileName : "";
     
-    ctx.fillStyle = isBlank ? "rgba(180,180,180,0.7)" : "rgba(0,129,152,0.8)";
-    ctx.fillText(label, i * halfW + halfW / 2, sheetPxH - DPI * 0.15);
+    ctx.fillStyle = isBlank ? "rgba(150,150,150,0.9)" : "rgba(0,129,152,0.95)";
+    ctx.fillText(label, labelCenterX, labelY);
     
     if (subLabel) {
       ctx.font = `${Math.round(DPI * 0.065)}px system-ui, sans-serif`;
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
       const truncName = subLabel.length > 25 ? subLabel.slice(0, 22) + "..." : subLabel;
-      ctx.fillText(truncName, i * halfW + halfW / 2, sheetPxH - DPI * 0.06);
+      ctx.fillText(truncName, labelCenterX, labelY + DPI * 0.1);
     }
     ctx.restore();
   }
@@ -224,16 +241,22 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
   // Fold line
   ctx.save();
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = "rgba(0,0,0,0.25)";
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(halfW, 0);
   ctx.lineTo(halfW, sheetPxH);
   ctx.stroke();
+  // Fold label pill
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  const foldPillW = DPI * 0.6;
+  ctx.beginPath();
+  ctx.roundRect(halfW - foldPillW / 2, DPI * 0.04, foldPillW, DPI * 0.14, 3);
+  ctx.fill();
   ctx.font = `${Math.round(DPI * 0.07)}px system-ui, sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.fillText("← fold →", halfW, DPI * 0.13);
+  ctx.fillStyle = "rgba(0,0,0,0.4)";
+  ctx.fillText("← fold →", halfW, DPI * 0.14);
   ctx.restore();
 }
 
@@ -253,11 +276,14 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
   const sheetW = Math.max(preset.sheetW, preset.sheetH);
   const sheetH = Math.min(preset.sheetW, preset.sheetH);
   const halfW = sheetW / 2;
-  const margin = PRINTER_PROFILES.ricoh.minMargin;
   const renderDPI = 300;
   
-  const slotW = (halfW - margin * 2) * renderDPI;
-  const slotH = (sheetH - margin * 2) * renderDPI;
+  // Each page fills its entire half-sheet — no internal margins.
+  // The printer's physical non-printable area (~4mm) is the only constraint,
+  // and that's handled by the printer itself. We place content edge-to-edge
+  // so the booklet pages fill completely when trimmed/folded.
+  const slotW = halfW * renderDPI;
+  const slotH = sheetH * renderDPI;
   
   for (let i = 0; i < signatures.length; i++) {
     const sig = signatures[i];
@@ -272,7 +298,7 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot);
+        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot, "fill");
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
@@ -283,13 +309,12 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
         pctx.fillRect(0, 0, slotW, slotH);
       }
       
-      const x = slotIdx * halfW + margin;
-      const y = margin;
-      const w = halfW - margin * 2;
-      const h = sheetH - margin * 2;
+      // Place at exact half-sheet position — edge to edge
+      const x = slotIdx * halfW;
+      const y = 0;
       
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
-      doc.addImage(imgData, "JPEG", x, y, w, h);
+      doc.addImage(imgData, "JPEG", x, y, halfW, sheetH);
     }
     
     // Back side
@@ -302,7 +327,7 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot);
+        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot, "fill");
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
@@ -313,13 +338,11 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
         pctx.fillRect(0, 0, slotW, slotH);
       }
       
-      const x = slotIdx * halfW + margin;
-      const y = margin;
-      const w = halfW - margin * 2;
-      const h = sheetH - margin * 2;
+      const x = slotIdx * halfW;
+      const y = 0;
       
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
-      doc.addImage(imgData, "JPEG", x, y, w, h);
+      doc.addImage(imgData, "JPEG", x, y, halfW, sheetH);
     }
   }
   
