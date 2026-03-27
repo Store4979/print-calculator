@@ -1162,3 +1162,48 @@ body {
   .price-bar { position: static; box-shadow: none; }
   .pc-btn { display: none; }
 }
+
+/* ============================================
+   IMPOSE TAB — GREEN ACCENT
+   Add this to the end of src/index.css
+   ============================================ */
+
+/* Tab active state */
+.service-tab.active-green { color: var(--green); }
+
+/* Step number badge */
+.step-num-green {
+  background: var(--green-light) !important;
+  color: var(--green) !important;
+}
+
+/* Price bar green accent */
+.price-bar-green {
+  border-top: 3px solid var(--green);
+}
+
+.price-bar-green .price-metric-val.is-total-green {
+  color: var(--green);
+  font-size: 26px;
+}
+
+/* Booklet preview sheet selector */
+.sig-map-item {
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-size: 11px;
+}
+
+.sig-map-item:hover {
+  border-color: var(--green);
+  background: var(--green-light);
+}
+
+.sig-map-item.active {
+  background: var(--green-light);
+  border-color: var(--green);
+}
