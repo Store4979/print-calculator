@@ -1,5 +1,5 @@
-// ─── BOOKLET MAKER ──────────────────────────────────────────
-// Imposition tool: upload a PDF, generate saddle-stitch booklet
+// ─── BOOKLET MAKER v2 ───────────────────────────────────────
+// Multi-file upload, auto-fit/rotate, saddle-stitch imposition
 // Supports Ricoh Pro C5400s (auto-duplex, saddle-stitch finisher)
 // ─────────────────────────────────────────────────────────────
 
@@ -8,9 +8,9 @@ import { useState, useRef, useCallback, useEffect } from "react";
 // ── CONSTANTS ──────────────────────────────────────────────
 
 const BOOKLET_PRESETS = [
-  { key: "half-letter", label: '5.5 × 8.5" Booklet', finishedW: 5.5, finishedH: 8.5, sheetW: 8.5, sheetH: 11, desc: "Half-letter on 8.5×11 stock" },
-  { key: "half-tabloid", label: '8.5 × 11" Booklet', finishedW: 8.5, finishedH: 11, sheetW: 11, sheetH: 17, desc: "Half-tabloid on 11×17 stock" },
-  { key: "a5-on-a4", label: "A5 Booklet", finishedW: 5.83, finishedH: 8.27, sheetW: 8.27, sheetH: 11.69, desc: "A5 on A4 stock" },
+  { key: "half-letter", label: '5.5 × 8.5" Booklet', finishedW: 5.5, finishedH: 8.5, sheetW: 11, sheetH: 8.5, desc: "Half-letter on 8.5×11 stock" },
+  { key: "half-tabloid", label: '8.5 × 11" Booklet', finishedW: 8.5, finishedH: 11, sheetW: 17, sheetH: 11, desc: "Half-tabloid on 11×17 stock" },
+  { key: "a5-on-a4", label: "A5 Booklet", finishedW: 5.83, finishedH: 8.27, sheetW: 11.69, sheetH: 8.27, desc: "A5 on A4 stock" },
 ];
 
 // Ricoh Pro C5400s specs
@@ -21,35 +21,26 @@ const PRINTER_PROFILES = {
     minMargin: 0.157, // ~4mm non-printable
     duplex: true,
     saddleStitch: true,
-    maxSaddleSheets: 15, // max sheets for saddle-stitch
+    maxSaddleSheets: 15,
   },
 };
 
 // ── SIGNATURE MATH ─────────────────────────────────────────
 
-/**
- * For a saddle-stitch booklet, pages must be arranged in "signature" order.
- * A signature is one physical sheet with 4 page positions (front-left, front-right, back-left, back-right).
- * 
- * For N pages (padded to multiple of 4):
- * Sheet 1 front: [N, 1]  |  Sheet 1 back: [2, N-1]
- * Sheet 2 front: [N-2, 3]  |  Sheet 2 back: [4, N-3]
- * etc.
- * 
- * When folded and nested, pages read sequentially.
- */
 function computeSignatures(totalPages) {
-  // Pad to multiple of 4
   const padded = Math.ceil(totalPages / 4) * 4;
-  const sheets = padded / 2; // each sheet holds 2 pages per side
   const numSheets = padded / 4;
   
   const signatures = [];
   for (let i = 0; i < numSheets; i++) {
-    const frontLeft = padded - (2 * i);       // outside left (becomes right when folded)
-    const frontRight = (2 * i) + 1;           // outside right (becomes left when folded)
-    const backLeft = (2 * i) + 2;             // inside left
-    const backRight = padded - (2 * i) - 1;   // inside right
+    // Saddle-stitch signature ordering:
+    // When the booklet is folded, the outermost sheet has the first and last pages.
+    // Front of sheet (outside when folded): right side = low page, left side = high page
+    // Back of sheet (inside when folded): left side = low page + 1, right side = high page - 1
+    const frontLeft = padded - (2 * i);
+    const frontRight = (2 * i) + 1;
+    const backLeft = (2 * i) + 2;
+    const backRight = padded - (2 * i) - 1;
     
     signatures.push({
       sheet: i + 1,
@@ -60,54 +51,118 @@ function computeSignatures(totalPages) {
   return { signatures, paddedTotal: padded, numSheets };
 }
 
-// ── PDF PAGE RENDERER ──────────────────────────────────────
+// ── PDF UTILITIES ──────────────────────────────────────────
 
-async function renderPdfPage(pdfDoc, pageNum, targetW, targetH) {
-  if (pageNum > pdfDoc.numPages || pageNum < 1) {
-    // Return blank canvas for padding pages
+async function loadPdfFromFile(file) {
+  const lib = window.pdfjsLib;
+  if (!lib) throw new Error("PDF.js not loaded");
+  const ab = await file.arrayBuffer();
+  return lib.getDocument({ data: ab }).promise;
+}
+
+/**
+ * Render a PDF page to canvas, auto-rotating and fitting to target slot.
+ * 
+ * @param {Object} pdfDoc - PDF.js document
+ * @param {number} pageNum - 1-based page number
+ * @param {number} slotW - target slot width in pixels
+ * @param {number} slotH - target slot height in pixels
+ * @param {number} manualRotation - additional manual rotation (0, 90, 180, 270)
+ * @returns {Object} { canvas, wasAutoRotated }
+ */
+async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0) {
+  if (!pdfDoc || pageNum < 1 || pageNum > pdfDoc.numPages) {
+    // Blank page
     const canvas = document.createElement("canvas");
-    canvas.width = Math.round(targetW);
-    canvas.height = Math.round(targetH);
+    canvas.width = Math.round(slotW);
+    canvas.height = Math.round(slotH);
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    return canvas;
+    return { canvas, wasAutoRotated: false };
   }
   
   const page = await pdfDoc.getPage(pageNum);
-  const vp = page.getViewport({ scale: 1 });
+  const baseVp = page.getViewport({ scale: 1, rotation: 0 });
+  const pageW = baseVp.width;
+  const pageH = baseVp.height;
   
-  // Scale to fit target dimensions
-  const scaleX = targetW / vp.width;
-  const scaleY = targetH / vp.height;
+  // Determine if auto-rotation is needed:
+  // If the page is landscape but the slot is portrait (or vice versa), rotate 90°
+  const pageIsLandscape = pageW > pageH;
+  const slotIsLandscape = slotW > slotH;
+  let autoRotate = 0;
+  
+  if (pageIsLandscape !== slotIsLandscape) {
+    autoRotate = 90;
+  }
+  
+  const totalRotation = (autoRotate + manualRotation) % 360;
+  
+  // Get viewport with rotation applied
+  const rotatedVp = page.getViewport({ scale: 1, rotation: totalRotation });
+  
+  // Scale to fit within slot
+  const scaleX = slotW / rotatedVp.width;
+  const scaleY = slotH / rotatedVp.height;
   const scale = Math.min(scaleX, scaleY);
   
-  const viewport = page.getViewport({ scale });
+  const finalVp = page.getViewport({ scale, rotation: totalRotation });
+  
+  // Create canvas at slot size, centered
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(viewport.width);
-  canvas.height = Math.round(viewport.height);
+  canvas.width = Math.round(slotW);
+  canvas.height = Math.round(slotH);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Center the rendered page within the slot
+  const offsetX = (slotW - finalVp.width) / 2;
+  const offsetY = (slotH - finalVp.height) / 2;
+  
+  // Render with offset using transform
+  const renderCanvas = document.createElement("canvas");
+  renderCanvas.width = Math.round(finalVp.width);
+  renderCanvas.height = Math.round(finalVp.height);
   
   await page.render({
-    canvasContext: canvas.getContext("2d"),
-    viewport,
+    canvasContext: renderCanvas.getContext("2d"),
+    viewport: finalVp,
   }).promise;
   
-  return canvas;
+  ctx.drawImage(renderCanvas, Math.round(offsetX), Math.round(offsetY));
+  
+  return { canvas, wasAutoRotated: autoRotate !== 0 };
 }
 
-// ── BOOKLET PREVIEW RENDERER ───────────────────────────────
+// ── MULTI-FILE PAGE MAP ────────────────────────────────────
+// Maps sequential "booklet page numbers" to { pdfDoc, pdfPageNum } pairs
 
-async function renderBookletPreview(pdfDoc, signatures, preset, previewCanvas, sheetIndex, side) {
-  const ctx = previewCanvas.getContext("2d");
+function buildPageMap(pdfEntries) {
+  const map = []; // index 0 = booklet page 1
+  for (const entry of pdfEntries) {
+    if (!entry.doc) continue;
+    for (let p = 1; p <= entry.doc.numPages; p++) {
+      map.push({ doc: entry.doc, pageNum: p, fileName: entry.name });
+    }
+  }
+  return map;
+}
+
+// ── PREVIEW RENDERER ───────────────────────────────────────
+
+async function renderBookletPreview(pageMap, totalPages, signatures, preset, canvas, sheetIndex, side, pageRotations) {
+  const ctx = canvas.getContext("2d");
   const DPI = 150;
+  // Sheet is landscape: width > height
   const sheetPxW = Math.round(preset.sheetW * DPI);
   const sheetPxH = Math.round(preset.sheetH * DPI);
   const halfW = sheetPxW / 2;
   
-  previewCanvas.width = sheetPxW;
-  previewCanvas.height = sheetPxH;
+  canvas.width = sheetPxW;
+  canvas.height = sheetPxH;
   
-  // White background
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, sheetPxW, sheetPxH);
   
@@ -118,99 +173,150 @@ async function renderBookletPreview(pdfDoc, signatures, preset, previewCanvas, s
     ? [sig.front.left, sig.front.right]
     : [sig.back.left, sig.back.right];
   
-  // Render each half
+  const slotW = halfW - 8;
+  const slotH = sheetPxH - 8;
+  
   for (let i = 0; i < 2; i++) {
-    const pageNum = pageSlots[i];
-    const pagePxW = halfW - 4; // small gap
-    const pagePxH = sheetPxH - 4;
+    const bookletPageNum = pageSlots[i];
+    const mapIdx = bookletPageNum - 1;
+    const entry = mapIdx >= 0 && mapIdx < pageMap.length ? pageMap[mapIdx] : null;
+    const manualRot = pageRotations[bookletPageNum] || 0;
     
-    const pageCanvas = await renderPdfPage(pdfDoc, pageNum, pagePxW, pagePxH);
+    let pageCanvas;
+    if (entry) {
+      const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot);
+      pageCanvas = result.canvas;
+    } else {
+      // Blank page (padding)
+      pageCanvas = document.createElement("canvas");
+      pageCanvas.width = Math.round(slotW);
+      pageCanvas.height = Math.round(slotH);
+      const pctx = pageCanvas.getContext("2d");
+      pctx.fillStyle = "#ffffff";
+      pctx.fillRect(0, 0, slotW, slotH);
+    }
     
-    // Center the rendered page in its half
     const offsetX = i * halfW + (halfW - pageCanvas.width) / 2;
     const offsetY = (sheetPxH - pageCanvas.height) / 2;
-    
     ctx.drawImage(pageCanvas, offsetX, offsetY);
     
-    // Draw page number label
+    // Page label
     ctx.save();
-    ctx.font = `bold ${Math.round(DPI * 0.12)}px system-ui, sans-serif`;
+    ctx.font = `bold ${Math.round(DPI * 0.1)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillStyle = pageNum > pdfDoc.numPages ? "rgba(200,200,200,0.6)" : "rgba(0,129,152,0.7)";
-    ctx.fillText(
-      pageNum > pdfDoc.numPages ? `(blank)` : `Page ${pageNum}`,
-      i * halfW + halfW / 2,
-      sheetPxH - DPI * 0.08
-    );
+    
+    const isBlank = bookletPageNum > totalPages;
+    const label = isBlank ? "(blank)" : `Page ${bookletPageNum}`;
+    const subLabel = !isBlank && entry ? entry.fileName : "";
+    
+    ctx.fillStyle = isBlank ? "rgba(180,180,180,0.7)" : "rgba(0,129,152,0.8)";
+    ctx.fillText(label, i * halfW + halfW / 2, sheetPxH - DPI * 0.15);
+    
+    if (subLabel) {
+      ctx.font = `${Math.round(DPI * 0.065)}px system-ui, sans-serif`;
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      const truncName = subLabel.length > 25 ? subLabel.slice(0, 22) + "..." : subLabel;
+      ctx.fillText(truncName, i * halfW + halfW / 2, sheetPxH - DPI * 0.06);
+    }
     ctx.restore();
   }
   
-  // Center fold line
+  // Fold line
   ctx.save();
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = "rgba(0,0,0,0.2)";
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(halfW, 0);
   ctx.lineTo(halfW, sheetPxH);
   ctx.stroke();
-  
-  // Fold label
-  ctx.font = `${Math.round(DPI * 0.08)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(DPI * 0.07)}px system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.fillText("← fold →", halfW, DPI * 0.15);
+  ctx.fillText("← fold →", halfW, DPI * 0.13);
   ctx.restore();
 }
 
 // ── IMPOSED PDF GENERATOR ──────────────────────────────────
 
-async function generateImposedPDF(pdfDoc, signatures, preset) {
+async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageRotations) {
   const jsPDF = window.jspdf?.jsPDF || window.jsPDF;
   if (!jsPDF) throw new Error("jsPDF not loaded");
   
+  // Sheet is always landscape
   const doc = new jsPDF({
     orientation: "landscape",
     unit: "in",
-    format: [preset.sheetW, preset.sheetH],
+    format: [Math.max(preset.sheetW, preset.sheetH), Math.min(preset.sheetW, preset.sheetH)],
   });
   
-  const halfW = preset.sheetW / 2;
+  const sheetW = Math.max(preset.sheetW, preset.sheetH);
+  const sheetH = Math.min(preset.sheetW, preset.sheetH);
+  const halfW = sheetW / 2;
   const margin = PRINTER_PROFILES.ricoh.minMargin;
-  const renderScale = 300; // DPI for output
+  const renderDPI = 300;
+  
+  const slotW = (halfW - margin * 2) * renderDPI;
+  const slotH = (sheetH - margin * 2) * renderDPI;
   
   for (let i = 0; i < signatures.length; i++) {
     const sig = signatures[i];
     
     // Front side
-    if (i > 0) doc.addPage([preset.sheetW, preset.sheetH], "landscape");
+    if (i > 0) doc.addPage([sheetW, sheetH], "landscape");
     
-    for (const [slotIdx, pageNum] of [sig.front.left, sig.front.right].entries()) {
-      const pagePxW = (halfW - margin * 2) * renderScale;
-      const pagePxH = (preset.sheetH - margin * 2) * renderScale;
-      const pageCanvas = await renderPdfPage(pdfDoc, pageNum, pagePxW, pagePxH);
+    for (const [slotIdx, bookletPage] of [sig.front.left, sig.front.right].entries()) {
+      const mapIdx = bookletPage - 1;
+      const entry = mapIdx >= 0 && mapIdx < pageMap.length ? pageMap[mapIdx] : null;
+      const manualRot = pageRotations[bookletPage] || 0;
+      
+      let pageCanvas;
+      if (entry) {
+        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot);
+        pageCanvas = result.canvas;
+      } else {
+        pageCanvas = document.createElement("canvas");
+        pageCanvas.width = Math.round(slotW);
+        pageCanvas.height = Math.round(slotH);
+        const pctx = pageCanvas.getContext("2d");
+        pctx.fillStyle = "#ffffff";
+        pctx.fillRect(0, 0, slotW, slotH);
+      }
       
       const x = slotIdx * halfW + margin;
       const y = margin;
       const w = halfW - margin * 2;
-      const h = preset.sheetH - margin * 2;
+      const h = sheetH - margin * 2;
       
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
       doc.addImage(imgData, "JPEG", x, y, w, h);
     }
     
     // Back side
-    doc.addPage([preset.sheetW, preset.sheetH], "landscape");
+    doc.addPage([sheetW, sheetH], "landscape");
     
-    for (const [slotIdx, pageNum] of [sig.back.left, sig.back.right].entries()) {
-      const pagePxW = (halfW - margin * 2) * renderScale;
-      const pagePxH = (preset.sheetH - margin * 2) * renderScale;
-      const pageCanvas = await renderPdfPage(pdfDoc, pageNum, pagePxW, pagePxH);
+    for (const [slotIdx, bookletPage] of [sig.back.left, sig.back.right].entries()) {
+      const mapIdx = bookletPage - 1;
+      const entry = mapIdx >= 0 && mapIdx < pageMap.length ? pageMap[mapIdx] : null;
+      const manualRot = pageRotations[bookletPage] || 0;
+      
+      let pageCanvas;
+      if (entry) {
+        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot);
+        pageCanvas = result.canvas;
+      } else {
+        pageCanvas = document.createElement("canvas");
+        pageCanvas.width = Math.round(slotW);
+        pageCanvas.height = Math.round(slotH);
+        const pctx = pageCanvas.getContext("2d");
+        pctx.fillStyle = "#ffffff";
+        pctx.fillRect(0, 0, slotW, slotH);
+      }
       
       const x = slotIdx * halfW + margin;
       const y = margin;
       const w = halfW - margin * 2;
-      const h = preset.sheetH - margin * 2;
+      const h = sheetH - margin * 2;
       
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
       doc.addImage(imgData, "JPEG", x, y, w, h);
@@ -257,14 +363,46 @@ const ChevronRight = () => (
   </svg>
 );
 
-const InfoIcon = () => (
+const PrinterIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+    <path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
   </svg>
 );
 
-const PrinterIcon = () => (
+const RotateIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38L21.5 8"/>
+  </svg>
+);
+
+const GripIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+    <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+    <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+  </svg>
+);
+
+const XIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+);
+
+const ArrowUpIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+);
+
+const ArrowDownIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="6 9 12 15 18 9"/>
+  </svg>
+);
+
+const PrintIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
   </svg>
 );
@@ -273,69 +411,108 @@ const PrinterIcon = () => (
 
 export default function BookletMaker({ CardHeader }) {
   // State
-  const [pdfFile, setPdfFile] = useState(null);
-  const [pdfDoc, setPdfDoc] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
+  const [pdfEntries, setPdfEntries] = useState([]); // [{ id, name, file, doc, numPages }]
   const [presetKey, setPresetKey] = useState("half-letter");
   const [previewSheet, setPreviewSheet] = useState(0);
   const [previewSide, setPreviewSide] = useState("front");
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [showCropMarks, setShowCropMarks] = useState(false);
+  const [pageRotations, setPageRotations] = useState({}); // { bookletPageNum: degrees }
   
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
   
   const preset = BOOKLET_PRESETS.find(p => p.key === presetKey) || BOOKLET_PRESETS[0];
-  const { signatures, paddedTotal, numSheets } = pageCount > 0
-    ? computeSignatures(pageCount)
+  
+  // Build page map from all PDFs
+  const pageMap = buildPageMap(pdfEntries);
+  const totalPages = pageMap.length;
+  
+  const { signatures, paddedTotal, numSheets } = totalPages > 0
+    ? computeSignatures(totalPages)
     : { signatures: [], paddedTotal: 0, numSheets: 0 };
   
   const printer = PRINTER_PROFILES.ricoh;
+  const sheetW = Math.max(preset.sheetW, preset.sheetH);
+  const sheetH = Math.min(preset.sheetW, preset.sheetH);
   const withinSaddleLimit = numSheets <= printer.maxSaddleSheets;
-  const withinPaperSize = preset.sheetW <= printer.maxW && preset.sheetH <= printer.maxH;
-  const blankPages = paddedTotal - pageCount;
+  const withinPaperSize = sheetW <= printer.maxW && sheetH <= printer.maxH;
+  const blankPages = paddedTotal - totalPages;
   
-  // ── PDF Loading ──
-  const loadPdf = useCallback(async (file) => {
+  // ── File Loading ──
+  const addFiles = useCallback(async (files) => {
     setLoading(true);
-    setPdfFile(file);
-    try {
-      const lib = window.pdfjsLib;
-      if (!lib) throw new Error("PDF.js not loaded");
-      const ab = await file.arrayBuffer();
-      const doc = await lib.getDocument({ data: ab }).promise;
-      setPdfDoc(doc);
-      setPageCount(doc.numPages);
-      setPreviewSheet(0);
-      setPreviewSide("front");
-    } catch (err) {
-      alert("Could not load PDF: " + err.message);
-      setPdfFile(null);
-      setPdfDoc(null);
-      setPageCount(0);
+    const newEntries = [];
+    for (const file of files) {
+      if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) continue;
+      try {
+        const doc = await loadPdfFromFile(file);
+        newEntries.push({
+          id: `pdf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          file,
+          doc,
+          numPages: doc.numPages,
+        });
+      } catch (err) {
+        console.error("Failed to load PDF:", file.name, err);
+      }
     }
+    setPdfEntries(prev => [...prev, ...newEntries]);
+    setPreviewSheet(0);
+    setPreviewSide("front");
     setLoading(false);
+  }, []);
+  
+  const removeFile = useCallback((id) => {
+    setPdfEntries(prev => prev.filter(e => e.id !== id));
+    setPageRotations({});
+  }, []);
+  
+  const moveFile = useCallback((idx, direction) => {
+    setPdfEntries(prev => {
+      const arr = [...prev];
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= arr.length) return arr;
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      return arr;
+    });
+    setPageRotations({});
+  }, []);
+  
+  const clearAll = useCallback(() => {
+    setPdfEntries([]);
+    setPageRotations({});
+    setPreviewSheet(0);
+    setPreviewSide("front");
+  }, []);
+  
+  // ── Page rotation ──
+  const rotateBookletPage = useCallback((bookletPageNum) => {
+    setPageRotations(prev => ({
+      ...prev,
+      [bookletPageNum]: ((prev[bookletPageNum] || 0) + 90) % 360,
+    }));
   }, []);
   
   // ── Preview rendering ──
   useEffect(() => {
-    if (!pdfDoc || !previewRef.current || signatures.length === 0) return;
-    renderBookletPreview(pdfDoc, signatures, preset, previewRef.current, previewSheet, previewSide);
-  }, [pdfDoc, signatures.length, preset.key, previewSheet, previewSide]);
+    if (totalPages === 0 || !previewRef.current || signatures.length === 0) return;
+    renderBookletPreview(pageMap, totalPages, signatures, preset, previewRef.current, previewSheet, previewSide, pageRotations);
+  }, [totalPages, pdfEntries.length, preset.key, previewSheet, previewSide, pageRotations, signatures.length]);
   
   // ── Generate imposed PDF ──
   const handleGenerate = useCallback(async () => {
-    if (!pdfDoc) return;
+    if (totalPages === 0) return;
     setGenerating(true);
     try {
-      const doc = await generateImposedPDF(pdfDoc, signatures, preset);
+      const doc = await generateImposedPDF(pageMap, totalPages, signatures, preset, pageRotations);
       const blob = doc.output("blob");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `booklet_imposed_${preset.key}_${pageCount}pp.pdf`;
+      a.download = `booklet_imposed_${preset.key}_${totalPages}pp.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -344,23 +521,70 @@ export default function BookletMaker({ CardHeader }) {
       alert("Error generating PDF: " + err.message);
     }
     setGenerating(false);
-  }, [pdfDoc, signatures, preset, pageCount]);
+  }, [pageMap, totalPages, signatures, preset, pageRotations]);
+  
+  // ── Print directly ──
+  const handlePrint = useCallback(async () => {
+    if (totalPages === 0) return;
+    setGenerating(true);
+    try {
+      const doc = await generateImposedPDF(pageMap, totalPages, signatures, preset, pageRotations);
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      
+      // Open in new window for printing
+      const printWin = window.open(url, "_blank");
+      if (printWin) {
+        printWin.addEventListener("load", () => {
+          setTimeout(() => {
+            printWin.print();
+          }, 500);
+        });
+      } else {
+        // Fallback: use iframe
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          setTimeout(() => {
+            iframe.contentWindow.print();
+            setTimeout(() => {
+              document.body.removeChild(iframe);
+              URL.revokeObjectURL(url);
+            }, 2000);
+          }, 500);
+        };
+      }
+    } catch (err) {
+      alert("Error preparing print: " + err.message);
+    }
+    setGenerating(false);
+  }, [pageMap, totalPages, signatures, preset, pageRotations]);
   
   // ── Drag & Drop ──
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer?.files?.[0];
-    if (file && (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) {
-      loadPdf(file);
-    }
-  }, [loadPdf]);
+    const files = Array.from(e.dataTransfer?.files || []).filter(
+      f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
+    );
+    if (files.length) addFiles(files);
+  }, [addFiles]);
   
   const handleFileInput = useCallback((e) => {
-    const file = e.target.files?.[0];
-    if (file) loadPdf(file);
+    const files = Array.from(e.target.files || []);
+    if (files.length) addFiles(files);
     e.target.value = "";
-  }, [loadPdf]);
+  }, [addFiles]);
+  
+  // ── Get current preview page info for rotation button ──
+  const currentSig = signatures[previewSheet];
+  const currentSlotPages = currentSig
+    ? (previewSide === "front"
+        ? [currentSig.front.left, currentSig.front.right]
+        : [currentSig.back.left, currentSig.back.right])
+    : [];
   
   // ── Render ──
   return (
@@ -388,105 +612,161 @@ export default function BookletMaker({ CardHeader }) {
             ))}
           </div>
           
-          {/* Printer compatibility info */}
           <div className="callout callout-info" style={{ marginTop: 14 }}>
             <span className="callout-icon"><PrinterIcon /></span>
             <div>
-              <strong>{printer.name}</strong> — Stock size: {preset.sheetW}×{preset.sheetH}" (landscape)
-              {printer.saddleStitch && " · Saddle-stitch ready"}
-              {printer.duplex && " · Auto-duplex"}
+              <strong>{printer.name}</strong> — Stock: {sheetW}×{sheetH}" landscape
+              {printer.saddleStitch && " · Saddle-stitch"}{printer.duplex && " · Auto-duplex"}
               {!withinPaperSize && (
-                <span style={{ color: "#dc2626", fontWeight: 600 }}> ⚠ Stock exceeds printer max ({printer.maxW}×{printer.maxH}")</span>
+                <span style={{ color: "#dc2626", fontWeight: 600 }}> ⚠ Exceeds max ({printer.maxW}×{printer.maxH}")</span>
               )}
             </div>
           </div>
         </div>
       </div>
       
-      {/* Step 2 — Upload PDF */}
+      {/* Step 2 — Upload PDFs */}
       <div className="pc-card">
         <CardHeader
           step="2"
           stepClass="step-num-green"
-          title="Upload PDF"
-          hint="Drop your document to impose for booklet printing"
+          title="Upload PDFs"
+          hint="Add one or more PDF files — they'll be combined in order"
         />
         <div className="pc-card-body">
           <input
             ref={fileInputRef}
             type="file"
             accept="application/pdf"
+            multiple
             style={{ display: "none" }}
             onChange={handleFileInput}
           />
           
+          {/* Drop zone */}
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
             style={{
-              border: `2px dashed ${dragOver ? "var(--green)" : pdfFile ? "var(--green)" : "var(--border-strong)"}`,
+              border: `2px dashed ${dragOver ? "var(--green)" : pdfEntries.length ? "var(--border)" : "var(--border-strong)"}`,
               borderRadius: "var(--radius)",
-              padding: pdfFile ? "14px 18px" : "32px 18px",
+              padding: pdfEntries.length ? "14px 18px" : "32px 18px",
               textAlign: "center",
               cursor: "pointer",
-              background: dragOver ? "var(--green-light)" : pdfFile ? "var(--green-light)" : "var(--surface-2)",
+              background: dragOver ? "var(--green-light)" : "var(--surface-2)",
               transition: "all 0.2s ease",
             }}
           >
             {loading ? (
-              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading PDF...</div>
-            ) : pdfFile ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 8,
-                  background: "var(--green)", color: "white",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 11, fontWeight: 700,
-                }}>PDF</div>
-                <div style={{ textAlign: "left", flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{pdfFile.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                    {pageCount} page{pageCount !== 1 ? "s" : ""} · {(pdfFile.size / 1024).toFixed(0)} KB
-                  </div>
-                </div>
-                <button
-                  className="pc-btn pc-btn-secondary pc-btn-xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPdfFile(null); setPdfDoc(null); setPageCount(0);
-                  }}
-                >Change</button>
-              </div>
+              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading PDF{pdfEntries.length ? "s" : ""}...</div>
             ) : (
               <>
                 <UploadIcon />
                 <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", marginTop: 8 }}>
-                  Drop a PDF here or click to browse
+                  {pdfEntries.length ? "Drop more PDFs here or click to add" : "Drop PDF files here or click to browse"}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                  PDF files only · Multi-page documents supported
+                  Multiple PDFs supported — files will be merged in listed order
                 </div>
               </>
             )}
           </div>
           
+          {/* File list */}
+          {pdfEntries.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>
+                  FILES ({pdfEntries.length}) — {totalPages} total page{totalPages !== 1 ? "s" : ""}
+                </div>
+                <button className="pc-btn pc-btn-secondary pc-btn-xs" onClick={clearAll}>Clear all</button>
+              </div>
+              
+              {pdfEntries.map((entry, idx) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 10px", marginBottom: 4,
+                    background: "var(--surface-2)", borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border)",
+                    fontSize: 12,
+                  }}
+                >
+                  {/* Reorder buttons */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <button
+                      className="pc-btn pc-btn-secondary pc-btn-icon"
+                      style={{ width: 22, height: 18, padding: 0, border: "none", background: "transparent" }}
+                      disabled={idx === 0}
+                      onClick={() => moveFile(idx, -1)}
+                    ><ArrowUpIcon /></button>
+                    <button
+                      className="pc-btn pc-btn-secondary pc-btn-icon"
+                      style={{ width: 22, height: 18, padding: 0, border: "none", background: "transparent" }}
+                      disabled={idx === pdfEntries.length - 1}
+                      onClick={() => moveFile(idx, 1)}
+                    ><ArrowDownIcon /></button>
+                  </div>
+                  
+                  {/* File icon */}
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 6,
+                    background: "var(--green)", color: "white",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 700, flexShrink: 0,
+                  }}>PDF</div>
+                  
+                  {/* File info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {entry.name}
+                    </div>
+                    <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                      {entry.numPages} page{entry.numPages !== 1 ? "s" : ""}
+                      {" · "}{(entry.file.size / 1024).toFixed(0)} KB
+                    </div>
+                  </div>
+                  
+                  {/* Order badge */}
+                  <div style={{
+                    width: 22, height: 22, borderRadius: "50%",
+                    background: "var(--green-light)", color: "var(--green)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 700,
+                  }}>{idx + 1}</div>
+                  
+                  {/* Remove */}
+                  <button
+                    className="pc-btn pc-btn-icon"
+                    style={{ width: 28, height: 28, padding: 0, background: "transparent", border: "none", color: "var(--text-muted)" }}
+                    onClick={() => removeFile(entry.id)}
+                    title="Remove"
+                  ><XIcon /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          
           {/* Stats row */}
-          {pageCount > 0 && (
+          {totalPages > 0 && (
             <div style={{
               display: "flex", gap: 16, flexWrap: "wrap",
-              marginTop: 14, padding: "10px 14px",
+              marginTop: 12, padding: "10px 14px",
               background: "var(--surface-3)", borderRadius: "var(--radius-sm)",
               fontSize: 12,
             }}>
-              <div><span style={{ color: "var(--text-muted)" }}>Pages:</span> <strong>{pageCount}</strong></div>
+              <div><span style={{ color: "var(--text-muted)" }}>Total pages:</span> <strong>{totalPages}</strong></div>
               <div><span style={{ color: "var(--text-muted)" }}>Padded to:</span> <strong>{paddedTotal}</strong></div>
-              <div><span style={{ color: "var(--text-muted)" }}>Physical sheets:</span> <strong>{numSheets}</strong></div>
-              <div><span style={{ color: "var(--text-muted)" }}>Blank pages added:</span> <strong>{blankPages}</strong></div>
+              <div><span style={{ color: "var(--text-muted)" }}>Sheets:</span> <strong>{numSheets}</strong></div>
+              {blankPages > 0 && (
+                <div><span style={{ color: "var(--text-muted)" }}>Blanks added:</span> <strong>{blankPages}</strong></div>
+              )}
               {!withinSaddleLimit && (
                 <div style={{ color: "#d97706", fontWeight: 600 }}>
-                  ⚠ Exceeds saddle-stitch limit ({printer.maxSaddleSheets} sheets) — consider perfect binding
+                  ⚠ {numSheets} sheets exceeds saddle-stitch limit ({printer.maxSaddleSheets})
                 </div>
               )}
             </div>
@@ -494,14 +774,14 @@ export default function BookletMaker({ CardHeader }) {
         </div>
       </div>
       
-      {/* Step 3 — Preview & Download */}
-      {pdfDoc && signatures.length > 0 && (
+      {/* Step 3 — Preview & Actions */}
+      {totalPages > 0 && signatures.length > 0 && (
         <div className="pc-card">
           <CardHeader
             step="3"
             stepClass="step-num-green"
             title="Imposition Preview"
-            hint={`${numSheets} sheet${numSheets !== 1 ? "s" : ""}, front & back — ${preset.sheetW}×${preset.sheetH}" landscape`}
+            hint={`${numSheets} sheet${numSheets !== 1 ? "s" : ""} · ${sheetW}×${sheetH}" landscape · Pages auto-fit & rotated`}
           />
           <div className="pc-card-body">
             
@@ -522,10 +802,12 @@ export default function BookletMaker({ CardHeader }) {
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
                   {previewSide === "front" ? "Front" : "Back"} — Pages{" "}
-                  {previewSide === "front"
-                    ? `${signatures[previewSheet].front.left}${signatures[previewSheet].front.left > pageCount ? " (blank)" : ""} & ${signatures[previewSheet].front.right}`
-                    : `${signatures[previewSheet].back.left} & ${signatures[previewSheet].back.right}${signatures[previewSheet].back.right > pageCount ? " (blank)" : ""}`
-                  }
+                  {currentSlotPages.map((p, i) => (
+                    <span key={i}>
+                      {i > 0 && " & "}
+                      {p > totalPages ? <em style={{ opacity: 0.5 }}>blank</em> : p}
+                    </span>
+                  ))}
                 </div>
               </div>
               
@@ -536,8 +818,8 @@ export default function BookletMaker({ CardHeader }) {
               ><ChevronRight /></button>
             </div>
             
-            {/* Front/Back toggle */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 12, justifyContent: "center" }}>
+            {/* Front/Back toggle + rotation controls */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 12, justifyContent: "center", alignItems: "center", flexWrap: "wrap" }}>
               <button
                 className={`pc-btn pc-btn-sm ${previewSide === "front" ? "pc-btn-primary" : "pc-btn-secondary"}`}
                 onClick={() => setPreviewSide("front")}
@@ -546,6 +828,24 @@ export default function BookletMaker({ CardHeader }) {
                 className={`pc-btn pc-btn-sm ${previewSide === "back" ? "pc-btn-primary" : "pc-btn-secondary"}`}
                 onClick={() => setPreviewSide("back")}
               >Back</button>
+              
+              <span style={{ width: 1, height: 20, background: "var(--border)", margin: "0 4px" }} />
+              
+              {/* Rotate individual pages on current view */}
+              {currentSlotPages.map((pageNum, i) => (
+                pageNum <= totalPages && (
+                  <button
+                    key={i}
+                    className="pc-btn pc-btn-secondary pc-btn-xs"
+                    onClick={() => rotateBookletPage(pageNum)}
+                    title={`Rotate page ${pageNum}`}
+                    style={{ display: "flex", alignItems: "center", gap: 4 }}
+                  >
+                    <RotateIcon /> Pg {pageNum}
+                    {pageRotations[pageNum] ? ` (${pageRotations[pageNum]}°)` : ""}
+                  </button>
+                )
+              ))}
             </div>
             
             {/* Canvas preview */}
@@ -577,8 +877,7 @@ export default function BookletMaker({ CardHeader }) {
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-                gap: 6,
-                fontSize: 11,
+                gap: 6, fontSize: 11,
               }}>
                 {signatures.map((sig, idx) => (
                   <div
@@ -586,8 +885,8 @@ export default function BookletMaker({ CardHeader }) {
                     onClick={() => { setPreviewSheet(idx); setPreviewSide("front"); }}
                     style={{
                       padding: "8px 10px",
-                      background: previewSheet === idx ? "var(--teal-light)" : "var(--surface-2)",
-                      border: `1px solid ${previewSheet === idx ? "var(--teal)" : "var(--border)"}`,
+                      background: previewSheet === idx ? "var(--green-light)" : "var(--surface-2)",
+                      border: `1px solid ${previewSheet === idx ? "var(--green)" : "var(--border)"}`,
                       borderRadius: "var(--radius-sm)",
                       cursor: "pointer",
                       transition: "all 0.15s",
@@ -595,7 +894,8 @@ export default function BookletMaker({ CardHeader }) {
                   >
                     <div style={{ fontWeight: 600, marginBottom: 2 }}>Sheet {idx + 1}</div>
                     <div style={{ color: "var(--text-muted)" }}>
-                      Front: [{sig.front.left}, {sig.front.right}] · Back: [{sig.back.left}, {sig.back.right}]
+                      Front: [{sig.front.left > totalPages ? "·" : sig.front.left}, {sig.front.right}]
+                      {" · "}Back: [{sig.back.left}, {sig.back.right > totalPages ? "·" : sig.back.right}]
                     </div>
                   </div>
                 ))}
@@ -605,29 +905,38 @@ export default function BookletMaker({ CardHeader }) {
         </div>
       )}
       
-      {/* Generate Button / Info Bar */}
-      {pdfDoc && (
+      {/* Action Bar */}
+      {totalPages > 0 && (
         <div className="price-bar" style={{ position: "sticky", bottom: 0, zIndex: 50 }}>
-          <div className="price-bar-inner price-bar-green" style={{ justifyContent: "space-between" }}>
+          <div className="price-bar-inner price-bar-green" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
               <div className="price-metric">
                 <div className="price-metric-label">Sheets</div>
                 <div className="price-metric-val">{numSheets}</div>
               </div>
               <div className="price-metric">
-                <div className="price-metric-label">Finished size</div>
+                <div className="price-metric-label">Finished</div>
                 <div className="price-metric-val">{preset.finishedW}×{preset.finishedH}"</div>
               </div>
               <div className="price-metric">
                 <div className="price-metric-label">Stock</div>
-                <div className="price-metric-val">{preset.sheetW}×{preset.sheetH}"</div>
+                <div className="price-metric-val">{sheetW}×{sheetH}"</div>
               </div>
               <div className="price-metric">
-                <div className="price-metric-label">Printer</div>
-                <div className="price-metric-val" style={{ fontSize: 12 }}>Ricoh C5400s</div>
+                <div className="price-metric-label">Pages</div>
+                <div className="price-metric-val">{totalPages} ({pdfEntries.length} file{pdfEntries.length !== 1 ? "s" : ""})</div>
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="pc-btn pc-btn-secondary"
+                disabled={generating || !withinPaperSize}
+                onClick={handlePrint}
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <PrintIcon />
+                Print
+              </button>
               <button
                 className="pc-btn pc-btn-success"
                 disabled={generating || !withinPaperSize}
@@ -635,7 +944,7 @@ export default function BookletMaker({ CardHeader }) {
                 style={{ display: "flex", alignItems: "center", gap: 6 }}
               >
                 <DownloadIcon />
-                {generating ? "Generating..." : "Download Imposed PDF"}
+                {generating ? "Generating..." : "Download PDF"}
               </button>
             </div>
           </div>
@@ -645,5 +954,4 @@ export default function BookletMaker({ CardHeader }) {
   );
 }
 
-// Also export the icon for the tab bar
 export { BookletIcon };
