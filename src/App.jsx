@@ -1143,13 +1143,14 @@ function PriceCalculatorApp() {
           <div className="service-nav-label">What are you printing?</div>
           <div className="service-tabs">
             {[
-              { id:"paper",     label:"Sheets & Photos", icon:<Icon.Printer />, pill:"🖨",  pillBg:"#e0f4f7", activeColor:"var(--teal)" },
-              { id:"large",     label:"Large Format",    icon:<Icon.Ruler />,   pill:"📐",  pillBg:"#fef3c7", activeColor:"var(--amber)" },
-              { id:"blueprint", label:"Blueprints",      icon:<Icon.Blueprint/>,pill:"📋",  pillBg:"#dbeafe", activeColor:"var(--blue)"  },
-            ].map(tab => (
+  { id:"paper",     label:"Sheets & Photos", icon:<Icon.Printer />, pill:"🖨",  pillBg:"#e0f4f7", activeColor:"var(--teal)" },
+  { id:"large",     label:"Large Format",    icon:<Icon.Ruler />,   pill:"📐",  pillBg:"#fef3c7", activeColor:"var(--amber)" },
+  { id:"blueprint", label:"Blueprints",      icon:<Icon.Blueprint/>,pill:"📋",  pillBg:"#dbeafe", activeColor:"var(--blue)"  },
+  { id:"impose",    label:"Impose",          icon:<BookletIcon />,  pill:"📖",  pillBg:"#dcfce7", activeColor:"var(--green)" },
+].map(tab => (
               <button
                 key={tab.id}
-                className={`service-tab ${activeTab===tab.id ? (tab.id==="paper"?"active":tab.id==="large"?"active active-amber":"active active-blue") : ""}`}
+                className={`service-tab ${activeTab===tab.id ? (tab.id==="paper"?"active":tab.id==="large"?"active active-amber":tab.id==="impose"?"active active-green":"active active-blue") : ""}`}
                 onClick={() => setActiveTab(tab.id)}
               >
                 <span className="tab-icon-pill" style={{ background: activeTab===tab.id ? pillActiveBg(tab.id) : tab.pillBg }}>{tab.pill}</span>
@@ -1918,6 +1919,13 @@ function PriceCalculatorApp() {
           </>
         )}
 
+        {/* ════════════════════════════════════════
+            PANEL: IMPOSE (BOOKLET MAKER)
+        ════════════════════════════════════════ */}
+        {activeTab==="impose" && viewMode==="tool" && (
+          <BookletMaker CardHeader={CardHeader} />
+        )}
+
       </div>{/* /content-wrap */}
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
@@ -1931,6 +1939,7 @@ function pillActiveBg(id) {
   if (id==="paper")     return "#b3e8f0";
   if (id==="large")     return "#fde68a";
   if (id==="blueprint") return "#bfdbfe";
+  if (id==="impose")    return "#bbf7d0";
   return "#e5e7eb";
 }
 
