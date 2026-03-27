@@ -419,15 +419,30 @@ export default function BookletMaker({ CardHeader }) {
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pageRotations, setPageRotations] = useState({}); // { bookletPageNum: degrees }
+  const [pageOrder, setPageOrder] = useState([]); // indices into rawPageMap — controls page sequence
+  const [moveFrom, setMoveFrom] = useState(null); // booklet page num being moved (1-based)
+  const [moveTo, setMoveTo] = useState(""); // target position input
   
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
   
   const preset = BOOKLET_PRESETS.find(p => p.key === presetKey) || BOOKLET_PRESETS[0];
   
-  // Build page map from all PDFs
-  const pageMap = buildPageMap(pdfEntries);
-  const totalPages = pageMap.length;
+  // Build raw page map (natural file order), then apply reorder
+  const rawPageMap = buildPageMap(pdfEntries);
+  const totalPages = rawPageMap.length;
+  
+  // Keep pageOrder in sync when files change
+  useEffect(() => {
+    setPageOrder(Array.from({ length: rawPageMap.length }, (_, i) => i));
+    setMoveFrom(null);
+    setMoveTo("");
+  }, [rawPageMap.length, pdfEntries.length]);
+  
+  // Reordered page map — this is what signatures and preview use
+  const pageMap = pageOrder.length === totalPages
+    ? pageOrder.map(idx => rawPageMap[idx])
+    : rawPageMap;
   
   const { signatures, paddedTotal, numSheets } = totalPages > 0
     ? computeSignatures(totalPages)
@@ -484,9 +499,53 @@ export default function BookletMaker({ CardHeader }) {
   const clearAll = useCallback(() => {
     setPdfEntries([]);
     setPageRotations({});
+    setPageOrder([]);
+    setMoveFrom(null);
+    setMoveTo("");
     setPreviewSheet(0);
     setPreviewSide("front");
   }, []);
+  
+  // ── Page reorder: move page from one position to another ──
+  const executePageMove = useCallback((fromPage, toPage) => {
+    // fromPage and toPage are 1-based booklet page numbers
+    if (fromPage < 1 || fromPage > totalPages || toPage < 1 || toPage > totalPages || fromPage === toPage) return;
+    setPageOrder(prev => {
+      const arr = [...prev];
+      const fromIdx = fromPage - 1;
+      const toIdx = toPage - 1;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      return arr;
+    });
+    // Shift rotations to follow pages
+    setPageRotations(prev => {
+      const newRot = {};
+      const arr = [...pageOrder];
+      const fromIdx = fromPage - 1;
+      const toIdx = toPage - 1;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      // Rebuild rotations: old booklet page's rotation follows to new position
+      for (let i = 0; i < arr.length; i++) {
+        const oldBookletPage = arr[i] + 1; // what was originally at this raw index
+        // Find what rotation was on the old position
+        // Actually, rotations should follow the content, not the position
+        // So we map: new position (i+1) gets the rotation from wherever that content was
+      }
+      // Simpler: just clear rotations on move — user can re-rotate
+      return {};
+    });
+    setMoveFrom(null);
+    setMoveTo("");
+  }, [totalPages, pageOrder]);
+  
+  const resetPageOrder = useCallback(() => {
+    setPageOrder(Array.from({ length: totalPages }, (_, i) => i));
+    setPageRotations({});
+    setMoveFrom(null);
+    setMoveTo("");
+  }, [totalPages]);
   
   // ── Page rotation ──
   const rotateBookletPage = useCallback((bookletPageNum) => {
@@ -500,7 +559,7 @@ export default function BookletMaker({ CardHeader }) {
   useEffect(() => {
     if (totalPages === 0 || !previewRef.current || signatures.length === 0) return;
     renderBookletPreview(pageMap, totalPages, signatures, preset, previewRef.current, previewSheet, previewSide, pageRotations);
-  }, [totalPages, pdfEntries.length, preset.key, previewSheet, previewSide, pageRotations, signatures.length]);
+  }, [totalPages, pdfEntries.length, preset.key, previewSheet, previewSide, pageRotations, signatures.length, pageOrder]);
   
   // ── Generate imposed PDF ──
   const handleGenerate = useCallback(async () => {
@@ -774,11 +833,160 @@ export default function BookletMaker({ CardHeader }) {
         </div>
       </div>
       
-      {/* Step 3 — Preview & Actions */}
-      {totalPages > 0 && signatures.length > 0 && (
+      {/* Step 3 — Page Order */}
+      {totalPages > 0 && (
         <div className="pc-card">
           <CardHeader
             step="3"
+            stepClass="step-num-green"
+            title="Page Order"
+            hint="Rearrange pages — click a page to select it, then move it to a new position"
+          />
+          <div className="pc-card-body">
+            
+            {/* Page grid */}
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))",
+              gap: 6,
+              marginBottom: 12,
+            }}>
+              {pageOrder.map((rawIdx, pos) => {
+                const bookletPage = pos + 1;
+                const entry = rawPageMap[rawIdx];
+                const isSelected = moveFrom === bookletPage;
+                const isTarget = moveFrom && moveFrom !== bookletPage;
+                const origPage = rawIdx + 1;
+                const truncName = entry ? (entry.fileName.length > 12 ? entry.fileName.slice(0, 10) + "…" : entry.fileName) : "";
+                
+                return (
+                  <div
+                    key={`${rawIdx}-${pos}`}
+                    onClick={() => {
+                      if (moveFrom === null) {
+                        // Select this page to move
+                        setMoveFrom(bookletPage);
+                        setMoveTo("");
+                      } else if (moveFrom === bookletPage) {
+                        // Deselect
+                        setMoveFrom(null);
+                        setMoveTo("");
+                      } else {
+                        // Move the selected page to this position
+                        executePageMove(moveFrom, bookletPage);
+                      }
+                    }}
+                    style={{
+                      padding: "8px 4px",
+                      textAlign: "center",
+                      background: isSelected ? "var(--green)" : isTarget && moveFrom ? "var(--green-light)" : "var(--surface-2)",
+                      color: isSelected ? "white" : "var(--text)",
+                      border: `2px solid ${isSelected ? "var(--green)" : isTarget && moveFrom ? "var(--green)" : "var(--border)"}`,
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                      position: "relative",
+                      userSelect: "none",
+                    }}
+                    title={
+                      isSelected
+                        ? "Click another page to place it there, or click again to cancel"
+                        : moveFrom
+                          ? `Move page ${moveFrom} here (position ${bookletPage})`
+                          : `Click to select page ${bookletPage} for moving`
+                    }
+                  >
+                    <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.2 }}>
+                      {bookletPage}
+                    </div>
+                    <div style={{
+                      fontSize: 9,
+                      opacity: isSelected ? 0.85 : 0.55,
+                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {truncName}
+                    </div>
+                    {origPage !== bookletPage && (
+                      <div style={{
+                        position: "absolute", top: 2, right: 3,
+                        fontSize: 8, fontWeight: 600,
+                        color: isSelected ? "rgba(255,255,255,0.7)" : "var(--amber)",
+                      }}>
+                        was {origPage}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            
+            {/* Move controls / status */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              padding: "10px 14px",
+              background: moveFrom ? "var(--green-light)" : "var(--surface-3)",
+              borderRadius: "var(--radius-sm)",
+              fontSize: 12,
+              transition: "background 0.2s",
+            }}>
+              {moveFrom ? (
+                <>
+                  <strong style={{ color: "var(--green)" }}>Page {moveFrom} selected</strong>
+                  <span style={{ color: "var(--text-muted)" }}>→ Click a page above to place it there, or:</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span>Move to position</span>
+                    <input
+                      className="pc-input"
+                      type="number"
+                      min="1"
+                      max={totalPages}
+                      value={moveTo}
+                      onChange={e => setMoveTo(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          const target = parseInt(moveTo, 10);
+                          if (target >= 1 && target <= totalPages) executePageMove(moveFrom, target);
+                        }
+                      }}
+                      style={{ width: 56, height: 30, fontSize: 13, textAlign: "center", padding: "0 4px" }}
+                      placeholder="#"
+                    />
+                    <button
+                      className="pc-btn pc-btn-primary pc-btn-xs"
+                      disabled={!moveTo || parseInt(moveTo, 10) < 1 || parseInt(moveTo, 10) > totalPages || parseInt(moveTo, 10) === moveFrom}
+                      onClick={() => executePageMove(moveFrom, parseInt(moveTo, 10))}
+                    >Go</button>
+                  </div>
+                  <button
+                    className="pc-btn pc-btn-secondary pc-btn-xs"
+                    onClick={() => { setMoveFrom(null); setMoveTo(""); }}
+                  >Cancel</button>
+                </>
+              ) : (
+                <span style={{ color: "var(--text-muted)" }}>
+                  Click any page above to select it, then click where you want to move it.
+                  {pageOrder.some((v, i) => v !== i) && (
+                    <> Pages have been reordered. <button
+                      className="pc-btn pc-btn-secondary pc-btn-xs"
+                      style={{ marginLeft: 6 }}
+                      onClick={resetPageOrder}
+                    >Reset to original order</button></>
+                  )}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Step 4 — Preview & Actions */}
+      {totalPages > 0 && signatures.length > 0 && (
+        <div className="pc-card">
+          <CardHeader
+            step="4"
             stepClass="step-num-green"
             title="Imposition Preview"
             hint={`${numSheets} sheet${numSheets !== 1 ? "s" : ""} · ${sheetW}×${sheetH}" landscape · Pages auto-fit & rotated`}
