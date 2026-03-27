@@ -161,6 +161,9 @@ function buildPageMap(pdfEntries) {
 async function renderBookletPreview(pageMap, totalPages, signatures, preset, canvas, sheetIndex, side, pageRotations) {
   const ctx = canvas.getContext("2d");
   const DPI = 150;
+  const m = PRINTER_PROFILES.ricoh.minMargin; // inches
+  const mPx = Math.round(m * DPI); // margin in pixels
+  
   // Sheet is landscape: width > height
   const sheetPxW = Math.round(Math.max(preset.sheetW, preset.sheetH) * DPI);
   const sheetPxH = Math.round(Math.min(preset.sheetW, preset.sheetH) * DPI);
@@ -169,7 +172,8 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
   canvas.width = sheetPxW;
   canvas.height = sheetPxH;
   
-  ctx.fillStyle = "#ffffff";
+  // Light gray background to show the sheet edges / non-printable area
+  ctx.fillStyle = "#e8e8e8";
   ctx.fillRect(0, 0, sheetPxW, sheetPxH);
   
   const sig = signatures[sheetIndex];
@@ -179,39 +183,41 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
     ? [sig.front.left, sig.front.right]
     : [sig.back.left, sig.back.right];
   
-  // Each page fills its entire half-sheet — edge to edge
-  const slotW = halfW;
-  const slotH = sheetPxH;
+  // Margin-aware slot geometry (same logic as PDF generator):
+  // Left page:  margin on left/top/bottom, fold edge flush
+  // Right page: fold edge flush, margin on right/top/bottom
+  const slotGeom = [
+    { x: mPx, y: mPx, w: halfW - mPx, h: sheetPxH - 2 * mPx },
+    { x: halfW, y: mPx, w: halfW - mPx, h: sheetPxH - 2 * mPx },
+  ];
   
   for (let i = 0; i < 2; i++) {
     const bookletPageNum = pageSlots[i];
     const mapIdx = bookletPageNum - 1;
     const entry = mapIdx >= 0 && mapIdx < pageMap.length ? pageMap[mapIdx] : null;
     const manualRot = pageRotations[bookletPageNum] || 0;
+    const geom = slotGeom[i];
     
     let pageCanvas;
     if (entry) {
-      const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot, "fill");
+      const result = await renderPageFitted(entry.doc, entry.pageNum, geom.w, geom.h, manualRot, "fill");
       pageCanvas = result.canvas;
     } else {
       pageCanvas = document.createElement("canvas");
-      pageCanvas.width = Math.round(slotW);
-      pageCanvas.height = Math.round(slotH);
+      pageCanvas.width = Math.round(geom.w);
+      pageCanvas.height = Math.round(geom.h);
       const pctx = pageCanvas.getContext("2d");
       pctx.fillStyle = "#ffffff";
-      pctx.fillRect(0, 0, slotW, slotH);
+      pctx.fillRect(0, 0, geom.w, geom.h);
     }
     
-    // Place edge-to-edge at each half
-    const offsetX = i * halfW;
-    const offsetY = 0;
-    ctx.drawImage(pageCanvas, offsetX, offsetY);
+    // Place within the margin-aware slot
+    ctx.drawImage(pageCanvas, geom.x, geom.y, geom.w, geom.h);
     
-    // Page label (overlay on top of content)
+    // Page label (overlay with background pill for readability)
     ctx.save();
-    // Semi-transparent background pill for readability
-    const labelY = sheetPxH - DPI * 0.28;
-    const labelCenterX = i * halfW + halfW / 2;
+    const labelY = geom.y + geom.h - DPI * 0.18;
+    const labelCenterX = geom.x + geom.w / 2;
     ctx.fillStyle = "rgba(255,255,255,0.75)";
     const pillW = DPI * 1.8;
     const pillH = DPI * 0.26;
@@ -258,6 +264,14 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
   ctx.fillStyle = "rgba(0,0,0,0.4)";
   ctx.fillText("← fold →", halfW, DPI * 0.14);
   ctx.restore();
+  
+  // Margin indicator labels (subtle)
+  ctx.save();
+  ctx.font = `${Math.round(DPI * 0.05)}px system-ui, sans-serif`;
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.textAlign = "left";
+  ctx.fillText(`${(m * 25.4).toFixed(0)}mm margin`, 3, mPx - 2);
+  ctx.restore();
 }
 
 // ── IMPOSED PDF GENERATOR ──────────────────────────────────
@@ -276,14 +290,28 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
   const sheetW = Math.max(preset.sheetW, preset.sheetH);
   const sheetH = Math.min(preset.sheetW, preset.sheetH);
   const halfW = sheetW / 2;
+  const m = PRINTER_PROFILES.ricoh.minMargin; // ~0.157" (~4mm)
   const renderDPI = 300;
   
-  // Each page fills its entire half-sheet — no internal margins.
-  // The printer's physical non-printable area (~4mm) is the only constraint,
-  // and that's handled by the printer itself. We place content edge-to-edge
-  // so the booklet pages fill completely when trimmed/folded.
-  const slotW = halfW * renderDPI;
-  const slotH = sheetH * renderDPI;
+  // Margin-aware slot geometry per half-sheet:
+  //
+  //  LEFT PAGE (slotIdx 0):                RIGHT PAGE (slotIdx 1):
+  //  ┌─m─┬────────────────┐fold           fold┌────────────────┬─m─┐
+  //  │   │                │  │             │  │                │   │
+  //  m   │   content      │  │             │  │   content      │   m
+  //  │   │                │  │             │  │                │   │
+  //  └─m─┴────────────────┘  │             │  └────────────────┴─m─┘
+  //
+  //  Left page:  x = m,  w = halfW - m  (margin on left, flush to fold)
+  //  Right page: x = halfW,  w = halfW - m  (flush to fold, margin on right)
+  //  Both:       y = m,  h = sheetH - 2*m  (margin top & bottom)
+  
+  const slotGeom = [
+    // slotIdx 0 (left page): margin on left/top/bottom, fold edge flush
+    { x: m, y: m, w: halfW - m, h: sheetH - 2 * m },
+    // slotIdx 1 (right page): fold edge flush, margin on right/top/bottom
+    { x: halfW, y: m, w: halfW - m, h: sheetH - 2 * m },
+  ];
   
   for (let i = 0; i < signatures.length; i++) {
     const sig = signatures[i];
@@ -295,26 +323,26 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       const mapIdx = bookletPage - 1;
       const entry = mapIdx >= 0 && mapIdx < pageMap.length ? pageMap[mapIdx] : null;
       const manualRot = pageRotations[bookletPage] || 0;
+      const geom = slotGeom[slotIdx];
+      
+      const pxW = geom.w * renderDPI;
+      const pxH = geom.h * renderDPI;
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot, "fill");
+        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fill");
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
-        pageCanvas.width = Math.round(slotW);
-        pageCanvas.height = Math.round(slotH);
+        pageCanvas.width = Math.round(pxW);
+        pageCanvas.height = Math.round(pxH);
         const pctx = pageCanvas.getContext("2d");
         pctx.fillStyle = "#ffffff";
-        pctx.fillRect(0, 0, slotW, slotH);
+        pctx.fillRect(0, 0, pxW, pxH);
       }
       
-      // Place at exact half-sheet position — edge to edge
-      const x = slotIdx * halfW;
-      const y = 0;
-      
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
-      doc.addImage(imgData, "JPEG", x, y, halfW, sheetH);
+      doc.addImage(imgData, "JPEG", geom.x, geom.y, geom.w, geom.h);
     }
     
     // Back side
@@ -324,25 +352,26 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       const mapIdx = bookletPage - 1;
       const entry = mapIdx >= 0 && mapIdx < pageMap.length ? pageMap[mapIdx] : null;
       const manualRot = pageRotations[bookletPage] || 0;
+      const geom = slotGeom[slotIdx];
+      
+      const pxW = geom.w * renderDPI;
+      const pxH = geom.h * renderDPI;
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, slotW, slotH, manualRot, "fill");
+        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fill");
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
-        pageCanvas.width = Math.round(slotW);
-        pageCanvas.height = Math.round(slotH);
+        pageCanvas.width = Math.round(pxW);
+        pageCanvas.height = Math.round(pxH);
         const pctx = pageCanvas.getContext("2d");
         pctx.fillStyle = "#ffffff";
-        pctx.fillRect(0, 0, slotW, slotH);
+        pctx.fillRect(0, 0, pxW, pxH);
       }
       
-      const x = slotIdx * halfW;
-      const y = 0;
-      
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.92);
-      doc.addImage(imgData, "JPEG", x, y, halfW, sheetH);
+      doc.addImage(imgData, "JPEG", geom.x, geom.y, geom.w, geom.h);
     }
   }
   
