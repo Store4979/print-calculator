@@ -182,6 +182,26 @@ const pdfFileToPngFile = async (file, pageNum=1, scale=2) => {
   return new File([blob], file.name.replace(/\.pdf$/i,"")+"-p1.png", { type:"image/png" });
 };
 
+const pdfFileToAllPages = async (file, scale=2) => {
+  const lib = window.pdfjsLib;
+  if (!lib) throw new Error("pdf.js not loaded");
+  const ab = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: ab }).promise;
+  const pages = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/png", 1));
+    const baseName = file.name.replace(/\.pdf$/i, "");
+    pages.push(new File([blob], `${baseName}-p${p}.png`, { type: "image/png" }));
+  }
+  return pages;
+};
+
 const normalizeUpload = async (file) => isPdfFile(file) ? await pdfFileToPngFile(file,1,2) : file;
 
 const canvasToCompressedJpeg = (canvas, { maxDim=1600, quality=0.75 }={}) => {
@@ -848,11 +868,18 @@ function PriceCalculatorApp() {
 
   // ─── FILE HANDLERS ──────────────────────────────────────
 
-  const handleFrontFiles = async (files) => {
+const handleFrontFiles = async (files) => {
     const newItems = [];
     for (const f of files) {
-      const normalized = await normalizeUpload(f);
-      newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:normalized, name:normalized.name, rotation:0, qty:copiesPerFile });
+      if (isPdfFile(f)) {
+        // Extract ALL pages from the PDF as individual items
+        const pages = await pdfFileToAllPages(f, 2);
+        for (const pg of pages) {
+          newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:copiesPerFile });
+        }
+      } else {
+        newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:copiesPerFile });
+      }
     }
     setFrontFiles(prev => [...prev, ...newItems]);
     if (newItems[0]) setSelectedFrontId(newItems[0].id);
