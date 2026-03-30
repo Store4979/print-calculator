@@ -1392,6 +1392,107 @@ try {
               </div>
               <hr className="pc-divider" />
 
+              <hr className="pc-divider" />
+
+              {/* Manage Sheet Paper Types */}
+              <div style={{ marginBottom:20 }}>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Manage Sheet Paper Types</div>
+                
+                {/* Existing paper types with delete */}
+                <div style={{ marginBottom:12 }}>
+                  {paperTypes.map(pt => (
+                    <div key={pt.key} style={{
+                      display:"flex", alignItems:"center", gap:8, padding:"6px 10px",
+                      marginBottom:4, background:"var(--surface-2)", borderRadius:"var(--radius-sm)",
+                      border:"1px solid var(--border)", fontSize:12,
+                    }}>
+                      <div style={{ flex:1 }}>
+                        <strong>{pt.label}</strong>
+                        <span style={{ color:"var(--text-muted)", marginLeft:8 }}>({pt.key})</span>
+                        <span style={{ color:"var(--text-subtle)", marginLeft:8 }}>
+                          Sheets: {(sheetKeysForPaper[pt.key]||[]).join(", ")||"none"}
+                        </span>
+                      </div>
+                      {/* Toggle sheet sizes for this paper */}
+                      <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
+                        {Object.keys(PRESET_SHEETS).filter(k=>k!=="custom").map(sk => {
+                          const active = (sheetKeysForPaper[pt.key]||[]).includes(sk);
+                          return (
+                            <button key={sk}
+                              className={`pc-btn pc-btn-xs ${active ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                              style={{ fontSize:10, padding:"2px 6px" }}
+                              onClick={()=>{
+                                setSheetKeysForPaper(prev => {
+                                  const n = {...prev};
+                                  const arr = [...(n[pt.key]||[])];
+                                  if (active) { n[pt.key] = arr.filter(s=>s!==sk); }
+                                  else { arr.push(sk); n[pt.key] = arr; }
+                                  return n;
+                                });
+                              }}
+                            >{sk}</button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        className="pc-btn pc-btn-xs"
+                        style={{ background:"#fee2e2", color:"#dc2626", border:"none" }}
+                        onClick={()=>{
+                          if (!window.confirm(`Delete "${pt.label}"? This will remove all pricing for this paper type.`)) return;
+                          setPaperTypes(prev => prev.filter(p=>p.key!==pt.key));
+                          setSheetKeysForPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                          setPricing(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                          setMarkupPerPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                          if (paperKey===pt.key) setPaperKey(paperTypes[0]?.key||"");
+                        }}
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+                
+                {/* Add new paper type */}
+                <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap", padding:"10px 12px", background:"var(--surface-3)", borderRadius:"var(--radius-sm)" }}>
+                  <div>
+                    <label className="field-label">Label</label>
+                    <input className="admin-input" type="text" placeholder="e.g. 60lb Offset" value={newPaperLabel}
+                      onChange={e=>{ setNewPaperLabel(e.target.value); setNewPaperKey(e.target.value.toLowerCase().replace(/[^a-z0-9]/g,"")); }} style={{ width:160 }} />
+                  </div>
+                  <div>
+                    <label className="field-label">Key</label>
+                    <input className="admin-input" type="text" placeholder="e.g. 60offset" value={newPaperKey}
+                      onChange={e=>setNewPaperKey(e.target.value.replace(/[^a-z0-9_]/g,""))} style={{ width:120 }} />
+                  </div>
+                  <div>
+                    <label className="field-label">Sheet sizes</label>
+                    <div style={{ display:"flex", gap:3 }}>
+                      {Object.keys(PRESET_SHEETS).filter(k=>k!=="custom").map(sk => (
+                        <button key={sk}
+                          className={`pc-btn pc-btn-xs ${newPaperSheets[sk] ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                          style={{ fontSize:10, padding:"2px 6px" }}
+                          onClick={()=>setNewPaperSheets(prev=>({...prev,[sk]:!prev[sk]}))}
+                        >{sk}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="pc-btn pc-btn-primary pc-btn-xs" disabled={!newPaperKey || !newPaperLabel || paperTypes.some(p=>p.key===newPaperKey)}
+                    onClick={()=>{
+                      const sheets = Object.keys(newPaperSheets).filter(k=>newPaperSheets[k]);
+                      if (!sheets.length) { alert("Select at least one sheet size."); return; }
+                      const newPt = { key:newPaperKey, label:newPaperLabel };
+                      setPaperTypes(prev => [...prev, newPt]);
+                      setSheetKeysForPaper(prev => ({...prev, [newPaperKey]:sheets}));
+                      setPricing(prev => {
+                        const n = {...prev}; n[newPaperKey] = {};
+                        sheets.forEach(sk => { n[newPaperKey][sk] = { baseCostColor:0, baseCostBW:0, priceColor:0, priceBW:0 }; });
+                        return n;
+                      });
+                      setMarkupPerPaper(prev => ({...prev, [newPaperKey]:0}));
+                      setNewPaperLabel(""); setNewPaperKey(""); setNewPaperSheets({});
+                    }}
+                  >+ Add Paper Type</button>
+                </div>
+              </div>
+
               {/* LF Pricing */}
               <div style={{ marginBottom:20 }}>
                 <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Large Format Pricing (per sq ft)</div>
@@ -1437,6 +1538,62 @@ try {
                     <label className="field-label">Coro Sign $</label>
                     <input className="pc-input" style={{ width:90 }} type="number" step="0.5" value={lfAddonPricing.coroSign} onChange={e=>setLfAddonPricing(p=>({...p,coroSign:+e.target.value||0}))} />
                   </div>
+                </div>
+              </div>
+              <hr className="pc-divider" />
+
+              {/* Manage LF Paper Types */}
+              <div style={{ marginBottom:20 }}>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Manage Large Format Media Types</div>
+                
+                {/* Existing LF paper types with delete */}
+                <div style={{ marginBottom:12 }}>
+                  {lfPaperTypes.map(pt => (
+                    <div key={pt.key} style={{
+                      display:"flex", alignItems:"center", gap:8, padding:"6px 10px",
+                      marginBottom:4, background:"var(--surface-2)", borderRadius:"var(--radius-sm)",
+                      border:"1px solid var(--border)", fontSize:12,
+                    }}>
+                      <div style={{ flex:1 }}>
+                        <strong>{pt.label}</strong>
+                        <span style={{ color:"var(--text-muted)", marginLeft:8 }}>({pt.key})</span>
+                      </div>
+                      <button
+                        className="pc-btn pc-btn-xs"
+                        style={{ background:"#fee2e2", color:"#dc2626", border:"none" }}
+                        onClick={()=>{
+                          if (!window.confirm(`Delete "${pt.label}"? This will remove all pricing for this media type.`)) return;
+                          setLfPaperTypes(prev => prev.filter(p=>p.key!==pt.key));
+                          setLfPricing(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                          setLfMarkupPerPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                          if (lfPaperKey===pt.key) setLfPaperKey(lfPaperTypes[0]?.key||"");
+                        }}
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+                
+                {/* Add new LF paper type */}
+                <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap", padding:"10px 12px", background:"var(--surface-3)", borderRadius:"var(--radius-sm)" }}>
+                  <div>
+                    <label className="field-label">Label</label>
+                    <input className="admin-input" type="text" placeholder="e.g. Matte Vinyl" value={newLfPaperLabel}
+                      onChange={e=>{ setNewLfPaperLabel(e.target.value); setNewLfPaperKey(e.target.value.toLowerCase().replace(/[^a-z0-9]/g,"_").replace(/_+/g,"_")); }} style={{ width:200 }} />
+                  </div>
+                  <div>
+                    <label className="field-label">Key</label>
+                    <input className="admin-input" type="text" placeholder="e.g. matte_vinyl" value={newLfPaperKey}
+                      onChange={e=>setNewLfPaperKey(e.target.value.replace(/[^a-z0-9_]/g,""))} style={{ width:160 }} />
+                  </div>
+                  <button className="pc-btn pc-btn-primary pc-btn-xs" disabled={!newLfPaperKey || !newLfPaperLabel || lfPaperTypes.some(p=>p.key===newLfPaperKey)}
+                    onClick={()=>{
+                      const newPt = { key:newLfPaperKey, label:newLfPaperLabel };
+                      setLfPaperTypes(prev => [...prev, newPt]);
+                      setLfPricing(prev => ({...prev, [newLfPaperKey]:{ baseCostColor:0, baseCostBW:0, priceColor:0, priceBW:0 }}));
+                      setLfMarkupPerPaper(prev => ({...prev, [newLfPaperKey]:0}));
+                      setNewLfPaperLabel(""); setNewLfPaperKey("");
+                    }}
+                  >+ Add Media Type</button>
                 </div>
               </div>
               <hr className="pc-divider" />
