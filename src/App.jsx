@@ -594,17 +594,34 @@ function PriceCalculatorApp() {
     el.dispatchEvent(new Event("input",{bubbles:true})); el.dispatchEvent(new Event("change",{bubbles:true}));
   };
 
-  // ── Load pricing.json ──
+// ── Load pricing.json ──
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch("/pricing.json", { cache:"no-store" });
         if (!res.ok) return;
         const json = await res.json();
-        if (json.sheetPricing)     { setPricing(json.sheetPricing);       localStorage.setItem(LS.PRICING, JSON.stringify(json.sheetPricing)); }
-        if (json.lfPricing)        { setLfPricing(json.lfPricing);        localStorage.setItem(LS.LF_PRICING, JSON.stringify(json.lfPricing)); }
-        if (json.quantityDiscounts){ setQuantityDiscounts(json.quantityDiscounts); }
-        if (json.lfQuantityDiscounts){ setLfQuantityDiscounts(json.lfQuantityDiscounts); }
+        if (json.paperTypes)       { setPaperTypes(json.paperTypes);       localStorage.setItem(LS.PAPER_TYPES, JSON.stringify(json.paperTypes)); }
+        if (json.sheetKeysForPaper){ setSheetKeysForPaper(json.sheetKeysForPaper); localStorage.setItem(LS.SHEET_KEYS, JSON.stringify(json.sheetKeysForPaper)); }
+        if (json.lfPaperTypes)     { setLfPaperTypes(json.lfPaperTypes);   localStorage.setItem(LS.LF_PAPER_TYPES, JSON.stringify(json.lfPaperTypes)); }
+        if (json.sheetPricing)     { setPricing(json.sheetPricing);        localStorage.setItem(LS.PRICING, JSON.stringify(json.sheetPricing)); }
+        if (json.lfPricing)        { setLfPricing(json.lfPricing);         localStorage.setItem(LS.LF_PRICING, JSON.stringify(json.lfPricing)); }
+        // Support both old and new field names for quantity discounts
+        const sheetDisc = json.sheetQtyDiscounts || json.quantityDiscounts;
+        if (sheetDisc) setQuantityDiscounts(sheetDisc);
+        const lfDisc = json.lfQtyDiscounts || json.lfQuantityDiscounts;
+        if (lfDisc) setLfQuantityDiscounts(lfDisc);
+        // Load markups (values may be strings in JSON, coerce to numbers)
+        if (json.sheetMarkupPerPaper) {
+          const m = {};
+          Object.entries(json.sheetMarkupPerPaper).forEach(([k,v]) => { m[k] = Number(v) || 0; });
+          setMarkupPerPaper(m);
+        }
+        if (json.lfMarkupPerPaper) {
+          const m = {};
+          Object.entries(json.lfMarkupPerPaper).forEach(([k,v]) => { m[k] = Number(v) || 0; });
+          setLfMarkupPerPaper(m);
+        }
         if (typeof json.backSideFactor==="number") setBackSideFactor(json.backSideFactor);
         if (json.lfAddonPricing)   setLfAddonPricing(json.lfAddonPricing);
         if (json.blueprintPricing) { setBpPricing(json.blueprintPricing); localStorage.setItem(LS.BP_PRICING, JSON.stringify(json.blueprintPricing)); }
@@ -1097,7 +1114,7 @@ const handleFrontFiles = async (files) => {
   };
 
   const exportPricingJson = () => {
-    const json = { sheetPricing:pricing, lfPricing, quantityDiscounts, lfQuantityDiscounts, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, paperTypes, sheetKeysForPaper, lfPaperTypes, previewMargin, previewSpacing };
+    const json = { paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing:pricing, lfPricing, sheetQtyDiscounts:quantityDiscounts, lfQtyDiscounts:lfQuantityDiscounts, sheetMarkupPerPaper:markupPerPaper, lfMarkupPerPaper, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, previewMargin, previewSpacing };
     const blob = new Blob([JSON.stringify(json,null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href=url; a.download="pricing.json";
@@ -1108,12 +1125,25 @@ const handleFrontFiles = async (files) => {
   const importPricingJson = (file) => {
     const r = new FileReader();
     r.onload = (e) => {
-      try {
+try {
         const json = JSON.parse(e.target.result);
+        if (json.paperTypes)       { setPaperTypes(json.paperTypes);       localStorage.setItem(LS.PAPER_TYPES,JSON.stringify(json.paperTypes)); }
+        if (json.sheetKeysForPaper){ setSheetKeysForPaper(json.sheetKeysForPaper); localStorage.setItem(LS.SHEET_KEYS,JSON.stringify(json.sheetKeysForPaper)); }
+        if (json.lfPaperTypes)     { setLfPaperTypes(json.lfPaperTypes);   localStorage.setItem(LS.LF_PAPER_TYPES,JSON.stringify(json.lfPaperTypes)); }
         if (json.sheetPricing) { setPricing(json.sheetPricing); localStorage.setItem(LS.PRICING,JSON.stringify(json.sheetPricing)); }
         if (json.lfPricing)    { setLfPricing(json.lfPricing);  localStorage.setItem(LS.LF_PRICING,JSON.stringify(json.lfPricing)); }
-        if (json.quantityDiscounts)   setQuantityDiscounts(json.quantityDiscounts);
-        if (json.lfQuantityDiscounts) setLfQuantityDiscounts(json.lfQuantityDiscounts);
+        const sheetDisc = json.sheetQtyDiscounts || json.quantityDiscounts;
+        if (sheetDisc) setQuantityDiscounts(sheetDisc);
+        const lfDisc = json.lfQtyDiscounts || json.lfQuantityDiscounts;
+        if (lfDisc) setLfQuantityDiscounts(lfDisc);
+        if (json.sheetMarkupPerPaper) {
+          const m = {}; Object.entries(json.sheetMarkupPerPaper).forEach(([k,v]) => { m[k] = Number(v)||0; });
+          setMarkupPerPaper(m);
+        }
+        if (json.lfMarkupPerPaper) {
+          const m = {}; Object.entries(json.lfMarkupPerPaper).forEach(([k,v]) => { m[k] = Number(v)||0; });
+          setLfMarkupPerPaper(m);
+        }
         if (typeof json.backSideFactor==="number") setBackSideFactor(json.backSideFactor);
         if (json.lfAddonPricing) setLfAddonPricing(json.lfAddonPricing);
         if (json.blueprintPricing){ setBpPricing(json.blueprintPricing); localStorage.setItem(LS.BP_PRICING,JSON.stringify(json.blueprintPricing)); }
@@ -1317,20 +1347,30 @@ const handleFrontFiles = async (files) => {
                   <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                     <thead>
                       <tr style={{ background:"var(--surface-3)" }}>
-                        <th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Paper</th>
+<th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Paper</th>
                         <th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Sheet</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Color $</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>B&W $</th>
+                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Cost Color</th>
+                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Cost B&W</th>
+                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Sell Color</th>
+                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Sell B&W</th>
                         <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Markup %</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paperTypes.map(pt => (sheetKeysForPaper[pt.key]||[]).map(sk => {
+{paperTypes.map(pt => (sheetKeysForPaper[pt.key]||[]).map(sk => {
                         const entry = normalizeEntry((pricing[pt.key]||{})[sk]||{});
                         return (
                           <tr key={`${pt.key}-${sk}`} style={{ borderTop:"1px solid var(--border)" }}>
                             <td style={{ padding:"5px 10px", color:"var(--text-muted)", fontSize:11 }}>{pt.label}</td>
                             <td style={{ padding:"5px 10px", fontWeight:500 }}>{sk}</td>
+                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
+                              <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.baseCostColor}
+                                onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),baseCostColor:v}; return n; }); }} />
+                            </td>
+                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
+                              <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.baseCostBW}
+                                onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),baseCostBW:v}; return n; }); }} />
+                            </td>
                             <td style={{ padding:"5px 10px", textAlign:"right" }}>
                               <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.priceColor}
                                 onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),priceColor:v}; return n; }); }} />
