@@ -500,7 +500,9 @@ export default function BookletMaker({ CardHeader }) {
   const sheetW = Math.max(preset.sheetW, preset.sheetH);
   const sheetH = Math.min(preset.sheetW, preset.sheetH);
   const withinSaddleLimit = numSheets <= printer.maxSaddleSheets;
-  const withinPaperSize = sheetW <= printer.maxW && sheetH <= printer.maxH;
+  // Ricoh: maxW = max width (short edge), maxH = max length (feed direction)
+  // So compare: stock short edge ≤ maxW, stock long edge ≤ maxH
+  const withinPaperSize = sheetH <= printer.maxW && sheetW <= printer.maxH;
   const blankPages = paddedTotal - totalPages;
   
   // ── File Loading ──
@@ -725,7 +727,7 @@ export default function BookletMaker({ CardHeader }) {
               <strong>{printer.name}</strong> — Stock: {sheetW}×{sheetH}" landscape
               {printer.saddleStitch && " · Saddle-stitch"}{printer.duplex && " · Auto-duplex"}
               {!withinPaperSize && (
-                <span style={{ color: "#dc2626", fontWeight: 600 }}> ⚠ Exceeds max ({printer.maxW}×{printer.maxH}")</span>
+                <span style={{ color: "#dc2626", fontWeight: 600 }}> ⚠ Exceeds max sheet size ({printer.maxW}" wide × {printer.maxH}" long)</span>
               )}
             </div>
           </div>
