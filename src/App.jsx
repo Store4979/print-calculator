@@ -275,8 +275,17 @@ const addOrderSheetPage = (doc, { jobType, details, totals, files=[] }) => {
   const ml=0.5, mt=0.5, cw=7.5;
   let y = mt;
   const line = (extra=0) => { y += 0.02; doc.setDrawColor(220,220,220); doc.line(ml, y, ml+cw, y); y += 0.02+extra; };
-  if (UPS_LOGO_PDF_DATA_URL) {
-    try { doc.addImage(UPS_LOGO_PDF_DATA_URL, "PNG", ml, y, 1.2, 0.5); } catch {}
+if (UPS_LOGO_PDF_DATA_URL) {
+    try {
+      // Maintain aspect ratio: fit within 1.2" wide × 0.5" tall box
+      const logoMaxW = 0.8, logoMaxH = 0.5;
+      const img = new Image();
+      img.src = UPS_LOGO_PDF_DATA_URL;
+      const ratio = img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 1.6;
+      let logoW = logoMaxW, logoH = logoW / ratio;
+      if (logoH > logoMaxH) { logoH = logoMaxH; logoW = logoH * ratio; }
+      doc.addImage(UPS_LOGO_PDF_DATA_URL, "PNG", ml, y, logoW, logoH);
+    } catch {}
   }
   doc.setFontSize(9); doc.setTextColor(80,80,80);
   doc.text(UPS_STORE.name, ml+1.4, y+0.15);
@@ -306,11 +315,25 @@ const addOrderSheetPage = (doc, { jobType, details, totals, files=[] }) => {
     doc.text(label, ml, y); doc.text(value, ml+cw, y, { align:"right" });
     y += isTotal ? 0.22 : 0.18;
   });
-  if (files.length) {
+if (files.length) {
     y += 0.06; line(0.1);
     doc.setFontSize(9); doc.setFont(undefined,"bold"); doc.text("Files attached:", ml, y); y += 0.18;
     doc.setFont(undefined,"normal"); doc.setTextColor(60,60,60);
     files.forEach((f) => { doc.text(`• ${f}`, ml+0.1, y); y += 0.16; });
+  }
+
+  // SKU / Job ID barcode-style identifier
+  if (details.find(d => d.label === "Paper:")) {
+    y += 0.15;
+    const skuVal = details.find(d => d.label === "SKU:")?.value || "";
+    if (skuVal) {
+      doc.setFontSize(8); doc.setFont("Courier", "bold"); doc.setTextColor(0,0,0);
+      doc.text(`SKU: ${skuVal}`, ml, y);
+      y += 0.14;
+      // Simple barcode-style representation using Code39-like pattern
+      doc.setFontSize(24); doc.setFont("Courier", "bold");
+      doc.text(`*${skuVal}*`, ml, y);
+    }
   }
 };
 
@@ -926,15 +949,17 @@ const handleFrontFiles = async (files) => {
 
   // ─── PDF DOWNLOADS ──────────────────────────────────────
 
-  const downloadSheetPDF = async () => {
+const downloadSheetPDF = async () => {
     if (!frontRef.current) { alert("Upload a front image first."); return; }
     await ensureLogoPdfDataUrl();
-    const orderDoc = new (getJsPDF())({ orientation, unit:"in", format:"letter" });
+    // Order sheet is always portrait letter
+    const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
     const isCustom = sheetKey==="custom";
     const [sw,sh] = isCustom ? [customSize.w,customSize.h] : (PRESET_SHEETS[sheetKey]||[8.5,11]);
     const details = [
       { label:"Paper:", value:currentPaper.label },
+      { label:"SKU:", value:paperKey },
       { label:"Sheet size:", value:`${sw}×${sh} in${isCustom?" (custom)":""}` },
       { label:"Orientation:", value:orientation },
       { label:"Print size:", value:`${prints.width}×${prints.height} in` },
@@ -955,25 +980,27 @@ const handleFrontFiles = async (files) => {
     ];
     const files = frontFiles.length ? frontFiles.map((f,i)=>`${i+1}. ${f.name}  —  qty: ${f.qty}`) : (frontImage ? [frontImage.name||"front"] : []);
     addOrderSheetPage(orderDoc, { jobType:"Paper Printing", details, totals, files });
+
+    // Add ONE preview page showing the layout (not duplicated for every sheet)
     const pdfW=orientedWIn, pdfH=orientedHIn;
     const isLandscape = pdfW>pdfH;
     const exportInput = frontFiles.length ? frontFiles : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
-    const cap = Math.max(1, printsPerSheet);
-    const exportPages = Math.max(1, Math.ceil((exportInput.reduce((s,f)=>s+(Number(f.qty)||0),0)||1) / cap));
-    let backData = null;
+
+    // Front preview — just page 0 (one sheet showing the grid layout)
+    const c = document.createElement("canvas");
+    await drawSheet(c, exportInput, frontRotation, 0, null);
+    orderDoc.addPage([pdfW,pdfH], isLandscape?"landscape":"portrait");
+    orderDoc.addImage(c.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
+
+    // Back preview (if double-sided)
     if (showBack && backImage) {
       const bc = document.createElement("canvas");
       await drawSheet(bc, backImage, backRotation, 0, null);
-      backData = bc.toDataURL("image/png",1.0);
-    }
-    for (let p=0; p<exportPages; p++) {
-      const c = document.createElement("canvas");
-      await drawSheet(c, exportInput, frontRotation, p, null);
       orderDoc.addPage([pdfW,pdfH], isLandscape?"landscape":"portrait");
-      orderDoc.addImage(c.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
-      if (backData) { orderDoc.addPage([pdfW,pdfH],isLandscape?"landscape":"portrait"); orderDoc.addImage(backData,"PNG",0,0,pdfW,pdfH); }
+      orderDoc.addImage(bc.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
     }
-    savePdf(orderDoc, "print_preview_with_order_sheet.pdf");
+
+    savePdf(orderDoc, "print_order_sheet.pdf");
   };
 
   const downloadLfPDF = () => {
