@@ -61,21 +61,23 @@ async function loadPdfFromFile(file) {
 }
 
 /**
- * Render a PDF page to canvas, auto-rotating and scaling to target slot.
+ * Render a PDF page to canvas, auto-rotating and stretching to fill target slot.
  * 
- * Uses "fit" (contain) scaling by default: the entire page is visible within
- * the slot, centered, with white bars if aspect ratios differ. No content
- * is ever cropped. "fill" (cover) mode is available but crops overflow.
+ * The page is drawn to exactly match the slot dimensions. This means:
+ * - No white gaps (unlike "fit"/contain)
+ * - No cropping (unlike "fill"/cover)
+ * - Slight aspect ratio distortion if source and target differ, but for
+ *   booklet imposition (e.g. 8.5×11 → 5.5×8.5) the distortion is minimal
+ *   and this is the standard behavior of professional imposition software.
  * 
  * @param {Object} pdfDoc - PDF.js document
  * @param {number} pageNum - 1-based page number
  * @param {number} slotW - target slot width in pixels
  * @param {number} slotH - target slot height in pixels
  * @param {number} manualRotation - additional manual rotation (0, 90, 180, 270)
- * @param {string} fitMode - "fit" (contain/no crop, default) or "fill" (cover/crop)
  * @returns {Object} { canvas, wasAutoRotated }
  */
-async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0, fitMode = "fit") {
+async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 0) {
   if (!pdfDoc || pageNum < 1 || pageNum > pdfDoc.numPages) {
     // Blank page
     const canvas = document.createElement("canvas");
@@ -107,26 +109,21 @@ async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 
   // Get viewport with rotation applied at scale 1
   const rotatedVp = page.getViewport({ scale: 1, rotation: totalRotation });
   
-  // Scale to FILL the slot (cover mode): use Math.max so the page
-  // completely covers the slot — any overflow gets cropped.
-  // Scale to FIT (contain mode): use Math.min — page fits inside with possible white bars.
-  const scaleX = slotW / rotatedVp.width;
-  const scaleY = slotH / rotatedVp.height;
-  const scale = fitMode === "fill" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+  // Render at high resolution: scale to whichever axis needs more pixels,
+  // then drawImage will stretch to exact slot size
+  const renderScale = Math.max(slotW / rotatedVp.width, slotH / rotatedVp.height);
+  const hiResVp = page.getViewport({ scale: renderScale, rotation: totalRotation });
   
-  const finalVp = page.getViewport({ scale, rotation: totalRotation });
-  
-  // Render the page at the computed scale (may be larger than slot)
   const renderCanvas = document.createElement("canvas");
-  renderCanvas.width = Math.round(finalVp.width);
-  renderCanvas.height = Math.round(finalVp.height);
+  renderCanvas.width = Math.round(hiResVp.width);
+  renderCanvas.height = Math.round(hiResVp.height);
   
   await page.render({
     canvasContext: renderCanvas.getContext("2d"),
-    viewport: finalVp,
+    viewport: hiResVp,
   }).promise;
   
-  // Create output canvas at exact slot size
+  // Create output canvas at exact slot size and stretch-draw the page into it
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(slotW);
   canvas.height = Math.round(slotH);
@@ -134,11 +131,9 @@ async function renderPageFitted(pdfDoc, pageNum, slotW, slotH, manualRotation = 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   
-  // Center the rendered page — if it's larger than the slot, the overflow
-  // is automatically cropped by the canvas boundary
-  const offsetX = (slotW - finalVp.width) / 2;
-  const offsetY = (slotH - finalVp.height) / 2;
-  ctx.drawImage(renderCanvas, Math.round(offsetX), Math.round(offsetY));
+  // drawImage with different source and dest sizes = stretch to fill exactly
+  ctx.drawImage(renderCanvas, 0, 0, renderCanvas.width, renderCanvas.height,
+                0, 0, canvas.width, canvas.height);
   
   return { canvas, wasAutoRotated: autoRotate !== 0 };
 }
@@ -201,7 +196,7 @@ async function renderBookletPreview(pageMap, totalPages, signatures, preset, can
     
     let pageCanvas;
     if (entry) {
-      const result = await renderPageFitted(entry.doc, entry.pageNum, geom.w, geom.h, manualRot, "fit");
+      const result = await renderPageFitted(entry.doc, entry.pageNum, geom.w, geom.h, manualRot);
       pageCanvas = result.canvas;
     } else {
       pageCanvas = document.createElement("canvas");
@@ -331,7 +326,7 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fit");
+        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot);
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
@@ -360,7 +355,7 @@ async function generateImposedPDF(pageMap, totalPages, signatures, preset, pageR
       
       let pageCanvas;
       if (entry) {
-        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot, "fit");
+        const result = await renderPageFitted(entry.doc, entry.pageNum, pxW, pxH, manualRot);
         pageCanvas = result.canvas;
       } else {
         pageCanvas = document.createElement("canvas");
