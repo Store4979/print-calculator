@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import BookletMaker, { BookletIcon } from "./BookletMaker.jsx";
+import DataMerge, { DataMergeIcon } from "./DataMerge.jsx";
 
 // ─── CONSTANTS ──────────────────────────────────────────────
 
@@ -1923,14 +1924,40 @@ function PriceCalculatorApp() {
             PANEL: IMPOSE (BOOKLET MAKER)
         ════════════════════════════════════════ */}
         {activeTab==="impose" && viewMode==="tool" && (
-          <BookletMaker CardHeader={CardHeader} />
-        )}
+  <ImposePanel CardHeader={CardHeader} />
+)}
 
       </div>{/* /content-wrap */}
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
 
     </div>
+  );
+}
+
+// ─── IMPOSE PANEL (sub-tool selector) ──────────────────────
+function ImposePanel({ CardHeader }) {
+  const [imposeTool, setImposeTool] = useState("booklet");
+  return (
+    <>
+      <div className="pc-card" style={{ marginBottom: 16 }}>
+        <div className="pc-card-body" style={{ padding: "12px 20px" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Tool:</span>
+            <button
+              className={`pc-btn pc-btn-sm ${imposeTool === "booklet" ? "pc-btn-primary" : "pc-btn-secondary"}`}
+              onClick={() => setImposeTool("booklet")}
+            >📖 Booklet Maker</button>
+            <button
+              className={`pc-btn pc-btn-sm ${imposeTool === "datamerge" ? "pc-btn-primary" : "pc-btn-secondary"}`}
+              onClick={() => setImposeTool("datamerge")}
+            >🔢 Data Merge</button>
+          </div>
+        </div>
+      </div>
+      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} />}
+      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} />}
+    </>
   );
 }
 
