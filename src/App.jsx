@@ -538,7 +538,7 @@ function PriceCalculatorApp() {
   const [quantityDiscounts, setQuantityDiscounts]   = useState([{ minSheets:0, discountPercent:0 }]);
   const [lfQuantityDiscounts, setLfQuantityDiscounts] = useState([{ minSqFt:0, discountPercent:0 }]);
   const [backSideFactor, setBackSideFactor] = useState(0.5);
-  const [lfAddonPricing, setLfAddonPricing] = useState({ grommets:8, foamCore:12, coroSign:15 });
+  const [lfAddonPricing, setLfAddonPricing] = useState({ grommetEach:1.50, foamCore:12 });
   const [bpPricing, setBpPricing]     = useState(buildInitialBlueprintPricing);
 
   useEffect(() => { try { localStorage.setItem(LS.PRICING, JSON.stringify(pricing)); } catch {} }, [pricing]);
@@ -552,9 +552,9 @@ function PriceCalculatorApp() {
   const [lfWidth, setLfWidth]   = useState(24);
   const [lfHeight, setLfHeight] = useState(36);
   const [lfColorMode, setLfColorMode] = useState("color");
-  const [lfGrommets, setLfGrommets]   = useState(false);
-  const [lfFoamCore, setLfFoamCore]   = useState(false);
-  const [lfCoroSign, setLfCoroSign]   = useState(false);
+  const [lfGrommets, setLfGrommets]       = useState(false);
+  const [lfGrommetCount, setLfGrommetCount] = useState(4);
+  const [lfFoamCore, setLfFoamCore]       = useState(false);
   const [lfImage, setLfImage]   = useState(null);
   const lfRef      = useRef(null);
   const lfInputRef = useRef(null);
@@ -690,7 +690,7 @@ function PriceCalculatorApp() {
   const lfAreaSqFt = (lfWidth * lfHeight) / 144;
   const lfSelectedPricing = normalizeEntry(lfPricing[lfPaperKey]||{});
   const lfBase = lfColorMode==="color" ? lfSelectedPricing.priceColor*lfAreaSqFt : lfSelectedPricing.priceBW*lfAreaSqFt;
-  const lfAddonsTotal = (lfGrommets ? (lfAddonPricing.grommets||0) : 0) + (lfFoamCore ? (lfAddonPricing.foamCore||0) : 0) + (lfCoroSign ? (lfAddonPricing.coroSign||0) : 0);
+  const lfAddonsTotal = (lfGrommets ? (lfAddonPricing.grommetEach||0) * (lfGrommetCount||0) : 0) + (lfFoamCore ? (lfAddonPricing.foamCore||0) : 0);
   const getLfDiscountFactor = (sqft) => { let b=0; lfQuantityDiscounts.forEach(t => { if (sqft>=(t.minSqFt||0)) b=Math.max(b,Number(t.discountPercent)||0); }); return 1-b/100; };
   const lfDiscountFactor = getLfDiscountFactor(lfAreaSqFt);
   const lfTotalWithDiscount = (lfBase + lfAddonsTotal) * lfDiscountFactor;
@@ -1012,7 +1012,7 @@ const downloadSheetPDF = async () => {
       { label:"Size:", value:`${lfWidth}×${lfHeight} in` },
       { label:"Orientation:", value:lfWidth>=lfHeight?"landscape":"portrait" },
       { label:"Color:", value:lfColorMode==="bw"?"B/W":"Color" },
-      { label:"Add-ons:", value:[lfGrommets?"Grommets":null,lfFoamCore?"Foam Core":null,lfCoroSign?"Coro Sign":null].filter(Boolean).join(", ")||"None" },
+      { label:"Add-ons:", value:[lfGrommets?`Grommets ×${lfGrommetCount} ($${((lfAddonPricing.grommetEach||0)*lfGrommetCount).toFixed(2)})`:null,lfFoamCore?`Foam Core ($${(lfAddonPricing.foamCore||0).toFixed(2)})`:null].filter(Boolean).join(", ")||"None" },
     ];
     const totals = [{ label:"Estimated total:", value:`$${lfTotalWithDiscount.toFixed(2)}` }];
     addOrderSheetPage(orderDoc, { jobType:"Large Format", details, totals, files: lfImage?[lfImage.name||"artwork"]:[] });
@@ -1063,7 +1063,7 @@ const downloadSheetPDF = async () => {
           paperItems.push({ name:"Paper Printing", sku:paperKey, specs:`${sheetKey} • ${paperKey} • ${frontColorMode.toUpperCase()}${showBack?" / "+backColorMode.toUpperCase():""}`, qty:sheetsNeeded, unitPrice:unit, total:totalPrice });
         }
         if (jobType==="large-format") {
-          const addons = [lfGrommets?"Grommets":null,lfFoamCore?"Foam Core":null,lfCoroSign?"Coro Sign":null].filter(Boolean);
+          const addons = [lfGrommets?`Grommets ×${lfGrommetCount}`:null,lfFoamCore?"Foam Core":null].filter(Boolean);
           largeFormatItems.push({ name:"Large Format", sku:lfPaperKey, specs:`${lfWidth}"×${lfHeight}" • ${lfPaperKey} • ${lfColorMode.toUpperCase()}${addons.length?" • "+addons.join(", "):""}`, qty:1, unitPrice:lfTotalWithDiscount, total:lfTotalWithDiscount });
         }
         if (jobType==="blueprints") {
@@ -1080,7 +1080,7 @@ const downloadSheetPDF = async () => {
         deepLinkUrl: `${window.location.origin}${window.location.pathname}?job=${encodeURIComponent(orderId)}`,
         order,
         jobType,
-        details: { jobType, user:{ name, email, phone }, sheet:{ sheetKey,orientation,prints,paperKey,frontColorMode,backColorMode,showBack,sheetsNeeded,totalPrice:totalPrice.toFixed(2) }, largeFormat:{ width:lfWidth,height:lfHeight,paperKey:lfPaperKey,colorMode:lfColorMode,addons:{grommets:lfGrommets,foamCore:lfFoamCore,coroSign:lfCoroSign},lfTotal:lfTotalWithDiscount.toFixed(2) }, blueprints:{ size:bpSizeKey,width:bpWidth,height:bpHeight,qty:bpQty,paperKey:"plain_20lb",colorMode:"bw",psf:bpPsf.toFixed(4),areaPerSheetSqFt:bpAreaPerSheetSqFt.toFixed(3),totalSqFt:bpTotalSqFt.toFixed(3),total:bpTotal.toFixed(2) } },
+        details: { jobType, user:{ name, email, phone }, sheet:{ sheetKey,orientation,prints,paperKey,frontColorMode,backColorMode,showBack,sheetsNeeded,totalPrice:totalPrice.toFixed(2) }, largeFormat:{ width:lfWidth,height:lfHeight,paperKey:lfPaperKey,colorMode:lfColorMode,addons:{grommets:lfGrommets,grommetCount:lfGrommetCount,foamCore:lfFoamCore},lfTotal:lfTotalWithDiscount.toFixed(2) }, blueprints:{ size:bpSizeKey,width:bpWidth,height:bpHeight,qty:bpQty,paperKey:"plain_20lb",colorMode:"bw",psf:bpPsf.toFixed(4),areaPerSheetSqFt:bpAreaPerSheetSqFt.toFixed(3),totalSqFt:bpTotalSqFt.toFixed(3),total:bpTotal.toFixed(2) } },
         jobPdfBase64, orderSheetPdfBase64,
       };
       const resp = await fetch("/.netlify/functions/send-print-job", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
@@ -1554,16 +1554,12 @@ try {
                 </div>
                 <div style={{ display:"flex", gap:10, marginTop:12, flexWrap:"wrap" }}>
                   <div>
-                    <label className="field-label">Add-on: Grommets $</label>
-                    <input className="pc-input" style={{ width:90 }} type="number" step="0.5" value={lfAddonPricing.grommets} onChange={e=>setLfAddonPricing(p=>({...p,grommets:+e.target.value||0}))} />
+                    <label className="field-label">Grommet (per each) $</label>
+                    <input className="pc-input" style={{ width:90 }} type="number" step="0.25" value={lfAddonPricing.grommetEach||0} onChange={e=>setLfAddonPricing(p=>({...p,grommetEach:+e.target.value||0}))} />
                   </div>
                   <div>
-                    <label className="field-label">Foam Core $</label>
+                    <label className="field-label">Foam Core (flat) $</label>
                     <input className="pc-input" style={{ width:90 }} type="number" step="0.5" value={lfAddonPricing.foamCore} onChange={e=>setLfAddonPricing(p=>({...p,foamCore:+e.target.value||0}))} />
-                  </div>
-                  <div>
-                    <label className="field-label">Coro Sign $</label>
-                    <input className="pc-input" style={{ width:90 }} type="number" step="0.5" value={lfAddonPricing.coroSign} onChange={e=>setLfAddonPricing(p=>({...p,coroSign:+e.target.value||0}))} />
                   </div>
                 </div>
               </div>
@@ -2043,10 +2039,19 @@ try {
                 <hr className="pc-divider" />
                 <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10 }}>Add-ons</div>
                 <div className="addon-grid">
-                  <AddonCard emoji="🔩" name="Grommets" price={`+$${lfAddonPricing.grommets}`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)} />
+                  <AddonCard emoji="🔩" name="Grommets" price={`$${(lfAddonPricing.grommetEach||0).toFixed(2)}/ea`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)} />
                   <AddonCard emoji="🧊" name="Foam Core" price={`+$${lfAddonPricing.foamCore}`} selected={lfFoamCore} onToggle={()=>setLfFoamCore(v=>!v)} />
-                  <AddonCard emoji="🪟" name="Coro Sign" price={`+$${lfAddonPricing.coroSign}`} selected={lfCoroSign} onToggle={()=>setLfCoroSign(v=>!v)} />
                 </div>
+                {lfGrommets && (
+                  <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:10, fontSize:12 }}>
+                    <label className="field-label" style={{ marginBottom:0 }}>Number of grommets:</label>
+                    <input className="pc-input" type="number" min="1" max="50" value={lfGrommetCount} style={{ width:70, height:34 }}
+                      onChange={e=>setLfGrommetCount(Math.max(1,+e.target.value||1))} />
+                    <span style={{ color:"var(--text-muted)" }}>
+                      = <strong style={{ color:"var(--text)" }}>${((lfAddonPricing.grommetEach||0) * lfGrommetCount).toFixed(2)}</strong>
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2083,7 +2088,7 @@ try {
               metrics={[
                 { label:"Dimensions",      value:`${lfWidth} × ${lfHeight} in` },
                 { label:"Area",            value:`${lfAreaSqFt.toFixed(2)} sq ft` },
-                { label:"Add-ons",         value:[lfGrommets&&"Grom.", lfFoamCore&&"Foam", lfCoroSign&&"Coro"].filter(Boolean).join(", ")||"None" },
+                { label:"Add-ons",         value:[lfGrommets&&`Grom. ×${lfGrommetCount}`, lfFoamCore&&"Foam Core"].filter(Boolean).join(", ")||"None" },
                 { label:"Estimated total", value:`$${lfTotalWithDiscount.toFixed(2)}`, big:true },
               ]}
               onDownload={downloadLfPDF}
