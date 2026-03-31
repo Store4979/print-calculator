@@ -486,9 +486,8 @@
   },
   "backSideFactor": 0.5,
   "lfAddonPricing": {
-    "grommets": 0,
+    "grommetEach": 1.00,
     "foamCore": 0,
-    "coroSign": 0
   },
   "previewMargin": 0.1,
   "previewSpacing": 0.01
