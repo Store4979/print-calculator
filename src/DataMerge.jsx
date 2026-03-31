@@ -407,7 +407,10 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove }) {
 
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
-export default function DataMerge({ CardHeader }) {
+export default function DataMerge({ CardHeader, pricingProps }) {
+  // Pricing props from parent
+  const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
+  
   // Template state
   const [templateFile, setTemplateFile] = useState(null);
   const [template, setTemplate] = useState(null); // { image, widthIn, heightIn, pxW, pxH, ... }
@@ -426,6 +429,11 @@ export default function DataMerge({ CardHeader }) {
   const [previewRecord, setPreviewRecord] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  
+  // Pricing state
+  const [selectedPaperKey, setSelectedPaperKey] = useState(() => paperTypes[0]?.key || "");
+  const [selectedSheetKey, setSelectedSheetKey] = useState("8.5x11");
+  const [colorMode, setColorMode] = useState("color");
 
   const previewCanvasRef = useRef(null);
   const templateInputRef = useRef(null);
@@ -445,10 +453,18 @@ export default function DataMerge({ CardHeader }) {
   });
   const selectedEntry = normalizeEntry((pricing[selectedPaperKey] || {})[selectedSheetKey] || {});
   const perSheetPrice = colorMode === "color" ? selectedEntry.priceColor : selectedEntry.priceBW;
-  const sheetsNeeded = totalRecords; // One record per page for data merge
+  const sheetsNeeded = totalRecords;
   const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(sheetsNeeded) : 1;
   const totalPrice = perSheetPrice * sheetsNeeded * discountFactor;
   const hasPricing = paperTypes.length > 0 && perSheetPrice > 0;
+  
+  // Auto-select first available sheet key when paper changes
+  useEffect(() => {
+    const keys = sheetKeysForPaper[selectedPaperKey] || [];
+    if (keys.length > 0 && !keys.includes(selectedSheetKey)) {
+      setSelectedSheetKey(keys[0]);
+    }
+  }, [selectedPaperKey]);
 
   // ── Template loading ──
   const handleTemplateFile = useCallback(async (file) => {
@@ -694,11 +710,88 @@ export default function DataMerge({ CardHeader }) {
         </div>
       </div>
 
-      {/* Step 2 — Data Source (CSV) */}
+      {/* Step 2 — Paper & Pricing */}
       {template && (
         <div className="pc-card">
           <CardHeader
             step="2"
+            stepClass="step-num-green"
+            title="Paper & Pricing"
+            hint="Select paper type, sheet size, and color mode"
+          />
+          <div className="pc-card-body">
+            {paperTypes.length > 0 ? (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="field-label">Paper Type</label>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {paperTypes.map(pt => (
+                      <button
+                        key={pt.key}
+                        className={`pc-btn pc-btn-sm ${selectedPaperKey === pt.key ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                        onClick={() => setSelectedPaperKey(pt.key)}
+                      >{pt.label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 12 }}>
+                  <label className="field-label">Sheet Size</label>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {availableSheetKeys.map(sk => (
+                      <button
+                        key={sk}
+                        className={`pc-btn pc-btn-sm ${selectedSheetKey === sk ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                        onClick={() => setSelectedSheetKey(sk)}
+                      >{sk}</button>
+                    ))}
+                  </div>
+                </div>
+                
+                <div style={{ marginBottom: 12 }}>
+                  <label className="field-label">Color Mode</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      className={`pc-btn pc-btn-sm ${colorMode === "color" ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                      onClick={() => setColorMode("color")}
+                    >Color</button>
+                    <button
+                      className={`pc-btn pc-btn-sm ${colorMode === "bw" ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                      onClick={() => setColorMode("bw")}
+                    >B&W</button>
+                  </div>
+                </div>
+                
+                {sheetsNeeded > 0 && (
+                  <div style={{
+                    display: "flex", gap: 16, flexWrap: "wrap",
+                    padding: "10px 14px", background: "var(--surface-3)",
+                    borderRadius: "var(--radius-sm)", fontSize: 12,
+                  }}>
+                    <div><span style={{ color: "var(--text-muted)" }}>Per sheet:</span> <strong>${perSheetPrice.toFixed(2)}</strong></div>
+                    <div><span style={{ color: "var(--text-muted)" }}>Records/sheets:</span> <strong>{sheetsNeeded}</strong></div>
+                    {discountFactor < 1 && (
+                      <div><span style={{ color: "var(--text-muted)" }}>Discount:</span> <strong style={{ color: "var(--green)" }}>{((1 - discountFactor) * 100).toFixed(1)}% off</strong></div>
+                    )}
+                    <div><span style={{ color: "var(--text-muted)" }}>Estimated total:</span> <strong style={{ color: "var(--green)", fontSize: 14 }}>${totalPrice.toFixed(2)}</strong></div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="callout callout-warn">
+                <span className="callout-icon" style={{ flexShrink: 0 }}>⚠</span>
+                <div>No paper types configured. Add pricing in the Admin panel under Sheet Pricing.</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Step 3 — Data Source (CSV) */}
+      {template && (
+        <div className="pc-card">
+          <CardHeader
+            step="3"
             stepClass="step-num-green"
             title="Data Source (Optional)"
             hint="Upload a CSV for mail merge, or skip for sequential numbering only"
@@ -771,11 +864,11 @@ export default function DataMerge({ CardHeader }) {
         </div>
       )}
 
-      {/* Step 3 — Place Fields */}
+      {/* Step 4 — Place Fields */}
       {template && (
         <div className="pc-card">
           <CardHeader
-            step="3"
+            step="4"
             stepClass="step-num-green"
             title="Place Variable Fields"
             hint="Add fields and click on the template preview to position them"
@@ -821,11 +914,11 @@ export default function DataMerge({ CardHeader }) {
         </div>
       )}
 
-      {/* Step 4 — Preview */}
+      {/* Step 5 — Preview */}
       {template && fields.length > 0 && (
         <div className="pc-card">
           <CardHeader
-            step="4"
+            step="5"
             stepClass="step-num-green"
             title="Preview"
             hint={`${totalRecords} record${totalRecords !== 1 ? "s" : ""} — click the template to reposition selected field`}
@@ -904,19 +997,21 @@ export default function DataMerge({ CardHeader }) {
                 <div className="price-metric-val">{totalRecords}</div>
               </div>
               <div className="price-metric">
-                <div className="price-metric-label">Fields</div>
-                <div className="price-metric-val">{fields.length}</div>
-              </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Template</div>
-                <div className="price-metric-val" style={{ fontSize: 12 }}>{template.widthIn.toFixed(1)}×{template.heightIn.toFixed(1)}"</div>
-              </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Source</div>
+                <div className="price-metric-label">Paper</div>
                 <div className="price-metric-val" style={{ fontSize: 12 }}>
-                  {hasDataField ? `CSV (${csvData.rows.length} rows)` : hasNumberField ? "Numbering" : "Static"}
+                  {paperTypes.find(p => p.key === selectedPaperKey)?.label || "—"} · {selectedSheetKey}
                 </div>
               </div>
+              <div className="price-metric">
+                <div className="price-metric-label">Per sheet</div>
+                <div className="price-metric-val" style={{ fontSize: 12 }}>${perSheetPrice.toFixed(2)}</div>
+              </div>
+              {hasPricing && (
+                <div className="price-metric">
+                  <div className="price-metric-label">Estimated total</div>
+                  <div className="price-metric-val" style={{ color: "var(--green)", fontSize: 20 }}>${totalPrice.toFixed(2)}</div>
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
