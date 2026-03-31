@@ -8,6 +8,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import BookletMaker, { BookletIcon } from "./BookletMaker.jsx";
 import DataMerge, { DataMergeIcon } from "./DataMerge.jsx";
+import { drawBarcode128 } from "./barcode128.js";
 
 // ─── CONSTANTS ──────────────────────────────────────────────
 
@@ -322,18 +323,16 @@ if (files.length) {
     files.forEach((f) => { doc.text(`• ${f}`, ml+0.1, y); y += 0.16; });
   }
 
-  // SKU / Job ID barcode-style identifier
-  if (details.find(d => d.label === "Paper:")) {
-    y += 0.15;
-    const skuVal = details.find(d => d.label === "SKU:")?.value || "";
-    if (skuVal) {
-      doc.setFontSize(8); doc.setFont("Courier", "bold"); doc.setTextColor(0,0,0);
-      doc.text(`SKU: ${skuVal}`, ml, y);
-      y += 0.14;
-      // Simple barcode-style representation using Code39-like pattern
-      doc.setFontSize(24); doc.setFont("Courier", "bold");
-      doc.text(`*${skuVal}*`, ml, y);
-    }
+// SKU barcode (scannable Code 128)
+  const skuVal = details.find(d => d.label === "SKU:")?.value || "";
+  if (skuVal) {
+    y += 0.25;
+    drawBarcode128(doc, skuVal, ml, y, {
+      width: 2.2,
+      height: 0.45,
+      showText: true,
+      fontSize: 9,
+    });
   }
 };
 
