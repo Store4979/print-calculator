@@ -535,6 +535,11 @@ function PriceCalculatorApp() {
   const [lfPricing, setLfPricing]     = useState(() => buildInitialLfPricingFrom(loadLfPaperTypes()));
   const [markupPerPaper, setMarkupPerPaper]   = useState(() => { const i={}; loadPaperTypes().forEach(p => i[p.key]=0); return i; });
   const [lfMarkupPerPaper, setLfMarkupPerPaper] = useState(() => { const i={}; loadLfPaperTypes().forEach(p => i[p.key]=0); return i; });
+  const [markupPerPaper, setMarkupPerPaper]   = useState(() => { const i={}; loadPaperTypes().forEach(p => i[p.key]=0); return i; });
+  const [skuMap, setSkuMap] = useState(() => {
+    try { const s = localStorage.getItem("printcalc_sku_map_v1"); if (s) { const m = JSON.parse(s); if (m && typeof m === "object") return m; } } catch {}
+    return {};
+  });
   const [quantityDiscounts, setQuantityDiscounts]   = useState([{ minSheets:0, discountPercent:0 }]);
   const [lfQuantityDiscounts, setLfQuantityDiscounts] = useState([{ minSqFt:0, discountPercent:0 }]);
   const [backSideFactor, setBackSideFactor] = useState(0.5);
@@ -545,6 +550,7 @@ function PriceCalculatorApp() {
   useEffect(() => { try { localStorage.setItem(LS.LF_PRICING, JSON.stringify(lfPricing)); } catch {} }, [lfPricing]);
   useEffect(() => { try { localStorage.setItem(LS.QTY_DISCOUNTS, JSON.stringify(quantityDiscounts)); } catch {} }, [quantityDiscounts]);
   useEffect(() => { try { localStorage.setItem(LS.BP_PRICING, JSON.stringify(bpPricing)); } catch {} }, [bpPricing]);
+  useEffect(() => { try { localStorage.setItem("printcalc_sku_map_v1", JSON.stringify(skuMap)); } catch {} }, [skuMap]);
 
   // ── Large Format state ──
   const [lfPaperTypes, setLfPaperTypes] = useState(loadLfPaperTypes);
@@ -959,7 +965,7 @@ const downloadSheetPDF = async () => {
     const [sw,sh] = isCustom ? [customSize.w,customSize.h] : (PRESET_SHEETS[sheetKey]||[8.5,11]);
     const details = [
       { label:"Paper:", value:currentPaper.label },
-      { label:"SKU:", value:paperKey },
+      { label:"SKU:", value:skuMap[`${paperKey}:${sheetKey}`] || paperKey },
       { label:"Sheet size:", value:`${sw}×${sh} in${isCustom?" (custom)":""}` },
       { label:"Orientation:", value:orientation },
       { label:"Print size:", value:`${prints.width}×${prints.height} in` },
@@ -1141,7 +1147,7 @@ const downloadSheetPDF = async () => {
   };
 
   const exportPricingJson = () => {
-    const json = { paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing:pricing, lfPricing, sheetQtyDiscounts:quantityDiscounts, lfQtyDiscounts:lfQuantityDiscounts, sheetMarkupPerPaper:markupPerPaper, lfMarkupPerPaper, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, previewMargin, previewSpacing };
+    const json = { paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing:pricing, lfPricing, sheetQtyDiscounts:quantityDiscounts, lfQtyDiscounts:lfQuantityDiscounts, sheetMarkupPerPaper:markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, previewMargin, previewSpacing };
     const blob = new Blob([JSON.stringify(json,null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href=url; a.download="pricing.json";
@@ -1171,6 +1177,7 @@ try {
           const m = {}; Object.entries(json.lfMarkupPerPaper).forEach(([k,v]) => { m[k] = Number(v)||0; });
           setLfMarkupPerPaper(m);
         }
+        if (json.skuMap && typeof json.skuMap === "object") setSkuMap(json.skuMap);
         if (typeof json.backSideFactor==="number") setBackSideFactor(json.backSideFactor);
         if (json.lfAddonPricing) setLfAddonPricing(json.lfAddonPricing);
         if (json.blueprintPricing){ setBpPricing(json.blueprintPricing); localStorage.setItem(LS.BP_PRICING,JSON.stringify(json.blueprintPricing)); }
@@ -1427,52 +1434,73 @@ try {
                 
                 {/* Existing paper types with delete */}
                 <div style={{ marginBottom:12 }}>
-                  {paperTypes.map(pt => (
+{paperTypes.map(pt => (
                     <div key={pt.key} style={{
-                      display:"flex", alignItems:"center", gap:8, padding:"6px 10px",
-                      marginBottom:4, background:"var(--surface-2)", borderRadius:"var(--radius-sm)",
+                      padding:"8px 10px", marginBottom:6,
+                      background:"var(--surface-2)", borderRadius:"var(--radius-sm)",
                       border:"1px solid var(--border)", fontSize:12,
                     }}>
-                      <div style={{ flex:1 }}>
-                        <strong>{pt.label}</strong>
-                        <span style={{ color:"var(--text-muted)", marginLeft:8 }}>({pt.key})</span>
-                        <span style={{ color:"var(--text-subtle)", marginLeft:8 }}>
-                          Sheets: {(sheetKeysForPaper[pt.key]||[]).join(", ")||"none"}
-                        </span>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                        <div style={{ flex:1 }}>
+                          <strong>{pt.label}</strong>
+                          <span style={{ color:"var(--text-muted)", marginLeft:8 }}>({pt.key})</span>
+                        </div>
+                        {/* Toggle sheet sizes */}
+                        <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
+                          {Object.keys(PRESET_SHEETS).filter(k=>k!=="custom").map(sk => {
+                            const active = (sheetKeysForPaper[pt.key]||[]).includes(sk);
+                            return (
+                              <button key={sk}
+                                className={`pc-btn pc-btn-xs ${active ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                                style={{ fontSize:10, padding:"2px 6px" }}
+                                onClick={()=>{
+                                  setSheetKeysForPaper(prev => {
+                                    const n = {...prev};
+                                    const arr = [...(n[pt.key]||[])];
+                                    if (active) { n[pt.key] = arr.filter(s=>s!==sk); }
+                                    else { arr.push(sk); n[pt.key] = arr; }
+                                    return n;
+                                  });
+                                }}
+                              >{sk}</button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          className="pc-btn pc-btn-xs"
+                          style={{ background:"#fee2e2", color:"#dc2626", border:"none" }}
+                          onClick={()=>{
+                            if (!window.confirm(`Delete "${pt.label}"? This will remove all pricing for this paper type.`)) return;
+                            setPaperTypes(prev => prev.filter(p=>p.key!==pt.key));
+                            setSheetKeysForPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                            setPricing(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                            setMarkupPerPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
+                            setSkuMap(prev => { const n={...prev}; Object.keys(n).filter(k=>k.startsWith(pt.key+":")).forEach(k=>delete n[k]); return n; });
+                            if (paperKey===pt.key) setPaperKey(paperTypes[0]?.key||"");
+                          }}
+                        >✕</button>
                       </div>
-                      {/* Toggle sheet sizes for this paper */}
-                      <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
-                        {Object.keys(PRESET_SHEETS).filter(k=>k!=="custom").map(sk => {
-                          const active = (sheetKeysForPaper[pt.key]||[]).includes(sk);
-                          return (
-                            <button key={sk}
-                              className={`pc-btn pc-btn-xs ${active ? "pc-btn-primary" : "pc-btn-secondary"}`}
-                              style={{ fontSize:10, padding:"2px 6px" }}
-                              onClick={()=>{
-                                setSheetKeysForPaper(prev => {
-                                  const n = {...prev};
-                                  const arr = [...(n[pt.key]||[])];
-                                  if (active) { n[pt.key] = arr.filter(s=>s!==sk); }
-                                  else { arr.push(sk); n[pt.key] = arr; }
-                                  return n;
-                                });
-                              }}
-                            >{sk}</button>
-                          );
-                        })}
-                      </div>
-                      <button
-                        className="pc-btn pc-btn-xs"
-                        style={{ background:"#fee2e2", color:"#dc2626", border:"none" }}
-                        onClick={()=>{
-                          if (!window.confirm(`Delete "${pt.label}"? This will remove all pricing for this paper type.`)) return;
-                          setPaperTypes(prev => prev.filter(p=>p.key!==pt.key));
-                          setSheetKeysForPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
-                          setPricing(prev => { const n={...prev}; delete n[pt.key]; return n; });
-                          setMarkupPerPaper(prev => { const n={...prev}; delete n[pt.key]; return n; });
-                          if (paperKey===pt.key) setPaperKey(paperTypes[0]?.key||"");
-                        }}
-                      >✕</button>
+                      {/* SKU per sheet size */}
+                      {(sheetKeysForPaper[pt.key]||[]).length > 0 && (
+                        <div style={{ display:"flex", gap:6, flexWrap:"wrap", paddingLeft:4 }}>
+                          {(sheetKeysForPaper[pt.key]||[]).map(sk => {
+                            const skuKey = `${pt.key}:${sk}`;
+                            return (
+                              <div key={sk} style={{ display:"flex", alignItems:"center", gap:4, fontSize:11 }}>
+                                <span style={{ color:"var(--text-muted)", minWidth:38 }}>{sk}:</span>
+                                <input
+                                  className="admin-input"
+                                  type="text"
+                                  placeholder="SKU #"
+                                  value={skuMap[skuKey]||""}
+                                  onChange={e=>setSkuMap(prev=>({...prev,[skuKey]:e.target.value}))}
+                                  style={{ width:110, fontSize:11, height:26 }}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
