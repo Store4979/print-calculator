@@ -438,6 +438,18 @@ export default function DataMerge({ CardHeader }) {
   const hasNumberField = fields.some(f => f.type === "number");
   const hasDataField = fields.some(f => f.type === "data");
 
+  // Pricing calculations
+  const availableSheetKeys = sheetKeysForPaper[selectedPaperKey] || [];
+  const normalizeEntry = (e = {}) => ({
+    priceColor: Number(e.priceColor || 0), priceBW: Number(e.priceBW || 0),
+  });
+  const selectedEntry = normalizeEntry((pricing[selectedPaperKey] || {})[selectedSheetKey] || {});
+  const perSheetPrice = colorMode === "color" ? selectedEntry.priceColor : selectedEntry.priceBW;
+  const sheetsNeeded = totalRecords; // One record per page for data merge
+  const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(sheetsNeeded) : 1;
+  const totalPrice = perSheetPrice * sheetsNeeded * discountFactor;
+  const hasPricing = paperTypes.length > 0 && perSheetPrice > 0;
+
   // ── Template loading ──
   const handleTemplateFile = useCallback(async (file) => {
     setLoading(true);
