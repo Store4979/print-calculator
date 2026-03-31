@@ -457,7 +457,10 @@ const PrintIcon = () => (
 
 // ── COMPONENT ──────────────────────────────────────────────
 
-export default function BookletMaker({ CardHeader }) {
+export default function BookletMaker({ CardHeader, pricingProps }) {
+  // Pricing props from parent
+  const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
+  
   // State
   const [pdfEntries, setPdfEntries] = useState([]); // [{ id, name, file, doc, numPages }]
   const [presetKey, setPresetKey] = useState("half-letter");
@@ -470,6 +473,10 @@ export default function BookletMaker({ CardHeader }) {
   const [pageOrder, setPageOrder] = useState([]); // indices into rawPageMap — controls page sequence
   const [moveFrom, setMoveFrom] = useState(null); // booklet page num being moved (1-based)
   const [moveTo, setMoveTo] = useState(""); // target position input
+  
+  // Pricing state
+  const [selectedPaperKey, setSelectedPaperKey] = useState(() => paperTypes[0]?.key || "");
+  const [colorMode, setColorMode] = useState("color");
   
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -504,6 +511,48 @@ export default function BookletMaker({ CardHeader }) {
   // So compare: stock short edge ≤ maxW, stock long edge ≤ maxH
   const withinPaperSize = sheetH <= printer.maxW && sheetW <= printer.maxH;
   const blankPages = paddedTotal - totalPages;
+  
+  // ── Pricing calculations ──
+  // Map booklet stock size to the closest sheet key from the pricing system
+  const stockSheetKey = (() => {
+    const w = Math.min(preset.sheetW, preset.sheetH);
+    const h = Math.max(preset.sheetW, preset.sheetH);
+    // Check common sizes
+    if ((w === 8.5 && h === 11) || (w === 11 && h === 8.5)) return "8.5x11";
+    if ((w === 11 && h === 17) || (w === 17 && h === 11)) return "11x17";
+    if ((w === 12 && h === 18) || (w === 18 && h === 12)) return "12x18";
+    if ((w === 13 && h === 19) || (w === 19 && h === 13)) return "13x19";
+    return `${w}x${h}`;
+  })();
+  
+  // Get available paper types that support this stock size
+  const availablePapers = paperTypes.filter(pt => 
+    (sheetKeysForPaper[pt.key] || []).includes(stockSheetKey)
+  );
+  
+  // Auto-select first available paper if current selection doesn't support this stock
+  useEffect(() => {
+    if (availablePapers.length > 0 && !availablePapers.find(p => p.key === selectedPaperKey)) {
+      setSelectedPaperKey(availablePapers[0].key);
+    }
+  }, [stockSheetKey, availablePapers.length]);
+  
+  const normalizeEntry = (e = {}) => ({
+    baseCostColor: Number(e.baseCostColor || 0),
+    baseCostBW: Number(e.baseCostBW || 0),
+    priceColor: Number(e.priceColor || e.baseCostColor || 0),
+    priceBW: Number(e.priceBW || e.baseCostBW || 0),
+  });
+  
+  const selectedPricingEntry = normalizeEntry((pricing[selectedPaperKey] || {})[stockSheetKey] || {});
+  const perSheetPrice = colorMode === "color" ? selectedPricingEntry.priceColor : selectedPricingEntry.priceBW;
+  // Booklets are always duplex, so add back side cost
+  const perSheetBack = (colorMode === "color" ? selectedPricingEntry.priceColor : selectedPricingEntry.priceBW) * backSideFactor;
+  const perSheetTotal = perSheetPrice + perSheetBack;
+  
+  const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(numSheets) : 1;
+  const totalPrice = perSheetTotal * numSheets * discountFactor;
+  const hasPricing = availablePapers.length > 0 && perSheetTotal > 0;
   
   // ── File Loading ──
   const addFiles = useCallback(async (files) => {
@@ -734,10 +783,72 @@ export default function BookletMaker({ CardHeader }) {
         </div>
       </div>
       
-      {/* Step 2 — Upload PDFs */}
+      {/* Step 2 — Paper & Pricing */}
       <div className="pc-card">
         <CardHeader
           step="2"
+          stepClass="step-num-green"
+          title="Paper & Pricing"
+          hint={`Select paper type for ${stockSheetKey} stock`}
+        />
+        <div className="pc-card-body">
+          {availablePapers.length > 0 ? (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label className="field-label">Paper Type</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {availablePapers.map(pt => (
+                    <button
+                      key={pt.key}
+                      className={`pc-btn pc-btn-sm ${selectedPaperKey === pt.key ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                      onClick={() => setSelectedPaperKey(pt.key)}
+                    >{pt.label}</button>
+                  ))}
+                </div>
+              </div>
+              
+              <div style={{ marginBottom: 12 }}>
+                <label className="field-label">Color Mode</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    className={`pc-btn pc-btn-sm ${colorMode === "color" ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                    onClick={() => setColorMode("color")}
+                  >Color</button>
+                  <button
+                    className={`pc-btn pc-btn-sm ${colorMode === "bw" ? "pc-btn-primary" : "pc-btn-secondary"}`}
+                    onClick={() => setColorMode("bw")}
+                  >B&W</button>
+                </div>
+              </div>
+              
+              {numSheets > 0 && (
+                <div style={{
+                  display: "flex", gap: 16, flexWrap: "wrap",
+                  padding: "10px 14px", background: "var(--surface-3)",
+                  borderRadius: "var(--radius-sm)", fontSize: 12,
+                }}>
+                  <div><span style={{ color: "var(--text-muted)" }}>Per sheet (front+back):</span> <strong>${perSheetTotal.toFixed(2)}</strong></div>
+                  <div><span style={{ color: "var(--text-muted)" }}>Sheets:</span> <strong>{numSheets}</strong></div>
+                  {discountFactor < 1 && (
+                    <div><span style={{ color: "var(--text-muted)" }}>Discount:</span> <strong style={{ color: "var(--green)" }}>{((1 - discountFactor) * 100).toFixed(1)}% off</strong></div>
+                  )}
+                  <div><span style={{ color: "var(--text-muted)" }}>Estimated total:</span> <strong style={{ color: "var(--green)", fontSize: 14 }}>${totalPrice.toFixed(2)}</strong></div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="callout callout-warn">
+              <span className="callout-icon" style={{ flexShrink: 0 }}>⚠</span>
+              <div>No paper types configured for {stockSheetKey} stock. Add pricing for this size in the Admin panel under Sheet Pricing.</div>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Step 3 — Upload PDFs */}
+      <div className="pc-card">
+        <CardHeader
+          step="3"
           stepClass="step-num-green"
           title="Upload PDFs"
           hint="Add one or more PDF files — they'll be combined in order"
@@ -883,11 +994,11 @@ export default function BookletMaker({ CardHeader }) {
         </div>
       </div>
       
-      {/* Step 3 — Page Order */}
+      {/* Step 4 — Page Order */}
       {totalPages > 0 && (
         <div className="pc-card">
           <CardHeader
-            step="3"
+            step="4"
             stepClass="step-num-green"
             title="Page Order"
             hint="Rearrange pages — click a page to select it, then move it to a new position"
@@ -1032,11 +1143,11 @@ export default function BookletMaker({ CardHeader }) {
         </div>
       )}
       
-      {/* Step 4 — Preview & Actions */}
+      {/* Step 5 — Preview & Actions */}
       {totalPages > 0 && signatures.length > 0 && (
         <div className="pc-card">
           <CardHeader
-            step="4"
+            step="5"
             stepClass="step-num-green"
             title="Imposition Preview"
             hint={`${numSheets} sheet${numSheets !== 1 ? "s" : ""} · ${sheetW}×${sheetH}" landscape · Pages auto-fit & rotated`}
@@ -1177,13 +1288,15 @@ export default function BookletMaker({ CardHeader }) {
                 <div className="price-metric-val">{preset.finishedW}×{preset.finishedH}"</div>
               </div>
               <div className="price-metric">
-                <div className="price-metric-label">Stock</div>
-                <div className="price-metric-val">{sheetW}×{sheetH}"</div>
+                <div className="price-metric-label">Paper</div>
+                <div className="price-metric-val" style={{ fontSize: 12 }}>{availablePapers.find(p=>p.key===selectedPaperKey)?.label || "—"}</div>
               </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Pages</div>
-                <div className="price-metric-val">{totalPages} ({pdfEntries.length} file{pdfEntries.length !== 1 ? "s" : ""})</div>
-              </div>
+              {hasPricing && (
+                <div className="price-metric">
+                  <div className="price-metric-label">Estimated total</div>
+                  <div className="price-metric-val" style={{ color: "var(--green)", fontSize: 20 }}>${totalPrice.toFixed(2)}</div>
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
