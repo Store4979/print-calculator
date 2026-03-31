@@ -535,7 +535,6 @@ function PriceCalculatorApp() {
   const [lfPricing, setLfPricing]     = useState(() => buildInitialLfPricingFrom(loadLfPaperTypes()));
   const [markupPerPaper, setMarkupPerPaper]   = useState(() => { const i={}; loadPaperTypes().forEach(p => i[p.key]=0); return i; });
   const [lfMarkupPerPaper, setLfMarkupPerPaper] = useState(() => { const i={}; loadLfPaperTypes().forEach(p => i[p.key]=0); return i; });
-  const [markupPerPaper, setMarkupPerPaper]   = useState(() => { const i={}; loadPaperTypes().forEach(p => i[p.key]=0); return i; });
   const [skuMap, setSkuMap] = useState(() => {
     try { const s = localStorage.getItem("printcalc_sku_map_v1"); if (s) { const m = JSON.parse(s); if (m && typeof m === "object") return m; } } catch {}
     return {};
