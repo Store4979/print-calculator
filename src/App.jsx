@@ -2205,8 +2205,11 @@ try {
         {/* ════════════════════════════════════════
             PANEL: IMPOSE (BOOKLET MAKER)
         ════════════════════════════════════════ */}
-        {activeTab==="impose" && viewMode==="tool" && (
-  <ImposePanel CardHeader={CardHeader} />
+{activeTab==="impose" && viewMode==="tool" && (
+  <ImposePanel CardHeader={CardHeader} pricingProps={{
+    paperTypes, sheetKeysForPaper, pricing, quantityDiscounts,
+    backSideFactor, getSheetDiscountFactor,
+  }} />
 )}
 
       </div>{/* /content-wrap */}
@@ -2218,7 +2221,7 @@ try {
 }
 
 // ─── IMPOSE PANEL (sub-tool selector) ──────────────────────
-function ImposePanel({ CardHeader }) {
+function ImposePanel({ CardHeader, pricingProps }) {
   const [imposeTool, setImposeTool] = useState("booklet");
   return (
     <>
@@ -2237,8 +2240,8 @@ function ImposePanel({ CardHeader }) {
           </div>
         </div>
       </div>
-      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} />}
-      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} />}
+      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} pricingProps={pricingProps} />}
+      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} pricingProps={pricingProps} />}
     </>
   );
 }
