@@ -251,6 +251,64 @@
       "priceBW": 0
     }
   },
+  "sheetQtyDiscounts": [
+    {
+      "minSheets": 50,
+      "discountPercent": 10
+    },
+    {
+      "minSheets": 150,
+      "discountPercent": 15
+    },
+    {
+      "minSheets": 250,
+      "discountPercent": 20
+    },
+    {
+      "minSheets": 350,
+      "discountPercent": 25
+    },
+    {
+      "minSheets": 450,
+      "discountPercent": 30
+    },
+    {
+      "minSheets": 550,
+      "discountPercent": 35
+    },
+    {
+      "minSheets": 650,
+      "discountPercent": 40
+    }
+  ],
+  "lfQtyDiscounts": [],
+  "sheetMarkupPerPaper": {
+    "28lb": 700,
+    "20lb": 600,
+    "80c": 600,
+    "110c": 600,
+    "80t": 600,
+    "100t": 600,
+    "14pt": 300,
+    "18pt": 350
+  },
+  "lfMarkupPerPaper": {
+    "hp_gloss_photo": 800,
+    "plain_20lb": 800,
+    "lexjet_46_bond": 800,
+    "lexjet_thrifty_banner": 800,
+    "lexjet_polypro": 800,
+    "fredrix_canvas": 800,
+    "hp_adhesive_polypro": 800,
+    "hp_translucent_bond": 800
+  },
+  "backSideFactor": 0.5,
+  "lfAddonPricing": {
+    "grommets": 0,
+    "foamCore": 17,
+    "coroSign": 0,
+    "grommetEach": 1
+  },
   "blueprintPricing": {
     "11x17": {
       "tiers": [
@@ -432,62 +490,6 @@
         }
       ]
     }
-  },
-  "sheetQtyDiscounts": [
-    {
-      "minSheets": 50,
-      "discountPercent": 10
-    },
-    {
-      "minSheets": 150,
-      "discountPercent": 15
-    },
-    {
-      "minSheets": 250,
-      "discountPercent": 20
-    },
-    {
-      "minSheets": 350,
-      "discountPercent": 25
-    },
-    {
-      "minSheets": 450,
-      "discountPercent": 30
-    },
-    {
-      "minSheets": 550,
-      "discountPercent": 35
-    },
-    {
-      "minSheets": 650,
-      "discountPercent": 40
-    }
-  ],
-  "lfQtyDiscounts": [],
-  "sheetMarkupPerPaper": {
-    "28lb": "700",
-    "20lb": "600",
-    "80c": "600",
-    "110c": "600",
-    "80t": "600",
-    "100t": "600",
-    "14pt": "300",
-    "18pt": "350"
-  },
-  "lfMarkupPerPaper": {
-    "hp_gloss_photo": 800,
-    "plain_20lb": 800,
-    "lexjet_46_bond": 800,
-    "lexjet_thrifty_banner": 800,
-    "lexjet_polypro": 800,
-    "fredrix_canvas": 800,
-    "hp_adhesive_polypro": 800,
-    "hp_translucent_bond": 800
-  },
-  "backSideFactor": 0.5,
-  "lfAddonPricing": {
-    "grommetEach": 1.00,
-    "foamCore": 17,
   },
   "previewMargin": 0.1,
   "previewSpacing": 0.01
