@@ -258,181 +258,114 @@ const TableIcon = () => (
   </svg>
 );
 
-// ── FIELD EDITOR PANEL ─────────────────────────────────────
+// ── FIELD EDITOR PANEL (simplified — font styling is shared) ─
 
-function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove }) {
+function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove, onSelect, isSelected }) {
   const update = (key, val) => onUpdate(index, { ...field, [key]: val });
 
   return (
-    <div style={{
-      padding: "12px 14px", marginBottom: 8,
-      background: "var(--surface-2)", borderRadius: "var(--radius-sm)",
-      border: `2px solid ${field._selected ? "var(--green)" : "var(--border)"}`,
-      fontSize: 12, transition: "border-color 0.15s",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+    <div
+      onClick={() => onSelect(index)}
+      style={{
+        padding: "10px 12px", marginBottom: 6,
+        background: isSelected ? "var(--green-light, #dcfce7)" : "var(--surface-2)",
+        borderRadius: "var(--radius-sm)",
+        border: `2px solid ${isSelected ? "var(--green)" : "var(--border)"}`,
+        fontSize: 12, transition: "border-color 0.15s", cursor: "pointer",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{
             width: 20, height: 20, borderRadius: "50%", display: "flex",
             alignItems: "center", justifyContent: "center", fontSize: 10,
             fontWeight: 700, background: "var(--green)", color: "white",
           }}>{index + 1}</span>
-          <strong style={{ fontSize: 13 }}>{field.label || `Field ${index + 1}`}</strong>
+          <input className="pc-input" type="text" value={field.label || ""}
+            placeholder={`Field ${index + 1}`}
+            onClick={e => e.stopPropagation()}
+            onChange={e => update("label", e.target.value)}
+            style={{ width: 130, height: 26, fontSize: 12, fontWeight: 600, padding: "2px 6px" }} />
         </div>
-        <button
-          className="pc-btn pc-btn-icon"
-          style={{ width: 24, height: 24, padding: 0, background: "transparent", border: "none", color: "var(--text-muted)" }}
-          onClick={() => onRemove(index)}
-          title="Remove field"
-        ><XIcon /></button>
-      </div>
-
-      {/* Field type */}
-      <div style={{ marginBottom: 8 }}>
-        <label className="field-label">Type</label>
-        <div className="chip-group" style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {/* Type selector inline */}
           {FIELD_TYPES.map(ft => (
-            <button
-              key={ft.key}
+            <button key={ft.key}
               className={`pc-btn pc-btn-xs ${field.type === ft.key ? "pc-btn-primary" : "pc-btn-secondary"}`}
-              onClick={() => update("type", ft.key)}
+              onClick={e => { e.stopPropagation(); update("type", ft.key); }}
+              style={{ fontSize: 10, padding: "2px 6px" }}
             >{ft.label}</button>
           ))}
+          <button
+            className="pc-btn pc-btn-icon"
+            style={{ width: 22, height: 22, padding: 0, background: "transparent", border: "none", color: "#dc2626", marginLeft: 4 }}
+            onClick={e => { e.stopPropagation(); onRemove(index); }}
+            title="Remove field"
+          ><XIcon /></button>
         </div>
       </div>
 
-      {/* Label */}
-      <div style={{ marginBottom: 8 }}>
-        <label className="field-label">Label</label>
-        <input className="pc-input" type="text" value={field.label || ""} placeholder="e.g. Ticket #, Name, Address"
-          onChange={e => update("label", e.target.value)} style={{ width: "100%" }} />
-      </div>
-
-      {/* Number config */}
+      {/* Type-specific config */}
       {field.type === "number" && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-          <div style={{ flex: 1, minWidth: 60 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} onClick={e => e.stopPropagation()}>
+          <div style={{ flex: 1, minWidth: 55 }}>
             <label className="field-label">Start</label>
             <input className="pc-input" type="number" value={field.startNum} min="0"
-              onChange={e => update("startNum", +e.target.value || 0)} style={{ width: "100%" }} />
+              onChange={e => update("startNum", +e.target.value || 0)} style={{ width: "100%", height: 26, fontSize: 11 }} />
           </div>
-          <div style={{ flex: 1, minWidth: 60 }}>
+          <div style={{ flex: 1, minWidth: 55 }}>
             <label className="field-label">End</label>
             <input className="pc-input" type="number" value={field.endNum} min={field.startNum}
-              onChange={e => update("endNum", +e.target.value || field.startNum)} style={{ width: "100%" }} />
+              onChange={e => update("endNum", +e.target.value || field.startNum)} style={{ width: "100%", height: 26, fontSize: 11 }} />
           </div>
-          <div style={{ flex: 1, minWidth: 50 }}>
+          <div style={{ flex: 1, minWidth: 45 }}>
             <label className="field-label">Digits</label>
             <input className="pc-input" type="number" value={field.padding} min="1" max="8"
-              onChange={e => update("padding", Math.max(1, +e.target.value || 1))} style={{ width: "100%" }} />
+              onChange={e => update("padding", Math.max(1, +e.target.value || 1))} style={{ width: "100%", height: 26, fontSize: 11 }} />
           </div>
-          <div style={{ flex: 1, minWidth: 50 }}>
+          <div style={{ flex: 1, minWidth: 45 }}>
             <label className="field-label">Prefix</label>
             <input className="pc-input" type="text" value={field.prefix} placeholder="#"
-              onChange={e => update("prefix", e.target.value)} style={{ width: "100%" }} />
+              onChange={e => update("prefix", e.target.value)} style={{ width: "100%", height: 26, fontSize: 11 }} />
           </div>
-          <div style={{ flex: 1, minWidth: 50 }}>
+          <div style={{ flex: 1, minWidth: 45 }}>
             <label className="field-label">Suffix</label>
-            <input className="pc-input" type="text" value={field.suffix} placeholder=""
-              onChange={e => update("suffix", e.target.value)} style={{ width: "100%" }} />
+            <input className="pc-input" type="text" value={field.suffix}
+              onChange={e => update("suffix", e.target.value)} style={{ width: "100%", height: 26, fontSize: 11 }} />
           </div>
         </div>
       )}
 
-      {/* CSV column picker */}
       {field.type === "data" && (
-        <div style={{ marginBottom: 8 }}>
-          <label className="field-label">CSV Column</label>
+        <div onClick={e => e.stopPropagation()}>
           {csvHeaders.length > 0 ? (
             <select className="pc-select" value={field.csvColumn}
-              onChange={e => update("csvColumn", e.target.value)} style={{ width: "100%" }}>
-              <option value="">— Select column —</option>
+              onChange={e => update("csvColumn", e.target.value)} style={{ width: "100%", height: 28, fontSize: 11 }}>
+              <option value="">— Select CSV column —</option>
               {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
             </select>
           ) : (
-            <div style={{ color: "var(--text-muted)", fontStyle: "italic" }}>Upload a CSV first</div>
+            <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>Upload a CSV first</div>
           )}
         </div>
       )}
 
-      {/* Static text */}
       {field.type === "static" && (
-        <div style={{ marginBottom: 8 }}>
-          <label className="field-label">Text</label>
+        <div onClick={e => e.stopPropagation()}>
           <input className="pc-input" type="text" value={field.staticText} placeholder="Enter text..."
-            onChange={e => update("staticText", e.target.value)} style={{ width: "100%" }} />
+            onChange={e => update("staticText", e.target.value)} style={{ width: "100%", height: 26, fontSize: 11 }} />
         </div>
       )}
 
-      {/* Font / style */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-        <div style={{ flex: 1, minWidth: 110 }}>
-          <label className="field-label">Font</label>
-          <select className="pc-select" value={field.fontFamily}
-            onChange={e => update("fontFamily", e.target.value)} style={{ width: "100%", fontFamily: field.fontFamily }}>
-            {FONT_OPTIONS.map(f => <option key={f.key} value={f.key} style={{ fontFamily: f.key }}>{f.label}</option>)}
-          </select>
+      {/* Position fine-tune */}
+      <div style={{ display: "flex", gap: 6, marginTop: 6 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
+          X: <input className="pc-input" type="number" step="0.05" value={field.x}
+            onChange={e => update("x", +e.target.value || 0)} style={{ width: 60, height: 24, fontSize: 11 }} />
         </div>
-        <div style={{ flex: 0, minWidth: 55 }}>
-          <label className="field-label">Size</label>
-          <input className="pc-input" type="number" value={field.fontSize} min="4" max="200"
-            onChange={e => update("fontSize", Math.max(4, +e.target.value || 12))} style={{ width: "100%" }} />
-        </div>
-        <div style={{ flex: 0, minWidth: 75 }}>
-          <label className="field-label">Style</label>
-          <select className="pc-select" value={`${field.fontWeight}${field.fontStyle === "italic" ? "-italic" : ""}`}
-            onChange={e => {
-              const v = e.target.value;
-              if (v === "bold-italic") { update("fontWeight", "bold"); update("fontStyle", "italic"); }
-              else if (v === "italic") { update("fontWeight", "normal"); update("fontStyle", "italic"); }
-              else if (v === "bold") { update("fontWeight", "bold"); update("fontStyle", "normal"); }
-              else { update("fontWeight", "normal"); update("fontStyle", "normal"); }
-            }} style={{ width: "100%" }}>
-            <option value="normal">Regular</option>
-            <option value="bold">Bold</option>
-            <option value="italic">Italic</option>
-            <option value="bold-italic">Bold Italic</option>
-          </select>
-        </div>
-        <div style={{ flex: 0, minWidth: 40 }}>
-          <label className="field-label">Color</label>
-          <input type="color" value={field.color}
-            onChange={e => update("color", e.target.value)}
-            style={{ width: 34, height: 34, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer" }} />
-        </div>
-        <div style={{ flex: 0, minWidth: 70 }}>
-          <label className="field-label">Align</label>
-          <select className="pc-select" value={field.align}
-            onChange={e => update("align", e.target.value)} style={{ width: "100%" }}>
-            {ALIGN_OPTIONS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
-          </select>
-        </div>
-      </div>
-      
-      {/* Font preview */}
-      <div style={{
-        padding: "6px 10px", marginBottom: 8, background: "var(--surface-3)",
-        borderRadius: "var(--radius-sm)", textAlign: field.align,
-        fontFamily: `${field.fontFamily}, sans-serif`,
-        fontSize: Math.min(field.fontSize, 24),
-        fontWeight: field.fontWeight,
-        fontStyle: field.fontStyle || "normal",
-        color: field.color, overflow: "hidden", whiteSpace: "nowrap",
-      }}>
-        {field.type === "static" ? (field.staticText || "Preview text") : field.type === "number" ? `${field.prefix}001${field.suffix}` : "Sample Data"}
-      </div>
-
-      {/* Position (manual fine-tune) */}
-      <div style={{ display: "flex", gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <label className="field-label">X (inches)</label>
-          <input className="pc-input" type="number" step="0.05" value={field.x}
-            onChange={e => update("x", +e.target.value || 0)} style={{ width: "100%" }} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label className="field-label">Y (inches)</label>
-          <input className="pc-input" type="number" step="0.05" value={field.y}
-            onChange={e => update("y", +e.target.value || 0)} style={{ width: "100%" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
+          Y: <input className="pc-input" type="number" step="0.05" value={field.y}
+            onChange={e => update("y", +e.target.value || 0)} style={{ width: 60, height: 24, fontSize: 11 }} />
         </div>
       </div>
     </div>
@@ -468,6 +401,36 @@ export default function DataMerge({ CardHeader, pricingProps }) {
   const [selectedPaperKey, setSelectedPaperKey] = useState(() => paperTypes[0]?.key || "");
   const [selectedSheetKey, setSelectedSheetKey] = useState("8.5x11");
   const [colorMode, setColorMode] = useState("color");
+  
+  // Shared field style (applies to ALL fields uniformly)
+  const [fieldStyle, setFieldStyle] = useState({
+    fontFamily: "Helvetica",
+    fontSize: 12,
+    fontWeight: "bold",
+    fontStyle: "normal",
+    color: "#000000",
+    align: "center",
+  });
+  
+  const updateStyle = (key, val) => setFieldStyle(prev => ({ ...prev, [key]: val }));
+  
+  // When shared style changes, update all existing fields
+  const applyStyleToAll = useCallback(() => {
+    setFields(prev => prev.map(f => ({
+      ...f,
+      fontFamily: fieldStyle.fontFamily,
+      fontSize: fieldStyle.fontSize,
+      fontWeight: fieldStyle.fontWeight,
+      fontStyle: fieldStyle.fontStyle,
+      color: fieldStyle.color,
+      align: fieldStyle.align,
+    })));
+  }, [fieldStyle]);
+  
+  // Auto-apply when style changes
+  useEffect(() => {
+    if (fields.length > 0) applyStyleToAll();
+  }, [fieldStyle]);
 
   const previewCanvasRef = useRef(null);
   const templateInputRef = useRef(null);
@@ -532,14 +495,15 @@ export default function DataMerge({ CardHeader, pricingProps }) {
   const addField = useCallback(() => {
     const newField = {
       ...DEFAULT_FIELD,
+      ...fieldStyle,
       label: `Field ${fields.length + 1}`,
       x: template ? template.widthIn / 2 : 2,
-      y: template ? template.heightIn / 2 : 2,
+      y: template ? 0.5 + fields.length * 0.4 : 2,
     };
     setFields(prev => [...prev, newField]);
     setSelectedField(fields.length);
     setPlacingField(true);
-  }, [fields.length, template]);
+  }, [fields.length, template, fieldStyle]);
 
   const updateField = useCallback((idx, updated) => {
     setFields(prev => prev.map((f, i) => i === idx ? updated : f));
@@ -1027,45 +991,113 @@ export default function DataMerge({ CardHeader, pricingProps }) {
             step="4"
             stepClass="step-num-green"
             title="Place Variable Fields"
-            hint="Add fields and click on the template preview to position them"
+            hint="Configure style, add fields, then click or drag on the preview to position"
           />
           <div className="pc-card-body">
-            <div style={{ display: "flex", gap: 16, flexDirection: "column" }}>
 
-              {/* Add field button */}
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button className="pc-btn pc-btn-primary pc-btn-sm" onClick={addField}
-                  style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <PlusIcon /> Add Field
-                </button>
-                {placingField && selectedField !== null && (
-                  <span style={{
-                    fontSize: 12, color: "var(--green)", fontWeight: 600,
-                    animation: "pulse 1.5s ease-in-out infinite",
-                  }}>
-                    👆 Click on the preview below to place this field
-                  </span>
-                )}
+            {/* ── Shared Field Style ── */}
+            <div style={{
+              padding: "12px 14px", marginBottom: 14,
+              background: "var(--surface-3)", borderRadius: "var(--radius)",
+              border: "1px solid var(--border)",
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                Field Style (applies to all fields)
               </div>
-
-              {/* Field editors */}
-              {fields.map((field, idx) => (
-                <FieldEditor
-                  key={idx}
-                  field={{ ...field, _selected: selectedField === idx }}
-                  index={idx}
-                  csvHeaders={csvData.headers}
-                  onUpdate={updateField}
-                  onRemove={removeField}
-                />
-              ))}
-
-              {fields.length === 0 && (
-                <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)", fontSize: 13 }}>
-                  Click "Add Field" to create a variable field (ticket number, name, address, etc.)
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <label className="field-label">Font</label>
+                  <select className="pc-select" value={fieldStyle.fontFamily}
+                    onChange={e => updateStyle("fontFamily", e.target.value)}
+                    style={{ width: "100%", fontFamily: fieldStyle.fontFamily }}>
+                    {FONT_OPTIONS.map(f => <option key={f.key} value={f.key} style={{ fontFamily: f.key }}>{f.label}</option>)}
+                  </select>
                 </div>
+                <div style={{ flex: 0, minWidth: 60 }}>
+                  <label className="field-label">Size (pt)</label>
+                  <input className="pc-input" type="number" value={fieldStyle.fontSize} min="4" max="200"
+                    onChange={e => updateStyle("fontSize", Math.max(4, +e.target.value || 12))} style={{ width: "100%" }} />
+                </div>
+                <div style={{ flex: 0, minWidth: 85 }}>
+                  <label className="field-label">Style</label>
+                  <select className="pc-select" value={`${fieldStyle.fontWeight}${fieldStyle.fontStyle === "italic" ? "-italic" : ""}`}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (v === "bold-italic") { updateStyle("fontWeight", "bold"); updateStyle("fontStyle", "italic"); }
+                      else if (v === "italic") { updateStyle("fontWeight", "normal"); updateStyle("fontStyle", "italic"); }
+                      else if (v === "bold") { updateStyle("fontWeight", "bold"); updateStyle("fontStyle", "normal"); }
+                      else { updateStyle("fontWeight", "normal"); updateStyle("fontStyle", "normal"); }
+                    }} style={{ width: "100%" }}>
+                    <option value="normal">Regular</option>
+                    <option value="bold">Bold</option>
+                    <option value="italic">Italic</option>
+                    <option value="bold-italic">Bold Italic</option>
+                  </select>
+                </div>
+                <div style={{ flex: 0, minWidth: 40 }}>
+                  <label className="field-label">Color</label>
+                  <input type="color" value={fieldStyle.color}
+                    onChange={e => updateStyle("color", e.target.value)}
+                    style={{ width: 34, height: 34, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer" }} />
+                </div>
+                <div style={{ flex: 0, minWidth: 75 }}>
+                  <label className="field-label">Align</label>
+                  <select className="pc-select" value={fieldStyle.align}
+                    onChange={e => updateStyle("align", e.target.value)} style={{ width: "100%" }}>
+                    {ALIGN_OPTIONS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              {/* Live preview */}
+              <div style={{
+                padding: "8px 12px", background: "white", borderRadius: "var(--radius-sm)",
+                border: "1px solid var(--border)", textAlign: fieldStyle.align,
+                fontFamily: `${fieldStyle.fontFamily}, sans-serif`,
+                fontSize: Math.min(fieldStyle.fontSize, 28),
+                fontWeight: fieldStyle.fontWeight,
+                fontStyle: fieldStyle.fontStyle || "normal",
+                color: fieldStyle.color, overflow: "hidden", whiteSpace: "nowrap",
+                lineHeight: 1.4,
+              }}>
+                The quick brown fox jumps over the lazy dog
+              </div>
+            </div>
+
+            {/* ── Add field + field list ── */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+              <button className="pc-btn pc-btn-primary pc-btn-sm" onClick={addField}
+                style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <PlusIcon /> Add Field
+              </button>
+              {placingField && selectedField !== null && (
+                <span style={{
+                  fontSize: 12, color: "var(--green)", fontWeight: 600,
+                  animation: "pulse 1.5s ease-in-out infinite",
+                }}>
+                  👆 Click on the preview below to place · or drag to reposition
+                </span>
               )}
             </div>
+
+            {/* Field editors (compact — no font controls) */}
+            {fields.map((field, idx) => (
+              <FieldEditor
+                key={idx}
+                field={field}
+                index={idx}
+                csvHeaders={csvData.headers}
+                onUpdate={updateField}
+                onRemove={removeField}
+                onSelect={setSelectedField}
+                isSelected={selectedField === idx}
+              />
+            ))}
+
+            {fields.length === 0 && (
+              <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)", fontSize: 13 }}>
+                Click "Add Field" to create a variable field (ticket number, name, address, etc.)
+              </div>
+            )}
           </div>
         </div>
       )}
