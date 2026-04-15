@@ -17,6 +17,18 @@ const FONT_OPTIONS = [
   { key: "Helvetica", label: "Helvetica" },
   { key: "Times-Roman", label: "Times Roman" },
   { key: "Courier", label: "Courier" },
+  { key: "Arial", label: "Arial" },
+  { key: "Georgia", label: "Georgia" },
+  { key: "Verdana", label: "Verdana" },
+  { key: "Trebuchet MS", label: "Trebuchet MS" },
+  { key: "Impact", label: "Impact" },
+  { key: "Comic Sans MS", label: "Comic Sans" },
+  { key: "Palatino", label: "Palatino" },
+  { key: "Garamond", label: "Garamond" },
+  { key: "Bookman", label: "Bookman" },
+  { key: "Tahoma", label: "Tahoma" },
+  { key: "Lucida Console", label: "Lucida Console" },
+  { key: "Monaco", label: "Monaco" },
 ];
 
 const ALIGN_OPTIONS = [
@@ -32,6 +44,7 @@ const DEFAULT_FIELD = {
   fontSize: 12,
   fontFamily: "Helvetica",
   fontWeight: "bold",
+  fontStyle: "normal",
   color: "#000000",
   align: "center",
   // Number-specific
@@ -353,24 +366,32 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove }) {
 
       {/* Font / style */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-        <div style={{ flex: 1, minWidth: 90 }}>
+        <div style={{ flex: 1, minWidth: 110 }}>
           <label className="field-label">Font</label>
           <select className="pc-select" value={field.fontFamily}
-            onChange={e => update("fontFamily", e.target.value)} style={{ width: "100%" }}>
-            {FONT_OPTIONS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+            onChange={e => update("fontFamily", e.target.value)} style={{ width: "100%", fontFamily: field.fontFamily }}>
+            {FONT_OPTIONS.map(f => <option key={f.key} value={f.key} style={{ fontFamily: f.key }}>{f.label}</option>)}
           </select>
         </div>
         <div style={{ flex: 0, minWidth: 55 }}>
           <label className="field-label">Size</label>
-          <input className="pc-input" type="number" value={field.fontSize} min="4" max="120"
+          <input className="pc-input" type="number" value={field.fontSize} min="4" max="200"
             onChange={e => update("fontSize", Math.max(4, +e.target.value || 12))} style={{ width: "100%" }} />
         </div>
-        <div style={{ flex: 0, minWidth: 55 }}>
-          <label className="field-label">Weight</label>
-          <select className="pc-select" value={field.fontWeight}
-            onChange={e => update("fontWeight", e.target.value)} style={{ width: "100%" }}>
-            <option value="normal">Normal</option>
+        <div style={{ flex: 0, minWidth: 75 }}>
+          <label className="field-label">Style</label>
+          <select className="pc-select" value={`${field.fontWeight}${field.fontStyle === "italic" ? "-italic" : ""}`}
+            onChange={e => {
+              const v = e.target.value;
+              if (v === "bold-italic") { update("fontWeight", "bold"); update("fontStyle", "italic"); }
+              else if (v === "italic") { update("fontWeight", "normal"); update("fontStyle", "italic"); }
+              else if (v === "bold") { update("fontWeight", "bold"); update("fontStyle", "normal"); }
+              else { update("fontWeight", "normal"); update("fontStyle", "normal"); }
+            }} style={{ width: "100%" }}>
+            <option value="normal">Regular</option>
             <option value="bold">Bold</option>
+            <option value="italic">Italic</option>
+            <option value="bold-italic">Bold Italic</option>
           </select>
         </div>
         <div style={{ flex: 0, minWidth: 40 }}>
@@ -386,6 +407,19 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove }) {
             {ALIGN_OPTIONS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
           </select>
         </div>
+      </div>
+      
+      {/* Font preview */}
+      <div style={{
+        padding: "6px 10px", marginBottom: 8, background: "var(--surface-3)",
+        borderRadius: "var(--radius-sm)", textAlign: field.align,
+        fontFamily: `${field.fontFamily}, sans-serif`,
+        fontSize: Math.min(field.fontSize, 24),
+        fontWeight: field.fontWeight,
+        fontStyle: field.fontStyle || "normal",
+        color: field.color, overflow: "hidden", whiteSpace: "nowrap",
+      }}>
+        {field.type === "static" ? (field.staticText || "Preview text") : field.type === "number" ? `${field.prefix}001${field.suffix}` : "Sample Data"}
       </div>
 
       {/* Position (manual fine-tune) */}
@@ -516,23 +550,142 @@ export default function DataMerge({ CardHeader, pricingProps }) {
     setSelectedField(null);
   }, []);
 
-  // ── Click to place ──
-  const handlePreviewClick = useCallback((e) => {
-    if (!template || !previewContainerRef.current) return;
-    const targetIdx = placingField && selectedField !== null ? selectedField : selectedField;
-    if (targetIdx === null) return;
-
+  // ── Click to place / Drag to move ──
+  const draggingRef = useRef(null); // { fieldIdx, startX, startY, origX, origY }
+  
+  const getInchesFromEvent = useCallback((e) => {
+    if (!template || !previewContainerRef.current) return null;
     const rect = previewContainerRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
     const scaleX = template.widthIn / rect.width;
     const scaleY = template.heightIn / rect.height;
-    const xIn = clickX * scaleX;
-    const yIn = clickY * scaleY;
+    return {
+      x: +(((e.clientX || e.touches?.[0]?.clientX || 0) - rect.left) * scaleX).toFixed(3),
+      y: +(((e.clientY || e.touches?.[0]?.clientY || 0) - rect.top) * scaleY).toFixed(3),
+    };
+  }, [template]);
 
-    setFields(prev => prev.map((f, i) => i === targetIdx ? { ...f, x: +xIn.toFixed(3), y: +yIn.toFixed(3) } : f));
-    setPlacingField(false);
-  }, [template, placingField, selectedField]);
+  const handlePreviewMouseDown = useCallback((e) => {
+    if (!template || !previewContainerRef.current) return;
+    const pos = getInchesFromEvent(e);
+    if (!pos) return;
+    
+    // If placing a new field, just set position
+    if (placingField && selectedField !== null) {
+      setFields(prev => prev.map((f, i) => i === selectedField ? { ...f, x: pos.x, y: pos.y } : f));
+      setPlacingField(false);
+      return;
+    }
+    
+    // Check if clicking on an existing field (hit test)
+    const DPI = 150;
+    const hitIdx = findFieldAtPosition(fields, pos.x, pos.y, DPI);
+    
+    if (hitIdx !== null) {
+      setSelectedField(hitIdx);
+      draggingRef.current = {
+        fieldIdx: hitIdx,
+        startX: pos.x,
+        startY: pos.y,
+        origX: fields[hitIdx].x,
+        origY: fields[hitIdx].y,
+      };
+      e.preventDefault();
+    } else if (selectedField !== null) {
+      // Click on empty area moves selected field there
+      setFields(prev => prev.map((f, i) => i === selectedField ? { ...f, x: pos.x, y: pos.y } : f));
+    }
+  }, [template, placingField, selectedField, fields, getInchesFromEvent]);
+  
+  const handlePreviewMouseMove = useCallback((e) => {
+    if (!draggingRef.current || !template) return;
+    const pos = getInchesFromEvent(e);
+    if (!pos) return;
+    const { fieldIdx, startX, startY, origX, origY } = draggingRef.current;
+    const dx = pos.x - startX;
+    const dy = pos.y - startY;
+    const newX = Math.max(0, Math.min(template.widthIn, origX + dx));
+    const newY = Math.max(0, Math.min(template.heightIn, origY + dy));
+    setFields(prev => prev.map((f, i) => i === fieldIdx ? { ...f, x: +newX.toFixed(3), y: +newY.toFixed(3) } : f));
+  }, [template, getInchesFromEvent]);
+  
+  const handlePreviewMouseUp = useCallback(() => {
+    draggingRef.current = null;
+  }, []);
+  
+  // Field hit test — find which field is near a position
+  const findFieldAtPosition = (fields, xIn, yIn, DPI) => {
+    // Check in reverse order so top-most field (last drawn) wins
+    for (let i = fields.length - 1; i >= 0; i--) {
+      const f = fields[i];
+      const hitRadius = Math.max(0.15, (f.fontSize / 72) * 0.6); // adaptive hit zone
+      if (Math.abs(xIn - f.x) < hitRadius * 2 && Math.abs(yIn - f.y) < hitRadius) {
+        return i;
+      }
+    }
+    return null;
+  };
+  
+  // ── Alignment tools ──
+  const alignFields = useCallback((mode) => {
+    if (fields.length < 2) return;
+    // Align ALL fields (or could limit to selected — but aligning all is more useful)
+    setFields(prev => {
+      const fs = [...prev];
+      if (mode === "left") {
+        const minX = Math.min(...fs.map(f => f.x));
+        return fs.map(f => ({ ...f, x: minX }));
+      }
+      if (mode === "right") {
+        const maxX = Math.max(...fs.map(f => f.x));
+        return fs.map(f => ({ ...f, x: maxX }));
+      }
+      if (mode === "centerH") {
+        const avgX = fs.reduce((s, f) => s + f.x, 0) / fs.length;
+        return fs.map(f => ({ ...f, x: +avgX.toFixed(3) }));
+      }
+      if (mode === "top") {
+        const minY = Math.min(...fs.map(f => f.y));
+        return fs.map(f => ({ ...f, y: minY }));
+      }
+      if (mode === "bottom") {
+        const maxY = Math.max(...fs.map(f => f.y));
+        return fs.map(f => ({ ...f, y: maxY }));
+      }
+      if (mode === "centerV") {
+        const avgY = fs.reduce((s, f) => s + f.y, 0) / fs.length;
+        return fs.map(f => ({ ...f, y: +avgY.toFixed(3) }));
+      }
+      if (mode === "distributeV") {
+        if (fs.length < 3) return fs;
+        const sorted = fs.map((f, i) => ({ ...f, _i: i })).sort((a, b) => a.y - b.y);
+        const minY = sorted[0].y, maxY = sorted[sorted.length - 1].y;
+        const step = (maxY - minY) / (sorted.length - 1);
+        const result = [...fs];
+        sorted.forEach((f, idx) => { result[f._i] = { ...result[f._i], y: +(minY + step * idx).toFixed(3) }; });
+        return result;
+      }
+      if (mode === "distributeH") {
+        if (fs.length < 3) return fs;
+        const sorted = fs.map((f, i) => ({ ...f, _i: i })).sort((a, b) => a.x - b.x);
+        const minX = sorted[0].x, maxX = sorted[sorted.length - 1].x;
+        const step = (maxX - minX) / (sorted.length - 1);
+        const result = [...fs];
+        sorted.forEach((f, idx) => { result[f._i] = { ...result[f._i], x: +(minX + step * idx).toFixed(3) }; });
+        return result;
+      }
+      if (mode === "pageCenterH") {
+        if (!template) return fs;
+        const cx = template.widthIn / 2;
+        return fs.map(f => ({ ...f, x: +cx.toFixed(3) }));
+      }
+      if (mode === "pageCenterV") {
+        if (!template) return fs;
+        const cy = template.heightIn / 2;
+        return fs.map(f => ({ ...f, y: +cy.toFixed(3) }));
+      }
+      return fs;
+    });
+  }, [fields.length, template]);
 
   // ── Preview rendering ──
   useEffect(() => {
@@ -560,7 +713,8 @@ export default function DataMerge({ CardHeader, pricingProps }) {
         const fsPx = field.fontSize * (DPI / 72);
 
         ctx.save();
-        ctx.font = `${field.fontWeight} ${Math.round(fsPx)}px ${field.fontFamily}, sans-serif`;
+        const fontStyle = field.fontStyle === "italic" ? "italic " : "";
+        ctx.font = `${fontStyle}${field.fontWeight} ${Math.round(fsPx)}px ${field.fontFamily}, sans-serif`;
         ctx.fillStyle = field.color;
         ctx.textAlign = field.align;
         ctx.textBaseline = "middle";
@@ -613,7 +767,9 @@ export default function DataMerge({ CardHeader, pricingProps }) {
           const text = rec[key] || "";
           if (!text) return;
 
-          doc.setFont(field.fontFamily, field.fontWeight === "bold" ? "bold" : "normal");
+          let fontStyle = field.fontWeight === "bold" ? "bold" : "normal";
+          if (field.fontStyle === "italic") fontStyle = field.fontWeight === "bold" ? "bolditalic" : "italic";
+          doc.setFont(field.fontFamily, fontStyle);
           doc.setFontSize(field.fontSize);
           doc.setTextColor(field.color);
 
@@ -967,21 +1123,60 @@ export default function DataMerge({ CardHeader, pricingProps }) {
               ))}
             </div>
 
-            {/* Preview canvas */}
+            {/* Alignment toolbar */}
+            {fields.length >= 2 && (
+              <div style={{
+                display: "flex", gap: 4, marginBottom: 10, padding: "6px 10px",
+                background: "var(--surface-3)", borderRadius: "var(--radius-sm)",
+                flexWrap: "wrap", alignItems: "center",
+              }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Align:</span>
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("left")} title="Align left edges">⫷ Left</button>
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("centerH")} title="Align horizontal centers">⫿ Center X</button>
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("right")} title="Align right edges">⫸ Right</button>
+                <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 4px" }} />
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("top")} title="Align top edges">⊤ Top</button>
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("centerV")} title="Align vertical centers">⊞ Center Y</button>
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("bottom")} title="Align bottom edges">⊥ Bottom</button>
+                <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 4px" }} />
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("pageCenterH")} title="Center all fields horizontally on page">⊹ Page Center X</button>
+                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("pageCenterV")} title="Center all fields vertically on page">⊹ Page Center Y</button>
+                {fields.length >= 3 && (
+                  <>
+                    <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 4px" }} />
+                    <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("distributeV")} title="Distribute evenly vertically">↕ Distribute Y</button>
+                    <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("distributeH")} title="Distribute evenly horizontally">↔ Distribute X</button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Preview canvas with drag support */}
             <div
               ref={previewContainerRef}
-              onClick={handlePreviewClick}
+              onMouseDown={handlePreviewMouseDown}
+              onMouseMove={handlePreviewMouseMove}
+              onMouseUp={handlePreviewMouseUp}
+              onMouseLeave={handlePreviewMouseUp}
+              onTouchStart={e => { e.preventDefault(); handlePreviewMouseDown(e.touches[0]); }}
+              onTouchMove={e => { e.preventDefault(); handlePreviewMouseMove(e.touches[0]); }}
+              onTouchEnd={handlePreviewMouseUp}
               style={{
                 border: `2px solid ${placingField ? "var(--green)" : "var(--border)"}`,
                 borderRadius: "var(--radius)", overflow: "hidden",
-                cursor: placingField ? "crosshair" : "default",
+                cursor: placingField ? "crosshair" : (draggingRef.current ? "grabbing" : "grab"),
                 transition: "border-color 0.2s",
+                touchAction: "none",
               }}
             >
               <canvas
                 ref={previewCanvasRef}
                 style={{ width: "100%", height: "auto", display: "block" }}
               />
+            </div>
+
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+              Click to place selected field · Drag fields to reposition · Use alignment tools above for precise layout
             </div>
           </div>
         </div>
