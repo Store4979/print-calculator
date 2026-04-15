@@ -356,18 +356,6 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove, onSelect, i
             onChange={e => update("staticText", e.target.value)} style={{ width: "100%", height: 26, fontSize: 11 }} />
         </div>
       )}
-
-      {/* Position fine-tune */}
-      <div style={{ display: "flex", gap: 6, marginTop: 6 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
-          X: <input className="pc-input" type="number" step="0.05" value={field.x}
-            onChange={e => update("x", +e.target.value || 0)} style={{ width: 60, height: 24, fontSize: 11 }} />
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
-          Y: <input className="pc-input" type="number" step="0.05" value={field.y}
-            onChange={e => update("y", +e.target.value || 0)} style={{ width: 60, height: 24, fontSize: 11 }} />
-        </div>
-      </div>
     </div>
   );
 }
@@ -410,6 +398,14 @@ export default function DataMerge({ CardHeader, pricingProps }) {
     fontStyle: "normal",
     color: "#000000",
     align: "center",
+    lineSpacing: 1.4,
+  });
+  
+  // Text frame position & size (single frame holds all fields)
+  const [frame, setFrame] = useState({
+    x: 0.5,
+    y: 0.5,
+    width: 3,
   });
   
   const updateStyle = (key, val) => setFieldStyle(prev => ({ ...prev, [key]: val }));
@@ -514,8 +510,8 @@ export default function DataMerge({ CardHeader, pricingProps }) {
     setSelectedField(null);
   }, []);
 
-  // ── Click to place / Drag to move ──
-  const draggingRef = useRef(null); // { fieldIdx, startX, startY, origX, origY }
+  // ── Click to place / Drag frame ──
+  const draggingRef = useRef(null); // { mode: "move"|"resize", startX, startY, origX, origY, origW }
   
   const getInchesFromEvent = useCallback((e) => {
     if (!template || !previewContainerRef.current) return null;
@@ -533,125 +529,69 @@ export default function DataMerge({ CardHeader, pricingProps }) {
     const pos = getInchesFromEvent(e);
     if (!pos) return;
     
-    // If placing a new field, just set position
-    if (placingField && selectedField !== null) {
-      setFields(prev => prev.map((f, i) => i === selectedField ? { ...f, x: pos.x, y: pos.y } : f));
-      setPlacingField(false);
+    // Check if clicking near the resize handle (bottom-right corner of frame)
+    const fsPx72 = fieldStyle.fontSize;
+    const lineH = fsPx72 * (fieldStyle.lineSpacing || 1.4) / 72;
+    const frameLines = fields.length || 1;
+    const frameH = frameLines * lineH + fsPx72 / 72 * 0.3;
+    const handleX = frame.x + frame.width;
+    const handleY = frame.y + frameH;
+    
+    if (Math.abs(pos.x - handleX) < 0.15 && Math.abs(pos.y - handleY) < 0.15) {
+      draggingRef.current = { mode: "resize", startX: pos.x, origW: frame.width };
+      e.preventDefault();
       return;
     }
     
-    // Check if clicking on an existing field (hit test)
-    const DPI = 150;
-    const hitIdx = findFieldAtPosition(fields, pos.x, pos.y, DPI);
-    
-    if (hitIdx !== null) {
-      setSelectedField(hitIdx);
-      draggingRef.current = {
-        fieldIdx: hitIdx,
-        startX: pos.x,
-        startY: pos.y,
-        origX: fields[hitIdx].x,
-        origY: fields[hitIdx].y,
-      };
+    // Check if clicking within the frame area → drag to move
+    if (pos.x >= frame.x && pos.x <= frame.x + frame.width &&
+        pos.y >= frame.y && pos.y <= frame.y + frameH) {
+      draggingRef.current = { mode: "move", startX: pos.x, startY: pos.y, origX: frame.x, origY: frame.y };
       e.preventDefault();
-    } else if (selectedField !== null) {
-      // Click on empty area moves selected field there
-      setFields(prev => prev.map((f, i) => i === selectedField ? { ...f, x: pos.x, y: pos.y } : f));
+      return;
     }
-  }, [template, placingField, selectedField, fields, getInchesFromEvent]);
+    
+    // Click outside frame → move frame to clicked position
+    setFrame(prev => ({ ...prev, x: +pos.x.toFixed(3), y: +pos.y.toFixed(3) }));
+  }, [template, fields.length, fieldStyle, frame, getInchesFromEvent]);
   
   const handlePreviewMouseMove = useCallback((e) => {
     if (!draggingRef.current || !template) return;
     const pos = getInchesFromEvent(e);
     if (!pos) return;
-    const { fieldIdx, startX, startY, origX, origY } = draggingRef.current;
-    const dx = pos.x - startX;
-    const dy = pos.y - startY;
-    const newX = Math.max(0, Math.min(template.widthIn, origX + dx));
-    const newY = Math.max(0, Math.min(template.heightIn, origY + dy));
-    setFields(prev => prev.map((f, i) => i === fieldIdx ? { ...f, x: +newX.toFixed(3), y: +newY.toFixed(3) } : f));
+    
+    if (draggingRef.current.mode === "move") {
+      const { startX, startY, origX, origY } = draggingRef.current;
+      const dx = pos.x - startX;
+      const dy = pos.y - startY;
+      setFrame(prev => ({
+        ...prev,
+        x: +Math.max(0, Math.min(template.widthIn - prev.width, origX + dx)).toFixed(3),
+        y: +Math.max(0, origY + dy).toFixed(3),
+      }));
+    } else if (draggingRef.current.mode === "resize") {
+      const { startX, origW } = draggingRef.current;
+      const dx = pos.x - startX;
+      const newW = Math.max(0.5, origW + dx);
+      setFrame(prev => ({ ...prev, width: +Math.min(template.widthIn - prev.x, newW).toFixed(3) }));
+    }
   }, [template, getInchesFromEvent]);
   
   const handlePreviewMouseUp = useCallback(() => {
     draggingRef.current = null;
   }, []);
-  
-  // Field hit test — find which field is near a position
-  const findFieldAtPosition = (fields, xIn, yIn, DPI) => {
-    // Check in reverse order so top-most field (last drawn) wins
-    for (let i = fields.length - 1; i >= 0; i--) {
-      const f = fields[i];
-      const hitRadius = Math.max(0.15, (f.fontSize / 72) * 0.6); // adaptive hit zone
-      if (Math.abs(xIn - f.x) < hitRadius * 2 && Math.abs(yIn - f.y) < hitRadius) {
-        return i;
-      }
-    }
-    return null;
-  };
-  
-  // ── Alignment tools ──
-  const alignFields = useCallback((mode) => {
-    if (fields.length < 2) return;
-    // Align ALL fields (or could limit to selected — but aligning all is more useful)
-    setFields(prev => {
-      const fs = [...prev];
-      if (mode === "left") {
-        const minX = Math.min(...fs.map(f => f.x));
-        return fs.map(f => ({ ...f, x: minX }));
-      }
-      if (mode === "right") {
-        const maxX = Math.max(...fs.map(f => f.x));
-        return fs.map(f => ({ ...f, x: maxX }));
-      }
-      if (mode === "centerH") {
-        const avgX = fs.reduce((s, f) => s + f.x, 0) / fs.length;
-        return fs.map(f => ({ ...f, x: +avgX.toFixed(3) }));
-      }
-      if (mode === "top") {
-        const minY = Math.min(...fs.map(f => f.y));
-        return fs.map(f => ({ ...f, y: minY }));
-      }
-      if (mode === "bottom") {
-        const maxY = Math.max(...fs.map(f => f.y));
-        return fs.map(f => ({ ...f, y: maxY }));
-      }
-      if (mode === "centerV") {
-        const avgY = fs.reduce((s, f) => s + f.y, 0) / fs.length;
-        return fs.map(f => ({ ...f, y: +avgY.toFixed(3) }));
-      }
-      if (mode === "distributeV") {
-        if (fs.length < 3) return fs;
-        const sorted = fs.map((f, i) => ({ ...f, _i: i })).sort((a, b) => a.y - b.y);
-        const minY = sorted[0].y, maxY = sorted[sorted.length - 1].y;
-        const step = (maxY - minY) / (sorted.length - 1);
-        const result = [...fs];
-        sorted.forEach((f, idx) => { result[f._i] = { ...result[f._i], y: +(minY + step * idx).toFixed(3) }; });
-        return result;
-      }
-      if (mode === "distributeH") {
-        if (fs.length < 3) return fs;
-        const sorted = fs.map((f, i) => ({ ...f, _i: i })).sort((a, b) => a.x - b.x);
-        const minX = sorted[0].x, maxX = sorted[sorted.length - 1].x;
-        const step = (maxX - minX) / (sorted.length - 1);
-        const result = [...fs];
-        sorted.forEach((f, idx) => { result[f._i] = { ...result[f._i], x: +(minX + step * idx).toFixed(3) }; });
-        return result;
-      }
-      if (mode === "pageCenterH") {
-        if (!template) return fs;
-        const cx = template.widthIn / 2;
-        return fs.map(f => ({ ...f, x: +cx.toFixed(3) }));
-      }
-      if (mode === "pageCenterV") {
-        if (!template) return fs;
-        const cy = template.heightIn / 2;
-        return fs.map(f => ({ ...f, y: +cy.toFixed(3) }));
-      }
-      return fs;
-    });
-  }, [fields.length, template]);
 
-  // ── Preview rendering ──
+  // ── Compute text frame lines for a given record ──
+  const getFrameLines = useCallback((recordIdx) => {
+    const rec = records[recordIdx] || {};
+    return fields.map((field, fIdx) => {
+      const key = `field_${fIdx}`;
+      const text = rec[key] || (field.type === "number" ? `${field.prefix}${"0".repeat(field.padding)}${field.suffix}` : "");
+      return { text, label: field.label || `Field ${fIdx + 1}`, fieldIdx: fIdx };
+    }).filter(l => l.text); // skip empty lines
+  }, [fields, records]);
+
+  // ── Preview rendering (text frame model) ──
   useEffect(() => {
     if (!template || !previewCanvasRef.current) return;
 
@@ -667,42 +607,76 @@ export default function DataMerge({ CardHeader, pricingProps }) {
     img.onload = () => {
       ctx.drawImage(img, 0, 0, w, h);
 
-      // Render fields for current record
-      const rec = records[previewRecord] || {};
-      fields.forEach((field, fIdx) => {
-        const key = `field_${fIdx}`;
-        const text = rec[key] || (field.type === "number" ? `${field.prefix}${"0".repeat(field.padding)}${field.suffix}` : "[empty]");
-        const xPx = field.x * DPI;
-        const yPx = field.y * DPI;
-        const fsPx = field.fontSize * (DPI / 72);
+      if (fields.length === 0) return;
 
-        ctx.save();
-        const fontStyle = field.fontStyle === "italic" ? "italic " : "";
-        ctx.font = `${fontStyle}${field.fontWeight} ${Math.round(fsPx)}px ${field.fontFamily}, sans-serif`;
-        ctx.fillStyle = field.color;
-        ctx.textAlign = field.align;
+      const fsPx = fieldStyle.fontSize * (DPI / 72);
+      const lineHeight = fsPx * (fieldStyle.lineSpacing || 1.4);
+      const frameXPx = frame.x * DPI;
+      const frameYPx = frame.y * DPI;
+      const frameWPx = frame.width * DPI;
+      const fontStyleStr = fieldStyle.fontStyle === "italic" ? "italic " : "";
+      ctx.font = `${fontStyleStr}${fieldStyle.fontWeight} ${Math.round(fsPx)}px ${fieldStyle.fontFamily}, sans-serif`;
+
+      const lines = getFrameLines(previewRecord);
+
+      // Draw frame outline
+      const totalH = Math.max(lineHeight, lines.length * lineHeight);
+      ctx.save();
+      ctx.strokeStyle = "rgba(0, 160, 100, 0.4)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(frameXPx, frameYPx, frameWPx, totalH + fsPx * 0.3);
+      ctx.setLineDash([]);
+
+      // Draw resize handle (bottom-right corner)
+      ctx.fillStyle = "rgba(0, 160, 100, 0.6)";
+      ctx.fillRect(frameXPx + frameWPx - 6, frameYPx + totalH + fsPx * 0.3 - 6, 8, 8);
+
+      // Draw each line
+      lines.forEach((line, idx) => {
+        const yPx = frameYPx + fsPx * 0.6 + idx * lineHeight;
+        let xPx = frameXPx;
+        if (fieldStyle.align === "center") xPx = frameXPx + frameWPx / 2;
+        else if (fieldStyle.align === "right") xPx = frameXPx + frameWPx;
+
+        ctx.fillStyle = fieldStyle.color;
+        ctx.textAlign = fieldStyle.align;
         ctx.textBaseline = "middle";
-        ctx.fillText(text, xPx, yPx);
-
-        // Selection indicator
-        if (selectedField === fIdx) {
-          const metrics = ctx.measureText(text);
-          let boxX = xPx;
-          if (field.align === "center") boxX -= metrics.width / 2;
-          else if (field.align === "right") boxX -= metrics.width;
-          ctx.strokeStyle = "var(--green)";
-          ctx.lineWidth = 2;
-          ctx.setLineDash([4, 3]);
-          ctx.strokeRect(boxX - 4, yPx - fsPx / 2 - 4, metrics.width + 8, fsPx + 8);
-          ctx.setLineDash([]);
+        
+        // Word wrap within frame width
+        const words = line.text.split(" ");
+        let currentLine = "";
+        let subLineIdx = 0;
+        for (let wi = 0; wi < words.length; wi++) {
+          const testLine = currentLine ? currentLine + " " + words[wi] : words[wi];
+          const metrics = ctx.measureText(testLine);
+          if (metrics.width > frameWPx && currentLine) {
+            ctx.fillText(currentLine, xPx, yPx + subLineIdx * lineHeight);
+            currentLine = words[wi];
+            subLineIdx++;
+          } else {
+            currentLine = testLine;
+          }
         }
-        ctx.restore();
+        ctx.fillText(currentLine, xPx, yPx + subLineIdx * lineHeight);
+
+        // Highlight selected field's line
+        if (selectedField === line.fieldIdx) {
+          const textW = ctx.measureText(line.text).width;
+          let hlX = frameXPx;
+          if (fieldStyle.align === "center") hlX = frameXPx + (frameWPx - textW) / 2;
+          else if (fieldStyle.align === "right") hlX = frameXPx + frameWPx - textW;
+          ctx.fillStyle = "rgba(0, 180, 100, 0.1)";
+          ctx.fillRect(hlX - 2, yPx - fsPx * 0.5, textW + 4, fsPx);
+        }
       });
+
+      ctx.restore();
     };
     img.src = template.image;
-  }, [template, fields, records, previewRecord, selectedField]);
+  }, [template, fields, records, previewRecord, selectedField, fieldStyle, frame, getFrameLines]);
 
-  // ── PDF Generation ──
+  // ── PDF Generation (text frame model) ──
   const handleGenerate = useCallback(async () => {
     if (!template || records.length === 0) return;
     setGenerating(true);
@@ -718,30 +692,52 @@ export default function DataMerge({ CardHeader, pricingProps }) {
         format: [template.widthIn, template.heightIn],
       });
 
+      let fontStylePdf = fieldStyle.fontWeight === "bold" ? "bold" : "normal";
+      if (fieldStyle.fontStyle === "italic") fontStylePdf = fieldStyle.fontWeight === "bold" ? "bolditalic" : "italic";
+
+      const lineHeightIn = (fieldStyle.fontSize / 72) * (fieldStyle.lineSpacing || 1.4);
+
       for (let r = 0; r < records.length; r++) {
         if (r > 0) doc.addPage([template.widthIn, template.heightIn], orient);
 
         // Add template image
         doc.addImage(template.image, "PNG", 0, 0, template.widthIn, template.heightIn);
 
-        // Add fields
+        // Set font once for all fields
+        doc.setFont(fieldStyle.fontFamily, fontStylePdf);
+        doc.setFontSize(fieldStyle.fontSize);
+        doc.setTextColor(fieldStyle.color);
+
+        // Render each field as a line in the frame
         const rec = records[r];
+        let currentY = frame.y + fieldStyle.fontSize / 72 * 0.6;
+        
         fields.forEach((field, fIdx) => {
           const key = `field_${fIdx}`;
           const text = rec[key] || "";
           if (!text) return;
 
-          let fontStyle = field.fontWeight === "bold" ? "bold" : "normal";
-          if (field.fontStyle === "italic") fontStyle = field.fontWeight === "bold" ? "bolditalic" : "italic";
-          doc.setFont(field.fontFamily, fontStyle);
-          doc.setFontSize(field.fontSize);
-          doc.setTextColor(field.color);
-
           let alignOpt = {};
-          if (field.align === "center") alignOpt = { align: "center" };
-          else if (field.align === "right") alignOpt = { align: "right" };
+          let xPos = frame.x;
+          if (fieldStyle.align === "center") { xPos = frame.x + frame.width / 2; alignOpt = { align: "center" }; }
+          else if (fieldStyle.align === "right") { xPos = frame.x + frame.width; alignOpt = { align: "right" }; }
 
-          doc.text(text, field.x, field.y, alignOpt);
+          // Word wrap within frame width
+          const words = text.split(" ");
+          let currentLine = "";
+          for (let wi = 0; wi < words.length; wi++) {
+            const testLine = currentLine ? currentLine + " " + words[wi] : words[wi];
+            const testW = doc.getTextWidth(testLine);
+            if (testW > frame.width && currentLine) {
+              doc.text(currentLine, xPos, currentY, alignOpt);
+              currentY += lineHeightIn;
+              currentLine = words[wi];
+            } else {
+              currentLine = testLine;
+            }
+          }
+          doc.text(currentLine, xPos, currentY, alignOpt);
+          currentY += lineHeightIn;
         });
       }
 
@@ -758,7 +754,7 @@ export default function DataMerge({ CardHeader, pricingProps }) {
       alert("Error generating PDF: " + err.message);
     }
     setGenerating(false);
-  }, [template, records, fields]);
+  }, [template, records, fields, fieldStyle, frame]);
 
   // ── Render ──
   return (
@@ -1047,6 +1043,11 @@ export default function DataMerge({ CardHeader, pricingProps }) {
                     {ALIGN_OPTIONS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
                   </select>
                 </div>
+                <div style={{ flex: 0, minWidth: 60 }}>
+                  <label className="field-label">Line spacing</label>
+                  <input className="pc-input" type="number" value={fieldStyle.lineSpacing || 1.4} min="0.8" max="4" step="0.1"
+                    onChange={e => updateStyle("lineSpacing", Math.max(0.8, +e.target.value || 1.4))} style={{ width: "100%" }} />
+                </div>
               </div>
               {/* Live preview */}
               <div style={{
@@ -1102,14 +1103,14 @@ export default function DataMerge({ CardHeader, pricingProps }) {
         </div>
       )}
 
-      {/* Step 5 — Preview */}
+      {/* Step 5 — Preview & Position */}
       {template && fields.length > 0 && (
         <div className="pc-card">
           <CardHeader
             step="5"
             stepClass="step-num-green"
-            title="Preview"
-            hint={`${totalRecords} record${totalRecords !== 1 ? "s" : ""} — click the template to reposition selected field`}
+            title="Preview & Position"
+            hint="Drag the text frame to position it · Drag the corner handle to resize width"
           />
           <div className="pc-card-body">
 
@@ -1127,13 +1128,6 @@ export default function DataMerge({ CardHeader, pricingProps }) {
                 <div style={{ fontSize: 13, fontWeight: 600 }}>
                   Record {previewRecord + 1} of {totalRecords}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {fields.map((f, i) => {
-                    const key = `field_${i}`;
-                    const val = records[previewRecord]?.[key] || "";
-                    return `${f.label || "Field"}: ${val}`;
-                  }).join(" · ")}
-                </div>
               </div>
 
               <button className="pc-btn pc-btn-secondary pc-btn-sm pc-btn-icon"
@@ -1142,48 +1136,54 @@ export default function DataMerge({ CardHeader, pricingProps }) {
               ><ChevronRight /></button>
             </div>
 
-            {/* Field selector chips */}
-            <div style={{ display: "flex", gap: 4, marginBottom: 10, flexWrap: "wrap" }}>
-              {fields.map((f, i) => (
-                <button key={i}
-                  className={`pc-btn pc-btn-xs ${selectedField === i ? "pc-btn-primary" : "pc-btn-secondary"}`}
-                  onClick={() => { setSelectedField(i); setPlacingField(true); }}
-                >
-                  {f.label || `Field ${i + 1}`}
-                  {selectedField === i && " 📍"}
-                </button>
-              ))}
+            {/* Frame position controls */}
+            <div style={{
+              display: "flex", gap: 10, marginBottom: 10, padding: "8px 12px",
+              background: "var(--surface-3)", borderRadius: "var(--radius-sm)",
+              flexWrap: "wrap", alignItems: "center", fontSize: 12,
+            }}>
+              <span style={{ fontWeight: 600, color: "var(--text-muted)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Frame:</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                X: <input className="pc-input" type="number" step="0.05" value={frame.x}
+                  onChange={e => setFrame(prev => ({ ...prev, x: +e.target.value || 0 }))}
+                  style={{ width: 60, height: 26, fontSize: 11 }} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                Y: <input className="pc-input" type="number" step="0.05" value={frame.y}
+                  onChange={e => setFrame(prev => ({ ...prev, y: +e.target.value || 0 }))}
+                  style={{ width: 60, height: 26, fontSize: 11 }} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                W: <input className="pc-input" type="number" step="0.1" min="0.5" value={frame.width}
+                  onChange={e => setFrame(prev => ({ ...prev, width: Math.max(0.5, +e.target.value || 1) }))}
+                  style={{ width: 60, height: 26, fontSize: 11 }} />
+              </div>
+              <span style={{ width: 1, height: 16, background: "var(--border)" }} />
+              <button className="pc-btn pc-btn-xs pc-btn-secondary"
+                onClick={() => {
+                  if (!template) return;
+                  const cx = (template.widthIn - frame.width) / 2;
+                  setFrame(prev => ({ ...prev, x: +cx.toFixed(3) }));
+                }}
+              >Center H</button>
+              <button className="pc-btn pc-btn-xs pc-btn-secondary"
+                onClick={() => {
+                  if (!template) return;
+                  const lineH = fieldStyle.fontSize / 72 * (fieldStyle.lineSpacing || 1.4);
+                  const totalH = fields.length * lineH;
+                  const cy = (template.heightIn - totalH) / 2;
+                  setFrame(prev => ({ ...prev, y: +Math.max(0, cy).toFixed(3) }));
+                }}
+              >Center V</button>
+              <button className="pc-btn pc-btn-xs pc-btn-secondary"
+                onClick={() => {
+                  if (!template) return;
+                  setFrame(prev => ({ ...prev, width: +template.widthIn.toFixed(3), x: 0 }));
+                }}
+              >Full Width</button>
             </div>
 
-            {/* Alignment toolbar */}
-            {fields.length >= 2 && (
-              <div style={{
-                display: "flex", gap: 4, marginBottom: 10, padding: "6px 10px",
-                background: "var(--surface-3)", borderRadius: "var(--radius-sm)",
-                flexWrap: "wrap", alignItems: "center",
-              }}>
-                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 4 }}>Align:</span>
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("left")} title="Align left edges">⫷ Left</button>
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("centerH")} title="Align horizontal centers">⫿ Center X</button>
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("right")} title="Align right edges">⫸ Right</button>
-                <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 4px" }} />
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("top")} title="Align top edges">⊤ Top</button>
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("centerV")} title="Align vertical centers">⊞ Center Y</button>
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("bottom")} title="Align bottom edges">⊥ Bottom</button>
-                <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 4px" }} />
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("pageCenterH")} title="Center all fields horizontally on page">⊹ Page Center X</button>
-                <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("pageCenterV")} title="Center all fields vertically on page">⊹ Page Center Y</button>
-                {fields.length >= 3 && (
-                  <>
-                    <span style={{ width: 1, height: 16, background: "var(--border)", margin: "0 4px" }} />
-                    <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("distributeV")} title="Distribute evenly vertically">↕ Distribute Y</button>
-                    <button className="pc-btn pc-btn-xs pc-btn-secondary" onClick={() => alignFields("distributeH")} title="Distribute evenly horizontally">↔ Distribute X</button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Preview canvas with drag support */}
+            {/* Preview canvas */}
             <div
               ref={previewContainerRef}
               onMouseDown={handlePreviewMouseDown}
@@ -1194,10 +1194,9 @@ export default function DataMerge({ CardHeader, pricingProps }) {
               onTouchMove={e => { e.preventDefault(); handlePreviewMouseMove(e.touches[0]); }}
               onTouchEnd={handlePreviewMouseUp}
               style={{
-                border: `2px solid ${placingField ? "var(--green)" : "var(--border)"}`,
+                border: "2px solid var(--border)",
                 borderRadius: "var(--radius)", overflow: "hidden",
-                cursor: placingField ? "crosshair" : (draggingRef.current ? "grabbing" : "grab"),
-                transition: "border-color 0.2s",
+                cursor: "grab",
                 touchAction: "none",
               }}
             >
@@ -1208,7 +1207,7 @@ export default function DataMerge({ CardHeader, pricingProps }) {
             </div>
 
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-              Click to place selected field · Drag fields to reposition · Use alignment tools above for precise layout
+              Drag the green frame to reposition · Drag the bottom-right handle to resize · Click outside frame to move it there
             </div>
           </div>
         </div>
