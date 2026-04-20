@@ -817,11 +817,15 @@ function PriceCalculatorApp() {
               ctx.translate(contentX+contentW/2, contentY+contentH/2);
               ctx.beginPath(); ctx.rect(-contentW/2,-contentH/2,contentW,contentH); ctx.clip();
 const totalRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
-              const rad = (totalRot * Math.PI) / 180;
-              ctx.rotate(rad);
-              // Stretch-to-fill: image fills the exact slot dimensions
               const totalRotNorm = normRot(totalRot);
-              const swap = totalRotNorm===90 || totalRotNorm===270;
+              // When the slot is already rotated by computeBestFit (printRotated),
+              // we need to counter-rotate the image to fill correctly
+              const effectiveRot = printRotated ? totalRot + 90 : totalRot;
+              const rad = (effectiveRot * Math.PI) / 180;
+              ctx.rotate(rad);
+              // Stretch-to-fill: determine draw dimensions based on effective rotation
+              const effNorm = normRot(effectiveRot);
+              const swap = effNorm===90 || effNorm===270;
               const drawW = swap ? contentH : contentW;
               const drawH = swap ? contentW : contentH;
               ctx.drawImage(chosen.img, -drawW/2, -drawH/2, drawW, drawH);
