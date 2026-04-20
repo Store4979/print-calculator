@@ -816,21 +816,15 @@ function PriceCalculatorApp() {
               ctx.save();
               ctx.translate(contentX+contentW/2, contentY+contentH/2);
               ctx.beginPath(); ctx.rect(-contentW/2,-contentH/2,contentW,contentH); ctx.clip();
-              const rad = (((Number(rotDeg)||0)+(Number(it.rotation)||0))*Math.PI)/180;
+const totalRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
+              const rad = (totalRot * Math.PI) / 180;
               ctx.rotate(rad);
-const rotNorm = normRot(it.rotation);
-              const swap = rotNorm===90 || rotNorm===270;
-              const imgW = swap ? chosen.height : chosen.width;
-              const imgH = swap ? chosen.width : chosen.height;
-              const imgAspect = imgW / imgH;
-              const slotAspect = contentW / contentH;
-              let drawW, drawH;
-              if (imgAspect > slotAspect) {
-                drawH = contentH; drawW = contentH * imgAspect;
-              } else {
-                drawW = contentW; drawH = contentW / imgAspect;
-              }
-              ctx.drawImage(chosen.img,-drawW/2,-drawH/2,drawW,drawH);
+              // Stretch-to-fill: image fills the exact slot dimensions
+              const totalRotNorm = normRot(totalRot);
+              const swap = totalRotNorm===90 || totalRotNorm===270;
+              const drawW = swap ? contentH : contentW;
+              const drawH = swap ? contentW : contentH;
+              ctx.drawImage(chosen.img, -drawW/2, -drawH/2, drawW, drawH);
               ctx.restore();
             } else {
               ctx.fillStyle = "#e5e7eb"; ctx.fillRect(contentX,contentY,contentW,contentH);
