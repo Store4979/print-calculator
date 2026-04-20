@@ -810,9 +810,6 @@ function PriceCalculatorApp() {
             pagePlacements.push({ col, row, x, y, w:printWPx, h:printHPx, itemId:it.id, itemName:it.name, slotIndex:slotIdx });
 
             ctx.save();
-            if (showBleed && bleedPx>0) {
-              ctx.fillStyle = "#f0f0f0"; ctx.fillRect(x,y,printWPx,printHPx);
-            }
             const contentX = x+bleedPx, contentY = y+bleedPx;
             const contentW = printWPx-bleedPx*2, contentH = printHPx-bleedPx*2;
             if (chosen?.img) {
