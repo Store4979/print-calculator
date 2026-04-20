@@ -227,10 +227,9 @@ const normRot = (deg) => ((Number(deg)||0) % 360 + 360) % 360;
 
 const getFileExt = (name="") => (name.split(".").pop()||"").toUpperCase().slice(0,4) || "IMG";
 
-const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn, bleed) => {
-  const bleedAdd = bleed ? 0.125 : 0;
-  const pw = (printW||0) + bleedAdd*2;
-  const ph = (printH||0) + bleedAdd*2;
+const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn) => {
+  const pw = (printW||0);
+  const ph = (printH||0);
   if (!pw || !ph) return { cols:1, rows:1, count:1, printRotated:false, sheetOrientation:"portrait" };
   let best = null;
   [false, true].forEach((printRotated) => {
@@ -496,7 +495,6 @@ function PriceCalculatorApp() {
   const [frontColorMode, setFrontColorMode] = useState("color");
   const [backColorMode, setBackColorMode]   = useState("bw");
   const [showBack, setShowBack]     = useState(false);
-  const [showBleed, setShowBleed]   = useState(false);
   const [showCutLines, setShowCutLines]   = useState(true);
   const [showGuides, setShowGuides] = useState(true);
   const [prints, setPrints]         = useState({ width:3.5, height:2, quantity:100 });
@@ -665,7 +663,7 @@ function PriceCalculatorApp() {
   const orientedHIn = orientation==="landscape" ? Math.min(...sheetDims) : Math.max(...sheetDims);
 
   // ── Best fit calculation ──
-  const frontSlotInfo = computeBestFit(prints.width, prints.height, orientedWIn, orientedHIn, previewMargin, previewSpacing, showBleed);
+  const frontSlotInfo = computeBestFit(prints.width, prints.height, orientedWIn, orientedHIn, previewMargin, previewSpacing, false);
   const printsPerSheet = frontSlotInfo?.count || 1;
 
   const totalPrintQty = frontFiles.length
@@ -763,7 +761,7 @@ function PriceCalculatorApp() {
 
       const marginPx  = inchesToPx(previewMargin);
       const spacingPx = inchesToPx(previewSpacing);
-      const bleedPx   = showBleed ? inchesToPx(0.125) : 0;
+      const bleedPx = 0;
       const { cols, rows, printRotated, sheetOrientation } = frontSlotInfo || { cols:1, rows:1, printRotated:false, sheetOrientation:"portrait" };
       const actualOriented = sheetOrientation==="landscape"
         ? { w: Math.max(wPx,hPx), h: Math.min(wPx,hPx) }
@@ -825,12 +823,16 @@ function PriceCalculatorApp() {
               ctx.rotate(rad);
               const perFileRot = normRot(it.rotation);
               let drawW, drawH;
-              if (perFileRot!==0) {
-                const swap = perFileRot===90||perFileRot===270;
-                drawW = swap ? contentH : contentW; drawH = swap ? contentW : contentH;
+const perFileRotNorm = normRot(it.rotation);
+              const swap = perFileRotNorm===90 || perFileRotNorm===270;
+              const imgW = swap ? chosen.height : chosen.width;
+              const imgH = swap ? chosen.width : chosen.height;
+              const imgAspect = imgW / imgH;
+              const slotAspect = contentW / contentH;
+              if (imgAspect > slotAspect) {
+                drawH = contentH; drawW = contentH * imgAspect;
               } else {
-                drawW = contentW; drawH = (chosen.height/chosen.width)*contentW;
-                if (drawH<contentH) { drawH=contentH; drawW=(chosen.width/chosen.height)*contentH; }
+                drawW = contentW; drawH = contentW / imgAspect;
               }
               ctx.drawImage(chosen.img,-drawW/2,-drawH/2,drawW,drawH);
               ctx.restore();
@@ -856,15 +858,15 @@ function PriceCalculatorApp() {
         resolve({ placements: pagePlacements });
       });
     });
-  }, [orientedWIn, orientedHIn, prints, frontSlotInfo, showBleed, showCutLines, showGuides, previewMargin, previewSpacing]);
+  }, [orientedWIn, orientedHIn, prints, frontSlotInfo, showCutLines, showGuides, previewMargin, previewSpacing]);
 
   useEffect(() => {
     drawSheet(frontRef.current, frontFiles.length ? frontFiles : frontImage, frontRotation, frontPreviewPage, frontPlacementsRef);
-  }, [frontFiles, frontImage, frontRotation, frontPreviewPage, sheetKey, orientation, customSize, prints, showBleed, showCutLines, showGuides, drawSheet]);
+  }, [frontFiles, frontImage, frontRotation, frontPreviewPage, sheetKey, orientation, customSize, prints, showCutLines, showGuides, drawSheet]);
 
   useEffect(() => {
     if (showBack) drawSheet(backRef.current, backImage, backRotation, 0, null);
-  }, [backImage, backRotation, sheetKey, orientation, customSize, prints, showBleed, showCutLines, showGuides, showBack, drawSheet]);
+  }, [backImage, backRotation, sheetKey, orientation, customSize, prints, showCutLines, showGuides, showBack, drawSheet]);
 
   // ── LF Canvas ──
   useEffect(() => {
@@ -1775,10 +1777,6 @@ try {
                     <Toggle checked={showBack} onChange={setShowBack} />
                   </div>
                   <div className="toggle-row">
-                    <div><div className="toggle-label-text">Full bleed</div><div className="toggle-label-sub">Adds 0.125" on each side</div></div>
-                    <Toggle checked={showBleed} onChange={setShowBleed} />
-                  </div>
-                  <div className="toggle-row">
                     <div><div className="toggle-label-text">Show cut lines</div><div className="toggle-label-sub">Visible in preview only</div></div>
                     <Toggle checked={showCutLines} onChange={setShowCutLines} />
                   </div>
@@ -1899,7 +1897,7 @@ try {
                 )}
 
                 {/* Back side upload (shown when double-sided is on) */}
-                {showBack && (
+{showBack && (
                   <div style={{ marginTop:16, paddingTop:16, borderTop:"1px solid var(--border)" }}>
                     <label className="field-label">Back side image</label>
                     <input
@@ -1917,6 +1915,19 @@ try {
                       onFiles={handleBackFile}
                       inputRef={backInputRef}
                     />
+                    {backImage && (
+                      <div style={{ display:"flex", gap:8, marginTop:8, alignItems:"center" }}>
+                        <button className="pc-btn pc-btn-secondary pc-btn-sm" onClick={()=>setBackRotation(r=>(r+90)%360)} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <Icon.Rotate /> Rotate 90°
+                        </button>
+                        <span style={{ fontSize:12, color:"var(--text-muted)" }}>
+                          {backRotation > 0 ? `Rotated ${backRotation}°` : "No rotation"}
+                        </span>
+                        <button className="pc-btn pc-btn-secondary pc-btn-sm" style={{ marginLeft:"auto" }} onClick={()=>{ setBackImage(null); setBackRotation(0); }}>
+                          <Icon.X /> Remove
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
