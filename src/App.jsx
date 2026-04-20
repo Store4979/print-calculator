@@ -821,14 +821,13 @@ function PriceCalculatorApp() {
               ctx.beginPath(); ctx.rect(-contentW/2,-contentH/2,contentW,contentH); ctx.clip();
               const rad = (((Number(rotDeg)||0)+(Number(it.rotation)||0))*Math.PI)/180;
               ctx.rotate(rad);
-              const perFileRot = normRot(it.rotation);
-              let drawW, drawH;
-const perFileRotNorm = normRot(it.rotation);
-              const swap = perFileRotNorm===90 || perFileRotNorm===270;
+const rotNorm = normRot(it.rotation);
+              const swap = rotNorm===90 || rotNorm===270;
               const imgW = swap ? chosen.height : chosen.width;
               const imgH = swap ? chosen.width : chosen.height;
               const imgAspect = imgW / imgH;
               const slotAspect = contentW / contentH;
+              let drawW, drawH;
               if (imgAspect > slotAspect) {
                 drawH = contentH; drawW = contentH * imgAspect;
               } else {
