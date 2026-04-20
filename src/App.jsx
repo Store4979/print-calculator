@@ -762,22 +762,19 @@ function PriceCalculatorApp() {
       const marginPx  = inchesToPx(previewMargin);
       const spacingPx = inchesToPx(previewSpacing);
       const bleedPx = 0;
-      const { cols, rows, printRotated, sheetOrientation } = frontSlotInfo || { cols:1, rows:1, printRotated:false, sheetOrientation:"portrait" };
-      const actualOriented = sheetOrientation==="landscape"
-        ? { w: Math.max(wPx,hPx), h: Math.min(wPx,hPx) }
-        : { w: Math.min(wPx,hPx), h: Math.max(wPx,hPx) };
+const { cols, rows, printRotated } = frontSlotInfo || { cols:1, rows:1, printRotated:false };
 
       let printWPx = printRotated
-        ? inchesToPx(prints.height) + bleedPx*2
-        : inchesToPx(prints.width)  + bleedPx*2;
+        ? inchesToPx(prints.height)
+        : inchesToPx(prints.width);
       let printHPx = printRotated
-        ? inchesToPx(prints.width)  + bleedPx*2
-        : inchesToPx(prints.height) + bleedPx*2;
+        ? inchesToPx(prints.width)
+        : inchesToPx(prints.height);
 
       const gridW = cols*(printWPx+spacingPx) - spacingPx;
       const gridH = rows*(printHPx+spacingPx) - spacingPx;
-      const startX = Math.round((actualOriented.w - gridW)/2);
-      const startY = Math.round((actualOriented.h - gridH)/2);
+      const startX = Math.round((wPx - gridW)/2);
+      const startY = Math.round((hPx - gridH)/2);
 
       const totalSlots = cols * rows;
       const cap = totalSlots;
@@ -816,16 +813,16 @@ function PriceCalculatorApp() {
               ctx.save();
               ctx.translate(contentX+contentW/2, contentY+contentH/2);
               ctx.beginPath(); ctx.rect(-contentW/2,-contentH/2,contentW,contentH); ctx.clip();
-const totalRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
-              const totalRotNorm = normRot(totalRot);
-              // When the slot is already rotated by computeBestFit (printRotated),
-              // we need to counter-rotate the image to fill correctly
-              const effectiveRot = printRotated ? totalRot + 90 : totalRot;
-              const rad = (effectiveRot * Math.PI) / 180;
+const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
+              // printRotated means the slot is W×H swapped to fit more on the sheet,
+              // so we rotate the image 90° to match the swapped slot
+              const totalRot = printRotated ? userRot - 90 : userRot;
+              const rad = (totalRot * Math.PI) / 180;
               ctx.rotate(rad);
-              // Stretch-to-fill: determine draw dimensions based on effective rotation
-              const effNorm = normRot(effectiveRot);
-              const swap = effNorm===90 || effNorm===270;
+              // Stretch-to-fill: always draw at content dimensions
+              // When rotated 90/270, swap draw dimensions so image fills the rotated frame
+              const rotNorm = normRot(totalRot);
+              const swap = rotNorm===90 || rotNorm===270;
               const drawW = swap ? contentH : contentW;
               const drawH = swap ? contentW : contentH;
               ctx.drawImage(chosen.img, -drawW/2, -drawH/2, drawW, drawH);
