@@ -12,7 +12,12 @@ import { drawBarcode128 } from "./barcode128.js";
 
 // ─── CONSTANTS ──────────────────────────────────────────────
 
-const DPI = 96;
+const DPI = 96;                 // on-screen preview rasterization
+const PRINT_DPI_SHEET   = 300;  // output DPI for sheet / photo PDFs
+const PRINT_DPI_LF      = 150;  // output DPI for large-format PDFs (prints viewed at distance)
+const PRINT_DPI_BP      = 200;  // output DPI for blueprint PDFs
+const MAX_OUTPUT_PX     = 8000; // per-dimension cap to avoid browser OOM on huge canvases
+const PDF_JPEG_QUALITY  = 0.95; // high-quality JPEG for embedded rasters
 const DEFAULT_MARGIN_IN  = 0.125;
 const DEFAULT_SPACING_IN = 0.0625;
 
@@ -167,13 +172,24 @@ const buildInitialBlueprintPricing = () => {
 
 const isPdfFile = (f) => f?.type === "application/pdf" || (f?.name||"").toLowerCase().endsWith(".pdf");
 
-const pdfFileToPngFile = async (file, pageNum=1, scale=2) => {
+// Compute a PDF.js viewport scale that targets a given DPI while capping
+// the resulting pixel dimensions to avoid browser OOM on huge source PDFs.
+const pdfRasterScale = (page, targetDpi, maxPx) => {
+  const base = page.getViewport({ scale: 1 }); // 1 unit = 1 PDF point (72 DPI)
+  let scale = targetDpi / 72;
+  const biggest = Math.max(base.width, base.height) * scale;
+  if (biggest > maxPx) scale = maxPx / Math.max(base.width, base.height);
+  return scale;
+};
+
+const pdfFileToPngFile = async (file, pageNum=1, { targetDpi=PRINT_DPI_SHEET, maxPx=MAX_OUTPUT_PX }={}) => {
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("pdf.js not loaded");
   const ab = await file.arrayBuffer();
   const pdf = await lib.getDocument({ data: ab }).promise;
   const safePage = Math.min(Math.max(1, pageNum), pdf.numPages || 1);
   const page = await pdf.getPage(safePage);
+  const scale = pdfRasterScale(page, targetDpi, maxPx);
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil(viewport.width);
@@ -183,7 +199,7 @@ const pdfFileToPngFile = async (file, pageNum=1, scale=2) => {
   return new File([blob], file.name.replace(/\.pdf$/i,"")+"-p1.png", { type:"image/png" });
 };
 
-const pdfFileToAllPages = async (file, scale=2) => {
+const pdfFileToAllPages = async (file, { targetDpi=PRINT_DPI_SHEET, maxPx=MAX_OUTPUT_PX }={}) => {
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("pdf.js not loaded");
   const ab = await file.arrayBuffer();
@@ -191,6 +207,7 @@ const pdfFileToAllPages = async (file, scale=2) => {
   const pages = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
+    const scale = pdfRasterScale(page, targetDpi, maxPx);
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement("canvas");
     canvas.width = Math.ceil(viewport.width);
@@ -203,19 +220,7 @@ const pdfFileToAllPages = async (file, scale=2) => {
   return pages;
 };
 
-const normalizeUpload = async (file) => isPdfFile(file) ? await pdfFileToPngFile(file,1,2) : file;
-
-const canvasToCompressedJpeg = (canvas, { maxDim=1600, quality=0.75 }={}) => {
-  let w = canvas.width, h = canvas.height;
-  if (Math.max(w,h) > maxDim) {
-    const r = maxDim / Math.max(w,h);
-    w = Math.round(w*r); h = Math.round(h*r);
-  }
-  const tmp = document.createElement("canvas");
-  tmp.width = w; tmp.height = h;
-  tmp.getContext("2d").drawImage(canvas, 0, 0, w, h);
-  return tmp.toDataURL("image/jpeg", quality);
-};
+const normalizeUpload = async (file, opts={}) => isPdfFile(file) ? await pdfFileToPngFile(file, 1, opts) : file;
 
 const getJsPDF = () => {
   if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
@@ -223,36 +228,122 @@ const getJsPDF = () => {
   throw new Error("jsPDF not loaded");
 };
 
-const normRot = (deg) => ((Number(deg)||0) % 360 + 360) % 360;
+// Load a File/Blob as an Image element.
+const fileToImage = (fileOrBlob) => new Promise((resolve, reject) => {
+  if (!fileOrBlob) return reject(new Error("no file"));
+  const url = URL.createObjectURL(fileOrBlob);
+  const img = new Image();
+  img.onload = () => { setTimeout(() => URL.revokeObjectURL(url), 0); resolve(img); };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image load failed")); };
+  img.src = url;
+});
+
+// Rasterize a single image to a canvas sized to `widthIn × heightIn` at the
+// requested DPI (capped at MAX_OUTPUT_PX per side). Fill mode:
+//   "cover" → aspect preserved, cropped to fill (auto-orients 90° if needed)
+//   "fit"   → aspect preserved, letterboxed (auto-orients 90° if needed)
+const renderSingleImageCanvas = (img, widthIn, heightIn, { dpi=PRINT_DPI_SHEET, fill="cover", background="#ffffff" } = {}) => {
+  const baseW = widthIn * dpi;
+  const baseH = heightIn * dpi;
+  let effDpi = dpi;
+  const biggest = Math.max(baseW, baseH);
+  if (biggest > MAX_OUTPUT_PX) effDpi = dpi * (MAX_OUTPUT_PX / biggest);
+  const wPx = Math.max(1, Math.round(widthIn * effDpi));
+  const hPx = Math.max(1, Math.round(heightIn * effDpi));
+  const canvas = document.createElement("canvas");
+  canvas.width = wPx; canvas.height = hPx;
+  const ctx = canvas.getContext("2d");
+  if (background) { ctx.fillStyle = background; ctx.fillRect(0, 0, wPx, hPx); }
+  if (!img || !img.naturalWidth) return canvas;
+
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const imgLandscape = iw >= ih;
+  const boxLandscape = wPx >= hPx;
+  const autoRot = imgLandscape === boxLandscape ? 0 : 90;
+  const swapped = autoRot === 90 || autoRot === 270;
+  const effW = swapped ? ih : iw;
+  const effH = swapped ? iw : ih;
+  const scale = fill === "cover"
+    ? Math.max(wPx / effW, hPx / effH)
+    : Math.min(wPx / effW, hPx / effH);
+  const drawW = iw * scale;
+  const drawH = ih * scale;
+
+  ctx.save();
+  if (fill === "cover") {
+    ctx.beginPath();
+    ctx.rect(0, 0, wPx, hPx);
+    ctx.clip();
+  }
+  ctx.translate(wPx/2, hPx/2);
+  ctx.rotate((autoRot * Math.PI) / 180);
+  ctx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
+  ctx.restore();
+  return canvas;
+};
+
+// Serialize a canvas to a JPEG data URL ready to embed in a PDF.
+const canvasToPrintJpeg = (canvas, quality=PDF_JPEG_QUALITY) => canvas.toDataURL("image/jpeg", quality);
 
 const getFileExt = (name="") => (name.split(".").pop()||"").toUpperCase().slice(0,4) || "IMG";
 
+// Fit calculator. Honors the supplied sheetW/sheetH orientation (caller picks
+// portrait vs landscape). Only the print-rotation is swept to maximize count.
 const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn) => {
   const pw = (printW||0);
   const ph = (printH||0);
-  if (!pw || !ph) return { cols:1, rows:1, count:1, printRotated:false, sheetOrientation:"portrait" };
+  const sheetOrientation = sheetW >= sheetH ? "landscape" : "portrait";
+  if (!pw || !ph) return { cols:1, rows:1, count:1, printRotated:false, sheetOrientation };
   let best = null;
   [false, true].forEach((printRotated) => {
-    ["portrait","landscape"].forEach((sheetOrientation) => {
-      const sw = sheetOrientation==="landscape" ? Math.max(sheetW,sheetH) : Math.min(sheetW,sheetH);
-      const sh = sheetOrientation==="landscape" ? Math.min(sheetW,sheetH) : Math.max(sheetW,sheetH);
-      const aw = printRotated ? ph : pw;
-      const ah = printRotated ? pw : ph;
-      const m = marginIn;
-      const sp = spacingIn;
-      const usableW = sw - 2*m + sp;
-      const usableH = sh - 2*m + sp;
-      const cols = Math.max(1, Math.floor(usableW / (aw+sp)));
-      const rows = Math.max(1, Math.floor(usableH / (ah+sp)));
-      const count = cols * rows;
-      const candidate = { cols, rows, count, printRotated, sheetOrientation };
-      if (!best || count > best.count) best = candidate;
-      else if (count === best.count) {
-        if (best.printRotated && !candidate.printRotated) best = candidate;
-      }
-    });
+    const aw = printRotated ? ph : pw;
+    const ah = printRotated ? pw : ph;
+    const m = marginIn;
+    const sp = spacingIn;
+    const usableW = sheetW - 2*m + sp;
+    const usableH = sheetH - 2*m + sp;
+    const cols = Math.max(1, Math.floor(usableW / (aw+sp)));
+    const rows = Math.max(1, Math.floor(usableH / (ah+sp)));
+    const count = cols * rows;
+    const candidate = { cols, rows, count, printRotated, sheetOrientation };
+    if (!best || count > best.count) best = candidate;
+    else if (count === best.count && best.printRotated && !candidate.printRotated) best = candidate;
   });
-  return best || { cols:1, rows:1, count:1, printRotated:false, sheetOrientation:"portrait" };
+  return best || { cols:1, rows:1, count:1, printRotated:false, sheetOrientation };
+};
+
+// Draw an image centered in a box with "cover" sizing (aspect preserved, fills
+// the box, crops overflow). Auto-rotates the image by 90° when its natural
+// orientation doesn't match the box orientation, so portrait art fills a
+// portrait slot without stretching and landscape art fills a landscape slot.
+// `userRotDeg` is additive manual rotation (0/90/180/270).
+const drawImageCover = (ctx, img, cx, cy, boxW, boxH, userRotDeg=0) => {
+  if (!img || !img.naturalWidth || !img.naturalHeight) return;
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  const imgLandscape = iw >= ih;
+  const boxLandscape = boxW >= boxH;
+  const autoRot = imgLandscape === boxLandscape ? 0 : 90;
+  const totalRot = ((Number(userRotDeg)||0) + autoRot) % 360;
+  const rad = (totalRot * Math.PI) / 180;
+
+  // After rotation, the image's bounding axes swap when rotated 90/270.
+  const rotNorm = ((totalRot % 360) + 360) % 360;
+  const swapped = rotNorm === 90 || rotNorm === 270;
+  const effW = swapped ? ih : iw;
+  const effH = swapped ? iw : ih;
+  const scale = Math.max(boxW / effW, boxH / effH); // COVER
+  const drawW = iw * scale;
+  const drawH = ih * scale;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(cx - boxW/2, cy - boxH/2, boxW, boxH);
+  ctx.clip();
+  ctx.translate(cx, cy);
+  ctx.rotate(rad);
+  ctx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
+  ctx.restore();
 };
 
 // ─── PDF ORDER SHEET ────────────────────────────────────────
@@ -737,12 +828,21 @@ function PriceCalculatorApp() {
   const bestQuote = quoteRows[0];
 
   // ─── DRAW SHEET CANVAS ──────────────────────────────────
-  const drawSheet = useCallback((canvas, imageInput, rotDeg, pageIndex=0, placementsRef=null) => {
+  // When `opts.dpi` is set, the canvas is rendered at that DPI (used for
+  // high-quality PDF export). Otherwise it uses the on-screen preview DPI.
+  // `opts.showGuides` / `opts.showCutLines` can override the UI toggles so
+  // PDF output stays free of preview-only guides.
+  const drawSheet = useCallback((canvas, imageInput, rotDeg, pageIndex=0, placementsRef=null, opts={}) => {
     return new Promise((resolve) => {
       if (!canvas) return resolve();
+      const dpi = Math.max(1, Number(opts.dpi) || DPI);
+      const guidesOn = opts.showGuides ?? showGuides;
+      const cutsOn   = opts.showCutLines ?? showCutLines;
+      const inchesToPxAt = (i) => Math.round(i * dpi);
+
       const ctx = canvas.getContext("2d");
-      const wPx = inchesToPx(orientedWIn);
-      const hPx = inchesToPx(orientedHIn);
+      const wPx = inchesToPxAt(orientedWIn);
+      const hPx = inchesToPxAt(orientedHIn);
       canvas.width = wPx; canvas.height = hPx;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0,0,wPx,hPx);
@@ -759,26 +859,22 @@ function PriceCalculatorApp() {
 
       if (!items.length) { if (placementsRef) placementsRef.current=[]; return resolve(); }
 
-      const marginPx  = inchesToPx(previewMargin);
-      const spacingPx = inchesToPx(previewSpacing);
-      const bleedPx = 0;
-const { cols, rows, printRotated } = frontSlotInfo || { cols:1, rows:1, printRotated:false };
+      const marginPx  = inchesToPxAt(previewMargin);
+      const spacingPx = inchesToPxAt(previewSpacing);
+      const { cols, rows, printRotated } = frontSlotInfo || { cols:1, rows:1, printRotated:false };
 
-      let printWPx = printRotated
-        ? inchesToPx(prints.height)
-        : inchesToPx(prints.width);
-      let printHPx = printRotated
-        ? inchesToPx(prints.width)
-        : inchesToPx(prints.height);
+      // Slot pixel dimensions. printRotated means the image is rotated 90° to
+      // fit more copies on the sheet — we swap W/H of the slot itself so the
+      // grid layout aligns with the user-selected sheet orientation.
+      const printWPx = printRotated ? inchesToPxAt(prints.height) : inchesToPxAt(prints.width);
+      const printHPx = printRotated ? inchesToPxAt(prints.width)  : inchesToPxAt(prints.height);
 
       const gridW = cols*(printWPx+spacingPx) - spacingPx;
       const gridH = rows*(printHPx+spacingPx) - spacingPx;
       const startX = Math.round((wPx - gridW)/2);
       const startY = Math.round((hPx - gridH)/2);
 
-      const totalSlots = cols * rows;
-      const cap = totalSlots;
-
+      const cap = cols * rows;
       let workList = [];
       items.forEach(it => { const q = it.qty || 0; if (q>0) for (let i=0;i<q;i++) workList.push(it); else workList.push(it); });
       const startIdx = pageIndex * cap;
@@ -807,42 +903,31 @@ const { cols, rows, printRotated } = frontSlotInfo || { cols:1, rows:1, printRot
             pagePlacements.push({ col, row, x, y, w:printWPx, h:printHPx, itemId:it.id, itemName:it.name, slotIndex:slotIdx });
 
             ctx.save();
-            const contentX = x+bleedPx, contentY = y+bleedPx;
-            const contentW = printWPx-bleedPx*2, contentH = printHPx-bleedPx*2;
             if (chosen?.img) {
-              ctx.save();
-              ctx.translate(contentX+contentW/2, contentY+contentH/2);
-              ctx.beginPath(); ctx.rect(-contentW/2,-contentH/2,contentW,contentH); ctx.clip();
-const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
-              // printRotated means the slot is W×H swapped to fit more on the sheet,
-              // so we rotate the image 90° to match the swapped slot
-              const totalRot = printRotated ? userRot - 90 : userRot;
-              const rad = (totalRot * Math.PI) / 180;
-              ctx.rotate(rad);
-              // Stretch-to-fill: always draw at content dimensions
-              // When rotated 90/270, swap draw dimensions so image fills the rotated frame
-              const rotNorm = normRot(totalRot);
-              const swap = rotNorm===90 || rotNorm===270;
-              const drawW = swap ? contentH : contentW;
-              const drawH = swap ? contentW : contentH;
-              ctx.drawImage(chosen.img, -drawW/2, -drawH/2, drawW, drawH);
-              ctx.restore();
+              // Auto-orient + cover: portrait art into portrait slot without
+              // stretch; landscape art into landscape slot likewise. User-
+              // supplied manual rotation is additive.
+              const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
+              drawImageCover(ctx, chosen.img, x+printWPx/2, y+printHPx/2, printWPx, printHPx, userRot);
             } else {
-              ctx.fillStyle = "#e5e7eb"; ctx.fillRect(contentX,contentY,contentW,contentH);
-              ctx.fillStyle = "#9ca3af"; ctx.font = `${Math.min(contentW*0.12,14)}px sans-serif`;
+              ctx.fillStyle = "#e5e7eb"; ctx.fillRect(x,y,printWPx,printHPx);
+              ctx.fillStyle = "#9ca3af"; ctx.font = `${Math.min(printWPx*0.12,14)}px sans-serif`;
               ctx.textAlign="center"; ctx.textBaseline="middle";
-              ctx.fillText(it.name||"Image", contentX+contentW/2, contentY+contentH/2);
+              ctx.fillText(it.name||"Image", x+printWPx/2, y+printHPx/2);
             }
-            if (showCutLines) {
-              ctx.strokeStyle = "rgba(100,100,100,0.35)"; ctx.lineWidth = 0.5; ctx.setLineDash([3,3]);
-              ctx.strokeRect(contentX, contentY, contentW, contentH); ctx.setLineDash([]);
-            }
-            if (showGuides && marginPx>0) {
-              ctx.strokeStyle = "rgba(0,129,152,0.2)"; ctx.lineWidth = 0.5; ctx.setLineDash([2,4]);
-              ctx.strokeRect(marginPx, marginPx, wPx-marginPx*2, hPx-marginPx*2); ctx.setLineDash([]);
+            if (cutsOn) {
+              ctx.strokeStyle = "rgba(100,100,100,0.35)"; ctx.lineWidth = Math.max(0.5, dpi/192); ctx.setLineDash([3,3]);
+              ctx.strokeRect(x, y, printWPx, printHPx); ctx.setLineDash([]);
             }
             ctx.restore();
           }
+        }
+        if (guidesOn && marginPx>0) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(0,129,152,0.2)"; ctx.lineWidth = Math.max(0.5, dpi/192); ctx.setLineDash([2,4]);
+          ctx.strokeRect(marginPx, marginPx, wPx-marginPx*2, hPx-marginPx*2);
+          ctx.setLineDash([]);
+          ctx.restore();
         }
         if (placementsRef) placementsRef.current = pagePlacements;
         for (const v of loadedMap.values()) { try { URL.revokeObjectURL(v.url); } catch {} }
@@ -860,6 +945,9 @@ const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
   }, [backImage, backRotation, sheetKey, orientation, customSize, prints, showCutLines, showGuides, showBack, drawSheet]);
 
   // ── LF Canvas ──
+  // Cover + auto-orient so the preview matches what will actually print at the
+  // requested lfWidth × lfHeight. Portrait artwork into a landscape target is
+  // rotated 90° instead of being letterboxed.
   useEffect(() => {
     const canvas = lfRef.current; if (!canvas || !lfImage) return;
     const ctx = canvas.getContext("2d");
@@ -869,15 +957,16 @@ const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
     const url = URL.createObjectURL(lfImage);
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(wPx/img.width, hPx/img.height);
-      const dw = img.width*scale, dh = img.height*scale;
-      ctx.drawImage(img,(wPx-dw)/2,(hPx-dh)/2,dw,dh);
+      drawImageCover(ctx, img, wPx/2, hPx/2, wPx, hPx, 0);
       URL.revokeObjectURL(url);
     };
     img.src = url;
   }, [lfImage, lfWidth, lfHeight]);
 
   // ── Blueprint Canvas ──
+  // Blueprints are drawn to-scale, so we keep "fit" (letterbox) to preserve
+  // the uploaded page's aspect ratio, but auto-rotate when orientations
+  // disagree so the drawing fills the chosen sheet.
   useEffect(() => {
     const canvas = bpRef.current; if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -894,9 +983,20 @@ const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
       const url = URL.createObjectURL(bpFile);
       const img = new Image();
       img.onload = () => {
-        const scale = Math.min(wPx/img.width, hPx/img.height);
-        const dw=img.width*scale, dh=img.height*scale;
-        ctx.drawImage(img,(wPx-dw)/2,(hPx-dh)/2,dw,dh);
+        const imgLandscape = img.naturalWidth >= img.naturalHeight;
+        const boxLandscape = wPx >= hPx;
+        const autoRot = imgLandscape === boxLandscape ? 0 : 90;
+        const rotNorm = ((autoRot % 360) + 360) % 360;
+        const swapped = rotNorm === 90 || rotNorm === 270;
+        const effW = swapped ? img.naturalHeight : img.naturalWidth;
+        const effH = swapped ? img.naturalWidth  : img.naturalHeight;
+        const s = Math.min(wPx/effW, hPx/effH); // FIT for blueprints
+        const dw = img.naturalWidth * s, dh = img.naturalHeight * s;
+        ctx.save();
+        ctx.translate(wPx/2, hPx/2);
+        ctx.rotate((autoRot * Math.PI) / 180);
+        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+        ctx.restore();
         URL.revokeObjectURL(url);
       };
       img.src = url;
@@ -910,7 +1010,7 @@ const handleFrontFiles = async (files) => {
     for (const f of files) {
       if (isPdfFile(f)) {
         // Extract ALL pages from the PDF as individual items
-        const pages = await pdfFileToAllPages(f, 2);
+        const pages = await pdfFileToAllPages(f);
         for (const pg of pages) {
           newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:copiesPerFile });
         }
@@ -946,7 +1046,20 @@ const handleFrontFiles = async (files) => {
 
   // ─── PDF DOWNLOADS ──────────────────────────────────────
 
-const downloadSheetPDF = async () => {
+// Render a hi-res sheet canvas for print-quality PDF embedding. Uses the
+  // same drawSheet logic but at PRINT_DPI_SHEET DPI, and suppresses on-screen-
+  // only guides/cut lines so the output PDF is clean.
+  const renderHiResSheet = async (imageInput, rotDeg, pageIndex=0) => {
+    const c = document.createElement("canvas");
+    await drawSheet(c, imageInput, rotDeg, pageIndex, null, {
+      dpi: PRINT_DPI_SHEET,
+      showGuides: false,
+      showCutLines: false,
+    });
+    return c;
+  };
+
+  const downloadSheetPDF = async () => {
     if (!frontRef.current) { alert("Upload a front image first."); return; }
     await ensureLogoPdfDataUrl();
     // Order sheet is always portrait letter
@@ -978,30 +1091,29 @@ const downloadSheetPDF = async () => {
     const files = frontFiles.length ? frontFiles.map((f,i)=>`${i+1}. ${f.name}  —  qty: ${f.qty}`) : (frontImage ? [frontImage.name||"front"] : []);
     addOrderSheetPage(orderDoc, { jobType:"Paper Printing", details, totals, files });
 
-    // Add ONE preview page showing the layout (not duplicated for every sheet)
+    // Add ONE preview page showing the layout at print DPI
     const pdfW=orientedWIn, pdfH=orientedHIn;
-    const isLandscape = pdfW>pdfH;
+    const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
     const exportInput = frontFiles.length ? frontFiles : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
 
-    // Front preview — just page 0 (one sheet showing the grid layout)
-    const c = document.createElement("canvas");
-    await drawSheet(c, exportInput, frontRotation, 0, null);
-    orderDoc.addPage([pdfW,pdfH], isLandscape?"landscape":"portrait");
-    orderDoc.addImage(c.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
+    // Front preview — one sheet showing the grid layout, rendered at 300 DPI
+    const frontCanvas = await renderHiResSheet(exportInput, frontRotation, 0);
+    orderDoc.addPage([pdfW,pdfH], pageOrient);
+    orderDoc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
 
     // Back preview (if double-sided)
     if (showBack && backImage) {
-      const bc = document.createElement("canvas");
-      await drawSheet(bc, backImage, backRotation, 0, null);
-      orderDoc.addPage([pdfW,pdfH], isLandscape?"landscape":"portrait");
-      orderDoc.addImage(bc.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
+      const backCanvas = await renderHiResSheet(backImage, backRotation, 0);
+      orderDoc.addPage([pdfW,pdfH], pageOrient);
+      orderDoc.addImage(canvasToPrintJpeg(backCanvas), "JPEG", 0, 0, pdfW, pdfH);
     }
 
     savePdf(orderDoc, "print_order_sheet.pdf");
   };
 
-  const downloadLfPDF = () => {
-    if (!lfRef.current) { alert("Upload a large format image first."); return; }
+  const downloadLfPDF = async () => {
+    if (!lfImage) { alert("Upload a large format image first."); return; }
+    await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const lfPaper = lfPaperTypes.find(p=>p.key===lfPaperKey)||{label:lfPaperKey};
     const details = [
@@ -1013,13 +1125,19 @@ const downloadSheetPDF = async () => {
     ];
     const totals = [{ label:"Estimated total:", value:`$${lfTotalWithDiscount.toFixed(2)}` }];
     addOrderSheetPage(orderDoc, { jobType:"Large Format", details, totals, files: lfImage?[lfImage.name||"artwork"]:[] });
+
+    // Render the artwork at LF print DPI with cover + auto-orient
     const pdfW=lfWidth, pdfH=lfHeight, orient=pdfW>=pdfH?"landscape":"portrait";
+    const img = await fileToImage(lfImage);
+    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "cover" });
     orderDoc.addPage([pdfW,pdfH],orient);
-    orderDoc.addImage(lfRef.current.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
+    orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
+
     savePdf(orderDoc, "large_format_with_order_sheet.pdf");
   };
 
-  const downloadBlueprintPDF = () => {
+  const downloadBlueprintPDF = async () => {
+    await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const details = [
       { label:"Paper:", value:"20lb plain bond" },
@@ -1029,10 +1147,13 @@ const downloadSheetPDF = async () => {
     ];
     const totals = [{ label:"Estimated total:", value:`$${bpTotal.toFixed(2)}` }];
     addOrderSheetPage(orderDoc, { jobType:"Blueprints", details, totals, files: bpFile?[bpFile.name||"blueprint"]:[] });
-    if (bpRef.current) {
+    if (bpFile) {
       const pdfW=bpWidth, pdfH=bpHeight, orient=pdfW>=pdfH?"landscape":"portrait";
+      const img = await fileToImage(bpFile);
+      // Blueprints: FIT (letterbox) preserves the drawing's aspect/scale
+      const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_BP, fill: "fit" });
       orderDoc.addPage([pdfW,pdfH],orient);
-      orderDoc.addImage(bpRef.current.toDataURL("image/png",1.0),"PNG",0,0,pdfW,pdfH);
+      orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
     }
     savePdf(orderDoc, "blueprint_with_order_sheet.pdf");
   };
@@ -1090,10 +1211,21 @@ const downloadSheetPDF = async () => {
   const orderSheetJob = async () => {
     if (!frontRef.current) { alert("Please upload a front image first."); return; }
     const pdfW=orientedWIn, pdfH=orientedHIn;
-    const doc = new (getJsPDF())({ orientation, unit:"in", format:[pdfW,pdfH] });
-    const frontData = canvasToCompressedJpeg(frontRef.current,{maxDim:1600,quality:0.75});
-    doc.addImage(frontData,"JPEG",0,0,pdfW,pdfH);
-    if (showBack && backRef.current && backImage) { doc.addPage([pdfW,pdfH],orientation); doc.addImage(canvasToCompressedJpeg(backRef.current,{maxDim:1600,quality:0.75}),"JPEG",0,0,pdfW,pdfH); }
+    const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
+    const doc = new (getJsPDF())({ orientation:pageOrient, unit:"in", format:[pdfW,pdfH] });
+
+    // Render the front sheet at print DPI instead of copying the preview canvas
+    const exportInput = frontFiles.length
+      ? frontFiles
+      : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
+    const frontCanvas = await renderHiResSheet(exportInput, frontRotation, 0);
+    doc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
+
+    if (showBack && backImage) {
+      const backCanvas = await renderHiResSheet(backImage, backRotation, 0);
+      doc.addPage([pdfW,pdfH], pageOrient);
+      doc.addImage(canvasToPrintJpeg(backCanvas), "JPEG", 0, 0, pdfW, pdfH);
+    }
     const jobBlob = doc.output("blob");
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
@@ -1105,10 +1237,12 @@ const downloadSheetPDF = async () => {
   };
 
   const orderLargeFormatJob = async () => {
-    if (!lfRef.current) { alert("Please upload a large format image first."); return; }
+    if (!lfImage) { alert("Please upload a large format image first."); return; }
     const pdfW=lfWidth, pdfH=lfHeight;
     const doc = new (getJsPDF())({ orientation:pdfW>=pdfH?"landscape":"portrait", unit:"in", format:[pdfW,pdfH] });
-    doc.addImage(canvasToCompressedJpeg(lfRef.current,{maxDim:1800,quality:0.72}),"JPEG",0,0,pdfW,pdfH);
+    const img = await fileToImage(lfImage);
+    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "cover" });
+    doc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
     const jobBlob = doc.output("blob");
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
