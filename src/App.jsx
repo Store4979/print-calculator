@@ -239,10 +239,15 @@ const fileToImage = (fileOrBlob) => new Promise((resolve, reject) => {
 });
 
 // Rasterize a single image to a canvas sized to `widthIn × heightIn` at the
-// requested DPI (capped at MAX_OUTPUT_PX per side). Fill mode:
-//   "cover" → aspect preserved, cropped to fill (auto-orients 90° if needed)
-//   "fit"   → aspect preserved, letterboxed (auto-orients 90° if needed)
-const renderSingleImageCanvas = (img, widthIn, heightIn, { dpi=PRINT_DPI_SHEET, fill="cover", background="#ffffff" } = {}) => {
+// requested DPI (capped at MAX_OUTPUT_PX per side). Fill modes:
+//   "stretch" → image stretched to EXACTLY fill the box (default for sheets
+//               and large format — the user has explicitly specified the
+//               target print size, so their image is sized to match it
+//               regardless of aspect ratio)
+//   "fit"     → aspect preserved, letterboxed, and auto-rotated 90° if the
+//               image's natural orientation doesn't match the target (used
+//               for blueprints so scale drawings stay to scale)
+const renderSingleImageCanvas = (img, widthIn, heightIn, { dpi=PRINT_DPI_SHEET, fill="stretch", background="#ffffff", userRotDeg=0 } = {}) => {
   const baseW = widthIn * dpi;
   const baseH = heightIn * dpi;
   let effDpi = dpi;
@@ -256,27 +261,27 @@ const renderSingleImageCanvas = (img, widthIn, heightIn, { dpi=PRINT_DPI_SHEET, 
   if (background) { ctx.fillStyle = background; ctx.fillRect(0, 0, wPx, hPx); }
   if (!img || !img.naturalWidth) return canvas;
 
+  if (fill === "stretch") {
+    drawImageFill(ctx, img, wPx/2, hPx/2, wPx, hPx, userRotDeg);
+    return canvas;
+  }
+
+  // "fit" — aspect preserved, auto-orient 90° if orientations differ.
   const iw = img.naturalWidth, ih = img.naturalHeight;
   const imgLandscape = iw >= ih;
   const boxLandscape = wPx >= hPx;
   const autoRot = imgLandscape === boxLandscape ? 0 : 90;
-  const swapped = autoRot === 90 || autoRot === 270;
+  const totalRot = (((Number(userRotDeg)||0) + autoRot) % 360 + 360) % 360;
+  const swapped = totalRot === 90 || totalRot === 270;
   const effW = swapped ? ih : iw;
   const effH = swapped ? iw : ih;
-  const scale = fill === "cover"
-    ? Math.max(wPx / effW, hPx / effH)
-    : Math.min(wPx / effW, hPx / effH);
+  const scale = Math.min(wPx / effW, hPx / effH);
   const drawW = iw * scale;
   const drawH = ih * scale;
 
   ctx.save();
-  if (fill === "cover") {
-    ctx.beginPath();
-    ctx.rect(0, 0, wPx, hPx);
-    ctx.clip();
-  }
   ctx.translate(wPx/2, hPx/2);
-  ctx.rotate((autoRot * Math.PI) / 180);
+  ctx.rotate((totalRot * Math.PI) / 180);
   ctx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
   ctx.restore();
   return canvas;
@@ -312,34 +317,20 @@ const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn) => 
   return best || { cols:1, rows:1, count:1, printRotated:false, sheetOrientation };
 };
 
-// Draw an image centered in a box with "cover" sizing (aspect preserved, fills
-// the box, crops overflow). Auto-rotates the image by 90° when its natural
-// orientation doesn't match the box orientation, so portrait art fills a
-// portrait slot without stretching and landscape art fills a landscape slot.
-// `userRotDeg` is additive manual rotation (0/90/180/270).
-const drawImageCover = (ctx, img, cx, cy, boxW, boxH, userRotDeg=0) => {
+// Draw an image centered at (cx, cy) and stretched to EXACTLY fill boxW ×
+// boxH. Aspect ratio is NOT preserved — the image ends up at the user's
+// requested print size regardless of its natural proportions. `userRotDeg`
+// applies an explicit rotation (0/90/180/270). When rotated by 90°/270° the
+// draw dimensions are swapped so the image still precisely fills the box
+// after rotation, which prevents the old "image disappears after rotate" bug.
+const drawImageFill = (ctx, img, cx, cy, boxW, boxH, userRotDeg=0) => {
   if (!img || !img.naturalWidth || !img.naturalHeight) return;
-  const iw = img.naturalWidth;
-  const ih = img.naturalHeight;
-  const imgLandscape = iw >= ih;
-  const boxLandscape = boxW >= boxH;
-  const autoRot = imgLandscape === boxLandscape ? 0 : 90;
-  const totalRot = ((Number(userRotDeg)||0) + autoRot) % 360;
-  const rad = (totalRot * Math.PI) / 180;
-
-  // After rotation, the image's bounding axes swap when rotated 90/270.
-  const rotNorm = ((totalRot % 360) + 360) % 360;
+  const rotNorm = (((Number(userRotDeg)||0) % 360) + 360) % 360;
   const swapped = rotNorm === 90 || rotNorm === 270;
-  const effW = swapped ? ih : iw;
-  const effH = swapped ? iw : ih;
-  const scale = Math.max(boxW / effW, boxH / effH); // COVER
-  const drawW = iw * scale;
-  const drawH = ih * scale;
-
+  const drawW = swapped ? boxH : boxW;
+  const drawH = swapped ? boxW : boxH;
+  const rad = (rotNorm * Math.PI) / 180;
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(cx - boxW/2, cy - boxH/2, boxW, boxH);
-  ctx.clip();
   ctx.translate(cx, cy);
   ctx.rotate(rad);
   ctx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
@@ -835,6 +826,12 @@ function PriceCalculatorApp() {
   const drawSheet = useCallback((canvas, imageInput, rotDeg, pageIndex=0, placementsRef=null, opts={}) => {
     return new Promise((resolve) => {
       if (!canvas) return resolve();
+      // Generation token so a later drawSheet call supersedes an in-flight
+      // one on the same canvas — prevents stale async draws overwriting
+      // fresh content when inputs change quickly.
+      const myGen = (canvas.__drawSheetGen || 0) + 1;
+      canvas.__drawSheetGen = myGen;
+
       const dpi = Math.max(1, Number(opts.dpi) || DPI);
       const guidesOn = opts.showGuides ?? showGuides;
       const cutsOn   = opts.showCutLines ?? showCutLines;
@@ -889,9 +886,14 @@ function PriceCalculatorApp() {
         const url = URL.createObjectURL(f);
         const img = new Image();
         img.onload = () => { loadedMap.set(f, { img, url, width:img.naturalWidth, height:img.naturalHeight }); res(); };
-        img.onerror = () => res();
+        img.onerror = () => { URL.revokeObjectURL(url); res(); };
         img.src = url;
       }))).then(() => {
+        // Superseded by a newer drawSheet call — drop our result.
+        if (canvas.__drawSheetGen !== myGen) {
+          for (const v of loadedMap.values()) { try { URL.revokeObjectURL(v.url); } catch {} }
+          return resolve();
+        }
         for (let row=0; row<rows; row++) {
           for (let col=0; col<cols; col++) {
             const slotIdx = row*cols+col;
@@ -904,11 +906,15 @@ function PriceCalculatorApp() {
 
             ctx.save();
             if (chosen?.img) {
-              // Auto-orient + cover: portrait art into portrait slot without
-              // stretch; landscape art into landscape slot likewise. User-
-              // supplied manual rotation is additive.
-              const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
-              drawImageCover(ctx, chosen.img, x+printWPx/2, y+printHPx/2, printWPx, printHPx, userRot);
+              // Stretch-to-fill the slot, exactly matching the user's
+              // requested print size regardless of the image's natural
+              // aspect. `printRotated` means the best-fit packer rotated
+              // the print 90° to squeeze more copies on the sheet, so we
+              // also rotate the image 90° to keep its content oriented
+              // the way the user drew it. Per-file and per-side manual
+              // rotations stack on top.
+              const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0) + (printRotated ? 90 : 0);
+              drawImageFill(ctx, chosen.img, x+printWPx/2, y+printHPx/2, printWPx, printHPx, userRot);
             } else {
               ctx.fillStyle = "#e5e7eb"; ctx.fillRect(x,y,printWPx,printHPx);
               ctx.fillStyle = "#9ca3af"; ctx.font = `${Math.min(printWPx*0.12,14)}px sans-serif`;
@@ -945,11 +951,13 @@ function PriceCalculatorApp() {
   }, [backImage, backRotation, sheetKey, orientation, customSize, prints, showCutLines, showGuides, showBack, drawSheet]);
 
   // ── LF Canvas ──
-  // Cover + auto-orient so the preview matches what will actually print at the
-  // requested lfWidth × lfHeight. Portrait artwork into a landscape target is
-  // rotated 90° instead of being letterboxed.
+  // Stretch-to-fill at the user's requested lfWidth × lfHeight so the preview
+  // matches what will print. Auto-orients the artwork 90° when its natural
+  // orientation disagrees with the target, but still fills the full area
+  // regardless of aspect.
   useEffect(() => {
     const canvas = lfRef.current; if (!canvas || !lfImage) return;
+    let cancelled = false;
     const ctx = canvas.getContext("2d");
     const wPx = inchesToPx(lfWidth); const hPx = inchesToPx(lfHeight);
     canvas.width=wPx; canvas.height=hPx;
@@ -957,10 +965,13 @@ function PriceCalculatorApp() {
     const url = URL.createObjectURL(lfImage);
     const img = new Image();
     img.onload = () => {
-      drawImageCover(ctx, img, wPx/2, hPx/2, wPx, hPx, 0);
+      if (cancelled) return;
+      drawImageFill(ctx, img, wPx/2, hPx/2, wPx, hPx, 0);
       URL.revokeObjectURL(url);
     };
+    img.onerror = () => { URL.revokeObjectURL(url); };
     img.src = url;
+    return () => { cancelled = true; URL.revokeObjectURL(url); };
   }, [lfImage, lfWidth, lfHeight]);
 
   // ── Blueprint Canvas ──
@@ -969,6 +980,7 @@ function PriceCalculatorApp() {
   // disagree so the drawing fills the chosen sheet.
   useEffect(() => {
     const canvas = bpRef.current; if (!canvas) return;
+    let cancelled = false;
     const ctx = canvas.getContext("2d");
     const wPx = inchesToPx(bpWidth); const hPx = inchesToPx(bpHeight);
     canvas.width=wPx; canvas.height=hPx;
@@ -979,28 +991,30 @@ function PriceCalculatorApp() {
       ctx.fillStyle="#93c5fd"; ctx.font=`bold ${Math.min(wPx*0.08,18)}px sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillText(`${bpWidth}″ × ${bpHeight}″`, wPx/2, hPx/2);
-    } else {
-      const url = URL.createObjectURL(bpFile);
-      const img = new Image();
-      img.onload = () => {
-        const imgLandscape = img.naturalWidth >= img.naturalHeight;
-        const boxLandscape = wPx >= hPx;
-        const autoRot = imgLandscape === boxLandscape ? 0 : 90;
-        const rotNorm = ((autoRot % 360) + 360) % 360;
-        const swapped = rotNorm === 90 || rotNorm === 270;
-        const effW = swapped ? img.naturalHeight : img.naturalWidth;
-        const effH = swapped ? img.naturalWidth  : img.naturalHeight;
-        const s = Math.min(wPx/effW, hPx/effH); // FIT for blueprints
-        const dw = img.naturalWidth * s, dh = img.naturalHeight * s;
-        ctx.save();
-        ctx.translate(wPx/2, hPx/2);
-        ctx.rotate((autoRot * Math.PI) / 180);
-        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
-        ctx.restore();
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
+      return;
     }
+    const url = URL.createObjectURL(bpFile);
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const imgLandscape = img.naturalWidth >= img.naturalHeight;
+      const boxLandscape = wPx >= hPx;
+      const autoRot = imgLandscape === boxLandscape ? 0 : 90;
+      const swapped = autoRot === 90;
+      const effW = swapped ? img.naturalHeight : img.naturalWidth;
+      const effH = swapped ? img.naturalWidth  : img.naturalHeight;
+      const s = Math.min(wPx/effW, hPx/effH); // FIT for blueprints
+      const dw = img.naturalWidth * s, dh = img.naturalHeight * s;
+      ctx.save();
+      ctx.translate(wPx/2, hPx/2);
+      ctx.rotate((autoRot * Math.PI) / 180);
+      ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+      ctx.restore();
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); };
+    img.src = url;
+    return () => { cancelled = true; URL.revokeObjectURL(url); };
   }, [bpFile, bpWidth, bpHeight]);
 
   // ─── FILE HANDLERS ──────────────────────────────────────
@@ -1126,10 +1140,12 @@ const handleFrontFiles = async (files) => {
     const totals = [{ label:"Estimated total:", value:`$${lfTotalWithDiscount.toFixed(2)}` }];
     addOrderSheetPage(orderDoc, { jobType:"Large Format", details, totals, files: lfImage?[lfImage.name||"artwork"]:[] });
 
-    // Render the artwork at LF print DPI with cover + auto-orient
+    // Render the artwork at LF print DPI, stretched to fill the user's
+    // requested lfWidth × lfHeight (aspect preserved only if it already
+    // matches — the user has explicitly asked for this size).
     const pdfW=lfWidth, pdfH=lfHeight, orient=pdfW>=pdfH?"landscape":"portrait";
     const img = await fileToImage(lfImage);
-    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "cover" });
+    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "stretch" });
     orderDoc.addPage([pdfW,pdfH],orient);
     orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
 
@@ -1241,7 +1257,7 @@ const handleFrontFiles = async (files) => {
     const pdfW=lfWidth, pdfH=lfHeight;
     const doc = new (getJsPDF())({ orientation:pdfW>=pdfH?"landscape":"portrait", unit:"in", format:[pdfW,pdfH] });
     const img = await fileToImage(lfImage);
-    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "cover" });
+    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "stretch" });
     doc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
     const jobBlob = doc.output("blob");
     await ensureLogoPdfDataUrl();
