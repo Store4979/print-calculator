@@ -242,11 +242,11 @@ const fileToImage = (fileOrBlob) => new Promise((resolve, reject) => {
 // requested DPI (capped at MAX_OUTPUT_PX per side). Fill modes:
 //   "stretch" → image stretched to EXACTLY fill the box (default for sheets
 //               and large format — the user has explicitly specified the
-//               target print size and wants it honored regardless of aspect)
-//   "fit"     → aspect preserved, letterboxed (used for blueprints so scale
-//               drawings stay to scale)
-// Both modes auto-rotate the image 90° if its natural orientation doesn't
-// match the target orientation.
+//               target print size, so their image is sized to match it
+//               regardless of aspect ratio)
+//   "fit"     → aspect preserved, letterboxed, and auto-rotated 90° if the
+//               image's natural orientation doesn't match the target (used
+//               for blueprints so scale drawings stay to scale)
 const renderSingleImageCanvas = (img, widthIn, heightIn, { dpi=PRINT_DPI_SHEET, fill="stretch", background="#ffffff", userRotDeg=0 } = {}) => {
   const baseW = widthIn * dpi;
   const baseH = heightIn * dpi;
@@ -262,7 +262,7 @@ const renderSingleImageCanvas = (img, widthIn, heightIn, { dpi=PRINT_DPI_SHEET, 
   if (!img || !img.naturalWidth) return canvas;
 
   if (fill === "stretch") {
-    drawImageFill(ctx, img, wPx/2, hPx/2, wPx, hPx, userRotDeg, { autoOrient: true });
+    drawImageFill(ctx, img, wPx/2, hPx/2, wPx, hPx, userRotDeg);
     return canvas;
   }
 
@@ -317,27 +317,15 @@ const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn) => 
   return best || { cols:1, rows:1, count:1, printRotated:false, sheetOrientation };
 };
 
-// Draw an image centered at (cx, cy), stretched to EXACTLY fill boxW × boxH
-// (aspect ratio is NOT preserved — this is intentional: the image has to end
-// up at the user's requested print size). When `autoOrient` is true the image
-// is first rotated 90° if its natural orientation doesn't match the slot, so
-// portrait art in a portrait slot does not get pre-stretched by the auto
-// step. `userRotDeg` is additive manual rotation (0/90/180/270).
-//
-// After the total rotation is applied, `drawW`/`drawH` are swapped for 90°
-// and 270° so the image still exactly fills the slot post-rotation — this
-// prevents the old "image disappears after rotate" bug that came from cover-
-// mode scaling.
-const drawImageFill = (ctx, img, cx, cy, boxW, boxH, userRotDeg=0, { autoOrient=true } = {}) => {
+// Draw an image centered at (cx, cy) and stretched to EXACTLY fill boxW ×
+// boxH. Aspect ratio is NOT preserved — the image ends up at the user's
+// requested print size regardless of its natural proportions. `userRotDeg`
+// applies an explicit rotation (0/90/180/270). When rotated by 90°/270° the
+// draw dimensions are swapped so the image still precisely fills the box
+// after rotation, which prevents the old "image disappears after rotate" bug.
+const drawImageFill = (ctx, img, cx, cy, boxW, boxH, userRotDeg=0) => {
   if (!img || !img.naturalWidth || !img.naturalHeight) return;
-  let autoRot = 0;
-  if (autoOrient) {
-    const imgLandscape = img.naturalWidth >= img.naturalHeight;
-    const boxLandscape = boxW >= boxH;
-    if (imgLandscape !== boxLandscape) autoRot = 90;
-  }
-  const totalRot = ((Number(userRotDeg)||0) + autoRot) % 360;
-  const rotNorm = ((totalRot % 360) + 360) % 360;
+  const rotNorm = (((Number(userRotDeg)||0) % 360) + 360) % 360;
   const swapped = rotNorm === 90 || rotNorm === 270;
   const drawW = swapped ? boxH : boxW;
   const drawH = swapped ? boxW : boxH;
@@ -918,13 +906,14 @@ function PriceCalculatorApp() {
 
             ctx.save();
             if (chosen?.img) {
-              // Stretch-to-fill the slot. `printRotated` (from the best-fit
-              // packing) already swapped the slot W/H above, so the slot we
-              // draw into has the correct rotated orientation; drawImageFill's
-              // autoOrient will rotate the image to match, no extra 90° needed
-              // here. Explicit per-file or per-side rotation still cycles on
-              // top.
-              const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0);
+              // Stretch-to-fill the slot, exactly matching the user's
+              // requested print size regardless of the image's natural
+              // aspect. `printRotated` means the best-fit packer rotated
+              // the print 90° to squeeze more copies on the sheet, so we
+              // also rotate the image 90° to keep its content oriented
+              // the way the user drew it. Per-file and per-side manual
+              // rotations stack on top.
+              const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0) + (printRotated ? 90 : 0);
               drawImageFill(ctx, chosen.img, x+printWPx/2, y+printHPx/2, printWPx, printHPx, userRot);
             } else {
               ctx.fillStyle = "#e5e7eb"; ctx.fillRect(x,y,printWPx,printHPx);
