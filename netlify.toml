@@ -6,6 +6,10 @@
 [build.environment]
   NODE_VERSION = "20"
   MISE_DISABLE = "1"
+  # Supabase: anon key is a public client key (RLS gates real access).
+  # Override these in the Netlify dashboard if you rotate them.
+  VITE_SUPABASE_URL      = "https://gmxyisjjaxtpycsmmzef.supabase.co"
+  VITE_SUPABASE_ANON_KEY = "sb_publishable_2pMOMFvyFD_LXPXgfYeREg_2g2PMVaU"
 
 [[redirects]]
   from = "/*"

@@ -1115,6 +1115,362 @@ body {
 .mobile-num-btn.done { background: var(--teal); padding: 0 20px; font-weight: 600; }
 
 /* ============================================
+   SAVE-JOB DIALOG + TOAST + JOB HISTORY
+   ============================================ */
+.pc-dialog-backdrop, .jh-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 80;
+  padding: 24px;
+  animation: fadeIn 0.18s ease-out;
+}
+.pc-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  width: min(540px, 100%);
+  padding: 22px 22px 18px;
+  animation: dialogIn 0.2s ease-out;
+}
+.pc-dialog-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.pc-dialog-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+.pc-dialog-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px 12px; margin-bottom: 14px;
+}
+.pc-dialog-summary {
+  display: flex; gap: 16px; flex-wrap: wrap;
+  font-size: 13px; color: var(--text-muted);
+  padding: 10px 12px; background: var(--surface-3); border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+}
+.pc-dialog-summary strong { color: var(--text); }
+.pc-dialog-actions {
+  display: flex; gap: 10px; justify-content: flex-end;
+}
+
+.pc-toast {
+  position: fixed; left: 50%; bottom: 28px;
+  transform: translateX(-50%);
+  background: var(--teal); color: white;
+  padding: 10px 18px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 129, 152, 0.35);
+  z-index: 90;
+  animation: toastIn 0.25s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.jh-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(1000px, 100%);
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  animation: dialogIn 0.2s ease-out;
+}
+.jh-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.jh-title { font-size: 18px; font-weight: 700; color: var(--text); }
+.jh-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.jh-close {
+  background: transparent; border: 0;
+  font-size: 24px; line-height: 1; color: var(--text-muted);
+  cursor: pointer; padding: 4px 10px;
+  border-radius: var(--radius-sm);
+}
+.jh-close:hover { background: var(--surface-3); color: var(--text); }
+
+.jh-controls {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  padding: 12px 22px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.jh-controls .pc-input { flex: 1 1 220px; min-width: 200px; }
+.jh-date-range {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.jh-date-range .pc-input { flex: 0 0 auto; width: 150px; }
+.jh-date-range .field-label { margin-bottom: 0; }
+
+.jh-body {
+  overflow: auto;
+  padding: 8px 0;
+}
+.jh-state {
+  padding: 40px 22px; text-align: center; color: var(--text-muted);
+  font-size: 14px;
+}
+.jh-state-error { color: #b91c1c; }
+
+.jh-table-wrap { overflow-x: auto; }
+.jh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.jh-table thead th {
+  position: sticky; top: 0;
+  background: var(--surface-3);
+  text-align: left; font-weight: 600; font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.jh-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.jh-row { cursor: pointer; transition: background 0.12s ease; }
+.jh-row:hover { background: var(--surface-2); }
+.jh-row-open { background: var(--surface-2); }
+.jh-chev { color: var(--text-muted); font-size: 12px; }
+.jh-detail-row td { padding: 0 !important; background: var(--surface-3); }
+
+.jh-detail { padding: 14px 22px; }
+.jh-detail-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 18px;
+}
+.jh-detail-cell { font-size: 12px; }
+.jh-detail-label {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-bottom: 2px;
+}
+.jh-detail-value { color: var(--text); word-break: break-word; }
+.jh-detail-section { margin-top: 12px; }
+.jh-file-list { margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: var(--text); }
+.jh-json {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+  overflow: auto;
+  max-height: 240px;
+  margin: 6px 0 0;
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .pc-dialog { padding: 16px; }
+  .pc-dialog-grid { grid-template-columns: 1fr; }
+  .jh-modal { max-height: 100vh; border-radius: 0; }
+  .jh-header { padding: 14px 16px 10px; }
+  .jh-controls { padding: 10px 14px; }
+  .jh-detail { padding: 12px 16px; }
+}
+
+/* ============================================
+   MICRO-INTERACTIONS & POLISH
+   (animations are gated on prefers-reduced-motion)
+   ============================================ */
+
+/* Tab content slide+fade-in. Each tab's children mount fresh
+   when activeTab changes, so the animation re-triggers. */
+.content-wrap > * {
+  animation: pcFadeSlideIn 0.25s ease-out;
+}
+@keyframes pcFadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Card hover lift */
+.pc-card {
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+.pc-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  transform: translateY(-1px);
+}
+
+/* Chip press feedback + smoother selected transition */
+.pc-chip {
+  transition: background 0.15s ease, color 0.15s ease,
+              border-color 0.15s ease, transform 0.1s ease;
+}
+.pc-chip:active { transform: scale(0.95); }
+
+/* Upload zone idle pulse on the icon when no file is loaded */
+.upload-zone:not(.has-file) .upload-icon-wrap {
+  animation: pcBreathe 2.5s ease-in-out infinite;
+}
+@keyframes pcBreathe {
+  0%, 100% { transform: scale(1);    opacity: 0.7; }
+  50%      { transform: scale(1.08); opacity: 1;   }
+}
+
+/* Price bar slide up from bottom */
+.price-bar {
+  animation: pcSlideUp 0.3s ease-out;
+}
+@keyframes pcSlideUp {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* Subtle press ripple on primary action buttons */
+.pc-btn-primary, .pc-btn-success {
+  position: relative;
+  overflow: hidden;
+}
+.pc-btn-primary::after, .pc-btn-success::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at center, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+.pc-btn-primary:active::after, .pc-btn-success:active::after {
+  animation: pcRipple 0.45s ease-out;
+}
+@keyframes pcRipple {
+  0%   { opacity: 0.7; transform: scale(0.4); }
+  100% { opacity: 0;   transform: scale(1.6); }
+}
+
+/* Step number pulse — applied via .is-active modifier when the step
+   is currently being interacted with (caller adds the class). */
+.step-num {
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+.step-num.is-active {
+  animation: pcStepPulse 1.4s ease-in-out infinite;
+}
+@keyframes pcStepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 129, 152, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(0, 129, 152, 0); }
+}
+
+/* File row entrance */
+.file-row {
+  animation: pcSlideInRight 0.2s ease-out;
+}
+@keyframes pcSlideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+/* DnD reorder feedback */
+.file-row.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+.file-row.is-drop-target {
+  box-shadow: inset 0 2px 0 0 var(--teal);
+}
+
+/* Toggle: smoother track + slight thumb bounce */
+.pc-toggle-track {
+  transition: background 0.22s ease;
+}
+.pc-toggle-thumb {
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Tooltip on the tab pills via data-tooltip */
+.tab-icon-pill[data-tooltip] { position: relative; }
+.tab-icon-pill[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(100% + 6px);
+  background: rgba(15, 23, 42, 0.92);
+  color: white;
+  font-size: 11px; font-weight: 500;
+  padding: 4px 8px; border-radius: 4px;
+  white-space: nowrap;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 30;
+}
+.tab-icon-pill[data-tooltip]:hover::after {
+  opacity: 1;
+}
+
+/* Loading skeleton for the preview canvas while rendering */
+.canvas-skeleton {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 220px;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg,
+    var(--surface-2) 0%,
+    var(--surface-3) 50%,
+    var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: pcShimmer 1.4s ease-in-out infinite;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+@keyframes pcShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Confetti burst on order success */
+.pc-confetti-host {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 95;
+}
+.pc-confetti-piece {
+  position: absolute; top: -20px;
+  width: 8px; height: 14px;
+  border-radius: 2px;
+  animation: pcConfettiFall 1s cubic-bezier(0.2, 0.6, 0.4, 1) forwards;
+}
+@keyframes pcConfettiFall {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg);     opacity: 1; }
+  100% { transform: translate3d(var(--pcx, 0), 100vh, 0) rotate(540deg); opacity: 0; }
+}
+
+/* Respect motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .content-wrap > *,
+  .pc-card,
+  .pc-chip,
+  .upload-zone:not(.has-file) .upload-icon-wrap,
+  .price-bar,
+  .pc-btn-primary::after,
+  .pc-btn-success::after,
+  .step-num.is-active,
+  .file-row,
+  .pc-toggle-track,
+  .pc-toggle-thumb,
+  .tab-icon-pill[data-tooltip]::after,
+  .canvas-skeleton,
+  .pc-confetti-piece {
+    animation: none !important;
+    transition: none !important;
+  }
+  .pc-card:hover { transform: none; }
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 @media (max-width: 640px) {

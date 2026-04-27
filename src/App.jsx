@@ -9,6 +9,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import BookletMaker, { BookletIcon } from "./BookletMaker.jsx";
 import DataMerge, { DataMergeIcon } from "./DataMerge.jsx";
 import { drawBarcode128 } from "./barcode128.js";
+import JobHistory from "./JobHistory.jsx";
+import { ensureDbAuthenticated, savePrintJob, isSupabaseConfigured } from "./supabase.js";
 
 // ─── CONSTANTS ──────────────────────────────────────────────
 
@@ -552,6 +554,28 @@ function MobileNumberBar({ open, onDone, onClear, onNudge }) {
   );
 }
 
+// Brief confetti burst (CSS-driven). Skipped if the user prefers
+// reduced motion. Pieces auto-clean after the animation finishes.
+const fireConfetti = () => {
+  if (typeof document === "undefined") return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  const host = document.createElement("div");
+  host.className = "pc-confetti-host";
+  document.body.appendChild(host);
+  const colors = ["#008198", "#f59e0b", "#3b82f6", "#10b981", "#ef4444", "#a855f7"];
+  for (let i = 0; i < 36; i++) {
+    const piece = document.createElement("div");
+    piece.className = "pc-confetti-piece";
+    piece.style.left = (Math.random() * 100) + "vw";
+    piece.style.background = colors[i % colors.length];
+    piece.style.setProperty("--pcx", ((Math.random() - 0.5) * 220) + "px");
+    piece.style.animationDelay    = (Math.random() * 0.15) + "s";
+    piece.style.animationDuration = (0.85 + Math.random() * 0.4) + "s";
+    host.appendChild(piece);
+  }
+  setTimeout(() => host.remove(), 1500);
+};
+
 // ─── MAIN APP ───────────────────────────────────────────────
 
 function PriceCalculatorApp() {
@@ -559,6 +583,12 @@ function PriceCalculatorApp() {
   const [activeTab, setActiveTab]   = useState(() => { try { return localStorage.getItem("activeTab") || "paper"; } catch { return "paper"; }});
   const [viewMode, setViewMode]     = useState("tool"); // "tool" | "quote"
   const [showAdmin, setShowAdmin]   = useState(false);
+  const [showJobHistory, setShowJobHistory] = useState(false);
+  // pendingSaveJob: { row, jobType, label } — if non-null, the save-to-db
+  // confirmation dialog is open. The PDF has already been downloaded.
+  const [pendingSaveJob, setPendingSaveJob] = useState(null);
+  const [savingJob, setSavingJob] = useState(false);
+  const [savedJobToast, setSavedJobToast] = useState("");
   const [isAdmin, setIsAdmin]       = useState(false);
 
   useEffect(() => { try { localStorage.setItem("activeTab", activeTab); } catch {} }, [activeTab]);
@@ -682,6 +712,31 @@ function PriceCalculatorApp() {
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => { document.removeEventListener("focusin", onFocusIn); document.removeEventListener("focusout", onFocusOut); };
+  }, []);
+
+  // Wheel-to-increment for focused number inputs. Wheel up = increase by step,
+  // wheel down = decrease. Only intercepts when a number input is focused so
+  // page scrolling is preserved everywhere else.
+  useEffect(() => {
+    const onWheel = (e) => {
+      const el = document.activeElement;
+      if (!el || el.tagName !== "INPUT" || el.type !== "number") return;
+      e.preventDefault();
+      const step = parseFloat(el.getAttribute("step") || "1") || 1;
+      const dir = e.deltaY > 0 ? -1 : 1;
+      const min = el.getAttribute("min");
+      const max = el.getAttribute("max");
+      const curr = parseFloat(el.value) || 0;
+      let next = curr + dir * step;
+      if (min !== null && next < parseFloat(min)) next = parseFloat(min);
+      if (max !== null && next > parseFloat(max)) next = parseFloat(max);
+      const dec = (String(step).split(".")[1] || "").length;
+      el.value = dec ? next.toFixed(Math.min(4, dec)) : String(Math.round(next));
+      el.dispatchEvent(new Event("input",  { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
   }, []);
 
   const blurActive  = () => { lastNumericRef.current?.blur?.(); setNumBarOpen(false); };
@@ -1012,45 +1067,162 @@ function PriceCalculatorApp() {
   }, [bpFile, bpWidth, bpHeight]);
 
   // ─── FILE HANDLERS ──────────────────────────────────────
+  // While PDF rasterization is in flight we expose `processingFiles`
+  // so the upload zone can show a shimmer skeleton instead of a
+  // blank state.
+  const [processingFiles, setProcessingFiles] = useState(false);
 
 const handleFrontFiles = async (files) => {
-    const newItems = [];
-    for (const f of files) {
-      if (isPdfFile(f)) {
-        // Extract ALL pages from the PDF as individual items
-        const pages = await pdfFileToAllPages(f);
-        for (const pg of pages) {
-          newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:copiesPerFile });
+    setProcessingFiles(true);
+    try {
+      const newItems = [];
+      for (const f of files) {
+        if (isPdfFile(f)) {
+          // Extract ALL pages from the PDF as individual items
+          const pages = await pdfFileToAllPages(f);
+          for (const pg of pages) {
+            newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:copiesPerFile });
+          }
+        } else {
+          newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:copiesPerFile });
         }
-      } else {
-        newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:copiesPerFile });
       }
+      setFrontFiles(prev => [...prev, ...newItems]);
+      if (newItems[0]) setSelectedFrontId(newItems[0].id);
+    } finally {
+      setProcessingFiles(false);
     }
-    setFrontFiles(prev => [...prev, ...newItems]);
-    if (newItems[0]) setSelectedFrontId(newItems[0].id);
   };
 
   const handleBackFile = async (files) => {
     if (!files[0]) return;
-    const normalized = await normalizeUpload(files[0]);
-    setBackImage(normalized);
+    setProcessingFiles(true);
+    try { setBackImage(await normalizeUpload(files[0])); }
+    finally { setProcessingFiles(false); }
   };
 
   const handleLfFile = async (files) => {
     if (!files[0]) return;
-    const normalized = await normalizeUpload(files[0]);
-    setLfImage(normalized);
+    setProcessingFiles(true);
+    try { setLfImage(await normalizeUpload(files[0])); }
+    finally { setProcessingFiles(false); }
   };
 
   const handleBpFile = async (files) => {
     if (!files[0]) return;
-    const normalized = await normalizeUpload(files[0]);
-    setBpFile(normalized);
+    setProcessingFiles(true);
+    try { setBpFile(await normalizeUpload(files[0])); }
+    finally { setProcessingFiles(false); }
   };
 
   const removeFile = (id) => setFrontFiles(prev => prev.filter(f => f.id!==id));
   const updateFileQty = (id, qty) => setFrontFiles(prev => prev.map(f => f.id===id ? {...f, qty:Math.max(0,qty)} : f));
   const rotateFile = (id) => setFrontFiles(prev => prev.map(f => f.id===id ? {...f, rotation:((f.rotation||0)+90)%360} : f));
+
+  // Drag-and-drop reorder of uploaded files. We track which row id
+  // is being dragged so other rows can render an insertion indicator.
+  const [dragSourceId, setDragSourceId] = useState(null);
+  const [dragOverId, setDragOverId]     = useState(null);
+  const reorderFile = (sourceId, targetId) => {
+    if (!sourceId || sourceId === targetId) return;
+    setFrontFiles(prev => {
+      const src = prev.findIndex(f => f.id === sourceId);
+      const dst = prev.findIndex(f => f.id === targetId);
+      if (src < 0 || dst < 0) return prev;
+      const next = prev.slice();
+      const [moved] = next.splice(src, 1);
+      next.splice(dst, 0, moved);
+      return next;
+    });
+  };
+
+  // ─── SAVE-TO-DB ROW BUILDERS ────────────────────────────
+  // After a PDF download, we offer to persist a snapshot of the
+  // job to Supabase. Each download function builds the row and
+  // hands it to requestSaveJob, which opens the confirmation
+  // modal (and password prompt if needed).
+  const requestSaveJob = (row, label) => {
+    if (!isSupabaseConfigured) return; // silently skip if env vars missing
+    setPendingSaveJob({ row, label });
+  };
+
+  const buildSheetJobRow = () => {
+    const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
+    const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
+    const discPct = Math.max(0,(1-(discountFactor||1))*100);
+    const fileNames = frontFiles.length ? frontFiles.map(f => f.name) : (frontImage ? [frontImage.name||"front"] : []);
+    return {
+      job_type: "sheets",
+      paper_type: currentPaper.label,
+      paper_key: paperKey,
+      sheet_size: sheetKey,
+      sku: skuMap[`${paperKey}:${sheetKey}`] || null,
+      print_size: `${prints.width}x${prints.height}`,
+      orientation,
+      color_mode: frontColorMode,
+      quantity: totalPrintQty || null,
+      sheets_needed: sheetsNeeded || null,
+      sides: showBack ? "Front + Back" : "Single-sided",
+      per_sheet_price: Number(perSheetTotal.toFixed(4)),
+      discount_percent: Number(discPct.toFixed(3)),
+      total_price: Number(totalPrice.toFixed(2)),
+      file_names: fileNames,
+      job_details: {
+        sheetSize: { w: sw, h: sh },
+        prints: { width: prints.width, height: prints.height, quantity: prints.quantity },
+        backColorMode: showBack ? backColorMode : null,
+        printsPerSheet,
+        gridCols: frontSlotInfo?.cols,
+        gridRows: frontSlotInfo?.rows,
+        printRotated: !!frontSlotInfo?.printRotated,
+        files: frontFiles.map(f => ({ name: f.name, qty: f.qty, rotation: f.rotation })),
+      },
+    };
+  };
+
+  const buildLfJobRow = () => {
+    const lfPaper = lfPaperTypes.find(p=>p.key===lfPaperKey)||{label:lfPaperKey};
+    return {
+      job_type: "large-format",
+      paper_type: lfPaper.label,
+      paper_key: lfPaperKey,
+      print_size: `${lfWidth}x${lfHeight}`,
+      orientation: lfWidth>=lfHeight ? "landscape" : "portrait",
+      color_mode: lfColorMode,
+      quantity: 1,
+      total_price: Number(lfTotalWithDiscount.toFixed(2)),
+      file_names: lfImage ? [lfImage.name||"artwork"] : [],
+      addons: {
+        grommets: lfGrommets ? { count: lfGrommetCount, eachPrice: lfAddonPricing.grommetEach||0 } : null,
+        foamCore: lfFoamCore ? { price: lfAddonPricing.foamCore||0 } : null,
+      },
+      job_details: {
+        widthIn: lfWidth, heightIn: lfHeight,
+        areaSqFt: Number(lfAreaSqFt.toFixed(3)),
+      },
+    };
+  };
+
+  const buildBlueprintJobRow = () => ({
+    job_type: "blueprints",
+    paper_type: "20lb plain bond",
+    paper_key: "plain_20lb",
+    print_size: bpSizeObj.label,
+    orientation: bpWidth>=bpHeight ? "landscape" : "portrait",
+    color_mode: "bw",
+    quantity: bpQty,
+    sheets_needed: bpQty,
+    per_sheet_price: Number(bpPerSheet.toFixed(4)),
+    total_price: Number(bpTotal.toFixed(2)),
+    file_names: bpFile ? [bpFile.name] : [],
+    job_details: {
+      sizeKey: bpSizeKey,
+      widthIn: bpWidth, heightIn: bpHeight,
+      psf: Number(bpPsf.toFixed(4)),
+      areaPerSheetSqFt: Number(bpAreaPerSheetSqFt.toFixed(3)),
+      totalSqFt: Number(bpTotalSqFt.toFixed(3)),
+    },
+  });
 
   // ─── PDF DOWNLOADS ──────────────────────────────────────
 
@@ -1116,6 +1288,7 @@ const handleFrontFiles = async (files) => {
     }
 
     savePdf(orderDoc, "print_order_sheet.pdf");
+    requestSaveJob(buildSheetJobRow(), "Sheets / Photos");
   };
 
   const downloadLfPDF = async () => {
@@ -1143,6 +1316,7 @@ const handleFrontFiles = async (files) => {
     orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
 
     savePdf(orderDoc, "large_format_with_order_sheet.pdf");
+    requestSaveJob(buildLfJobRow(), "Large Format");
   };
 
   const downloadBlueprintPDF = async () => {
@@ -1165,6 +1339,33 @@ const handleFrontFiles = async (files) => {
       orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
     }
     savePdf(orderDoc, "blueprint_with_order_sheet.pdf");
+    requestSaveJob(buildBlueprintJobRow(), "Blueprints");
+  };
+
+  // ─── SAVE-TO-DB CONFIRM ────────────────────────────────
+  const confirmSaveJob = async (extra={}) => {
+    if (!pendingSaveJob) return;
+    if (!ensureDbAuthenticated()) return;
+    setSavingJob(true);
+    try {
+      const merged = { ...pendingSaveJob.row, ...extra };
+      const saved = await savePrintJob(merged);
+      setPendingSaveJob(null);
+      const idShort = saved?.id ? saved.id.slice(0, 8) : "saved";
+      setSavedJobToast(`Saved · job ${idShort}`);
+      setTimeout(() => setSavedJobToast(""), 3500);
+    } catch (e) {
+      alert("Could not save job: " + (e?.message || String(e)));
+    } finally {
+      setSavingJob(false);
+    }
+  };
+  const dismissSaveJob = () => { if (!savingJob) setPendingSaveJob(null); };
+
+  const openJobHistory = () => {
+    if (!isSupabaseConfigured) { alert("Supabase isn't configured."); return; }
+    if (!ensureDbAuthenticated()) return;
+    setShowJobHistory(true);
   };
 
   // ─── EMAIL ORDER ────────────────────────────────────────
@@ -1212,6 +1413,7 @@ const handleFrontFiles = async (files) => {
       };
       const resp = await fetch("/.netlify/functions/send-print-job", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
       if (!resp.ok) { console.error("Server error:", resp.status); alert("Could not send automatically. Please download the PDF and email it to "+UPS_STORE.email); return false; }
+      fireConfetti();
       alert("Order sent! We'll receive your job details by email shortly.");
       return true;
     } catch (err) { console.error("sendOrderEmail error:", err); alert("Could not send automatically. Please download and email manually."); return false; }
@@ -1354,6 +1556,16 @@ try {
               <Icon.Quote />
               Quick Quote
             </button>
+            {isSupabaseConfigured && (
+              <button
+                className="pc-btn pc-btn-secondary pc-btn-sm"
+                onClick={openJobHistory}
+                style={{ gap:6 }}
+                title="View saved print jobs"
+              >
+                📋 Job History
+              </button>
+            )}
             <button className="pc-btn pc-btn-admin" onClick={handleAdminClick} style={{ display:"flex", alignItems:"center", gap:5 }}>
               <Icon.Admin />
               {isAdmin && showAdmin ? "Close Admin" : "Admin"}
@@ -1378,7 +1590,7 @@ try {
                 className={`service-tab ${activeTab===tab.id ? (tab.id==="paper"?"active":tab.id==="large"?"active active-amber":tab.id==="impose"?"active active-green":"active active-blue") : ""}`}
                 onClick={() => setActiveTab(tab.id)}
               >
-                <span className="tab-icon-pill" style={{ background: activeTab===tab.id ? pillActiveBg(tab.id) : tab.pillBg }}>{tab.pill}</span>
+                <span className="tab-icon-pill" data-tooltip={tab.label} style={{ background: activeTab===tab.id ? pillActiveBg(tab.id) : tab.pillBg }}>{tab.pill}</span>
                 {tab.label}
               </button>
             ))}
@@ -1983,11 +2195,40 @@ try {
 
                 {frontFiles.length>0 && (
                   <div className="file-list">
-                    {frontFiles.map(f => (
+                    {frontFiles.map(f => {
+                      const classes = [
+                        "file-row",
+                        selectedFrontId===f.id ? "selected" : "",
+                        dragSourceId===f.id ? "is-dragging" : "",
+                        dragOverId===f.id && dragSourceId && dragSourceId!==f.id ? "is-drop-target" : "",
+                      ].filter(Boolean).join(" ");
+                      return (
                       <div
                         key={f.id}
-                        className={`file-row ${selectedFrontId===f.id?"selected":""}`}
+                        className={classes}
+                        draggable
+                        onDragStart={e => {
+                          setDragSourceId(f.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          try { e.dataTransfer.setData("text/plain", f.id); } catch {}
+                        }}
+                        onDragOver={e => {
+                          if (!dragSourceId || dragSourceId === f.id) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                          if (dragOverId !== f.id) setDragOverId(f.id);
+                        }}
+                        onDragLeave={() => { if (dragOverId === f.id) setDragOverId(null); }}
+                        onDrop={e => {
+                          e.preventDefault();
+                          const src = dragSourceId || e.dataTransfer.getData("text/plain");
+                          reorderFile(src, f.id);
+                          setDragSourceId(null);
+                          setDragOverId(null);
+                        }}
+                        onDragEnd={() => { setDragSourceId(null); setDragOverId(null); }}
                         onClick={()=>setSelectedFrontId(f.id)}
+                        title="Drag to reorder"
                       >
                         <div className="file-thumb">{getFileExt(f.name)}</div>
                         <div className="file-info">
@@ -2012,7 +2253,8 @@ try {
                           <Icon.X />
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -2108,6 +2350,8 @@ try {
                       ref={frontRef}
                       style={{ transform:`scale(${frontZoom})`, transformOrigin:"top left", cursor:"pointer", width:"100%" }}
                     />
+                  ) : processingFiles ? (
+                    <div className="canvas-skeleton">Processing files…</div>
                   ) : (
                     <div className="preview-pane">
                       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity:0.35 }}>
@@ -2347,6 +2591,77 @@ try {
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
 
+      {pendingSaveJob && (
+        <SaveJobDialog
+          label={pendingSaveJob.label}
+          row={pendingSaveJob.row}
+          saving={savingJob}
+          onCancel={dismissSaveJob}
+          onConfirm={confirmSaveJob}
+        />
+      )}
+
+      {showJobHistory && <JobHistory onClose={() => setShowJobHistory(false)} />}
+
+      {savedJobToast && <div className="pc-toast">{savedJobToast}</div>}
+
+    </div>
+  );
+}
+
+// ─── SAVE-JOB DIALOG ───────────────────────────────────────
+// Asks the user whether to persist the current print job, plus
+// optional customer fields. Receives the row builder output and
+// merges customer fields when the user confirms.
+function SaveJobDialog({ label, row, saving, onCancel, onConfirm }) {
+  const [name, setName]   = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const submit = (e) => {
+    e?.preventDefault?.();
+    onConfirm({
+      customer_name:  name.trim()  || null,
+      customer_email: email.trim() || null,
+      customer_phone: phone.trim() || null,
+      notes:          notes.trim() || null,
+    });
+  };
+  return (
+    <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !saving && onCancel()}>
+      <form className="pc-dialog" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="pc-dialog-title">Save this {label} job to history?</div>
+        <div className="pc-dialog-sub">Optional customer info — leave blank if walk-in.</div>
+        <div className="pc-dialog-grid">
+          <div>
+            <label className="field-label">Customer name</label>
+            <input className="pc-input" value={name} onChange={e => setName(e.target.value)} autoFocus />
+          </div>
+          <div>
+            <label className="field-label">Email</label>
+            <input className="pc-input" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className="field-label">Phone</label>
+            <input className="pc-input" value={phone} onChange={e => setPhone(e.target.value)} />
+          </div>
+          <div style={{ gridColumn:"1 / -1" }}>
+            <label className="field-label">Notes</label>
+            <input className="pc-input" value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+        </div>
+        <div className="pc-dialog-summary">
+          <span>Total: <strong>${Number(row.total_price||0).toFixed(2)}</strong></span>
+          <span>{row.print_size || row.sheet_size}</span>
+          {row.quantity != null && <span>Qty {row.quantity}</span>}
+        </div>
+        <div className="pc-dialog-actions">
+          <button type="button" className="pc-btn pc-btn-secondary" onClick={onCancel} disabled={saving}>No, skip</button>
+          <button type="submit" className="pc-btn pc-btn-success" disabled={saving}>
+            {saving ? "Saving…" : "Yes, save job"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
