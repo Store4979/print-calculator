@@ -22,13 +22,9 @@ const DEFAULT_MARGIN_IN  = 0.125;
 const DEFAULT_SPACING_IN = 0.0625;
 
 const PRESET_SHEETS = {
-  "4x6":    [4,  6],
-  "5x7":    [5,  7],
   "8.5x11": [8.5,11],
   "11x17":  [11, 17],
   "12x18":  [12, 18],
-  "13x19":  [13, 19],
-  "custom": null,
 };
 
 const DEFAULT_PAPER_TYPES = [
@@ -36,8 +32,8 @@ const DEFAULT_PAPER_TYPES = [
   { key:"24lb_premium",  label:"24lb Premium Bond",  sheets:["8.5x11","11x17","12x18"] },
   { key:"cardstock_80",  label:"Cardstock 80lb",     sheets:["8.5x11","11x17"] },
   { key:"cardstock_100", label:"Cardstock 100lb",    sheets:["8.5x11"] },
-  { key:"photo_glossy",  label:"Photo Glossy",       sheets:["4x6","5x7","8.5x11"] },
-  { key:"photo_matte",   label:"Photo Matte",        sheets:["4x6","5x7","8.5x11"] },
+  { key:"photo_glossy",  label:"Photo Glossy",       sheets:["8.5x11"] },
+  { key:"photo_matte",   label:"Photo Matte",        sheets:["8.5x11"] },
 ];
 
 const DEFAULT_LF_PAPER_TYPES = [
@@ -121,7 +117,7 @@ const loadSheetKeysForPaper = (pts) => {
     if (s) { const m = JSON.parse(s); if (m && typeof m === "object") return m; }
   } catch {}
   const m = {};
-  pts.forEach((pt) => { m[pt.key] = pt.sheets || Object.keys(PRESET_SHEETS).filter(k => k !== "custom"); });
+  pts.forEach((pt) => { m[pt.key] = pt.sheets || Object.keys(PRESET_SHEETS); });
   return m;
 };
 
@@ -572,7 +568,6 @@ function PriceCalculatorApp() {
   const [sheetKeysForPaper, setSheetKeysForPaper] = useState(() => loadSheetKeysForPaper(loadPaperTypes()));
   const [paperKey, setPaperKey]     = useState(() => { const pts = loadPaperTypes(); return pts[0]?.key || DEFAULT_PAPER_TYPES[0].key; });
   const [sheetKey, setSheetKey]     = useState("8.5x11");
-  const [customSize, setCustomSize] = useState({ w:8.5, h:11 });
   const [orientation, setOrientation] = useState("portrait");
   const [frontColorMode, setFrontColorMode] = useState("color");
   const [backColorMode, setBackColorMode]   = useState("bw");
@@ -739,8 +734,8 @@ function PriceCalculatorApp() {
   }, []);
 
   // ── Derived: sheet dimensions ──
-  const getPresetSheetKeys = () => Object.keys(PRESET_SHEETS).filter(k => k !== "custom");
-  const sheetDims = sheetKey === "custom" ? [customSize.w, customSize.h] : (PRESET_SHEETS[sheetKey] || [8.5,11]);
+  const getPresetSheetKeys = () => Object.keys(PRESET_SHEETS);
+  const sheetDims = PRESET_SHEETS[sheetKey] || [8.5,11];
   const orientedWIn = orientation==="landscape" ? Math.max(...sheetDims) : Math.min(...sheetDims);
   const orientedHIn = orientation==="landscape" ? Math.min(...sheetDims) : Math.max(...sheetDims);
 
@@ -801,7 +796,6 @@ function PriceCalculatorApp() {
     const pts = quoteShowAllPapers ? paperTypes : paperTypes.filter(p => p.key===quotePaperKey);
     pts.forEach(pt => {
       (sheetKeysForPaper[pt.key]||[]).forEach(sk => {
-        if (sk==="custom") return;
         const entry = normalizeEntry((pricing[pt.key]||{})[sk]||{});
         if (!entry.priceColor && !entry.priceBW) return;
         const [sw,sh] = PRESET_SHEETS[sk]||[8.5,11];
@@ -944,11 +938,11 @@ function PriceCalculatorApp() {
 
   useEffect(() => {
     drawSheet(frontRef.current, frontFiles.length ? frontFiles : frontImage, frontRotation, frontPreviewPage, frontPlacementsRef);
-  }, [frontFiles, frontImage, frontRotation, frontPreviewPage, sheetKey, orientation, customSize, prints, showCutLines, showGuides, drawSheet]);
+  }, [frontFiles, frontImage, frontRotation, frontPreviewPage, sheetKey, orientation, prints, showCutLines, showGuides, drawSheet]);
 
   useEffect(() => {
     if (showBack) drawSheet(backRef.current, backImage, backRotation, 0, null);
-  }, [backImage, backRotation, sheetKey, orientation, customSize, prints, showCutLines, showGuides, showBack, drawSheet]);
+  }, [backImage, backRotation, sheetKey, orientation, prints, showCutLines, showGuides, showBack, drawSheet]);
 
   // ── LF Canvas ──
   // Stretch-to-fill at the user's requested lfWidth × lfHeight so the preview
@@ -1079,12 +1073,11 @@ const handleFrontFiles = async (files) => {
     // Order sheet is always portrait letter
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
-    const isCustom = sheetKey==="custom";
-    const [sw,sh] = isCustom ? [customSize.w,customSize.h] : (PRESET_SHEETS[sheetKey]||[8.5,11]);
+    const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
     const details = [
       { label:"Paper:", value:currentPaper.label },
       { label:"SKU:", value:skuMap[`${paperKey}:${sheetKey}`] || paperKey },
-      { label:"Sheet size:", value:`${sw}×${sh} in${isCustom?" (custom)":""}` },
+      { label:"Sheet size:", value:`${sw}×${sh} in` },
       { label:"Orientation:", value:orientation },
       { label:"Print size:", value:`${prints.width}×${prints.height} in` },
       { label:"Prints/sheet:", value:`${Math.max(1,printsPerSheet)} (${frontSlotInfo?.cols||0}×${frontSlotInfo?.rows||0} grid)` },
@@ -1246,8 +1239,7 @@ const handleFrontFiles = async (files) => {
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
-    const isCustom=sheetKey==="custom";
-    const [sw,sh] = isCustom?[customSize.w,customSize.h]:(PRESET_SHEETS[sheetKey]||[8.5,11]);
+    const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
     addOrderSheetPage(orderDoc,{ jobType:"Paper Printing", details:[{label:"Paper:",value:currentPaper.label},{label:"Sheet:",value:`${sw}×${sh} in`},{label:"Print size:",value:`${prints.width}×${prints.height} in`},{label:"Qty:",value:totalPrintQty},{label:"Sheets:",value:sheetsNeeded}], totals:[{label:"Estimated total:",value:`$${totalPrice.toFixed(2)}`}], files:frontImage?[frontImage.name||"front"]:[] });
     await sendOrderEmail("sheets", jobBlob, orderDoc.output("blob"));
   };
@@ -1588,7 +1580,7 @@ try {
                         </div>
                         {/* Toggle sheet sizes */}
                         <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
-                          {Object.keys(PRESET_SHEETS).filter(k=>k!=="custom").map(sk => {
+                          {Object.keys(PRESET_SHEETS).map(sk => {
                             const active = (sheetKeysForPaper[pt.key]||[]).includes(sk);
                             return (
                               <button key={sk}
@@ -1661,7 +1653,7 @@ try {
                   <div>
                     <label className="field-label">Sheet sizes</label>
                     <div style={{ display:"flex", gap:3 }}>
-                      {Object.keys(PRESET_SHEETS).filter(k=>k!=="custom").map(sk => (
+                      {Object.keys(PRESET_SHEETS).map(sk => (
                         <button key={sk}
                           className={`pc-btn pc-btn-xs ${newPaperSheets[sk] ? "pc-btn-primary" : "pc-btn-secondary"}`}
                           style={{ fontSize:10, padding:"2px 6px" }}
@@ -1848,23 +1840,10 @@ try {
                   <label className="field-label">Sheet size</label>
                   <div className="chip-group">
                     {Object.keys(PRESET_SHEETS).map(sk => (
-                      <Chip key={sk} label={sk==="custom"?"Custom":sk} selected={sheetKey===sk} onClick={()=>setSheetKey(sk)} />
+                      <Chip key={sk} label={sk} selected={sheetKey===sk} onClick={()=>setSheetKey(sk)} />
                     ))}
                   </div>
                 </div>
-
-                {sheetKey==="custom" && (
-                  <div className="grid-2" style={{ marginBottom:16 }}>
-                    <div>
-                      <label className="field-label">Custom width (in)</label>
-                      <input className="pc-input" type="number" value={customSize.w} step="0.25" min="1" onChange={e=>setCustomSize(p=>({...p,w:+e.target.value||1}))} />
-                    </div>
-                    <div>
-                      <label className="field-label">Custom height (in)</label>
-                      <input className="pc-input" type="number" value={customSize.h} step="0.25" min="1" onChange={e=>setCustomSize(p=>({...p,h:+e.target.value||1}))} />
-                    </div>
-                  </div>
-                )}
 
                 <div className="grid-auto" style={{ marginBottom:16 }}>
                   <div>
