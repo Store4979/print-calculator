@@ -415,6 +415,95 @@ if (files.length) {
   }
 };
 
+// Multi-job order sheet. Each `jobs` entry carries the per-job display
+// strings; `summary` is the ticket-wide totals/discount block. Renders the
+// store header, then per-job sections, then the summary, then a barcode
+// for the ticket key (or the first job's SKU).
+const addTicketOrderSheetPage = (doc, { jobs, summary, barcodeValue }) => {
+  const ml = 0.5, mt = 0.5, cw = 7.5;
+  let y = mt;
+  const hr = (extra = 0) => { y += 0.02; doc.setDrawColor(220,220,220); doc.line(ml, y, ml+cw, y); y += 0.02 + extra; };
+
+  if (UPS_LOGO_PDF_DATA_URL) {
+    try {
+      const logoMaxW = 0.8, logoMaxH = 0.5;
+      const img = new Image(); img.src = UPS_LOGO_PDF_DATA_URL;
+      const ratio = img.naturalWidth && img.naturalHeight ? img.naturalWidth/img.naturalHeight : 1.6;
+      let logoW = logoMaxW, logoH = logoW/ratio;
+      if (logoH > logoMaxH) { logoH = logoMaxH; logoW = logoH*ratio; }
+      doc.addImage(UPS_LOGO_PDF_DATA_URL, "PNG", ml, y, logoW, logoH);
+    } catch {}
+  }
+  doc.setFontSize(9); doc.setTextColor(80,80,80);
+  doc.text(UPS_STORE.name, ml+1.4, y+0.15);
+  doc.text(UPS_STORE.address, ml+1.4, y+0.28);
+  doc.text(`Ph: ${UPS_STORE.phone}  ·  ${UPS_STORE.email}`, ml+1.4, y+0.41);
+  y += 0.65;
+  hr(0.08);
+
+  doc.setFontSize(13); doc.setTextColor(0,0,0); doc.setFont(undefined, "bold");
+  doc.text(`Print Order — Paper Printing (${jobs.length} ${jobs.length===1?"Job":"Jobs"})`, ml, y); y += 0.22;
+  doc.setFont(undefined, "normal");
+  doc.setFontSize(8); doc.setTextColor(100,100,100);
+  doc.text(`Generated: ${new Date().toLocaleString()}`, ml, y); y += 0.18;
+  hr(0.1);
+
+  // Per-job sections
+  jobs.forEach((job, idx) => {
+    if (y > 9.0) { doc.addPage(); y = mt; }
+    doc.setFontSize(10.5); doc.setTextColor(0,0,0); doc.setFont(undefined, "bold");
+    doc.text(`Job ${idx + 1}`, ml, y);
+    doc.setFont(undefined, "normal"); doc.setFontSize(9); doc.setTextColor(120,120,120);
+    if (job.subtitle) doc.text(job.subtitle, ml+1.0, y);
+    y += 0.16;
+    doc.setDrawColor(230,230,230); doc.line(ml, y, ml+cw, y); y += 0.06;
+
+    doc.setFontSize(9.5); doc.setTextColor(0,0,0);
+    (job.details || []).forEach(({ label, value }) => {
+      doc.setFont(undefined, "bold"); doc.text(label, ml, y);
+      doc.setFont(undefined, "normal"); doc.text(String(value ?? ""), ml+2.2, y);
+      y += 0.16;
+    });
+    if (job.files && job.files.length) {
+      doc.setFont(undefined, "bold"); doc.text("Files:", ml, y);
+      doc.setFont(undefined, "normal");
+      const filesText = job.files.join("  ·  ");
+      const wrapped = doc.splitTextToSize(filesText, cw - 1.0);
+      wrapped.forEach((ln, li) => { doc.text(ln, ml+1.0, y + li*0.14); });
+      y += Math.max(0.16, wrapped.length * 0.14);
+    }
+    if (job.subtotalLabel) {
+      doc.setTextColor(60,60,60);
+      doc.setFont(undefined, "normal");
+      doc.text(job.subtotalLabel, ml, y);
+      doc.text(job.subtotalValue, ml+cw, y, { align:"right" });
+      y += 0.16;
+    }
+    y += 0.08;
+  });
+
+  // Ticket summary
+  if (y > 9.4) { doc.addPage(); y = mt; }
+  hr(0.1);
+  doc.setFontSize(11); doc.setTextColor(0,0,0); doc.setFont(undefined, "bold");
+  doc.text("Ticket Summary", ml, y); y += 0.18;
+  doc.setFont(undefined, "normal");
+  (summary || []).forEach(({ label, value }) => {
+    const isTotal = String(label).toLowerCase().includes("total");
+    doc.setFontSize(isTotal ? 11 : 9.5);
+    doc.setFont(undefined, isTotal ? "bold" : "normal");
+    doc.setTextColor(isTotal ? 0 : 60, 60, 60);
+    doc.text(label, ml, y); doc.text(value, ml+cw, y, { align: "right" });
+    y += isTotal ? 0.22 : 0.18;
+  });
+
+  // Barcode
+  if (barcodeValue) {
+    y += 0.25;
+    drawBarcode128(doc, barcodeValue, ml, y, { width: 2.2, height: 0.45, showText: true, fontSize: 9 });
+  }
+};
+
 const savePdf = (doc, filename) => {
   try {
     const blob = doc.output("blob");
@@ -554,7 +643,155 @@ function MobileNumberBar({ open, onDone, onClear, onNudge }) {
   );
 }
 
-// Brief confetti burst (CSS-driven). Skipped if the user prefers
+// Pure draw routine for a single sheet. All inputs are passed explicitly so
+// it can be reused outside the React closure (e.g. when generating a PDF
+// that needs to render preview pages for several saved ticket items).
+const drawSheetTo = (canvas, {
+  imageInput,
+  rotDeg = 0,
+  pageIndex = 0,
+  placementsRef = null,
+  orientedWIn,
+  orientedHIn,
+  prints,
+  frontSlotInfo,
+  previewMargin,
+  previewSpacing,
+  showGuides = false,
+  showCutLines = false,
+  dpi = DPI,
+}) => new Promise((resolve) => {
+  if (!canvas) return resolve();
+  // Generation token so a later call supersedes an in-flight one on the
+  // same canvas — prevents stale async draws overwriting fresh content.
+  const myGen = (canvas.__drawSheetGen || 0) + 1;
+  canvas.__drawSheetGen = myGen;
+
+  const safeDpi = Math.max(1, Number(dpi) || DPI);
+  const inchesToPxAt = (i) => Math.round(i * safeDpi);
+
+  const ctx = canvas.getContext("2d");
+  const wPx = inchesToPxAt(orientedWIn);
+  const hPx = inchesToPxAt(orientedHIn);
+  canvas.width = wPx; canvas.height = hPx;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, wPx, hPx);
+
+  let items = [];
+  if (Array.isArray(imageInput)) {
+    items = imageInput.filter(Boolean).map((it, idx) => it?.file
+      ? { id: String(it.id ?? `f_${idx}`), file: it.file, name: it.name ?? it.file?.name ?? `File ${idx+1}`, rotation: Number(it.rotation)||0, qty: Math.max(0, Number(it.qty)||0) }
+      : { id: `legacy_${idx}`, file: it, name: it?.name ?? `File ${idx+1}`, rotation: 0, qty: 0 }
+    );
+  } else if (imageInput) {
+    items = [{ id: "single", file: imageInput, name: imageInput?.name ?? "Image", rotation: 0, qty: Math.max(0, Number(prints?.quantity)||0) }];
+  }
+
+  if (!items.length) { if (placementsRef) placementsRef.current = []; return resolve(); }
+
+  const marginPx  = inchesToPxAt(previewMargin);
+  const spacingPx = inchesToPxAt(previewSpacing);
+  const { cols, rows, printRotated } = frontSlotInfo || { cols: 1, rows: 1, printRotated: false };
+
+  const printWPx = printRotated ? inchesToPxAt(prints.height) : inchesToPxAt(prints.width);
+  const printHPx = printRotated ? inchesToPxAt(prints.width)  : inchesToPxAt(prints.height);
+
+  const gridW = cols*(printWPx+spacingPx) - spacingPx;
+  const gridH = rows*(printHPx+spacingPx) - spacingPx;
+  const startX = Math.round((wPx - gridW)/2);
+  const startY = Math.round((hPx - gridH)/2);
+
+  const cap = cols * rows;
+  const workList = [];
+  items.forEach(it => { const q = it.qty || 0; if (q > 0) for (let i = 0; i < q; i++) workList.push(it); else workList.push(it); });
+  const startIdx = pageIndex * cap;
+  const pageItems = workList.slice(startIdx, startIdx + cap);
+  if (!pageItems.length) pageItems.push(...items.slice(0, 1));
+
+  const pagePlacements = [];
+  const loadedMap = new Map();
+  const toLoad = [...new Set(pageItems.map(it => it.file).filter(Boolean))];
+
+  Promise.all(toLoad.map(f => new Promise(res => {
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload  = () => { loadedMap.set(f, { img, url, width: img.naturalWidth, height: img.naturalHeight }); res(); };
+    img.onerror = () => { URL.revokeObjectURL(url); res(); };
+    img.src = url;
+  }))).then(() => {
+    if (canvas.__drawSheetGen !== myGen) {
+      for (const v of loadedMap.values()) { try { URL.revokeObjectURL(v.url); } catch {} }
+      return resolve();
+    }
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const slotIdx = row * cols + col;
+        const it = pageItems[slotIdx % pageItems.length];
+        if (!it) continue;
+        const x = startX + col*(printWPx+spacingPx);
+        const y = startY + row*(printHPx+spacingPx);
+        const chosen = it.file ? loadedMap.get(it.file) : null;
+        pagePlacements.push({ col, row, x, y, w: printWPx, h: printHPx, itemId: it.id, itemName: it.name, slotIndex: slotIdx });
+
+        ctx.save();
+        if (chosen?.img) {
+          const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0) + (printRotated ? 90 : 0);
+          drawImageFill(ctx, chosen.img, x+printWPx/2, y+printHPx/2, printWPx, printHPx, userRot);
+        } else {
+          ctx.fillStyle = "#e5e7eb"; ctx.fillRect(x, y, printWPx, printHPx);
+          ctx.fillStyle = "#9ca3af"; ctx.font = `${Math.min(printWPx*0.12, 14)}px sans-serif`;
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(it.name||"Image", x+printWPx/2, y+printHPx/2);
+        }
+        if (showCutLines) {
+          ctx.strokeStyle = "rgba(100,100,100,0.35)"; ctx.lineWidth = Math.max(0.5, safeDpi/192); ctx.setLineDash([3,3]);
+          ctx.strokeRect(x, y, printWPx, printHPx); ctx.setLineDash([]);
+        }
+        ctx.restore();
+      }
+    }
+    if (showGuides && marginPx > 0) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(0,129,152,0.2)"; ctx.lineWidth = Math.max(0.5, safeDpi/192); ctx.setLineDash([2,4]);
+      ctx.strokeRect(marginPx, marginPx, wPx-marginPx*2, hPx-marginPx*2);
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    if (placementsRef) placementsRef.current = pagePlacements;
+    for (const v of loadedMap.values()) { try { URL.revokeObjectURL(v.url); } catch {} }
+    resolve({ placements: pagePlacements });
+  });
+});
+
+// Default shape of one ticket line item. Same fields the editor mutates,
+// plus a stable id and the most recent computed snapshot used by the
+// pricing summary while debounced auto-save catches up.
+const createEmptyJob = (overrides = {}) => ({
+  id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  paperKey: overrides.paperKey ?? "20lb_bond",
+  sheetKey: overrides.sheetKey ?? "8.5x11",
+  orientation: "portrait",
+  frontColorMode: "color",
+  backColorMode: "bw",
+  showBack: false,
+  printWidth: 3.5,
+  printHeight: 2,
+  printQuantity: 100,
+  frontFiles: [],
+  backImage: null,
+  backRotation: 0,
+  frontRotation: 0,
+  showCutLines: true,
+  showGuides: true,
+  // computed snapshot (kept in sync by auto-save)
+  printsPerSheet: 1,
+  totalPrintQty: 0,
+  sheetsNeeded: 0,
+  perSheetTotal: 0,
+  ...overrides,
+});
+
+
 // reduced motion. Pieces auto-clean after the animation finishes.
 const fireConfetti = () => {
   if (typeof document === "undefined") return;
@@ -592,6 +829,20 @@ function PriceCalculatorApp() {
   const [isAdmin, setIsAdmin]       = useState(false);
 
   useEffect(() => { try { localStorage.setItem("activeTab", activeTab); } catch {} }, [activeTab]);
+
+  // ── Job ticket (Sheets & Photos only) ──
+  // The editor state below represents the CURRENTLY ACTIVE line item.
+  // `ticket` is the array of saved line items. `activeTicketIdx` selects
+  // which one the editor is bound to. An auto-save effect copies editor
+  // state back into ticket[activeTicketIdx]; while loading a different
+  // job into the editor we set isLoadingFromTicketRef so the auto-save
+  // skips the redundant write.
+  const [ticket, setTicket] = useState(() => [createEmptyJob({
+    paperKey: (loadPaperTypes()[0]?.key) || "20lb_bond",
+    sheetKey: "8.5x11",
+  })]);
+  const [activeTicketIdx, setActiveTicketIdx] = useState(0);
+  const isLoadingFromTicketRef = useRef(false);
 
   // ── Paper/Sheet state ──
   const [paperTypes, setPaperTypes] = useState(loadPaperTypes);
@@ -872,122 +1123,24 @@ function PriceCalculatorApp() {
   // high-quality PDF export). Otherwise it uses the on-screen preview DPI.
   // `opts.showGuides` / `opts.showCutLines` can override the UI toggles so
   // PDF output stays free of preview-only guides.
+  // Thin wrapper around the pure drawSheetTo, plumbed with the editor's
+  // current orientation / slot / margins. PDF generators that need to
+  // render non-active jobs call drawSheetTo directly with that job's params.
   const drawSheet = useCallback((canvas, imageInput, rotDeg, pageIndex=0, placementsRef=null, opts={}) => {
-    return new Promise((resolve) => {
-      if (!canvas) return resolve();
-      // Generation token so a later drawSheet call supersedes an in-flight
-      // one on the same canvas — prevents stale async draws overwriting
-      // fresh content when inputs change quickly.
-      const myGen = (canvas.__drawSheetGen || 0) + 1;
-      canvas.__drawSheetGen = myGen;
-
-      const dpi = Math.max(1, Number(opts.dpi) || DPI);
-      const guidesOn = opts.showGuides ?? showGuides;
-      const cutsOn   = opts.showCutLines ?? showCutLines;
-      const inchesToPxAt = (i) => Math.round(i * dpi);
-
-      const ctx = canvas.getContext("2d");
-      const wPx = inchesToPxAt(orientedWIn);
-      const hPx = inchesToPxAt(orientedHIn);
-      canvas.width = wPx; canvas.height = hPx;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0,0,wPx,hPx);
-
-      let items = [];
-      if (Array.isArray(imageInput)) {
-        items = imageInput.filter(Boolean).map((it,idx) => it?.file
-          ? { id:String(it.id??`f_${idx}`), file:it.file, name:it.name??it.file?.name??`File ${idx+1}`, rotation:Number(it.rotation)||0, qty:Math.max(0,Number(it.qty)||0) }
-          : { id:`legacy_${idx}`, file:it, name:it?.name??`File ${idx+1}`, rotation:0, qty:0 }
-        );
-      } else if (imageInput) {
-        items = [{ id:"single", file:imageInput, name:imageInput?.name??"Image", rotation:0, qty:Math.max(0,Number(prints.quantity)||0) }];
-      }
-
-      if (!items.length) { if (placementsRef) placementsRef.current=[]; return resolve(); }
-
-      const marginPx  = inchesToPxAt(previewMargin);
-      const spacingPx = inchesToPxAt(previewSpacing);
-      const { cols, rows, printRotated } = frontSlotInfo || { cols:1, rows:1, printRotated:false };
-
-      // Slot pixel dimensions. printRotated means the image is rotated 90° to
-      // fit more copies on the sheet — we swap W/H of the slot itself so the
-      // grid layout aligns with the user-selected sheet orientation.
-      const printWPx = printRotated ? inchesToPxAt(prints.height) : inchesToPxAt(prints.width);
-      const printHPx = printRotated ? inchesToPxAt(prints.width)  : inchesToPxAt(prints.height);
-
-      const gridW = cols*(printWPx+spacingPx) - spacingPx;
-      const gridH = rows*(printHPx+spacingPx) - spacingPx;
-      const startX = Math.round((wPx - gridW)/2);
-      const startY = Math.round((hPx - gridH)/2);
-
-      const cap = cols * rows;
-      let workList = [];
-      items.forEach(it => { const q = it.qty || 0; if (q>0) for (let i=0;i<q;i++) workList.push(it); else workList.push(it); });
-      const startIdx = pageIndex * cap;
-      const pageItems = workList.slice(startIdx, startIdx+cap);
-      if (!pageItems.length) pageItems.push(...items.slice(0,1));
-
-      const pagePlacements = [];
-      const loadedMap = new Map();
-      const toLoad = [...new Set(pageItems.map(it => it.file).filter(Boolean))];
-
-      Promise.all(toLoad.map(f => new Promise(res => {
-        const url = URL.createObjectURL(f);
-        const img = new Image();
-        img.onload = () => { loadedMap.set(f, { img, url, width:img.naturalWidth, height:img.naturalHeight }); res(); };
-        img.onerror = () => { URL.revokeObjectURL(url); res(); };
-        img.src = url;
-      }))).then(() => {
-        // Superseded by a newer drawSheet call — drop our result.
-        if (canvas.__drawSheetGen !== myGen) {
-          for (const v of loadedMap.values()) { try { URL.revokeObjectURL(v.url); } catch {} }
-          return resolve();
-        }
-        for (let row=0; row<rows; row++) {
-          for (let col=0; col<cols; col++) {
-            const slotIdx = row*cols+col;
-            const it = pageItems[slotIdx % pageItems.length];
-            if (!it) continue;
-            const x = startX + col*(printWPx+spacingPx);
-            const y = startY + row*(printHPx+spacingPx);
-            const chosen = it.file ? loadedMap.get(it.file) : null;
-            pagePlacements.push({ col, row, x, y, w:printWPx, h:printHPx, itemId:it.id, itemName:it.name, slotIndex:slotIdx });
-
-            ctx.save();
-            if (chosen?.img) {
-              // Stretch-to-fill the slot, exactly matching the user's
-              // requested print size regardless of the image's natural
-              // aspect. `printRotated` means the best-fit packer rotated
-              // the print 90° to squeeze more copies on the sheet, so we
-              // also rotate the image 90° to keep its content oriented
-              // the way the user drew it. Per-file and per-side manual
-              // rotations stack on top.
-              const userRot = (Number(rotDeg)||0) + (Number(it.rotation)||0) + (printRotated ? 90 : 0);
-              drawImageFill(ctx, chosen.img, x+printWPx/2, y+printHPx/2, printWPx, printHPx, userRot);
-            } else {
-              ctx.fillStyle = "#e5e7eb"; ctx.fillRect(x,y,printWPx,printHPx);
-              ctx.fillStyle = "#9ca3af"; ctx.font = `${Math.min(printWPx*0.12,14)}px sans-serif`;
-              ctx.textAlign="center"; ctx.textBaseline="middle";
-              ctx.fillText(it.name||"Image", x+printWPx/2, y+printHPx/2);
-            }
-            if (cutsOn) {
-              ctx.strokeStyle = "rgba(100,100,100,0.35)"; ctx.lineWidth = Math.max(0.5, dpi/192); ctx.setLineDash([3,3]);
-              ctx.strokeRect(x, y, printWPx, printHPx); ctx.setLineDash([]);
-            }
-            ctx.restore();
-          }
-        }
-        if (guidesOn && marginPx>0) {
-          ctx.save();
-          ctx.strokeStyle = "rgba(0,129,152,0.2)"; ctx.lineWidth = Math.max(0.5, dpi/192); ctx.setLineDash([2,4]);
-          ctx.strokeRect(marginPx, marginPx, wPx-marginPx*2, hPx-marginPx*2);
-          ctx.setLineDash([]);
-          ctx.restore();
-        }
-        if (placementsRef) placementsRef.current = pagePlacements;
-        for (const v of loadedMap.values()) { try { URL.revokeObjectURL(v.url); } catch {} }
-        resolve({ placements: pagePlacements });
-      });
+    return drawSheetTo(canvas, {
+      imageInput,
+      rotDeg,
+      pageIndex,
+      placementsRef,
+      orientedWIn,
+      orientedHIn,
+      prints,
+      frontSlotInfo,
+      previewMargin,
+      previewSpacing,
+      showGuides:   opts.showGuides   ?? showGuides,
+      showCutLines: opts.showCutLines ?? showCutLines,
+      dpi:          opts.dpi || DPI,
     });
   }, [orientedWIn, orientedHIn, prints, frontSlotInfo, showCutLines, showGuides, previewMargin, previewSpacing]);
 
@@ -1136,6 +1289,163 @@ const handleFrontFiles = async (files) => {
     });
   };
 
+  // ─── TICKET ACTIONS ─────────────────────────────────────
+  // Snapshot current editor state into the shape of a ticket line item.
+  // Existing ticket entry's id is preserved.
+  const packEditorAsItem = () => ({
+    ...(ticket[activeTicketIdx] || {}),
+    id: ticket[activeTicketIdx]?.id || `item_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+    paperKey, sheetKey, orientation, frontColorMode, backColorMode, showBack,
+    printWidth: prints.width, printHeight: prints.height, printQuantity: prints.quantity,
+    frontFiles, backImage, backRotation, frontRotation,
+    showCutLines, showGuides,
+    // computed snapshot (used by ticket summaries)
+    printsPerSheet, totalPrintQty, sheetsNeeded, perSheetTotal,
+  });
+
+  // Push an item's stored state into the editor variables.
+  const applyJobToEditor = (item) => {
+    if (!item) return;
+    setPaperKey(item.paperKey);
+    setSheetKey(item.sheetKey);
+    setOrientation(item.orientation);
+    setFrontColorMode(item.frontColorMode);
+    setBackColorMode(item.backColorMode);
+    setShowBack(!!item.showBack);
+    setPrints({
+      width:    Number(item.printWidth)    || 3.5,
+      height:   Number(item.printHeight)   || 2,
+      quantity: Number(item.printQuantity) || 0,
+    });
+    setFrontFiles(Array.isArray(item.frontFiles) ? item.frontFiles : []);
+    setBackImage(item.backImage || null);
+    setBackRotation(Number(item.backRotation) || 0);
+    setFrontRotation(Number(item.frontRotation) || 0);
+    setShowCutLines(item.showCutLines ?? true);
+    setShowGuides(item.showGuides ?? true);
+    setSelectedFrontId(null);
+    setFrontPreviewPage(0);
+  };
+
+  // Auto-save the editor state into the active ticket slot, debounced.
+  // Skipped during an applyJobToEditor() so we don't immediately save back
+  // the just-loaded values.
+  useEffect(() => {
+    if (isLoadingFromTicketRef.current) {
+      isLoadingFromTicketRef.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      setTicket(prev => prev.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it));
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    paperKey, sheetKey, orientation, frontColorMode, backColorMode, showBack,
+    prints, frontFiles, backImage, backRotation, frontRotation,
+    showCutLines, showGuides,
+    printsPerSheet, totalPrintQty, sheetsNeeded, perSheetTotal,
+    activeTicketIdx,
+  ]);
+
+  const switchToTicketIdx = (idx) => {
+    if (idx === activeTicketIdx || idx < 0 || idx >= ticket.length) return;
+    // 1) immediately persist the outgoing editor state
+    const outgoing = packEditorAsItem();
+    // 2) load the new job into the editor (skip auto-save once)
+    isLoadingFromTicketRef.current = true;
+    setTicket(prev => prev.map((it, i) => i === activeTicketIdx ? outgoing : it));
+    applyJobToEditor(ticket[idx]);
+    setActiveTicketIdx(idx);
+  };
+
+  const addJobToTicket = () => {
+    const outgoing = packEditorAsItem();
+    const fresh = createEmptyJob({
+      paperKey: paperTypes[0]?.key || paperKey,
+      sheetKey: "8.5x11",
+    });
+    isLoadingFromTicketRef.current = true;
+    setTicket(prev => {
+      const next = prev.map((it, i) => i === activeTicketIdx ? outgoing : it);
+      next.push(fresh);
+      return next;
+    });
+    applyJobToEditor(fresh);
+    setActiveTicketIdx(ticket.length); // current length is the new index
+  };
+
+  const removeJobFromTicket = (idx) => {
+    if (ticket.length <= 1) return; // ticket always has at least one job
+    const next = ticket.filter((_, i) => i !== idx);
+    let newActive = activeTicketIdx;
+    if (idx === activeTicketIdx) newActive = Math.max(0, idx - 1);
+    else if (idx < activeTicketIdx) newActive = activeTicketIdx - 1;
+    isLoadingFromTicketRef.current = true;
+    setTicket(next);
+    applyJobToEditor(next[newActive]);
+    setActiveTicketIdx(newActive);
+  };
+
+  // ─── TICKET PRICING (grouped discounts) ────────────────
+  // Group line items by `paperKey:sheetKey`; each group's totalSheets
+  // determines that group's discount factor, which then applies to
+  // every line item in the group. The active editor's just-typed values
+  // may not yet have flushed to ticket[activeTicketIdx], so for that
+  // entry we use the live editor numbers.
+  const ticketView = useMemo(() => {
+    return ticket.map((it, i) => i === activeTicketIdx
+      ? { ...it, paperKey, sheetKey, sheetsNeeded, perSheetTotal, printsPerSheet, totalPrintQty,
+          printWidth: prints.width, printHeight: prints.height, frontFiles, backImage, showBack,
+          frontColorMode, backColorMode, orientation }
+      : it
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket, activeTicketIdx, paperKey, sheetKey, sheetsNeeded, perSheetTotal, printsPerSheet, totalPrintQty, prints, frontFiles, backImage, showBack, frontColorMode, backColorMode, orientation]);
+
+  const ticketGroups = useMemo(() => {
+    const g = {};
+    ticketView.forEach((it) => {
+      const key = `${it.paperKey}:${it.sheetKey}`;
+      if (!g[key]) g[key] = { paperKey: it.paperKey, sheetKey: it.sheetKey, totalSheets: 0, items: [] };
+      g[key].items.push(it);
+      g[key].totalSheets += Number(it.sheetsNeeded) || 0;
+    });
+    Object.values(g).forEach((group) => {
+      group.discountFactor = getSheetDiscountFactor(group.totalSheets);
+      group.discountPercent = (1 - group.discountFactor) * 100;
+    });
+    return g;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketView, quantityDiscounts]);
+
+  const ticketLines = useMemo(() => {
+    return ticketView.map((it) => {
+      const key = `${it.paperKey}:${it.sheetKey}`;
+      const group = ticketGroups[key];
+      const factor = group?.discountFactor ?? 1;
+      const pst = Number(it.perSheetTotal) || 0;
+      const sn  = Number(it.sheetsNeeded)  || 0;
+      const subtotal = pst * sn;
+      return {
+        item: it,
+        groupKey: key,
+        appliedDiscountFactor: factor,
+        appliedDiscountPercent: (1 - factor) * 100,
+        subtotal,
+        lineTotal: subtotal * factor,
+        discountAmount: subtotal * (1 - factor),
+      };
+    });
+  }, [ticketView, ticketGroups]);
+
+  const ticketTotal       = ticketLines.reduce((s, l) => s + l.lineTotal, 0);
+  const ticketSubtotal    = ticketLines.reduce((s, l) => s + l.subtotal,  0);
+  const ticketDiscountAmt = ticketLines.reduce((s, l) => s + l.discountAmount, 0);
+  const ticketTotalSheets = ticketLines.reduce((s, l) => s + (Number(l.item.sheetsNeeded)||0), 0);
+  const activeLine        = ticketLines[activeTicketIdx];
+  const activeGroup       = activeLine ? ticketGroups[activeLine.groupKey] : null;
+
   // ─── SAVE-TO-DB ROW BUILDERS ────────────────────────────
   // After a PDF download, we offer to persist a snapshot of the
   // job to Supabase. Each download function builds the row and
@@ -1147,35 +1457,109 @@ const handleFrontFiles = async (files) => {
   };
 
   const buildSheetJobRow = () => {
-    const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
-    const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
-    const discPct = Math.max(0,(1-(discountFactor||1))*100);
-    const fileNames = frontFiles.length ? frontFiles.map(f => f.name) : (frontImage ? [frontImage.name||"front"] : []);
+    // For multi-job tickets we still produce a single row (one DB entry per
+    // ticket), but we collapse the line items into the row's columns and
+    // capture the full ticket snapshot in job_details for later lookup.
+    const liveTicket = ticket.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it);
+    const fileNamesAll = liveTicket.flatMap(it => (it.frontFiles||[]).map(f => f.name));
+
+    if (liveTicket.length === 1) {
+      const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
+      const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
+      const discPct = Math.max(0,(1-(discountFactor||1))*100);
+      return {
+        job_type: "sheets",
+        paper_type: currentPaper.label,
+        paper_key: paperKey,
+        sheet_size: sheetKey,
+        sku: skuMap[`${paperKey}:${sheetKey}`] || null,
+        print_size: `${prints.width}x${prints.height}`,
+        orientation,
+        color_mode: frontColorMode,
+        quantity: totalPrintQty || null,
+        sheets_needed: sheetsNeeded || null,
+        sides: showBack ? "Front + Back" : "Single-sided",
+        per_sheet_price: Number(perSheetTotal.toFixed(4)),
+        discount_percent: Number(discPct.toFixed(3)),
+        total_price: Number(totalPrice.toFixed(2)),
+        file_names: fileNamesAll,
+        job_details: {
+          sheetSize: { w: sw, h: sh },
+          prints: { width: prints.width, height: prints.height, quantity: prints.quantity },
+          backColorMode: showBack ? backColorMode : null,
+          printsPerSheet,
+          gridCols: frontSlotInfo?.cols,
+          gridRows: frontSlotInfo?.rows,
+          printRotated: !!frontSlotInfo?.printRotated,
+          files: frontFiles.map(f => ({ name: f.name, qty: f.qty, rotation: f.rotation })),
+        },
+      };
+    }
+
+    // Multi-job snapshot — re-derive grouped totals from liveTicket.
+    const groups = {};
+    liveTicket.forEach(it => {
+      const k = `${it.paperKey}:${it.sheetKey}`;
+      if (!groups[k]) groups[k] = { totalSheets: 0 };
+      groups[k].totalSheets += Number(it.sheetsNeeded) || 0;
+    });
+    Object.values(groups).forEach(g => { g.factor = getSheetDiscountFactor(g.totalSheets); });
+    const sub = liveTicket.reduce((s, it) => s + (it.perSheetTotal||0)*(it.sheetsNeeded||0), 0);
+    const total = liveTicket.reduce((s, it) => s + (it.perSheetTotal||0)*(it.sheetsNeeded||0)*groups[`${it.paperKey}:${it.sheetKey}`].factor, 0);
+    const totalSheetsAll = liveTicket.reduce((s, it) => s + (it.sheetsNeeded||0), 0);
+    const totalQtyAll    = liveTicket.reduce((s, it) => s + (it.totalPrintQty||0), 0);
+    const overallDiscPct = sub > 0 ? Math.max(0, (1 - total/sub) * 100) : 0;
+    const first = liveTicket[0];
+    const firstPaper = paperTypes.find(p=>p.key===first.paperKey)?.label || first.paperKey;
+
     return {
       job_type: "sheets",
-      paper_type: currentPaper.label,
-      paper_key: paperKey,
-      sheet_size: sheetKey,
-      sku: skuMap[`${paperKey}:${sheetKey}`] || null,
-      print_size: `${prints.width}x${prints.height}`,
-      orientation,
-      color_mode: frontColorMode,
-      quantity: totalPrintQty || null,
-      sheets_needed: sheetsNeeded || null,
-      sides: showBack ? "Front + Back" : "Single-sided",
-      per_sheet_price: Number(perSheetTotal.toFixed(4)),
-      discount_percent: Number(discPct.toFixed(3)),
-      total_price: Number(totalPrice.toFixed(2)),
-      file_names: fileNames,
+      paper_type: `Ticket: ${liveTicket.length} jobs`,
+      paper_key: first.paperKey, // first job's key as a representative
+      sheet_size: first.sheetKey,
+      sku: skuMap[`${first.paperKey}:${first.sheetKey}`] || first.paperKey,
+      print_size: `${first.printWidth}x${first.printHeight}`,
+      orientation: first.orientation,
+      color_mode: first.frontColorMode,
+      quantity: totalQtyAll || null,
+      sheets_needed: totalSheetsAll || null,
+      sides: liveTicket.some(it => it.showBack) ? "Mixed" : "Single-sided",
+      per_sheet_price: null,
+      discount_percent: Number(overallDiscPct.toFixed(3)),
+      total_price: Number(total.toFixed(2)),
+      file_names: fileNamesAll,
       job_details: {
-        sheetSize: { w: sw, h: sh },
-        prints: { width: prints.width, height: prints.height, quantity: prints.quantity },
-        backColorMode: showBack ? backColorMode : null,
-        printsPerSheet,
-        gridCols: frontSlotInfo?.cols,
-        gridRows: frontSlotInfo?.rows,
-        printRotated: !!frontSlotInfo?.printRotated,
-        files: frontFiles.map(f => ({ name: f.name, qty: f.qty, rotation: f.rotation })),
+        ticket: liveTicket.map((it, i) => {
+          const k = `${it.paperKey}:${it.sheetKey}`;
+          const factor = groups[k].factor;
+          const subt = (it.perSheetTotal||0)*(it.sheetsNeeded||0);
+          return {
+            jobNumber: i + 1,
+            paperKey: it.paperKey,
+            paperLabel: paperTypes.find(p=>p.key===it.paperKey)?.label || it.paperKey,
+            sheetKey: it.sheetKey,
+            orientation: it.orientation,
+            printWidth: it.printWidth,
+            printHeight: it.printHeight,
+            printQuantity: it.printQuantity,
+            sheetsNeeded: it.sheetsNeeded,
+            printsPerSheet: it.printsPerSheet,
+            perSheetPrice: Number((it.perSheetTotal||0).toFixed(4)),
+            colorMode: it.frontColorMode,
+            backColorMode: it.showBack ? it.backColorMode : null,
+            sides: it.showBack ? "Front + Back" : "Single-sided",
+            files: (it.frontFiles||[]).map(f => ({ name: f.name, qty: f.qty, rotation: f.rotation })),
+            appliedDiscountPercent: Number(((1 - factor) * 100).toFixed(3)),
+            subtotal: Number(subt.toFixed(2)),
+            lineTotal: Number((subt * factor).toFixed(2)),
+          };
+        }),
+        groups: Object.entries(groups).map(([k, g]) => ({
+          group: k,
+          totalSheets: g.totalSheets,
+          discountPercent: Number(((1 - g.factor) * 100).toFixed(3)),
+        })),
+        firstPaperLabel: firstPaper,
       },
     };
   };
@@ -1239,56 +1623,166 @@ const handleFrontFiles = async (files) => {
     return c;
   };
 
+  // Hi-res render of an arbitrary ticket line item (NOT the active editor).
+  // Builds the same orientation/slot params drawSheetTo expects from the
+  // saved item snapshot.
+  const renderHiResForItem = async (item) => {
+    const c = document.createElement("canvas");
+    const dims = PRESET_SHEETS[item.sheetKey] || [8.5, 11];
+    const widthIn  = item.orientation === "landscape" ? Math.max(...dims) : Math.min(...dims);
+    const heightIn = item.orientation === "landscape" ? Math.min(...dims) : Math.max(...dims);
+    const itemPrints = { width: item.printWidth, height: item.printHeight, quantity: item.printQuantity };
+    const fit = computeBestFit(item.printWidth, item.printHeight, widthIn, heightIn, previewMargin, previewSpacing);
+    const itemFiles = (Array.isArray(item.frontFiles) && item.frontFiles.length) ? item.frontFiles : null;
+    await drawSheetTo(c, {
+      imageInput: itemFiles,
+      rotDeg: Number(item.frontRotation) || 0,
+      pageIndex: 0,
+      placementsRef: null,
+      orientedWIn: widthIn,
+      orientedHIn: heightIn,
+      prints: itemPrints,
+      frontSlotInfo: fit,
+      previewMargin, previewSpacing,
+      showGuides: false, showCutLines: false,
+      dpi: PRINT_DPI_SHEET,
+    });
+    return { canvas: c, widthIn, heightIn };
+  };
+
   const downloadSheetPDF = async () => {
-    if (!frontRef.current) { alert("Upload a front image first."); return; }
+    // Make sure the ticket reflects the latest editor edits before we read it.
+    const liveTicket = ticket.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it);
+    const hasAnyFiles = liveTicket.some(it => (it.frontFiles||[]).length > 0) || !!frontImage;
+    if (!hasAnyFiles) { alert("Upload at least one image before downloading."); return; }
     await ensureLogoPdfDataUrl();
-    // Order sheet is always portrait letter
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
-    const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
-    const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
-    const details = [
-      { label:"Paper:", value:currentPaper.label },
-      { label:"SKU:", value:skuMap[`${paperKey}:${sheetKey}`] || paperKey },
-      { label:"Sheet size:", value:`${sw}×${sh} in` },
-      { label:"Orientation:", value:orientation },
-      { label:"Print size:", value:`${prints.width}×${prints.height} in` },
-      { label:"Prints/sheet:", value:`${Math.max(1,printsPerSheet)} (${frontSlotInfo?.cols||0}×${frontSlotInfo?.rows||0} grid)` },
-      { label:"Total prints:", value:totalPrintQty },
-      { label:"Sheets needed:", value:sheetsNeeded },
-      { label:"Sides:", value:showBack?"Front + Back":"Single-sided" },
-      { label:"Color:", value:showBack?`${frontColorMode.toUpperCase()} / ${backColorMode.toUpperCase()}`:frontColorMode.toUpperCase() },
-    ];
-    const subtotal = perSheetTotal * sheetsNeeded;
-    const discPct  = Math.max(0,(1-(discountFactor||1))*100);
-    const discAmt  = Math.max(0, subtotal - totalPrice);
-    const totals = [
-      { label:"Per-sheet cost:", value:`$${perSheetTotal.toFixed(2)}` },
-      { label:"Subtotal:", value:`$${subtotal.toFixed(2)}` },
-      ...(discPct>0.0001 ? [{ label:`Qty discount (${discPct.toFixed(1)}%):`, value:`-$${discAmt.toFixed(2)}` }] : []),
-      { label:"Estimated total:", value:`$${totalPrice.toFixed(2)}` },
-    ];
-    const files = frontFiles.length ? frontFiles.map((f,i)=>`${i+1}. ${f.name}  —  qty: ${f.qty}`) : (frontImage ? [frontImage.name||"front"] : []);
-    addOrderSheetPage(orderDoc, { jobType:"Paper Printing", details, totals, files });
 
-    // Add ONE preview page showing the layout at print DPI
-    const pdfW=orientedWIn, pdfH=orientedHIn;
-    const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
-    const exportInput = frontFiles.length ? frontFiles : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
+    if (liveTicket.length === 1) {
+      // ── SINGLE JOB ── identical to the original behavior.
+      const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
+      const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
+      const details = [
+        { label:"Paper:", value:currentPaper.label },
+        { label:"SKU:", value:skuMap[`${paperKey}:${sheetKey}`] || paperKey },
+        { label:"Sheet size:", value:`${sw}×${sh} in` },
+        { label:"Orientation:", value:orientation },
+        { label:"Print size:", value:`${prints.width}×${prints.height} in` },
+        { label:"Prints/sheet:", value:`${Math.max(1,printsPerSheet)} (${frontSlotInfo?.cols||0}×${frontSlotInfo?.rows||0} grid)` },
+        { label:"Total prints:", value:totalPrintQty },
+        { label:"Sheets needed:", value:sheetsNeeded },
+        { label:"Sides:", value:showBack?"Front + Back":"Single-sided" },
+        { label:"Color:", value:showBack?`${frontColorMode.toUpperCase()} / ${backColorMode.toUpperCase()}`:frontColorMode.toUpperCase() },
+      ];
+      const subtotal = perSheetTotal * sheetsNeeded;
+      const discPct  = Math.max(0,(1-(discountFactor||1))*100);
+      const discAmt  = Math.max(0, subtotal - totalPrice);
+      const totals = [
+        { label:"Per-sheet cost:", value:`$${perSheetTotal.toFixed(2)}` },
+        { label:"Subtotal:", value:`$${subtotal.toFixed(2)}` },
+        ...(discPct>0.0001 ? [{ label:`Qty discount (${discPct.toFixed(1)}%):`, value:`-$${discAmt.toFixed(2)}` }] : []),
+        { label:"Estimated total:", value:`$${totalPrice.toFixed(2)}` },
+      ];
+      const files = frontFiles.length ? frontFiles.map((f,i)=>`${i+1}. ${f.name}  —  qty: ${f.qty}`) : (frontImage ? [frontImage.name||"front"] : []);
+      addOrderSheetPage(orderDoc, { jobType:"Paper Printing", details, totals, files });
 
-    // Front preview — one sheet showing the grid layout, rendered at 300 DPI
-    const frontCanvas = await renderHiResSheet(exportInput, frontRotation, 0);
-    orderDoc.addPage([pdfW,pdfH], pageOrient);
-    orderDoc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
+      const pdfW=orientedWIn, pdfH=orientedHIn;
+      const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
+      const exportInput = frontFiles.length ? frontFiles : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
 
-    // Back preview (if double-sided)
-    if (showBack && backImage) {
-      const backCanvas = await renderHiResSheet(backImage, backRotation, 0);
+      const frontCanvas = await renderHiResSheet(exportInput, frontRotation, 0);
       orderDoc.addPage([pdfW,pdfH], pageOrient);
-      orderDoc.addImage(canvasToPrintJpeg(backCanvas), "JPEG", 0, 0, pdfW, pdfH);
+      orderDoc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
+
+      if (showBack && backImage) {
+        const backCanvas = await renderHiResSheet(backImage, backRotation, 0);
+        orderDoc.addPage([pdfW,pdfH], pageOrient);
+        orderDoc.addImage(canvasToPrintJpeg(backCanvas), "JPEG", 0, 0, pdfW, pdfH);
+      }
+    } else {
+      // ── MULTI-JOB TICKET ──
+      // Build a per-item view from liveTicket so prices reflect current
+      // grouping. We re-derive groups locally so the saved ticket array is
+      // the single source of truth.
+      const groups = {};
+      liveTicket.forEach((it) => {
+        const k = `${it.paperKey}:${it.sheetKey}`;
+        if (!groups[k]) groups[k] = { totalSheets: 0 };
+        groups[k].totalSheets += Number(it.sheetsNeeded) || 0;
+      });
+      Object.values(groups).forEach((g) => { g.factor = getSheetDiscountFactor(g.totalSheets); });
+
+      const jobs = liveTicket.map((it, idx) => {
+        const paperLabel = paperTypes.find(p=>p.key===it.paperKey)?.label || it.paperKey;
+        const [sw, sh] = PRESET_SHEETS[it.sheetKey] || [8.5, 11];
+        const sku = skuMap[`${it.paperKey}:${it.sheetKey}`] || it.paperKey;
+        const colorTxt = it.showBack
+          ? `${(it.frontColorMode||"").toUpperCase()} / ${(it.backColorMode||"").toUpperCase()}`
+          : (it.frontColorMode||"").toUpperCase();
+        const sub = (it.perSheetTotal || 0) * (it.sheetsNeeded || 0);
+        const factor = groups[`${it.paperKey}:${it.sheetKey}`].factor;
+        const lineTotal = sub * factor;
+        const fileLabels = (it.frontFiles || []).map(f => `${f.name} (×${f.qty || 0})`);
+        return {
+          subtitle: `${paperLabel} · ${it.sheetKey}`,
+          details: [
+            { label:"Paper:",      value: paperLabel },
+            { label:"SKU:",        value: sku },
+            { label:"Sheet:",      value: `${sw}×${sh} in (${it.orientation})` },
+            { label:"Print size:", value: `${it.printWidth}×${it.printHeight} in` },
+            { label:"Color:",      value: colorTxt || "—" },
+            { label:"Sides:",      value: it.showBack ? "Front + Back" : "Single-sided" },
+            { label:"Total prints:", value: it.totalPrintQty || 0 },
+            { label:"Sheets:",     value: it.sheetsNeeded || 0 },
+            { label:"Per sheet:",  value: `$${(it.perSheetTotal||0).toFixed(2)}` },
+          ],
+          files: fileLabels,
+          subtotalLabel: `Job ${idx + 1} subtotal:`,
+          subtotalValue: `$${lineTotal.toFixed(2)}`,
+        };
+      });
+
+      const subtotal = liveTicket.reduce((s, it) => s + (it.perSheetTotal||0)*(it.sheetsNeeded||0), 0);
+      const ticketTotalLocal = liveTicket.reduce((s, it) => {
+        const f = groups[`${it.paperKey}:${it.sheetKey}`].factor;
+        return s + (it.perSheetTotal||0)*(it.sheetsNeeded||0)*f;
+      }, 0);
+      const discAmt = Math.max(0, subtotal - ticketTotalLocal);
+      const totalSheetsLocal = liveTicket.reduce((s, it) => s + (it.sheetsNeeded||0), 0);
+
+      const summary = [
+        { label:"Total sheets (all jobs):", value: String(totalSheetsLocal) },
+        { label:"Subtotal:", value: `$${subtotal.toFixed(2)}` },
+        ...(discAmt > 0.0001 ? [{ label:"Combined volume discount:", value: `-$${discAmt.toFixed(2)}` }] : []),
+        { label:"Ticket total:", value: `$${ticketTotalLocal.toFixed(2)}` },
+      ];
+
+      // Group breakdown helps the press operator see why discounts applied.
+      Object.entries(groups).forEach(([k, g]) => {
+        const pct = (1 - g.factor) * 100;
+        if (pct > 0.05) {
+          const [pk, sk] = k.split(":");
+          const pl = paperTypes.find(p=>p.key===pk)?.label || pk;
+          summary.splice(summary.length - 1, 0,
+            { label:`  • ${pl} ${sk} (${g.totalSheets} sht)`, value:`${pct.toFixed(1)}% off` });
+        }
+      });
+
+      const firstSku = skuMap[`${liveTicket[0].paperKey}:${liveTicket[0].sheetKey}`] || liveTicket[0].paperKey;
+      addTicketOrderSheetPage(orderDoc, { jobs, summary, barcodeValue: firstSku });
+
+      // One preview page per job at print DPI.
+      for (let i = 0; i < liveTicket.length; i++) {
+        const item = liveTicket[i];
+        const { canvas, widthIn, heightIn } = await renderHiResForItem(item);
+        const orient = widthIn > heightIn ? "landscape" : "portrait";
+        orderDoc.addPage([widthIn, heightIn], orient);
+        orderDoc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+      }
     }
 
-    savePdf(orderDoc, "print_order_sheet.pdf");
-    requestSaveJob(buildSheetJobRow(), "Sheets / Photos");
+    savePdf(orderDoc, liveTicket.length > 1 ? "print_order_ticket.pdf" : "print_order_sheet.pdf");
+    requestSaveJob(buildSheetJobRow(), liveTicket.length > 1 ? `Ticket (${liveTicket.length} jobs)` : "Sheets / Photos");
   };
 
   const downloadLfPDF = async () => {
@@ -1387,8 +1881,38 @@ const handleFrontFiles = async (files) => {
       const buildOrder = () => {
         const paperItems=[],largeFormatItems=[],blueprintItems=[];
         if (jobType==="sheets") {
-          const unit = sheetsNeeded>0 ? totalPrice/sheetsNeeded : totalPrice;
-          paperItems.push({ name:"Paper Printing", sku:paperKey, specs:`${sheetKey} • ${paperKey} • ${frontColorMode.toUpperCase()}${showBack?" / "+backColorMode.toUpperCase():""}`, qty:sheetsNeeded, unitPrice:unit, total:totalPrice });
+          const liveTicket = ticket.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it);
+          if (liveTicket.length === 1) {
+            const unit = sheetsNeeded>0 ? totalPrice/sheetsNeeded : totalPrice;
+            paperItems.push({ name:"Paper Printing", sku:paperKey, specs:`${sheetKey} • ${paperKey} • ${frontColorMode.toUpperCase()}${showBack?" / "+backColorMode.toUpperCase():""}`, qty:sheetsNeeded, unitPrice:unit, total:totalPrice });
+          } else {
+            // One paperItem per ticket line; volume discount is already
+            // baked into each line's total via the grouped factor.
+            const groups = {};
+            liveTicket.forEach(it => {
+              const k = `${it.paperKey}:${it.sheetKey}`;
+              if (!groups[k]) groups[k] = { totalSheets: 0 };
+              groups[k].totalSheets += Number(it.sheetsNeeded) || 0;
+            });
+            Object.values(groups).forEach(g => { g.factor = getSheetDiscountFactor(g.totalSheets); });
+            liveTicket.forEach((it, idx) => {
+              const factor = groups[`${it.paperKey}:${it.sheetKey}`].factor;
+              const sub = (it.perSheetTotal||0)*(it.sheetsNeeded||0);
+              const lineTotal = sub * factor;
+              const unit = it.sheetsNeeded>0 ? lineTotal/it.sheetsNeeded : lineTotal;
+              const colorTxt = it.showBack
+                ? `${(it.frontColorMode||"").toUpperCase()} / ${(it.backColorMode||"").toUpperCase()}`
+                : (it.frontColorMode||"").toUpperCase();
+              paperItems.push({
+                name: `Job ${idx + 1} — Paper Printing`,
+                sku: skuMap[`${it.paperKey}:${it.sheetKey}`] || it.paperKey,
+                specs: `${it.sheetKey} • ${it.paperKey} • ${it.printWidth}×${it.printHeight} • ${colorTxt}`,
+                qty: it.sheetsNeeded || 0,
+                unitPrice: unit,
+                total: lineTotal,
+              });
+            });
+          }
         }
         if (jobType==="large-format") {
           const addons = [lfGrommets?`Grommets ×${lfGrommetCount}`:null,lfFoamCore?"Foam Core":null].filter(Boolean);
@@ -1420,29 +1944,96 @@ const handleFrontFiles = async (files) => {
   };
 
   const orderSheetJob = async () => {
-    if (!frontRef.current) { alert("Please upload a front image first."); return; }
-    const pdfW=orientedWIn, pdfH=orientedHIn;
-    const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
-    const doc = new (getJsPDF())({ orientation:pageOrient, unit:"in", format:[pdfW,pdfH] });
+    const liveTicket = ticket.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it);
+    const hasAnyFiles = liveTicket.some(it => (it.frontFiles||[]).length > 0) || !!frontImage;
+    if (!hasAnyFiles) { alert("Please upload at least one image first."); return; }
 
-    // Render the front sheet at print DPI instead of copying the preview canvas
-    const exportInput = frontFiles.length
-      ? frontFiles
-      : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
-    const frontCanvas = await renderHiResSheet(exportInput, frontRotation, 0);
-    doc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
+    // Build a single PDF that contains all jobs' preview pages back-to-back.
+    // First page sets the format; we add each job's preview at its own dims.
+    const firstItem = liveTicket[0];
+    const firstDims = PRESET_SHEETS[firstItem.sheetKey] || [8.5, 11];
+    const firstW = firstItem.orientation === "landscape" ? Math.max(...firstDims) : Math.min(...firstDims);
+    const firstH = firstItem.orientation === "landscape" ? Math.min(...firstDims) : Math.max(...firstDims);
+    const doc = new (getJsPDF())({ orientation: firstW>firstH?"landscape":"portrait", unit:"in", format:[firstW, firstH] });
 
+    for (let i = 0; i < liveTicket.length; i++) {
+      const { canvas, widthIn, heightIn } = await renderHiResForItem(liveTicket[i]);
+      const orient = widthIn > heightIn ? "landscape" : "portrait";
+      if (i === 0) {
+        doc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+      } else {
+        doc.addPage([widthIn, heightIn], orient);
+        doc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+      }
+    }
+    // Active job's back side (if any) — only the active item carries
+    // backImage state. Per-item back support across the ticket would need
+    // separate state per item; out of scope for this iteration.
     if (showBack && backImage) {
+      const pdfW = orientedWIn, pdfH = orientedHIn;
+      const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
       const backCanvas = await renderHiResSheet(backImage, backRotation, 0);
-      doc.addPage([pdfW,pdfH], pageOrient);
+      doc.addPage([pdfW, pdfH], pageOrient);
       doc.addImage(canvasToPrintJpeg(backCanvas), "JPEG", 0, 0, pdfW, pdfH);
     }
     const jobBlob = doc.output("blob");
+
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
-    const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
-    const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
-    addOrderSheetPage(orderDoc,{ jobType:"Paper Printing", details:[{label:"Paper:",value:currentPaper.label},{label:"Sheet:",value:`${sw}×${sh} in`},{label:"Print size:",value:`${prints.width}×${prints.height} in`},{label:"Qty:",value:totalPrintQty},{label:"Sheets:",value:sheetsNeeded}], totals:[{label:"Estimated total:",value:`$${totalPrice.toFixed(2)}`}], files:frontImage?[frontImage.name||"front"]:[] });
+    if (liveTicket.length === 1) {
+      const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey};
+      const [sw,sh] = PRESET_SHEETS[sheetKey] || [8.5,11];
+      addOrderSheetPage(orderDoc, {
+        jobType: "Paper Printing",
+        details: [
+          { label:"Paper:",      value: currentPaper.label },
+          { label:"Sheet:",      value: `${sw}×${sh} in` },
+          { label:"Print size:", value: `${prints.width}×${prints.height} in` },
+          { label:"Qty:",        value: totalPrintQty },
+          { label:"Sheets:",     value: sheetsNeeded },
+        ],
+        totals: [{ label:"Estimated total:", value:`$${totalPrice.toFixed(2)}` }],
+        files: frontImage ? [frontImage.name || "front"] : [],
+      });
+    } else {
+      // Reuse the multi-job layout we built for downloads.
+      const groups = {};
+      liveTicket.forEach(it => {
+        const k = `${it.paperKey}:${it.sheetKey}`;
+        if (!groups[k]) groups[k] = { totalSheets: 0 };
+        groups[k].totalSheets += Number(it.sheetsNeeded) || 0;
+      });
+      Object.values(groups).forEach(g => { g.factor = getSheetDiscountFactor(g.totalSheets); });
+      const jobs = liveTicket.map((it, idx) => {
+        const paperLabel = paperTypes.find(p=>p.key===it.paperKey)?.label || it.paperKey;
+        const sub = (it.perSheetTotal||0)*(it.sheetsNeeded||0);
+        const factor = groups[`${it.paperKey}:${it.sheetKey}`].factor;
+        return {
+          subtitle: `${paperLabel} · ${it.sheetKey}`,
+          details: [
+            { label:"Paper:",      value: paperLabel },
+            { label:"Sheet:",      value: it.sheetKey },
+            { label:"Print size:", value: `${it.printWidth}×${it.printHeight} in` },
+            { label:"Total prints:", value: it.totalPrintQty || 0 },
+            { label:"Sheets:",     value: it.sheetsNeeded || 0 },
+          ],
+          files: (it.frontFiles||[]).map(f => `${f.name} (×${f.qty||0})`),
+          subtotalLabel: `Job ${idx + 1} subtotal:`,
+          subtotalValue: `$${(sub*factor).toFixed(2)}`,
+        };
+      });
+      const sub = liveTicket.reduce((s, it) => s + (it.perSheetTotal||0)*(it.sheetsNeeded||0), 0);
+      const total = liveTicket.reduce((s, it) => s + (it.perSheetTotal||0)*(it.sheetsNeeded||0)*groups[`${it.paperKey}:${it.sheetKey}`].factor, 0);
+      const discAmt = Math.max(0, sub - total);
+      const summary = [
+        { label:"Total sheets:", value: String(liveTicket.reduce((s, it) => s + (it.sheetsNeeded||0), 0)) },
+        { label:"Subtotal:", value: `$${sub.toFixed(2)}` },
+        ...(discAmt > 0.0001 ? [{ label:"Combined volume discount:", value: `-$${discAmt.toFixed(2)}` }] : []),
+        { label:"Ticket total:", value: `$${total.toFixed(2)}` },
+      ];
+      const firstSku = skuMap[`${liveTicket[0].paperKey}:${liveTicket[0].sheetKey}`] || liveTicket[0].paperKey;
+      addTicketOrderSheetPage(orderDoc, { jobs, summary, barcodeValue: firstSku });
+    }
     await sendOrderEmail("sheets", jobBlob, orderDoc.output("blob"));
   };
 
@@ -2042,6 +2633,20 @@ try {
         ════════════════════════════════════════ */}
         {activeTab==="paper" && viewMode==="tool" && (
           <>
+            <TicketBar
+              ticket={ticket}
+              ticketLines={ticketLines}
+              ticketGroups={ticketGroups}
+              activeTicketIdx={activeTicketIdx}
+              ticketTotal={ticketTotal}
+              ticketTotalSheets={ticketTotalSheets}
+              ticketDiscountAmt={ticketDiscountAmt}
+              paperTypes={paperTypes}
+              onSwitch={switchToTicketIdx}
+              onAdd={addJobToTicket}
+              onRemove={removeJobFromTicket}
+            />
+
             {/* Step 1 — Print Setup */}
             <div className="pc-card">
               <CardHeader step="1" title="Print Setup" hint="Sheet size, paper type &amp; color" />
@@ -2374,15 +2979,23 @@ try {
               </div>
             </div>
 
-            {/* Price Bar */}
+            {/* Price Bar — single-job mode keeps the original metrics; multi-job
+                shows ticket-wide totals using the grouped discount logic. */}
             <PriceBar
               accentClass="price-bar-teal"
               totalClass="is-total"
-              metrics={[
-                { label:"Sheets needed", value:sheetsNeeded },
-                { label:"Per sheet",     value:`$${perSheetTotal.toFixed(2)}` },
-                { label:"Discount",      value:discountFactor<1?`${((1-discountFactor)*100).toFixed(1)}% off`:"—" },
-                { label:"Estimated total", value:`$${totalPrice.toFixed(2)}`, big:true },
+              metrics={ticket.length > 1 ? [
+                { label:"Jobs",            value: ticket.length },
+                { label:"Total sheets",    value: ticketTotalSheets },
+                { label:"Combined discount", value: ticketDiscountAmt > 0.005
+                    ? `−$${ticketDiscountAmt.toFixed(2)}` : "—" },
+                { label:"Ticket total",    value: `$${ticketTotal.toFixed(2)}`, big:true },
+              ] : [
+                { label:"Sheets needed", value: sheetsNeeded },
+                { label:"Per sheet",     value: `$${perSheetTotal.toFixed(2)}` },
+                { label:"Discount",      value: (activeLine?.appliedDiscountFactor ?? 1) < 1
+                    ? `${((1 - (activeLine?.appliedDiscountFactor ?? 1)) * 100).toFixed(1)}% off` : "—" },
+                { label:"Estimated total", value: `$${(activeLine?.lineTotal ?? totalPrice).toFixed(2)}`, big:true },
               ]}
               onDownload={downloadSheetPDF}
               onOrder={orderSheetJob}
@@ -2662,6 +3275,107 @@ function SaveJobDialog({ label, row, saving, onCancel, onConfirm }) {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// ─── TICKET BAR ────────────────────────────────────────────
+// Compact list of saved jobs. With one job this is a single inline row
+// nudging the user to add another job; with two or more it expands to
+// show clickable job cards plus the combined-discount summary.
+function TicketBar({
+  ticket, ticketLines, ticketGroups, activeTicketIdx,
+  ticketTotal, ticketTotalSheets, ticketDiscountAmt,
+  paperTypes, onSwitch, onAdd, onRemove,
+}) {
+  const isMulti = ticket.length > 1;
+  const labelOf = (item) => {
+    const pt = paperTypes.find(p => p.key === item.paperKey);
+    return pt?.label || item.paperKey || "—";
+  };
+
+  if (!isMulti) {
+    return (
+      <div className="ticket-bar ticket-bar-compact">
+        <div className="ticket-bar-compact-text">
+          Need to combine multiple jobs on one ticket? Add another and they'll share volume discounts when paper + sheet match.
+        </div>
+        <button type="button" className="pc-btn pc-btn-primary pc-btn-sm" onClick={onAdd}>
+          + Add Job
+        </button>
+      </div>
+    );
+  }
+
+  // Build a quick lookup of {groupKey -> discountPercent} so each card
+  // can show whether it's currently in a discounted group.
+  const groupDisc = {};
+  Object.entries(ticketGroups).forEach(([k, g]) => { groupDisc[k] = g.discountPercent; });
+
+  return (
+    <div className="pc-card ticket-bar">
+      <div className="ticket-bar-header">
+        <div>
+          <div className="ticket-bar-title">📋 Job Ticket</div>
+          <div className="ticket-bar-sub">{ticket.length} jobs · {ticketTotalSheets} sheets</div>
+        </div>
+        <button type="button" className="pc-btn pc-btn-primary pc-btn-sm" onClick={onAdd}>
+          + Add Job
+        </button>
+      </div>
+
+      <div className="ticket-card-list">
+        {ticketLines.map((line, i) => {
+          const it = line.item;
+          const active = i === activeTicketIdx;
+          const disc = groupDisc[line.groupKey] || 0;
+          return (
+            <div
+              key={it.id || i}
+              className={`ticket-card${active ? " is-active" : ""}`}
+              onClick={() => onSwitch(i)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSwitch(i); } }}
+            >
+              <div className="ticket-card-row">
+                <span className="ticket-card-num">Job {i + 1}</span>
+                <button
+                  type="button"
+                  className="ticket-card-remove"
+                  title="Remove this job"
+                  onClick={(e) => { e.stopPropagation(); onRemove(i); }}
+                  disabled={ticket.length <= 1}
+                  aria-label={`Remove job ${i + 1}`}
+                >×</button>
+              </div>
+              <div className="ticket-card-line">
+                <strong>{it.totalPrintQty || 0}×</strong> {it.printWidth}×{it.printHeight}
+              </div>
+              <div className="ticket-card-line ticket-card-paper" title={labelOf(it)}>{labelOf(it)}</div>
+              <div className="ticket-card-line ticket-card-meta">
+                {it.sheetKey} · {(it.sheetsNeeded || 0)} sht
+              </div>
+              <div className="ticket-card-total">
+                ${line.lineTotal.toFixed(2)}
+                {disc > 0.0001 && <span className="ticket-card-disc">−{disc.toFixed(0)}%</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="ticket-bar-summary">
+        <div>
+          <span className="ticket-summary-label">Ticket total</span>
+          <span className="ticket-summary-value">${ticketTotal.toFixed(2)}</span>
+        </div>
+        {ticketDiscountAmt > 0.005 && (
+          <div className="ticket-summary-pill">
+            saved ${ticketDiscountAmt.toFixed(2)} via combined discount
+          </div>
+        )}
+      </div>
     </div>
   );
 }
