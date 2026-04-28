@@ -1285,6 +1285,145 @@ body {
 }
 
 /* ============================================
+   TICKET BAR (Sheets & Photos multi-job)
+   ============================================ */
+.ticket-bar.ticket-bar-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+.ticket-bar-compact-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.pc-card.ticket-bar {
+  border-color: var(--teal-mid, var(--border));
+  border-top: 3px solid var(--teal);
+}
+.ticket-bar-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.ticket-bar-title {
+  font-size: 14px; font-weight: 700; color: var(--text);
+}
+.ticket-bar-sub {
+  font-size: 12px; color: var(--text-muted); margin-top: 2px;
+}
+
+.ticket-card-list {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  padding: 14px 18px;
+}
+
+.ticket-card {
+  width: 132px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  outline: none;
+  animation: pcSlideInRight 0.2s ease-out;
+}
+.ticket-card:hover {
+  border-color: var(--teal-mid, var(--teal));
+  box-shadow: 0 2px 8px rgba(0,129,152,0.1);
+}
+.ticket-card.is-active {
+  border: 2px solid var(--teal);
+  padding: 9px 11px; /* compensate for 1px extra border */
+  box-shadow: 0 2px 12px rgba(0,129,152,0.18);
+}
+.ticket-card:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+.ticket-card-row {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.ticket-card-num {
+  font-size: 10px; font-weight: 700; color: var(--teal);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.ticket-card-remove {
+  background: transparent; border: 0;
+  color: var(--text-muted); cursor: pointer;
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px;
+  font-size: 16px; line-height: 1;
+}
+.ticket-card-remove:hover { background: #fee2e2; color: #dc2626; }
+.ticket-card-remove:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.ticket-card-line {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ticket-card-line strong { font-weight: 700; }
+.ticket-card-paper {
+  color: var(--text-muted); font-size: 11px;
+}
+.ticket-card-meta {
+  color: var(--text-muted); font-size: 11px;
+}
+.ticket-card-total {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  margin-top: 2px;
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.ticket-card-disc {
+  font-size: 10px; font-weight: 600;
+  color: var(--teal);
+  background: rgba(0,129,152,0.1);
+  padding: 1px 5px; border-radius: 3px;
+}
+
+.ticket-bar-summary {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.ticket-summary-label {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-right: 8px;
+}
+.ticket-summary-value {
+  font-size: 16px; font-weight: 700; color: var(--text);
+}
+.ticket-summary-pill {
+  font-size: 12px; font-weight: 600;
+  background: rgba(0, 129, 152, 0.08);
+  color: var(--teal);
+  padding: 4px 10px; border-radius: 999px;
+}
+
+@media (max-width: 640px) {
+  .ticket-card { width: calc(50% - 5px); }
+  .ticket-card-list { padding: 12px; }
+  .ticket-bar-header { padding: 10px 12px; }
+  .ticket-bar-summary { padding: 10px 12px; }
+}
+
+/* ============================================
    MICRO-INTERACTIONS & POLISH
    (animations are gated on prefers-reduced-motion)
    ============================================ */
