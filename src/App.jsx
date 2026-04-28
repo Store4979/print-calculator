@@ -5,7 +5,7 @@
 //  Only the presentation layer has been replaced.
 // ============================================================
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import BookletMaker, { BookletIcon } from "./BookletMaker.jsx";
 import DataMerge, { DataMergeIcon } from "./DataMerge.jsx";
 import { drawBarcode128 } from "./barcode128.js";
