@@ -1,0 +1,405 @@
+{
+  "_comment": "PLACEHOLDER PRICING — verify against current Signs365 pricing before going live. Last updated: 2026-04-29",
+  "categories": {
+    "banners": {
+      "label": "Vinyl Banners",
+      "description": "Hemmed and grommeted, indoor/outdoor",
+      "products": {
+        "13oz-scrim": {
+          "label": "13oz Scrim Vinyl",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 1.25,
+          "minSqFt": 6,
+          "sizes": "custom",
+          "options": {
+            "hemming": { "label": "Hemming", "type": "checkbox", "default": true, "cost": 0 },
+            "grommets": {
+              "label": "Grommets",
+              "type": "select",
+              "choices": [
+                { "value": "every-2ft", "label": "Every 2ft (standard)", "cost": 0 },
+                { "value": "corners-only", "label": "Corners only", "cost": 0 },
+                { "value": "none", "label": "No grommets", "cost": 0 }
+              ]
+            },
+            "polePocket": {
+              "label": "Pole pocket",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "cost": 0 },
+                { "value": "top-3in", "label": "Top 3\"", "costPerLinearFt": 1.50 },
+                { "value": "top-bottom-3in", "label": "Top & bottom 3\"", "costPerLinearFt": 3.00 }
+              ]
+            },
+            "doubleSided": { "label": "Double-sided print", "type": "checkbox", "default": false, "costMultiplier": 1.75 }
+          }
+        },
+        "18oz-blockout": {
+          "label": "18oz Blockout (double-sided)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 2.95,
+          "minSqFt": 6,
+          "sizes": "custom",
+          "options": {
+            "hemming": { "label": "Hemming", "type": "checkbox", "default": true, "cost": 0 },
+            "grommets": {
+              "label": "Grommets",
+              "type": "select",
+              "choices": [
+                { "value": "every-2ft", "label": "Every 2ft (standard)", "cost": 0 },
+                { "value": "none", "label": "No grommets", "cost": 0 }
+              ]
+            }
+          }
+        },
+        "mesh": {
+          "label": "Mesh Banner (fence wrap)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 2.25,
+          "minSqFt": 6,
+          "sizes": "custom",
+          "options": {
+            "hemming": { "label": "Hemming", "type": "checkbox", "default": true, "cost": 0 },
+            "grommets": {
+              "label": "Grommets",
+              "type": "select",
+              "choices": [
+                { "value": "every-2ft", "label": "Every 2ft (standard)", "cost": 0 },
+                { "value": "none", "label": "No grommets", "cost": 0 }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "yardSigns": {
+      "label": "Yard Signs (Coroplast)",
+      "description": "Corrugated plastic, single or double-sided",
+      "products": {
+        "coroplast-4mm": {
+          "label": "4mm Coroplast",
+          "pricingModel": "perPiece",
+          "sizes": [
+            { "key": "12x18", "label": "12\" x 18\"", "baseCost": 6.00 },
+            { "key": "18x24", "label": "18\" x 24\"", "baseCost": 9.00 },
+            { "key": "24x18", "label": "24\" x 18\"", "baseCost": 10.00 },
+            { "key": "24x36", "label": "24\" x 36\"", "baseCost": 16.00 },
+            { "key": "36x24", "label": "36\" x 24\"", "baseCost": 16.00 },
+            { "key": "48x24", "label": "48\" x 24\"", "baseCost": 22.00 },
+            { "key": "48x36", "label": "48\" x 36\"", "baseCost": 30.00 }
+          ],
+          "options": {
+            "sides": {
+              "label": "Sides",
+              "type": "select",
+              "choices": [
+                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
+                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+              ]
+            },
+            "hStakes": { "label": "H-stakes (per each)", "type": "perEachAddon", "costPerEach": 1.50 }
+          }
+        },
+        "coroplast-10mm": {
+          "label": "10mm Coroplast (heavy duty)",
+          "pricingModel": "perPiece",
+          "sizes": [
+            { "key": "18x24", "label": "18\" x 24\"", "baseCost": 14.00 },
+            { "key": "24x36", "label": "24\" x 36\"", "baseCost": 24.00 },
+            { "key": "48x24", "label": "48\" x 24\"", "baseCost": 32.00 }
+          ],
+          "options": {
+            "sides": {
+              "label": "Sides",
+              "type": "select",
+              "choices": [
+                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
+                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "rigidSigns": {
+      "label": "Rigid Signs (ACM / PVC)",
+      "description": "Aluminum composite or PVC for durable signage",
+      "products": {
+        "acm-3mm": {
+          "label": "3mm ACM (Dibond)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 5.50,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "sides": {
+              "label": "Sides",
+              "type": "select",
+              "choices": [
+                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
+                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+              ]
+            },
+            "drillHoles": { "label": "Drill holes (per each)", "type": "perEachAddon", "costPerEach": 0.50 }
+          }
+        },
+        "pvc-3mm": {
+          "label": "3mm PVC (Sintra)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 4.25,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "sides": {
+              "label": "Sides",
+              "type": "select",
+              "choices": [
+                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
+                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+              ]
+            }
+          }
+        },
+        "pvc-6mm": {
+          "label": "6mm PVC (Sintra)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 6.50,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "sides": {
+              "label": "Sides",
+              "type": "select",
+              "choices": [
+                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
+                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "decals": {
+      "label": "Decals & Vinyl Lettering",
+      "description": "Cut or printed vinyl, indoor/outdoor",
+      "products": {
+        "printed-vinyl-contour": {
+          "label": "Printed Vinyl Decal (contour cut)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 4.00,
+          "minSqFt": 1,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 0.75 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 0.75 }
+              ]
+            }
+          }
+        },
+        "printed-vinyl-kisscut": {
+          "label": "Printed Vinyl Decal (kiss cut sheet)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 3.50,
+          "minSqFt": 1,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 0.75 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 0.75 }
+              ]
+            }
+          }
+        },
+        "cut-vinyl-lettering": {
+          "label": "Cut Vinyl Lettering (single color)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 3.00,
+          "minSqFt": 1,
+          "sizes": "custom",
+          "options": {
+            "color": {
+              "label": "Color",
+              "type": "select",
+              "choices": [
+                { "value": "black", "label": "Black", "cost": 0 },
+                { "value": "white", "label": "White", "cost": 0 },
+                { "value": "red", "label": "Red", "cost": 0 },
+                { "value": "blue", "label": "Blue", "cost": 0 },
+                { "value": "other", "label": "Other (specify in notes)", "cost": 0 }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "magnets": {
+      "label": "Magnetic Signs",
+      "description": "Vehicle door magnets, 30mil",
+      "products": {
+        "car-magnet-30mil": {
+          "label": "30mil Vehicle Magnet",
+          "pricingModel": "perPiece",
+          "sizes": [
+            { "key": "12x18", "label": "12\" x 18\"", "baseCost": 14.00 },
+            { "key": "18x24", "label": "18\" x 24\"", "baseCost": 22.00 },
+            { "key": "24x12", "label": "24\" x 12\"", "baseCost": 16.00 },
+            { "key": "24x18", "label": "24\" x 18\"", "baseCost": 22.00 },
+            { "key": "custom", "label": "Custom size", "baseCost": null, "perSqFtCost": 6.00 }
+          ],
+          "options": {}
+        }
+      }
+    },
+
+    "posters": {
+      "label": "Posters",
+      "description": "Large format paper posters, indoor use",
+      "products": {
+        "poster-paper-gloss": {
+          "label": "Gloss Poster Paper",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 2.00,
+          "minSqFt": 2,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+              ]
+            }
+          }
+        },
+        "poster-paper-matte": {
+          "label": "Matte Poster Paper",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 2.00,
+          "minSqFt": 2,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "foamBoard": {
+      "label": "Foam Board / Gatorboard",
+      "description": "Lightweight rigid display boards",
+      "products": {
+        "foam-board-3-16": {
+          "label": "3/16\" Foam Board",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 4.50,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+              ]
+            }
+          }
+        },
+        "foam-board-1-2": {
+          "label": "1/2\" Foam Board",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 5.50,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+              ]
+            }
+          }
+        },
+        "gatorboard-3-16": {
+          "label": "3/16\" Gatorboard (rigid)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 6.50,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+              ]
+            }
+          }
+        },
+        "gatorboard-1-2": {
+          "label": "1/2\" Gatorboard (rigid)",
+          "pricingModel": "perSqFt",
+          "baseCostPerSqFt": 7.50,
+          "minSqFt": 4,
+          "sizes": "custom",
+          "options": {
+            "lamination": {
+              "label": "Lamination",
+              "type": "select",
+              "choices": [
+                { "value": "none", "label": "None", "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
+                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "markup": {
+    "type": "tiered",
+    "tiers": [
+      { "maxCost": 50, "multiplier": 2.5, "label": "Under $50" },
+      { "maxCost": 200, "multiplier": 2.0, "label": "$50–$200" },
+      { "maxCost": null, "multiplier": 1.75, "label": "Over $200" }
+    ]
+  },
+
+  "quantityDiscounts": [
+    { "minQty": 1, "maxQty": 4, "discount": 0, "label": "1–4" },
+    { "minQty": 5, "maxQty": 9, "discount": 0.05, "label": "5–9 (5% off)" },
+    { "minQty": 10, "maxQty": 24, "discount": 0.10, "label": "10–24 (10% off)" },
+    { "minQty": 25, "maxQty": null, "discount": 0.15, "label": "25+ (15% off)" }
+  ]
+}
