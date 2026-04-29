@@ -1455,6 +1455,180 @@ body {
 }
 
 /* ============================================
+   MY NUMBERS (employee read-only summary)
+   ============================================ */
+.emp-pending-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--amber, #f59e0b);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 999px;
+  font-size: 11px; font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease;
+}
+.emp-pending-badge:hover { background: rgba(245, 158, 11, 0.2); }
+
+.my-numbers-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 90;
+  padding: 24px;
+  animation: fadeIn 0.18s ease-out;
+}
+.my-numbers-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.28);
+  width: min(640px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 22px;
+  animation: dialogIn 0.2s ease-out;
+}
+.my-numbers-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 18px;
+}
+.my-numbers-eyebrow {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--teal);
+}
+.my-numbers-title {
+  font-size: 22px; font-weight: 700;
+  color: var(--text);
+  margin-top: 2px;
+}
+.my-numbers-close {
+  background: transparent; border: 0;
+  font-size: 24px; line-height: 1;
+  color: var(--text-muted); cursor: pointer;
+  padding: 4px 10px; border-radius: var(--radius-sm);
+}
+.my-numbers-close:hover { background: var(--surface-3); color: var(--text); }
+
+.my-numbers-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.my-numbers-tile {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.my-numbers-tile.is-highlight {
+  background: rgba(0, 129, 152, 0.06);
+  border-color: rgba(0, 129, 152, 0.35);
+}
+.my-numbers-tile-label {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.my-numbers-tile-value {
+  font-size: 24px; font-weight: 700;
+  color: var(--text);
+  margin-top: 4px;
+}
+.my-numbers-tile-meta {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.my-numbers-bonus {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+}
+.my-numbers-bonus.is-hit {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.my-numbers-bonus-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px;
+}
+.my-numbers-bonus-label {
+  font-weight: 600; color: var(--text);
+}
+.my-numbers-bonus-amount {
+  font-weight: 700; color: var(--green, #10b981);
+}
+.my-numbers-bonus.is-hit .my-numbers-bonus-amount { color: var(--green, #10b981); }
+.my-numbers-progress {
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+.my-numbers-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal), var(--green, #10b981));
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.my-numbers-bonus-foot {
+  font-size: 11px; color: var(--text-muted);
+}
+
+.my-numbers-section { margin-top: 12px; }
+.my-numbers-section-title {
+  font-size: 11px; font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.my-numbers-tx-list {
+  list-style: none; padding: 0; margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.my-numbers-tx-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.my-numbers-tx-row:last-child { border-bottom: 0; }
+.my-numbers-tx-when {
+  font-size: 12px; font-weight: 600; color: var(--text);
+}
+.my-numbers-tx-meta {
+  font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.my-numbers-tx-total {
+  font-size: 13px; font-weight: 700; color: var(--text);
+}
+.my-numbers-tx-commission {
+  font-size: 11px; font-weight: 600;
+  color: var(--green, #10b981);
+}
+.my-numbers-state {
+  text-align: center;
+  font-size: 13px; color: var(--text-muted);
+  padding: 24px 12px;
+}
+.my-numbers-state-error { color: #b91c1c; }
+
+@media (max-width: 640px) {
+  .my-numbers-tiles { grid-template-columns: 1fr; }
+  .my-numbers-panel { padding: 16px; max-height: 100vh; border-radius: 0; }
+}
+
+/* ============================================
    ADMIN PANEL: Pricing / Commissions toggle
    ============================================ */
 .admin-view-tabs {
