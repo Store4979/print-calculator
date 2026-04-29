@@ -13,6 +13,7 @@ import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import CommissionDashboard from "./components/CommissionDashboard.jsx";
 import MyNumbersPanel from "./components/MyNumbersPanel.jsx";
+import SpecialtyTab from "./components/SpecialtyTab.jsx";
 import {
   ensureDbAuthenticated, savePrintJob, isSupabaseConfigured,
   getStoredEmployee, setStoredEmployee,
@@ -2546,11 +2547,12 @@ try {
   { id:"paper",     label:"Sheets & Photos", icon:<Icon.Printer />, pill:"🖨",  pillBg:"#e0f4f7", activeColor:"var(--teal)" },
   { id:"large",     label:"Large Format",    icon:<Icon.Ruler />,   pill:"📐",  pillBg:"#fef3c7", activeColor:"var(--amber)" },
   { id:"blueprint", label:"Blueprints",      icon:<Icon.Blueprint/>,pill:"📋",  pillBg:"#dbeafe", activeColor:"var(--blue)"  },
+  { id:"specialty", label:"Specialty",       icon:<Icon.Ruler />,   pill:"🪧",  pillBg:"#f3e8ff", activeColor:"var(--purple)" },
   { id:"impose",    label:"Impose",          icon:<BookletIcon />,  pill:"📖",  pillBg:"#dcfce7", activeColor:"var(--green)" },
 ].map(tab => (
               <button
                 key={tab.id}
-                className={`service-tab ${activeTab===tab.id ? (tab.id==="paper"?"active":tab.id==="large"?"active active-amber":tab.id==="impose"?"active active-green":"active active-blue") : ""}`}
+                className={`service-tab ${activeTab===tab.id ? (tab.id==="paper"?"active":tab.id==="large"?"active active-amber":tab.id==="impose"?"active active-green":tab.id==="specialty"?"active active-purple":"active active-blue") : ""}`}
                 onClick={() => setActiveTab(tab.id)}
               >
                 <span className="tab-icon-pill" data-tooltip={tab.label} style={{ background: activeTab===tab.id ? pillActiveBg(tab.id) : tab.pillBg }}>{tab.pill}</span>
@@ -3691,6 +3693,13 @@ try {
         )}
 
         {/* ════════════════════════════════════════
+            PANEL: SPECIALTY (Signs365 trade printing)
+        ════════════════════════════════════════ */}
+        {activeTab==="specialty" && viewMode==="tool" && (
+          <SpecialtyTab CardHeader={CardHeader} />
+        )}
+
+        {/* ════════════════════════════════════════
             PANEL: IMPOSE (BOOKLET MAKER)
         ════════════════════════════════════════ */}
 {activeTab==="impose" && viewMode==="tool" && (
@@ -4020,6 +4029,7 @@ function pillActiveBg(id) {
   if (id==="large")     return "#fde68a";
   if (id==="blueprint") return "#bfdbfe";
   if (id==="impose")    return "#bbf7d0";
+  if (id==="specialty") return "#ddd6fe";
   return "#e5e7eb";
 }
 
