@@ -169,6 +169,33 @@ export const saveCommissionSettings = async (patch) => {
   return data;
 };
 
+// ── Transactions ───────────────────────────────────────────
+// One row per completed sale. Throws on failure so the caller
+// can route the row through the offline queue.
+export const insertTransaction = async (row) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase
+    .from("transactions")
+    .insert(row)
+    .select("id, created_at")
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const fetchTransactions = async ({
+  from = null, to = null, employeeId = null, limit = 1000,
+} = {}) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  let q = supabase.from("transactions").select("*").order("created_at", { ascending: false }).limit(limit);
+  if (from)        q = q.gte("created_at", from);
+  if (to)          q = q.lte("created_at", to);
+  if (employeeId)  q = q.eq("employee_id", employeeId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+};
+
 // ── Logged-in employee (localStorage) ──────────────────────
 // Stored alongside the rest of the app's localStorage state. Cleared
 // when the user clicks "Switch User" or logs out.

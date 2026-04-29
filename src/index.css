@@ -1455,6 +1455,146 @@ body {
 }
 
 /* ============================================
+   UPSELL CLAIM TOGGLE + COMPLETE SALE
+   ============================================ */
+.upsell-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-size: 11px; font-weight: 600;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  user-select: none;
+}
+.upsell-toggle:hover {
+  border-color: var(--amber, #f59e0b);
+  color: var(--amber, #f59e0b);
+}
+.upsell-toggle.is-on {
+  background: var(--amber, #f59e0b);
+  border-color: var(--amber, #f59e0b);
+  color: white;
+  box-shadow: 0 1px 4px rgba(245, 158, 11, 0.3);
+}
+.upsell-toggle-icon { font-size: 12px; }
+
+.ticket-card-upsell {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 7px;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: white;
+  background: var(--amber, #f59e0b);
+  border-radius: 3px;
+}
+
+.pc-btn-complete-sale {
+  background: var(--green, #10b981);
+  color: white;
+  border: 0;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease;
+  position: relative; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+}
+.pc-btn-complete-sale:hover { background: #059669; }
+.pc-btn-complete-sale:active { transform: scale(0.97); }
+.pc-btn-complete-sale:disabled {
+  background: var(--surface-3);
+  color: var(--text-subtle, #94a3b8);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Complete-sale confirmation dialog */
+.complete-sale-dialog {
+  width: min(560px, 100%);
+}
+.complete-sale-breakdown {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.complete-sale-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 3px 0;
+  color: var(--text);
+}
+.complete-sale-row span:first-child { color: var(--text-muted); }
+.complete-sale-row.complete-sale-total {
+  font-size: 15px; font-weight: 700;
+  color: var(--green, #10b981);
+  margin-top: 2px;
+}
+.complete-sale-row.complete-sale-total span:first-child { color: var(--text); }
+
+.complete-sale-lines {
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+.complete-sale-lines-title {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.complete-sale-lines ul {
+  list-style: none; padding: 0; margin: 0;
+}
+.complete-sale-lines li {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; color: var(--text);
+  padding: 3px 0;
+  gap: 12px;
+}
+.complete-sale-lines li > span:first-child {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.complete-sale-lines li > span:last-child {
+  display: inline-flex; gap: 6px; align-items: center;
+  white-space: nowrap; font-weight: 600;
+}
+.complete-sale-upsell-pill {
+  font-size: 9px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: white; background: var(--amber, #f59e0b);
+  padding: 1px 6px; border-radius: 3px;
+}
+
+/* Admin upsell flag list */
+.upsell-flag-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px;
+}
+.upsell-flag-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+.upsell-flag-row:hover { border-color: var(--amber, #f59e0b); }
+.upsell-flag-row input[type="checkbox"] { margin: 0; cursor: pointer; }
+
+/* ============================================
    TICKET BAR (Sheets & Photos multi-job)
    ============================================ */
 .ticket-bar.ticket-bar-compact {
