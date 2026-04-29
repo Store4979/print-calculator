@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import signs365PricingDefaults from "../data/signs365Pricing.json";
+import { generateTradeOrderPDF } from "../utils/tradeOrderPDF.js";
 
 const LS_KEY = "signs365Pricing";
 
@@ -212,6 +213,14 @@ export default function SpecialtyTab({ CardHeader }) {
   const [selectedSizeKey, setSelectedSizeKey] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [selectedOptions, setSelectedOptions] = useState({});
+  // Customer + staff metadata that lands on the PDF. Optional —
+  // leaving them blank just renders the matching field as "—".
+  const [customerName,  setCustomerName]  = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [staffInitials, setStaffInitials] = useState("");
+  const [orderNotes,    setOrderNotes]    = useState("");
+  const [generating,    setGenerating]    = useState(false);
 
   const cat = pricing.categories?.[selectedCategory];
   const product = cat?.products?.[selectedProduct];
@@ -248,25 +257,42 @@ export default function SpecialtyTab({ CardHeader }) {
     setSelectedOptions({});
     setWidth(""); setHeight("");
     setQuantity(1);
+    setCustomerName(""); setCustomerPhone(""); setCustomerEmail("");
+    setOrderNotes("");
+    // Staff initials persist intentionally — same employee usually
+    // generates several orders in a row.
   };
 
-  const handleGeneratePdf = () => {
-    // Phase 4 fills this in. The orderData shape is captured here so
-    // Phase 4's helper has a clear contract:
-    const orderData = {
-      category:    cat ? { key: selectedCategory, label: cat.label } : null,
-      product:     product ? { key: selectedProduct, label: product.label, pricingModel: product.pricingModel } : null,
-      dimensions:  priceResult?.dimensions || null,
-      quantity,
-      options:     selectedOptions,
-      optionMeta:  product?.options || {},
-      pricing:     priceResult,
-    };
-    if (typeof window !== "undefined") window.__lastSpecialtyOrder = orderData;
-    alert("PDF generation lands in Phase 4 — order spec captured.");
+  const handleGeneratePdf = async () => {
+    if (generating || !priceResult) return;
+    setGenerating(true);
+    try {
+      const orderData = {
+        category:    cat ? { key: selectedCategory, label: cat.label } : null,
+        product:     product ? { key: selectedProduct, label: product.label, pricingModel: product.pricingModel } : null,
+        dimensions:  priceResult.dimensions || null,
+        quantity,
+        options:     selectedOptions,
+        optionMeta:  product?.options || {},
+        pricing:     priceResult,
+        customer: {
+          name:  customerName.trim(),
+          phone: customerPhone.trim(),
+          email: customerEmail.trim(),
+        },
+        staffInitials: staffInitials.trim(),
+        notes:         orderNotes.trim(),
+      };
+      await generateTradeOrderPDF(orderData);
+    } catch (e) {
+      console.error("trade order PDF failed:", e);
+      alert("Couldn't generate the trade order PDF: " + (e?.message || String(e)));
+    } finally {
+      setGenerating(false);
+    }
   };
 
-  const canGenerate = !!priceResult;
+  const canGenerate = !!priceResult && !generating;
 
   // ── Render ──
   return (
@@ -482,6 +508,78 @@ export default function SpecialtyTab({ CardHeader }) {
         </div>
       )}
 
+      {/* Step 4 — Customer + staff metadata for the trade-order PDF */}
+      {product && (
+        <div className="pc-card">
+          <CardHeader
+            step="4"
+            stepClass="step-num-purple"
+            title="Customer & order info"
+            hint="Optional — printed on the trade-order PDF"
+          />
+          <div className="pc-card-body">
+            <div className="grid-3" style={{ marginBottom: 12 }}>
+              <div>
+                <label className="field-label">Customer name</label>
+                <input
+                  className="pc-input"
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="Walk-in OK"
+                />
+              </div>
+              <div>
+                <label className="field-label">Phone</label>
+                <input
+                  className="pc-input"
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="field-label">Email</label>
+                <input
+                  className="pc-input"
+                  type="email"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid-2" style={{ marginBottom: 12 }}>
+              <div>
+                <label className="field-label">Staff initials</label>
+                <input
+                  className="pc-input"
+                  type="text"
+                  maxLength={6}
+                  value={staffInitials}
+                  onChange={(e) => setStaffInitials(e.target.value)}
+                  placeholder="e.g. JL"
+                  style={{ textTransform: "uppercase" }}
+                />
+              </div>
+              <div>
+                <label className="field-label">Order notes (optional)</label>
+                <input
+                  className="pc-input"
+                  type="text"
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  placeholder="anything to flag for the press operator"
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              These are printed on the order sheet. The PDF also includes a lined
+              area below the notes for handwritten additions on the shop floor.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sticky price + actions */}
       <div className="price-bar price-bar-purple">
         <div className="price-metrics">
@@ -530,7 +628,7 @@ export default function SpecialtyTab({ CardHeader }) {
             disabled={!canGenerate}
             title={canGenerate ? "Generate the trade-order PDF" : "Pick a category, product, size, and quantity first"}
           >
-            ⬇ Generate Trade Order PDF
+            {generating ? "Generating…" : "⬇ Generate Trade Order PDF"}
           </button>
         </div>
       </div>
