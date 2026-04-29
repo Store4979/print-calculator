@@ -49,6 +49,9 @@
   --blue-mid: #bfdbfe;
   --green: #059669;
   --green-light: #ecfdf5;
+  --purple: #7c3aed;
+  --purple-light: #f3e8ff;
+  --purple-mid: #ddd6fe;
 }
 
 /* ============================================
@@ -219,8 +222,9 @@ body {
   background: var(--page-bg);
 }
 
-.service-tab.active-amber { color: var(--amber); }
-.service-tab.active-blue  { color: var(--blue); }
+.service-tab.active-amber  { color: var(--amber); }
+.service-tab.active-blue   { color: var(--blue); }
+.service-tab.active-purple { color: var(--purple); }
 
 .tab-icon-pill {
   width: 22px;
@@ -274,8 +278,9 @@ body {
   flex-shrink: 0;
 }
 
-.step-num-amber { background: var(--amber); }
-.step-num-blue  { background: var(--blue); }
+.step-num-amber  { background: var(--amber); }
+.step-num-blue   { background: var(--blue); }
+.step-num-purple { background: var(--purple); }
 
 .pc-card-title {
   font-size: 14px;
@@ -1452,6 +1457,35 @@ body {
     grid-template-columns: 1fr 80px;
     grid-auto-rows: auto;
   }
+}
+
+/* ============================================
+   SPECIALTY TAB (Signs365 trade printing)
+   ============================================ */
+.specialty-cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.specialty-cat-card {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--purple);
+}
+.specialty-cat-label {
+  font-size: 13px; font-weight: 700; color: var(--text);
+}
+.specialty-cat-desc {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 2px;
+}
+.specialty-cat-count {
+  font-size: 11px; font-weight: 600;
+  color: var(--purple);
+  margin-top: 6px;
+  text-transform: uppercase; letter-spacing: 0.04em;
 }
 
 /* ============================================
