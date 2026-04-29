@@ -1462,6 +1462,128 @@ body {
 }
 
 /* ============================================
+   ADMIN: SIGNS365 PRICING EDITOR
+   ============================================ */
+.admin-details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  background: var(--surface);
+}
+.admin-details > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-details > summary::-webkit-details-marker { display: none; }
+.admin-details > summary::before {
+  content: "▸";
+  color: var(--text-muted);
+  font-size: 10px;
+  display: inline-block;
+  transition: transform 0.12s ease;
+}
+.admin-details[open] > summary::before { transform: rotate(90deg); }
+.admin-details-body {
+  padding: 10px 14px;
+}
+
+.admin-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.admin-mini-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.admin-mini-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.admin-mini-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.admin-mini-row label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.admin-product-block {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.admin-product-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.admin-product-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.admin-product-key {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.admin-options-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 8px 0 4px;
+}
+.admin-option-row {
+  margin-bottom: 4px;
+}
+.admin-option-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.admin-option-tag {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  background: var(--purple-light);
+  color: var(--purple);
+  border-radius: 999px;
+}
+
+/* ============================================
    SPECIALTY TAB (Signs365 trade printing)
    ============================================ */
 .specialty-options {

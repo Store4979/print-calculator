@@ -14,6 +14,7 @@ import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import CommissionDashboard from "./components/CommissionDashboard.jsx";
 import MyNumbersPanel from "./components/MyNumbersPanel.jsx";
 import SpecialtyTab from "./components/SpecialtyTab.jsx";
+import Signs365PricingEditor from "./components/Signs365PricingEditor.jsx";
 import {
   ensureDbAuthenticated, savePrintJob, isSupabaseConfigured,
   getStoredEmployee, setStoredEmployee,
@@ -95,6 +96,7 @@ const LS = {
   PREVIEW_MARGIN:   "printcalc_preview_margin_v1",
   PREVIEW_SPACING:  "printcalc_preview_spacing_v1",
   UPSELL_FLAGS:     "printcalc_upsell_flags_v1",
+  SIGNS365:         "signs365Pricing",
 };
 
 let UPS_LOGO_DATA_URL = "/ups-logo.png";
@@ -1042,6 +1044,26 @@ function PriceCalculatorApp() {
     )));
   }, [upsellFlags]);
 
+  // Signs365 pricing overrides — partial tree on top of
+  // src/data/signs365Pricing.json. Stored under LS.SIGNS365 (which
+  // is the "signs365Pricing" key SpecialtyTab also reads). The
+  // effect below pushes changes back to localStorage and fires a
+  // "signs365PricingUpdated" event so the open SpecialtyTab refreshes.
+  const [signs365Overrides, setSigns365Overrides] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS.SIGNS365);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try {
+      const hasAny = signs365Overrides && Object.keys(signs365Overrides).length > 0;
+      if (hasAny) localStorage.setItem(LS.SIGNS365, JSON.stringify(signs365Overrides));
+      else        localStorage.removeItem(LS.SIGNS365);
+      window.dispatchEvent(new Event("signs365PricingUpdated"));
+    } catch {}
+  }, [signs365Overrides]);
+
   // Commission settings (rates + monthly bonus thresholds). Lazy-loaded
   // from Supabase on mount so the Complete Sale dialog has live numbers.
   const [commissionSettings, setCommissionSettings] = useState({
@@ -1186,6 +1208,7 @@ function PriceCalculatorApp() {
         if (typeof json.previewMargin==="number")  setPreviewMargin(json.previewMargin);
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
         if (json.upsellFlags && typeof json.upsellFlags === "object") setUpsellFlags(json.upsellFlags);
+        if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
       } catch {}
     })();
   }, []);
@@ -2405,7 +2428,7 @@ const handleFrontFiles = async (files) => {
   };
 
   const exportPricingJson = () => {
-    const json = { paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing:pricing, lfPricing, sheetQtyDiscounts:quantityDiscounts, lfQtyDiscounts:lfQuantityDiscounts, sheetMarkupPerPaper:markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, previewMargin, previewSpacing, upsellFlags };
+    const json = { paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing:pricing, lfPricing, sheetQtyDiscounts:quantityDiscounts, lfQtyDiscounts:lfQuantityDiscounts, sheetMarkupPerPaper:markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, previewMargin, previewSpacing, upsellFlags, signs365Pricing: signs365Overrides };
     const blob = new Blob([JSON.stringify(json,null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href=url; a.download="pricing.json";
@@ -2441,6 +2464,8 @@ try {
         if (json.blueprintPricing){ setBpPricing(json.blueprintPricing); localStorage.setItem(LS.BP_PRICING,JSON.stringify(json.blueprintPricing)); }
         if (typeof json.previewMargin==="number")  setPreviewMargin(json.previewMargin);
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
+        if (json.upsellFlags && typeof json.upsellFlags === "object") setUpsellFlags(json.upsellFlags);
+        if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
         alert("Pricing imported successfully.");
       } catch { alert("Invalid pricing.json file."); }
     };
@@ -3089,6 +3114,13 @@ try {
                 ))}
                 <button className="pc-btn pc-btn-secondary pc-btn-xs" style={{ marginTop:4 }} onClick={()=>setQuantityDiscounts(p=>[...p,{minSheets:0,discountPercent:0}])}>+ Add tier</button>
               </div>
+
+              <hr className="pc-divider" />
+
+              <Signs365PricingEditor
+                overrides={signs365Overrides}
+                setOverrides={setSigns365Overrides}
+              />
               </>)}
             </div>
           </div>
