@@ -824,6 +824,7 @@ body {
 .price-bar-teal   { border-color: var(--teal-mid); }
 .price-bar-amber  { border-color: var(--amber-mid); }
 .price-bar-blue   { border-color: var(--blue-mid); }
+.price-bar-purple { border-color: var(--purple-mid); }
 
 .price-metrics {
   display: flex;
@@ -852,8 +853,9 @@ body {
 }
 
 .price-metric-val.is-total       { font-size: 26px; color: var(--teal); }
-.price-metric-val.is-total-amber { font-size: 26px; color: var(--amber); }
-.price-metric-val.is-total-blue  { font-size: 26px; color: var(--blue); }
+.price-metric-val.is-total-amber  { font-size: 26px; color: var(--amber); }
+.price-metric-val.is-total-blue   { font-size: 26px; color: var(--blue); }
+.price-metric-val.is-total-purple { font-size: 26px; color: var(--purple); }
 
 .price-bar-actions {
   display: flex;
@@ -1462,6 +1464,60 @@ body {
 /* ============================================
    SPECIALTY TAB (Signs365 trade printing)
    ============================================ */
+.specialty-options {
+  display: grid;
+  gap: 12px;
+}
+.specialty-opt {
+  display: block;
+}
+.specialty-opt-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.specialty-opt-row input[type="checkbox"] { cursor: pointer; }
+.specialty-opt-label {
+  flex: 1;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.specialty-opt-cost {
+  font-size: 11px; font-weight: 600; color: var(--purple);
+  background: var(--purple-light);
+  padding: 2px 8px; border-radius: 999px;
+  white-space: nowrap;
+}
+.specialty-opt-num {
+  width: 90px;
+  text-align: right;
+}
+
+.pc-btn-purple {
+  background: var(--purple);
+  color: white;
+  border: 0;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.25);
+}
+.pc-btn-purple:hover { background: #6d28d9; }
+.pc-btn-purple:active { transform: scale(0.97); }
+.pc-btn-purple:disabled {
+  background: var(--surface-3);
+  color: var(--text-subtle, #94a3b8);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Phase 2 stub leftover — kept in case the placeholder card is shown.
+   These rules render the "categories ready" preview when nothing is
+   selected yet. They no-op when the real flow has rendered. */
 .specialty-cat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -1474,19 +1530,9 @@ body {
   border-radius: var(--radius-sm);
   border-left: 3px solid var(--purple);
 }
-.specialty-cat-label {
-  font-size: 13px; font-weight: 700; color: var(--text);
-}
-.specialty-cat-desc {
-  font-size: 11px; color: var(--text-muted);
-  margin-top: 2px;
-}
-.specialty-cat-count {
-  font-size: 11px; font-weight: 600;
-  color: var(--purple);
-  margin-top: 6px;
-  text-transform: uppercase; letter-spacing: 0.04em;
-}
+.specialty-cat-label  { font-size: 13px; font-weight: 700; color: var(--text); }
+.specialty-cat-desc   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.specialty-cat-count  { font-size: 11px; font-weight: 600; color: var(--purple); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
 
 /* ============================================
    MY NUMBERS (employee read-only summary)
@@ -2303,7 +2349,8 @@ body {
   .price-bar { position: static; }
   .price-metric-val.is-total,
   .price-metric-val.is-total-amber,
-  .price-metric-val.is-total-blue { font-size: 22px; }
+  .price-metric-val.is-total-blue,
+  .price-metric-val.is-total-purple { font-size: 22px; }
   .addon-grid { grid-template-columns: 1fr 1fr 1fr; }
 
   input, select, textarea { font-size: 16px !important; }
