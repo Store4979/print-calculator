@@ -1285,6 +1285,176 @@ body {
 }
 
 /* ============================================
+   EMPLOYEE PIN LOGIN
+   ============================================ */
+.emp-login-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  z-index: 100;
+  animation: fadeIn 0.18s ease-out;
+}
+.emp-login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.3);
+  width: min(420px, 100%);
+  padding: 24px;
+  animation: dialogIn 0.2s ease-out;
+}
+.emp-login-title {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  text-align: center;
+}
+.emp-login-sub {
+  font-size: 13px; color: var(--text-muted);
+  text-align: center; margin-top: 4px; margin-bottom: 18px;
+}
+.emp-login-dots {
+  display: flex; gap: 14px; justify-content: center; margin-bottom: 12px;
+}
+.emp-login-dot {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong, #cbd5e1);
+  background: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+.emp-login-dot.is-filled {
+  background: var(--teal);
+  border-color: var(--teal);
+  transform: scale(1.05);
+}
+.emp-login-error {
+  min-height: 18px;
+  text-align: center;
+  color: #b91c1c;
+  font-size: 12px; font-weight: 500;
+  margin-bottom: 10px;
+}
+.emp-login-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.emp-login-key {
+  font-size: 24px; font-weight: 600;
+  height: 60px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s ease, transform 0.08s ease, box-shadow 0.1s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.emp-login-key:hover  { background: var(--surface-3); }
+.emp-login-key:active { transform: scale(0.96); background: var(--surface-3); }
+.emp-login-key:disabled { opacity: 0.5; cursor: default; }
+.emp-login-key.is-clear { background: var(--surface-3); color: var(--text-muted); font-size: 22px; }
+.emp-login-key.is-ok    { background: var(--teal); color: white; }
+.emp-login-key.is-ok:hover { background: var(--teal-dark, #006a7c); }
+.emp-login-cancel {
+  margin-top: 14px;
+  width: 100%;
+}
+
+/* ============================================
+   EMPLOYEE BADGE (header / sticky bar)
+   ============================================ */
+.emp-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 10px;
+  background: rgba(0, 129, 152, 0.08);
+  color: var(--teal);
+  border: 1px solid rgba(0, 129, 152, 0.25);
+  border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+  white-space: nowrap;
+}
+.emp-badge-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--teal);
+}
+.emp-badge-name { font-weight: 700; color: var(--text); }
+.emp-badge-switch {
+  background: transparent;
+  border: 0;
+  color: var(--teal);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  text-decoration: underline;
+}
+.emp-badge-switch:hover { color: var(--text); }
+
+.emp-badge-empty {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+}
+.emp-badge-empty:hover { color: var(--text); border-color: var(--border-strong, #cbd5e1); }
+
+/* ============================================
+   ADMIN: EMPLOYEE MANAGEMENT
+   ============================================ */
+.admin-emp-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.admin-emp-row {
+  display: grid;
+  grid-template-columns: 1fr 90px 70px auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.admin-emp-row.is-inactive {
+  opacity: 0.55;
+}
+.admin-emp-name {
+  font-weight: 600; color: var(--text);
+}
+.admin-emp-pin {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.admin-emp-status {
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--teal);
+}
+.admin-emp-row.is-inactive .admin-emp-status { color: var(--text-muted); }
+.admin-emp-add-row {
+  display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 640px) {
+  .admin-emp-row {
+    grid-template-columns: 1fr 80px;
+    grid-auto-rows: auto;
+  }
+}
+
+/* ============================================
    TICKET BAR (Sheets & Photos multi-job)
    ============================================ */
 .ticket-bar.ticket-bar-compact {

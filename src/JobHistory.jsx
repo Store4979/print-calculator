@@ -6,7 +6,7 @@
 // ============================================================
 
 import { useState, useEffect, useMemo } from "react";
-import { fetchPrintJobs, isSupabaseConfigured } from "./supabase.js";
+import { fetchPrintJobs, isSupabaseConfigured } from "./lib/supabase.js";
 
 const fmtDate = (iso) => {
   if (!iso) return "";
