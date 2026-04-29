@@ -12,6 +12,7 @@ import { drawBarcode128 } from "./barcode128.js";
 import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import CommissionDashboard from "./components/CommissionDashboard.jsx";
+import MyNumbersPanel from "./components/MyNumbersPanel.jsx";
 import {
   ensureDbAuthenticated, savePrintJob, isSupabaseConfigured,
   getStoredEmployee, setStoredEmployee,
@@ -879,6 +880,26 @@ function PriceCalculatorApp() {
     setStoredEmployee(null);
     setCurrentEmployee(null);
     setShowEmployeeLogin(true);
+  };
+  const [showMyNumbers, setShowMyNumbers] = useState(false);
+
+  // Manual retry of the offline transactions queue. Surfaced via the
+  // pending-sync badge in the header. Silent if there's nothing pending.
+  const retryPendingTransactions = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const result = await drainPendingTransactions(insertTransaction);
+      const remaining = loadPendingTransactions().length;
+      setPendingSalesCount(remaining);
+      if (result.flushed > 0) {
+        setSavedJobToast(`Synced ${result.flushed} pending sale${result.flushed === 1 ? "" : "s"}.`);
+        setTimeout(() => setSavedJobToast(""), 3500);
+      } else if (remaining > 0) {
+        alert("Still can't reach the database — check connection and try again.");
+      }
+    } catch (e) {
+      alert("Retry failed: " + (e?.message || String(e)));
+    }
   };
   // pendingSaveJob: { row, jobType, label } — if non-null, the save-to-db
   // confirmation dialog is open. The PDF has already been downloaded.
@@ -2449,15 +2470,36 @@ try {
             </div>
           </div>
           <div className="header-actions">
+            {isSupabaseConfigured && pendingSalesCount > 0 && (
+              <button
+                type="button"
+                className="emp-pending-badge"
+                onClick={retryPendingTransactions}
+                title="Click to retry syncing"
+              >
+                ⏳ {pendingSalesCount} pending
+              </button>
+            )}
             {isSupabaseConfigured && (
               currentEmployee ? (
-                <span className="emp-badge" title={`Signed in as ${currentEmployee.name}`}>
-                  <span className="emp-badge-dot" aria-hidden="true" />
-                  <span className="emp-badge-name">{currentEmployee.name}</span>
-                  <button type="button" className="emp-badge-switch" onClick={switchEmployee}>
-                    Switch
+                <>
+                  <span className="emp-badge" title={`Signed in as ${currentEmployee.name}`}>
+                    <span className="emp-badge-dot" aria-hidden="true" />
+                    <span className="emp-badge-name">{currentEmployee.name}</span>
+                    <button type="button" className="emp-badge-switch" onClick={switchEmployee}>
+                      Switch
+                    </button>
+                  </span>
+                  <button
+                    type="button"
+                    className="pc-btn pc-btn-secondary pc-btn-sm"
+                    onClick={() => setShowMyNumbers(true)}
+                    style={{ gap: 6 }}
+                    title="See your sales and commission"
+                  >
+                    📊 My Numbers
                   </button>
-                </span>
+                </>
               ) : (
                 <button
                   type="button"
@@ -3687,6 +3729,13 @@ try {
           busy={completingSale}
           onConfirm={confirmCompleteSale}
           onCancel={() => !completingSale && setPendingSale(null)}
+        />
+      )}
+
+      {showMyNumbers && currentEmployee && (
+        <MyNumbersPanel
+          employee={currentEmployee}
+          onClose={() => setShowMyNumbers(false)}
         />
       )}
 
