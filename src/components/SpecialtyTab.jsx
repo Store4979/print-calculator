@@ -18,12 +18,15 @@ import { generateTradeOrderPDF } from "../utils/tradeOrderPDF.js";
 const LS_KEY = "signs365Pricing";
 
 // Recursive merge: arrays overwrite (so admin can replace a sizes
-// list cleanly), plain objects merge key-by-key, scalars overwrite.
+// list cleanly), plain objects merge key-by-key, undefined entries
+// in the override fall back to the base default (so clearing an
+// admin field reverts to the JSON default), scalars overwrite.
 const isPlainObject = (v) => v && typeof v === "object" && !Array.isArray(v);
 const deepMerge = (base, override) => {
   if (!isPlainObject(base) || !isPlainObject(override)) return override ?? base;
   const out = { ...base };
   for (const [k, v] of Object.entries(override)) {
+    if (v === undefined) continue;
     if (isPlainObject(v) && isPlainObject(base[k])) out[k] = deepMerge(base[k], v);
     else out[k] = v;
   }
