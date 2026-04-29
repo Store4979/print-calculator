@@ -11,6 +11,7 @@ import DataMerge, { DataMergeIcon } from "./DataMerge.jsx";
 import { drawBarcode128 } from "./barcode128.js";
 import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
+import CommissionDashboard from "./components/CommissionDashboard.jsx";
 import {
   ensureDbAuthenticated, savePrintJob, isSupabaseConfigured,
   getStoredEmployee, setStoredEmployee,
@@ -862,6 +863,7 @@ function PriceCalculatorApp() {
   const [activeTab, setActiveTab]   = useState(() => { try { return localStorage.getItem("activeTab") || "paper"; } catch { return "paper"; }});
   const [viewMode, setViewMode]     = useState("tool"); // "tool" | "quote"
   const [showAdmin, setShowAdmin]   = useState(false);
+  const [adminView, setAdminView]   = useState("pricing"); // "pricing" | "commissions"
   const [showJobHistory, setShowJobHistory] = useState(false);
 
   // ── Logged-in employee (commission tracking) ──
@@ -2599,8 +2601,28 @@ try {
         ════════════════════════════════════════ */}
         {isAdmin && showAdmin && (
           <div className="admin-section" style={{ marginBottom:16 }}>
-            <div className="admin-section-header">⚙️ Admin Pricing Panel</div>
+            <div className="admin-section-header">⚙️ Admin Panel</div>
             <div className="admin-section-body">
+              <div className="admin-view-tabs">
+                <button
+                  type="button"
+                  className={`admin-view-tab ${adminView==="pricing" ? "is-active" : ""}`}
+                  onClick={() => setAdminView("pricing")}
+                >Pricing &amp; Setup</button>
+                {isSupabaseConfigured && (
+                  <button
+                    type="button"
+                    className={`admin-view-tab ${adminView==="commissions" ? "is-active" : ""}`}
+                    onClick={() => setAdminView("commissions")}
+                  >Commissions</button>
+                )}
+              </div>
+
+              {adminView === "commissions" && isSupabaseConfigured && (
+                <CommissionDashboard />
+              )}
+
+              {adminView === "pricing" && (<>
               <p style={{ fontSize:12, color:"var(--text-muted)", marginBottom:16 }}>
                 Settings are stored in localStorage. Export to <code>pricing.json</code> and place in <code>public/</code> to deploy universally.
               </p>
@@ -2612,10 +2634,6 @@ try {
                 </label>
               </div>
               <hr className="pc-divider" />
-
-              {/* Employees */}
-              {isSupabaseConfigured && <EmployeeAdminSection />}
-              {isSupabaseConfigured && <hr className="pc-divider" />}
 
               {/* Upsell items */}
               <div style={{ marginBottom: 20 }}>
@@ -3027,6 +3045,7 @@ try {
                 ))}
                 <button className="pc-btn pc-btn-secondary pc-btn-xs" style={{ marginTop:4 }} onClick={()=>setQuantityDiscounts(p=>[...p,{minSheets:0,discountPercent:0}])}>+ Add tier</button>
               </div>
+              </>)}
             </div>
           </div>
         )}
@@ -3813,143 +3832,6 @@ function CompleteSaleDialog({ pending, busy, onConfirm, onCancel }) {
             {busy ? "Logging…" : "✓ Confirm Sale"}
           </button>
         </div>
-      </form>
-    </div>
-  );
-}
-
-// ─── ADMIN: EMPLOYEE MANAGEMENT ────────────────────────────
-// Self-contained section rendered inside the existing admin panel.
-// Loads its own state on mount; no props from PriceCalculatorApp.
-function EmployeeAdminSection() {
-  const [list, setList]       = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState("");
-  const [name, setName]       = useState("");
-  const [pin, setPin]         = useState("");
-  const [adding, setAdding]   = useState(false);
-
-  const refresh = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const rows = await listEmployees({ includeInactive: true });
-      setList(rows);
-    } catch (e) {
-      setError(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { refresh(); }, []);
-
-  const handleAdd = async (e) => {
-    e?.preventDefault?.();
-    if (adding) return;
-    setAdding(true);
-    setError("");
-    try {
-      await createEmployee({ name, pin });
-      setName(""); setPin("");
-      await refresh();
-    } catch (err) {
-      setError(err?.message || String(err));
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const toggleActive = async (emp) => {
-    setError("");
-    try {
-      await setEmployeeActive(emp.id, !emp.active);
-      await refresh();
-    } catch (err) {
-      setError(err?.message || String(err));
-    }
-  };
-
-  return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Employees</div>
-      <p style={{ fontSize:12, color:"var(--text-muted)", marginBottom:10 }}>
-        Each employee gets a 4-digit PIN for sign-in. Deactivating preserves historical commission records.
-      </p>
-
-      {error && (
-        <div className="callout callout-warn" style={{ marginBottom:10, fontSize:12 }}>
-          ⚠ {error}
-        </div>
-      )}
-
-      {loading && list.length === 0 && (
-        <div style={{ fontSize:12, color:"var(--text-muted)" }}>Loading employees…</div>
-      )}
-
-      {!loading && list.length === 0 && (
-        <div style={{ fontSize:12, color:"var(--text-muted)", marginBottom:10 }}>
-          No employees yet. Add one below.
-        </div>
-      )}
-
-      {list.length > 0 && (
-        <div className="admin-emp-list">
-          {list.map((emp) => (
-            <div key={emp.id} className={`admin-emp-row ${emp.active ? "" : "is-inactive"}`}>
-              <div className="admin-emp-name">{emp.name}</div>
-              <div className="admin-emp-pin">PIN {emp.pin}</div>
-              <div className="admin-emp-status">{emp.active ? "Active" : "Inactive"}</div>
-              <button
-                className="pc-btn pc-btn-secondary pc-btn-xs"
-                onClick={() => toggleActive(emp)}
-                type="button"
-              >
-                {emp.active ? "Deactivate" : "Reactivate"}
-              </button>
-              <span style={{ fontSize:10, color:"var(--text-muted)" }}>
-                {emp.created_at ? new Date(emp.created_at).toLocaleDateString() : ""}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <form className="admin-emp-add-row" onSubmit={handleAdd}>
-        <div style={{ flex: "1 1 180px" }}>
-          <label className="field-label">Name</label>
-          <input
-            className="admin-input"
-            type="text"
-            placeholder="e.g. Jamie Lee"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={adding}
-            style={{ width: "100%" }}
-          />
-        </div>
-        <div>
-          <label className="field-label">4-digit PIN</label>
-          <input
-            className="admin-input"
-            type="text"
-            inputMode="numeric"
-            pattern="\d{4}"
-            placeholder="1234"
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
-            disabled={adding}
-            maxLength={4}
-            style={{ width: 80, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
-          />
-        </div>
-        <button
-          type="submit"
-          className="pc-btn pc-btn-primary pc-btn-xs"
-          disabled={adding || !name.trim() || pin.length !== 4}
-        >
-          {adding ? "Adding…" : "+ Add Employee"}
-        </button>
       </form>
     </div>
   );
