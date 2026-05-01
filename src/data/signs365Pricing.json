@@ -1169,8 +1169,8 @@
   "markup": {
     "type": "tiered",
     "tiers": [
-      { "maxCost": 50,   "multiplier": 2.5,  "label": "Under $50" },
-      { "maxCost": 200,  "multiplier": 2.0,  "label": "$50–$200" },
+      { "maxCost": 50,   "multiplier": 3.0,  "label": "Under $50" },
+      { "maxCost": 200,  "multiplier": 2.5,  "label": "$50–$200" },
       { "maxCost": null, "multiplier": 1.75, "label": "Over $200" }
     ]
   }
