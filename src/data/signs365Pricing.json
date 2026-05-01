@@ -1,405 +1,1177 @@
 {
-  "_comment": "PLACEHOLDER PRICING — verify against current Signs365 pricing before going live. Last updated: 2026-04-29",
+  "_comment": "Real Signs365 pricing extracted verbatim from the 5 source MD files in repo root. Last updated: 2026-04-29",
+  "_version": "2.0",
+
+  "_sharedSizes": {
+    "rigidSheets": [
+      { "key": "10.5x29-alt",         "label": "10.5\" x 29\" (alternate layout)",     "width": 10.5, "height": 29,   "piecesPerSheet": 12 },
+      { "key": "11x11",               "label": "11\" x 11\"",                          "width": 11,   "height": 11,   "piecesPerSheet": 32 },
+      { "key": "12x6",                "label": "12\" x 6\"",                           "width": 12,   "height": 6,    "piecesPerSheet": 64 },
+      { "key": "12x8",                "label": "12\" x 8\"",                           "width": 12,   "height": 8,    "piecesPerSheet": 48 },
+      { "key": "12x12",               "label": "12\" x 12\"",                          "width": 12,   "height": 12,   "piecesPerSheet": 32 },
+      { "key": "12x16",               "label": "12\" x 16\"",                          "width": 12,   "height": 16,   "piecesPerSheet": 24 },
+      { "key": "12x18",               "label": "12\" x 18\"",                          "width": 12,   "height": 18,   "piecesPerSheet": 20 },
+      { "key": "12x24",               "label": "12\" x 24\"",                          "width": 12,   "height": 24,   "piecesPerSheet": 16 },
+      { "key": "12x34",               "label": "12\" x 34\"",                          "width": 12,   "height": 34,   "piecesPerSheet": 10 },
+      { "key": "14x10",               "label": "14\" x 10\"",                          "width": 14,   "height": 10,   "piecesPerSheet": 27 },
+      { "key": "14x22",               "label": "14\" x 22\"",                          "width": 14,   "height": 22,   "piecesPerSheet": 12 },
+      { "key": "14.5x29.5",           "label": "14.5\" x 29.5\"",                      "width": 14.5, "height": 29.5, "piecesPerSheet": 9  },
+      { "key": "16x12",               "label": "16\" x 12\"",                          "width": 16,   "height": 12,   "piecesPerSheet": 24 },
+      { "key": "16x16",               "label": "16\" x 16\"",                          "width": 16,   "height": 16,   "piecesPerSheet": 18 },
+      { "key": "16x24",               "label": "16\" x 24\"",                          "width": 16,   "height": 24,   "piecesPerSheet": 12 },
+      { "key": "16x32",               "label": "16\" x 32\"",                          "width": 16,   "height": 32,   "piecesPerSheet": 9  },
+      { "key": "18x12",               "label": "18\" x 12\"",                          "width": 18,   "height": 12,   "piecesPerSheet": 16 },
+      { "key": "18x18",               "label": "18\" x 18\"",                          "width": 18,   "height": 18,   "piecesPerSheet": 10 },
+      { "key": "18x24",               "label": "18\" x 24\"",                          "width": 18,   "height": 24,   "piecesPerSheet": 8  },
+      { "key": "18x30",               "label": "18\" x 30\"",                          "width": 18,   "height": 30,   "piecesPerSheet": 6  },
+      { "key": "18x36",               "label": "18\" x 36\"",                          "width": 18,   "height": 36,   "piecesPerSheet": 5  },
+      { "key": "20x24",               "label": "20\" x 24\"",                          "width": 20,   "height": 24,   "piecesPerSheet": 8  },
+      { "key": "20x30",               "label": "20\" x 30\"",                          "width": 20,   "height": 30,   "piecesPerSheet": 6  },
+      { "key": "22x14",               "label": "22\" x 14\"",                          "width": 22,   "height": 14,   "piecesPerSheet": 12 },
+      { "key": "22x27",               "label": "22\" x 27\"",                          "width": 22,   "height": 27,   "piecesPerSheet": 6  },
+      { "key": "22x28",               "label": "22\" x 28\"",                          "width": 22,   "height": 28,   "piecesPerSheet": 6  },
+      { "key": "24x6",                "label": "24\" x 6\"",                           "width": 24,   "height": 6,    "piecesPerSheet": 32 },
+      { "key": "24x8",                "label": "24\" x 8\"",                           "width": 24,   "height": 8,    "piecesPerSheet": 24 },
+      { "key": "24x12",               "label": "24\" x 12\"",                          "width": 24,   "height": 12,   "piecesPerSheet": 16 },
+      { "key": "14x24",               "label": "14\" x 24\"",                          "width": 14,   "height": 24,   "piecesPerSheet": 12 },
+      { "key": "24x16",               "label": "24\" x 16\"",                          "width": 24,   "height": 16,   "piecesPerSheet": 12 },
+      { "key": "24x18",               "label": "24\" x 18\"",                          "width": 24,   "height": 18,   "piecesPerSheet": 10 },
+      { "key": "24x20",               "label": "24\" x 20\"",                          "width": 24,   "height": 20,   "piecesPerSheet": 8  },
+      { "key": "24x24",               "label": "24\" x 24\"",                          "width": 24,   "height": 24,   "piecesPerSheet": 8  },
+      { "key": "24x30",               "label": "24\" x 30\"",                          "width": 24,   "height": 30,   "piecesPerSheet": 6  },
+      { "key": "24x31",               "label": "24\" x 31\"",                          "width": 24,   "height": 31,   "piecesPerSheet": 6  },
+      { "key": "24x32",               "label": "24\" x 32\"",                          "width": 24,   "height": 32,   "piecesPerSheet": 6  },
+      { "key": "24x36-5pp",           "label": "24\" x 36\" (5 per sheet)",            "width": 24,   "height": 36,   "piecesPerSheet": 5  },
+      { "key": "24x36-4pp",           "label": "24\" x 36\" (4 per sheet)",            "width": 24,   "height": 36,   "piecesPerSheet": 4  },
+      { "key": "24x48-alt",           "label": "24\" x 48\" (alternate layout)",       "width": 24,   "height": 48,   "piecesPerSheet": 4  },
+      { "key": "24x96",               "label": "24\" x 96\"",                          "width": 24,   "height": 96,   "piecesPerSheet": 2  },
+      { "key": "29x10.5",             "label": "29\" x 10.5\"",                        "width": 29,   "height": 10.5, "piecesPerSheet": 12 },
+      { "key": "30x18",               "label": "30\" x 18\"",                          "width": 30,   "height": 18,   "piecesPerSheet": 8  },
+      { "key": "32x16",               "label": "32\" x 16\"",                          "width": 32,   "height": 16,   "piecesPerSheet": 9  },
+      { "key": "32x96",               "label": "32\" x 96\"",                          "width": 32,   "height": 96,   "piecesPerSheet": 1  },
+      { "key": "36x18",               "label": "36\" x 18\"",                          "width": 36,   "height": 18,   "piecesPerSheet": 5  },
+      { "key": "36x24",               "label": "36\" x 24\"",                          "width": 36,   "height": 24,   "piecesPerSheet": 4  },
+      { "key": "36x36",               "label": "36\" x 36\"",                          "width": 36,   "height": 36,   "piecesPerSheet": 2  },
+      { "key": "36x36-alt",           "label": "36\" x 36\" (alternate layout)",       "width": 36,   "height": 36,   "piecesPerSheet": 2  },
+      { "key": "36x48",               "label": "36\" x 48\"",                          "width": 36,   "height": 48,   "piecesPerSheet": 2  },
+      { "key": "36x96",               "label": "36\" x 96\"",                          "width": 36,   "height": 96,   "piecesPerSheet": 1  },
+      { "key": "40x26",               "label": "40\" x 26\"",                          "width": 40,   "height": 26,   "piecesPerSheet": 3  },
+      { "key": "42x32",               "label": "42\" x 32\"",                          "width": 42,   "height": 32,   "piecesPerSheet": 3  },
+      { "key": "42x48",               "label": "42\" x 48\"",                          "width": 42,   "height": 48,   "piecesPerSheet": 2  },
+      { "key": "43x27",               "label": "43\" x 27\"",                          "width": 43,   "height": 27,   "piecesPerSheet": 3  },
+      { "key": "44x28",               "label": "44\" x 28\"",                          "width": 44,   "height": 28,   "piecesPerSheet": 3  },
+      { "key": "48x9",                "label": "48\" x 9\"",                           "width": 48,   "height": 9,    "piecesPerSheet": 10 },
+      { "key": "48x18",               "label": "48\" x 18\"",                          "width": 48,   "height": 18,   "piecesPerSheet": 5  },
+      { "key": "48x24",               "label": "48\" x 24\"",                          "width": 48,   "height": 24,   "piecesPerSheet": 4  },
+      { "key": "48x32",               "label": "48\" x 32\"",                          "width": 48,   "height": 32,   "piecesPerSheet": 3  },
+      { "key": "48x36",               "label": "48\" x 36\"",                          "width": 48,   "height": 36,   "piecesPerSheet": 2  },
+      { "key": "48x48-vflutes",       "label": "48\" x 48\" (Vertical Flutes)",        "width": 48,   "height": 48,   "piecesPerSheet": 2  },
+      { "key": "48x48-vflutes-sf",    "label": "48\" x 48\" (Vertical Flutes, score & fold)", "width": 48, "height": 48, "piecesPerSheet": 2 },
+      { "key": "48x48-hflutes",       "label": "48\" x 48\" (Horizontal Flutes)",      "width": 48,   "height": 48,   "piecesPerSheet": 2  },
+      { "key": "48x48-hflutes-sf",    "label": "48\" x 48\" (Horizontal Flutes, score & fold)", "width": 48, "height": 48, "piecesPerSheet": 2 },
+      { "key": "48x48",               "label": "48\" x 48\"",                          "width": 48,   "height": 48,   "piecesPerSheet": 2  },
+      { "key": "48x69",               "label": "48\" x 69\"",                          "width": 48,   "height": 69,   "piecesPerSheet": 1  },
+      { "key": "48x72",               "label": "48\" x 72\"",                          "width": 48,   "height": 72,   "piecesPerSheet": 1  },
+      { "key": "48x78",               "label": "48\" x 78\"",                          "width": 48,   "height": 78,   "piecesPerSheet": 1  },
+      { "key": "48x96",               "label": "48\" x 96\"",                          "width": 48,   "height": 96,   "piecesPerSheet": 1  },
+      { "key": "48x96-sf",            "label": "48\" x 96\" (score & fold)",           "width": 48,   "height": 96,   "piecesPerSheet": 1  },
+      { "key": "96x48-r90",           "label": "96\" x 48\" (rotate 90)",              "width": 96,   "height": 48,   "piecesPerSheet": 1  },
+      { "key": "96x48-sf-r90",        "label": "96\" x 48\" (score & fold, rotate 90)","width": 96,   "height": 48,   "piecesPerSheet": 1  }
+    ],
+    "paper": [
+      { "key": "3.5x2-bc",      "label": "3.5\" x 2\" Business Card",  "width": 3.5, "height": 2,   "piecesPerSheet": 72 },
+      { "key": "3.5x2.5-tc",    "label": "3.5\" x 2.5\" Trading Card", "width": 3.5, "height": 2.5, "piecesPerSheet": 56 },
+      { "key": "5x3",           "label": "5\" x 3\"",                  "width": 5,   "height": 3,   "piecesPerSheet": 30 },
+      { "key": "6x4",           "label": "6\" x 4\"",                  "width": 6,   "height": 4,   "piecesPerSheet": 21 },
+      { "key": "7x5",           "label": "7\" x 5\"",                  "width": 7,   "height": 5,   "piecesPerSheet": 12 },
+      { "key": "9x4",           "label": "9\" x 4\"",                  "width": 9,   "height": 4,   "piecesPerSheet": 14 },
+      { "key": "9x6",           "label": "9\" x 6\"",                  "width": 9,   "height": 6,   "piecesPerSheet": 9  },
+      { "key": "11x8.5",        "label": "11\" x 8.5\"",               "width": 11,  "height": 8.5, "piecesPerSheet": 5  },
+      { "key": "14x11",         "label": "14\" x 11\"",                "width": 14,  "height": 11,  "piecesPerSheet": 2  },
+      { "key": "16x12",         "label": "16\" x 12\"",                "width": 16,  "height": 12,  "piecesPerSheet": 2  },
+      { "key": "17x11",         "label": "17\" x 11\"",                "width": 17,  "height": 11,  "piecesPerSheet": 2  },
+      { "key": "12x18",         "label": "12\" x 18\"",                "width": 12,  "height": 18,  "piecesPerSheet": 2  },
+      { "key": "20x16",         "label": "20\" x 16\"",                "width": 20,  "height": 16,  "piecesPerSheet": 1  },
+      { "key": "18x28",         "label": "18\" x 28\"",                "width": 18,  "height": 28,  "piecesPerSheet": 1  }
+    ],
+    "hardCard": [
+      { "key": "3.5x2",  "label": "3.5\" x 2\"",  "width": 3.5, "height": 2 },
+      { "key": "2x3.5",  "label": "2\" x 3.5\"",  "width": 2,   "height": 3.5 }
+    ]
+  },
+
+  "_optionPresets": {
+    "rush":            { "key": "rush",        "label": "Rush (100% upcharge)",  "type": "percentMultiplier", "default": false, "multiplier": 2.00 },
+    "contourCutPct":   { "key": "contourCut",  "label": "Contour cutting (+10%)","type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+    "customCut":       { "key": "customCut",   "label": "Custom cut",            "type": "checkbox",          "default": false, "cost": 0 },
+    "roundedCornersFee":{"key": "roundedCorners","label": "Rounded corners",     "type": "setupFee",          "default": false, "setupFee": 5.00 },
+    "roundedCornersFree":{"key":"roundedCorners","label":"Rounded corners",      "type": "checkbox",          "default": false, "cost": 0 },
+    "freeLamination":  { "key": "lamination",  "label": "Lamination",            "type": "select",            "default": "none",
+      "choices": [
+        { "value": "none",  "label": "No laminate",     "cost": 0 },
+        { "value": "gloss", "label": "Gloss laminate",  "cost": 0 },
+        { "value": "matte", "label": "Matte laminate",  "cost": 0 }
+      ]
+    }
+  },
+
   "categories": {
     "banners": {
-      "label": "Vinyl Banners",
-      "description": "Hemmed and grommeted, indoor/outdoor",
+      "label": "Banners",
+      "description": "Vinyl, HDPE, canvas, mesh, posters, banner stands",
       "products": {
-        "13oz-scrim": {
-          "label": "13oz Scrim Vinyl",
+        "13oz-vinyl": {
+          "label": "13oz HD Vinyl Banner",
           "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 1.25,
-          "minSqFt": 6,
-          "sizes": "custom",
-          "options": {
-            "hemming": { "label": "Hemming", "type": "checkbox", "default": true, "cost": 0 },
-            "grommets": {
-              "label": "Grommets",
-              "type": "select",
-              "choices": [
-                { "value": "every-2ft", "label": "Every 2ft (standard)", "cost": 0 },
-                { "value": "corners-only", "label": "Corners only", "cost": 0 },
-                { "value": "none", "label": "No grommets", "cost": 0 }
-              ]
-            },
-            "polePocket": {
-              "label": "Pole pocket",
-              "type": "select",
-              "choices": [
-                { "value": "none", "label": "None", "cost": 0 },
-                { "value": "top-3in", "label": "Top 3\"", "costPerLinearFt": 1.50 },
-                { "value": "top-bottom-3in", "label": "Top & bottom 3\"", "costPerLinearFt": 3.00 }
-              ]
-            },
-            "doubleSided": { "label": "Double-sided print", "type": "checkbox", "default": false, "costMultiplier": 1.75 }
-          }
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 1.25, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": null, "cost": 1.00, "label": "1000+ sq ft" }
+          ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "polePocket", "label": "Pole pocket",  "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00, "setupFee": 10.00 },
+            { "key": "welding",    "label": "Welding",      "type": "checkbox",    "default": false, "cost": 0 },
+            { "key": "grommets",   "label": "Grommets",     "type": "checkbox",    "default": true,  "cost": 0 },
+            { "key": "rope",       "label": "Rope",         "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00 },
+            { "key": "windSlits",  "label": "Wind slits",   "type": "perSqFtAddon","default": false, "costPerSqFt": 0.50 },
+            { "key": "rush",       "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner"
         },
-        "18oz-blockout": {
-          "label": "18oz Blockout (double-sided)",
+        "15oz-vinyl": {
+          "label": "15oz HD Vinyl Banner",
           "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 2.95,
-          "minSqFt": 6,
-          "sizes": "custom",
-          "options": {
-            "hemming": { "label": "Hemming", "type": "checkbox", "default": true, "cost": 0 },
-            "grommets": {
-              "label": "Grommets",
-              "type": "select",
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 1.75, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": null, "cost": 1.25, "label": "1000+ sq ft" }
+          ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "polePocket", "label": "Pole pocket",  "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00, "setupFee": 10.00 },
+            { "key": "welding",    "label": "Welding",      "type": "checkbox",    "default": false, "cost": 0 },
+            { "key": "grommets",   "label": "Grommets",     "type": "checkbox",    "default": true,  "cost": 0 },
+            { "key": "rope",       "label": "Rope",         "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00 },
+            { "key": "windSlits",  "label": "Wind slits",   "type": "perSqFtAddon","default": false, "costPerSqFt": 0.50 },
+            { "key": "rush",       "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner"
+        },
+        "18oz-vinyl": {
+          "label": "18oz HD Vinyl Banner",
+          "pricingModel": "perSqFt",
+          "tiers": {
+            "single": [
+              { "minQty": 1,    "maxQty": 999,  "cost": 2.25, "label": "1–999 sq ft" },
+              { "minQty": 1000, "maxQty": null, "cost": 1.75, "label": "1000+ sq ft" }
+            ],
+            "double": [
+              { "minQty": 1,    "maxQty": 999,  "cost": 4.25, "label": "1–999 sq ft" },
+              { "minQty": 1000, "maxQty": null, "cost": 3.25, "label": "1000+ sq ft" }
+            ]
+          },
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
               "choices": [
-                { "value": "every-2ft", "label": "Every 2ft (standard)", "cost": 0 },
-                { "value": "none", "label": "No grommets", "cost": 0 }
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
               ]
-            }
-          }
+            },
+            { "key": "polePocket", "label": "Pole pocket",  "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00, "setupFee": 10.00 },
+            { "key": "welding",    "label": "Welding",      "type": "checkbox",    "default": false, "cost": 0 },
+            { "key": "grommets",   "label": "Grommets",     "type": "checkbox",    "default": true,  "cost": 0 },
+            { "key": "rope",       "label": "Rope",         "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00 },
+            { "key": "windSlits",  "label": "Wind slits",   "type": "perSqFtAddon","default": false, "costPerSqFt": 0.50 },
+            { "key": "rush",       "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner"
+        },
+        "hdpe": {
+          "label": "HDPE Banner",
+          "pricingModel": "perSqFt",
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 1.50, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": 4999, "cost": 1.00, "label": "1000–4999 sq ft" },
+            { "minQty": 5000, "maxQty": null, "cost": 0.75, "label": "5000+ sq ft" }
+          ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [],
+          "shippingRule": "banner"
+        },
+        "canvas": {
+          "label": "Canvas",
+          "pricingModel": "perSqFt",
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 4.98, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": 4999, "cost": 3.79, "label": "1000–4999 sq ft" },
+            { "minQty": 5000, "maxQty": null, "cost": 2.49, "label": "5000+ sq ft" }
+          ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [],
+          "shippingRule": "banner"
         },
         "mesh": {
           "label": "Mesh Banner (fence wrap)",
           "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 2.25,
-          "minSqFt": 6,
-          "sizes": "custom",
-          "options": {
-            "hemming": { "label": "Hemming", "type": "checkbox", "default": true, "cost": 0 },
-            "grommets": {
-              "label": "Grommets",
-              "type": "select",
-              "choices": [
-                { "value": "every-2ft", "label": "Every 2ft (standard)", "cost": 0 },
-                { "value": "none", "label": "No grommets", "cost": 0 }
-              ]
-            }
-          }
-        }
-      }
-    },
-
-    "yardSigns": {
-      "label": "Yard Signs (Coroplast)",
-      "description": "Corrugated plastic, single or double-sided",
-      "products": {
-        "coroplast-4mm": {
-          "label": "4mm Coroplast",
-          "pricingModel": "perPiece",
-          "sizes": [
-            { "key": "12x18", "label": "12\" x 18\"", "baseCost": 6.00 },
-            { "key": "18x24", "label": "18\" x 24\"", "baseCost": 9.00 },
-            { "key": "24x18", "label": "24\" x 18\"", "baseCost": 10.00 },
-            { "key": "24x36", "label": "24\" x 36\"", "baseCost": 16.00 },
-            { "key": "36x24", "label": "36\" x 24\"", "baseCost": 16.00 },
-            { "key": "48x24", "label": "48\" x 24\"", "baseCost": 22.00 },
-            { "key": "48x36", "label": "48\" x 36\"", "baseCost": 30.00 }
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 2.44, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": 2499, "cost": 1.49, "label": "1000–2499 sq ft" },
+            { "minQty": 2500, "maxQty": 4999, "cost": 1.09, "label": "2500–4999 sq ft" },
+            { "minQty": 5000, "maxQty": null, "cost": 0.99, "label": "5000+ sq ft" }
           ],
-          "options": {
-            "sides": {
-              "label": "Sides",
-              "type": "select",
-              "choices": [
-                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
-                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
-              ]
-            },
-            "hStakes": { "label": "H-stakes (per each)", "type": "perEachAddon", "costPerEach": 1.50 }
-          }
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "polePocket", "label": "Pole pocket",  "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00, "setupFee": 10.00 },
+            { "key": "grommets",   "label": "Grommets",     "type": "checkbox",    "default": true,  "cost": 0 },
+            { "key": "welding",    "label": "Welding",      "type": "checkbox",    "default": false, "cost": 0 },
+            { "key": "rope",       "label": "Rope",         "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00 },
+            { "key": "webbing",    "label": "Webbing",      "type": "perLinearFt", "default": false, "costPerLinearFt": 1.00 },
+            { "key": "rush",       "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner"
         },
-        "coroplast-10mm": {
-          "label": "10mm Coroplast (heavy duty)",
-          "pricingModel": "perPiece",
-          "sizes": [
-            { "key": "18x24", "label": "18\" x 24\"", "baseCost": 14.00 },
-            { "key": "24x36", "label": "24\" x 36\"", "baseCost": 24.00 },
-            { "key": "48x24", "label": "48\" x 24\"", "baseCost": 32.00 }
+        "poster": {
+          "label": "Poster",
+          "pricingModel": "perSqFt",
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 2.00, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": 4999, "cost": 1.50, "label": "1000–4999 sq ft" },
+            { "minQty": 5000, "maxQty": null, "cost": 1.00, "label": "5000+ sq ft" }
           ],
-          "options": {
-            "sides": {
-              "label": "Sides",
-              "type": "select",
-              "choices": [
-                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
-                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
-              ]
-            }
-          }
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner"
+        },
+        "nocurl": {
+          "label": "NoCurl Banner",
+          "pricingModel": "perSqFt",
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 3.00, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": null, "cost": 2.00, "label": "1000+ sq ft" }
+          ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner"
+        },
+        "econo-banner-stand": {
+          "label": "Econo Banner Stand",
+          "pricingModel": "perPiece",
+          "tiers": [
+            { "minQty": 1, "maxQty": null, "cost": 90.00, "label": "1+ stands" }
+          ],
+          "tierBreakBy": "quantity",
+          "sizeMode": "none",
+          "options": [
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "banner_stand"
         }
       }
     },
 
     "rigidSigns": {
-      "label": "Rigid Signs (ACM / PVC)",
-      "description": "Aluminum composite or PVC for durable signage",
+      "label": "Rigid Signs",
+      "description": "Coro, Acrylic, Foamcore, PVC, Polystyrene, Aluminum, Backlite, JBond",
       "products": {
-        "acm-3mm": {
-          "label": "3mm ACM (Dibond)",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 5.50,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "sides": {
-              "label": "Sides",
-              "type": "select",
+        "coro-4mm": {
+          "label": "Coro 4mm",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 44.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 33.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 30.00, "label": "51+ sheets" }
+            ],
+            "double": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 55.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 44.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 40.00, "label": "51+ sheets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "rigidSheets",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
               "choices": [
-                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
-                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
               ]
             },
-            "drillHoles": { "label": "Drill holes (per each)", "type": "perEachAddon", "costPerEach": 0.50 }
-          }
+            { "key": "stakes",     "label": "Standard wire step stakes", "type": "perEachAddon", "default": 0, "costPerEach": 1.25 },
+            { "key": "stakesHd",   "label": "Heavy-duty step stakes",    "type": "perEachAddon", "default": 0, "costPerEach": 2.25 },
+            { "key": "grommets",   "label": "Grommets",                  "type": "perEachAddon", "default": 0, "costPerEach": 0.25, "setupFee": 15.00 },
+            { "key": "customCut",  "label": "Custom cut",                "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "contourCut", "label": "Contour cutting (+10%)",    "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "glossFinish","label": "Gloss finish",              "type": "perEachAddon", "default": 0, "costPerEach": 4.00 },
+            { "key": "scoreFold",  "label": "Score and fold",            "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",      "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "rigid_sheet"
+        },
+        "coro-10mm": {
+          "label": "Coro 10mm",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 70.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 60.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 55.00, "label": "51+ sheets" }
+            ],
+            "double": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 90.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 75.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 65.00, "label": "51+ sheets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "rigidSheets",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "stakes",     "label": "Standard wire step stakes", "type": "perEachAddon", "default": 0, "costPerEach": 1.25 },
+            { "key": "stakesHd",   "label": "Heavy-duty step stakes",    "type": "perEachAddon", "default": 0, "costPerEach": 2.25 },
+            { "key": "grommets",   "label": "Grommets",                  "type": "perEachAddon", "default": 0, "costPerEach": 0.25, "setupFee": 15.00 },
+            { "key": "customCut",  "label": "Custom cut",                "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "contourCut", "label": "Contour cutting (+10%)",    "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "glossFinish","label": "Gloss finish",              "type": "perEachAddon", "default": 0, "costPerEach": 4.00 },
+            { "key": "scoreFold",  "label": "Score and fold",            "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",      "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "rigid_sheet"
+        },
+        "acrylic": {
+          "label": "Acrylic",
+          "pricingModel": "perSqInch",
+          "tiers": [
+            { "minQty": 1, "maxQty": null, "cost": 0.10, "label": "1+ ($0.10/sq in)" }
+          ],
+          "tierBreakBy": "quantity",
+          "minPrice": 14.40,
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut",      "label": "Contour cut (+10%)",    "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "roundedCorners",  "label": "Rounded corners",       "type": "setupFee",          "default": false, "setupFee": 5.00 },
+            { "key": "standOffSilver",  "label": "Stand-off (Silver)",                    "type": "perEachAddon", "default": 0, "costPerEach": 2.50 },
+            { "key": "standOffBlack",   "label": "Stand-off (Black)",                     "type": "perEachAddon", "default": 0, "costPerEach": 3.50 },
+            { "key": "addStandOffSilver","label": "Additional stand-off (Silver)",        "type": "perEachAddon", "default": 0, "costPerEach": 2.50 },
+            { "key": "addStandOffBlack","label": "Additional stand-off (Black)",          "type": "perEachAddon", "default": 0, "costPerEach": 3.50 }
+          ],
+          "shippingRule": "acrylic_sheet",
+          "sheetSqIn": 4608
+        },
+        "foamcore": {
+          "label": "Foamcore",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 70.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 55.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 50.00, "label": "51+ sheets" }
+            ],
+            "double": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 80.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 65.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 60.00, "label": "51+ sheets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "rigidSheets",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "customCut",  "label": "Custom cut",             "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "glossFinish","label": "Gloss finish",           "type": "perEachAddon", "default": 0, "costPerEach": 4.00 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "rigid_sheet"
         },
         "pvc-3mm": {
-          "label": "3mm PVC (Sintra)",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 4.25,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "sides": {
-              "label": "Sides",
-              "type": "select",
+          "label": "PVC 3mm",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 65.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 17,   "cost": 55.00, "label": "10–17 sheets" },
+              { "minQty": 18, "maxQty": null, "cost": 50.00, "label": "18+ sheets" }
+            ],
+            "double": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 85.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 17,   "cost": 70.00, "label": "10–17 sheets" },
+              { "minQty": 18, "maxQty": null, "cost": 60.00, "label": "18+ sheets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "rigidSheets",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
               "choices": [
-                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
-                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
               ]
-            }
-          }
+            },
+            { "key": "customCut",  "label": "Custom cut",             "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "rigid_sheet"
         },
         "pvc-6mm": {
-          "label": "6mm PVC (Sintra)",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 6.50,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "sides": {
-              "label": "Sides",
-              "type": "select",
+          "label": "PVC 6mm",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 95.00,  "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 17,   "cost": 85.00,  "label": "10–17 sheets" },
+              { "minQty": 18, "maxQty": null, "cost": 75.00,  "label": "18+ sheets" }
+            ],
+            "double": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 115.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 17,   "cost": 100.00, "label": "10–17 sheets" },
+              { "minQty": 18, "maxQty": null, "cost": 85.00,  "label": "18+ sheets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "rigidSheets",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
               "choices": [
-                { "value": "single", "label": "Single-sided", "costMultiplier": 1.0 },
-                { "value": "double", "label": "Double-sided", "costMultiplier": 1.5 }
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
               ]
-            }
-          }
+            },
+            { "key": "customCut",  "label": "Custom cut",             "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "rigid_sheet"
+        },
+        "polystyrene-03": {
+          "label": "Polystyrene .03\"",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 55.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 45.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 40.00, "label": "51+ sheets" }
+            ],
+            "double": [
+              { "minQty": 1,  "maxQty": 9,    "cost": 65.00, "label": "1–9 sheets" },
+              { "minQty": 10, "maxQty": 50,   "cost": 55.00, "label": "10–50 sheets" },
+              { "minQty": 51, "maxQty": null, "cost": 50.00, "label": "51+ sheets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "rigidSheets",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "customCut",  "label": "Custom cut",             "type": "checkbox",     "default": false, "cost": 0 },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "glossFinish","label": "Gloss finish",           "type": "perEachAddon", "default": 0, "costPerEach": 4.00 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "rigid_sheet"
+        },
+        "aluminum-040": {
+          "label": "Aluminum .040",
+          "pricingModel": "perSqInch",
+          "tiers": {
+            "single": [ { "minQty": 1, "maxQty": null, "cost": 0.06, "label": "1+ ($0.06/sq in)" } ],
+            "double": [ { "minQty": 1, "maxQty": null, "cost": 0.07, "label": "1+ ($0.07/sq in)" } ]
+          },
+          "tierBreakBy": "quantity",
+          "minPrice": { "single": 8.64, "double": 10.08 },
+          "sizeMode": "custom",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "customCut",     "label": "Custom cut",          "type": "checkbox",          "default": false, "cost": 0 },
+            { "key": "contourCut",    "label": "Contour cut (+10%)",  "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "roundedCorners","label": "Rounded corners",     "type": "setupFee",          "default": false, "setupFee": 5.00 }
+          ],
+          "shippingRule": "acrylic_sheet",
+          "sheetSqIn": 4608
+        },
+        "aluminum-080": {
+          "label": "Aluminum .080",
+          "pricingModel": "perSqInch",
+          "tiers": {
+            "single": [ { "minQty": 1, "maxQty": null, "cost": 0.10, "label": "1+ ($0.10/sq in)" } ],
+            "double": [ { "minQty": 1, "maxQty": null, "cost": 0.11, "label": "1+ ($0.11/sq in)" } ]
+          },
+          "tierBreakBy": "quantity",
+          "minPrice": { "single": 14.40, "double": 15.84 },
+          "sizeMode": "custom",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "customCut",     "label": "Custom cut",          "type": "checkbox",          "default": false, "cost": 0 },
+            { "key": "contourCut",    "label": "Contour cut (+10%)",  "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "roundedCorners","label": "Rounded corners",     "type": "setupFee",          "default": false, "setupFee": 5.00 }
+          ],
+          "shippingRule": "acrylic_sheet",
+          "sheetSqIn": 4608
+        },
+        "backlite": {
+          "label": "Backlite",
+          "pricingModel": "perSqFt",
+          "tiers": [
+            { "minQty": 1,    "maxQty": 999,  "cost": 4.00, "label": "1–999 sq ft" },
+            { "minQty": 1000, "maxQty": 4999, "cost": 3.00, "label": "1000–4999 sq ft" },
+            { "minQty": 5000, "maxQty": null, "cost": 3.00, "label": "5000+ sq ft" }
+          ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [],
+          "shippingRule": "banner_simple"
+        },
+        "jbond-3mm": {
+          "label": "JBond 3mm",
+          "pricingModel": "perSqInch",
+          "tiers": {
+            "single": [ { "minQty": 1, "maxQty": null, "cost": 0.05, "label": "1+ ($0.05/sq in)" } ],
+            "double": [ { "minQty": 1, "maxQty": null, "cost": 0.06, "label": "1+ ($0.06/sq in)" } ]
+          },
+          "tierBreakBy": "quantity",
+          "minPrice": { "single": 7.20, "double": 8.64 },
+          "sizeMode": "custom",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "customCut",     "label": "Custom cut",          "type": "checkbox",          "default": false, "cost": 0 },
+            { "key": "contourCut",    "label": "Contour cut (+10%)",  "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "roundedCorners","label": "Rounded corners",     "type": "setupFee",          "default": false, "setupFee": 5.00 }
+          ],
+          "shippingRule": "acrylic_sheet",
+          "sheetSqIn": 4608
+        },
+        "jbond-6mm": {
+          "label": "JBond 6mm",
+          "pricingModel": "perSqInch",
+          "tiers": {
+            "single": [ { "minQty": 1, "maxQty": null, "cost": 0.08, "label": "1+ ($0.08/sq in)" } ],
+            "double": [ { "minQty": 1, "maxQty": null, "cost": 0.09, "label": "1+ ($0.09/sq in)" } ]
+          },
+          "tierBreakBy": "quantity",
+          "minPrice": { "single": 11.52, "double": 12.96 },
+          "sizeMode": "custom",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "customCut",     "label": "Custom cut",          "type": "checkbox",          "default": false, "cost": 0 },
+            { "key": "contourCut",    "label": "Contour cut (+10%)",  "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "roundedCorners","label": "Rounded corners",     "type": "setupFee",          "default": false, "setupFee": 5.00 }
+          ],
+          "shippingRule": "acrylic_sheet",
+          "sheetSqIn": 4608
         }
       }
     },
 
-    "decals": {
-      "label": "Decals & Vinyl Lettering",
-      "description": "Cut or printed vinyl, indoor/outdoor",
+    "adhesive": {
+      "label": "Adhesive Products",
+      "description": "3M, GF, Orajet, window film, decals, footprints, dry erase, reflective",
       "products": {
-        "printed-vinyl-contour": {
-          "label": "Printed Vinyl Decal (contour cut)",
+        "3m-ij35c": {
+          "label": "3M IJ-35C",
           "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 4.00,
-          "minSqFt": 1,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 2.99, "label": "1+ ($2.99/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "lamination", "label": "Lamination", "type": "select", "default": "none",
               "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 0.75 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 0.75 }
+                { "value": "none",  "label": "No laminate",    "cost": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "cost": 0 },
+                { "value": "matte", "label": "Matte laminate", "cost": 0 }
               ]
-            }
-          }
+            },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
         },
-        "printed-vinyl-kisscut": {
-          "label": "Printed Vinyl Decal (kiss cut sheet)",
+        "3m-controltac": {
+          "label": "3M Controltac",
           "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 3.50,
-          "minSqFt": 1,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 4.99, "label": "1+ ($4.99/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "lamination", "label": "Lamination", "type": "select", "default": "none",
               "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 0.75 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 0.75 }
+                { "value": "none",  "label": "No laminate",    "cost": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "cost": 0 },
+                { "value": "matte", "label": "Matte laminate", "cost": 0 }
               ]
-            }
-          }
+            },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
         },
-        "cut-vinyl-lettering": {
-          "label": "Cut Vinyl Lettering (single color)",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 3.00,
-          "minSqFt": 1,
-          "sizes": "custom",
-          "options": {
-            "color": {
-              "label": "Color",
-              "type": "select",
+        "window-cling": {
+          "label": "Window Cling",
+          "pricingModel": "perSqInch",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 0.02, "label": "1+ ($0.02/sq in)" } ],
+          "tierBreakBy": "quantity",
+          "minPrice": 2.88,
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "application", "label": "Application", "type": "select", "default": "inside",
               "choices": [
-                { "value": "black", "label": "Black", "cost": 0 },
-                { "value": "white", "label": "White", "cost": 0 },
-                { "value": "red", "label": "Red", "cost": 0 },
-                { "value": "blue", "label": "Blue", "cost": 0 },
-                { "value": "other", "label": "Other (specify in notes)", "cost": 0 }
+                { "value": "inside",  "label": "Inside",  "cost": 0 },
+                { "value": "outside", "label": "Outside", "cost": 0 }
+              ]
+            },
+            { "key": "viewable", "label": "Viewable", "type": "select", "default": "inside",
+              "choices": [
+                { "value": "inside",  "label": "Inside",  "cost": 0 },
+                { "value": "outside", "label": "Outside", "cost": 0 }
               ]
             }
-          }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "gf-203oapae": {
+          "label": "GF 203OAPAE",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 2.49, "label": "1+ ($2.49/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "lamination", "label": "Lamination", "type": "select", "default": "none",
+              "choices": [
+                { "value": "none",  "label": "No laminate",    "cost": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "cost": 0 },
+                { "value": "matte", "label": "Matte laminate", "cost": 0 }
+              ]
+            },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "gf830-automark": {
+          "label": "GF830 AutoMark",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 3.99, "label": "1+ ($3.99/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "lamination", "label": "Lamination", "type": "select", "default": "none",
+              "choices": [
+                { "value": "none",  "label": "No laminate",    "cost": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "cost": 0 },
+                { "value": "matte", "label": "Matte laminate", "cost": 0 }
+              ]
+            },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "orajet-clear": {
+          "label": "Orajet Clear",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 6.00, "label": "1+ ($6.00/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "one-way-window-5050": {
+          "label": "One Way Window 50/50 Perforation",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 2.75, "label": "1+ ($2.75/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "lamination", "label": "Lamination", "type": "select", "default": "none",
+              "choices": [
+                { "value": "none",  "label": "No laminate",                       "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate (+$1.24/sq ft)",     "costPerSqFt": 1.24 }
+              ]
+            },
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "one-way-window-7030": {
+          "label": "One Way Window 70/30 Perforation",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 2.75, "label": "1+ ($2.75/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "lamination", "label": "Lamination", "type": "select", "default": "none",
+              "choices": [
+                { "value": "none",  "label": "No laminate",                       "costPerSqFt": 0 },
+                { "value": "gloss", "label": "Gloss laminate (+$1.24/sq ft)",     "costPerSqFt": 1.24 }
+              ]
+            },
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "dualview": {
+          "label": "DualView",
+          "pricingModel": "perSqFt",
+          "tiers": {
+            "single": [ { "minQty": 1, "maxQty": null, "cost": 2.79, "label": "1+ ($2.79/sq ft)" } ],
+            "double": [ { "minQty": 1, "maxQty": null, "cost": 4.99, "label": "1+ ($4.99/sq ft)" } ]
+          },
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "footprints": {
+          "label": "Footprints",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 2.50, "label": "1+ ($2.50/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "bootprints": {
+          "label": "BootPrints",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 12.50, "label": "1+ ($12.50/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cut (+10%)",   "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "lowtac-wall": {
+          "label": "Low Tac Wall",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 3.47, "label": "1+ ($3.47/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "dry-erase": {
+          "label": "Dry Erase",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 3.50, "label": "1+ ($3.50/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "rush",       "label": "Rush (100% upcharge)",   "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "adhesive"
+        },
+        "reflective": {
+          "label": "Reflective",
+          "pricingModel": "perSqFt",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 8.00, "label": "1+ ($8.00/sq ft)" } ],
+          "tierBreakBy": "totalSqFt",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut", "label": "Contour cutting (+10%)", "type": "percentMultiplier", "default": false, "multiplier": 1.10 }
+          ],
+          "shippingRule": "adhesive"
         }
       }
     },
 
     "magnets": {
-      "label": "Magnetic Signs",
-      "description": "Vehicle door magnets, 30mil",
+      "label": "Magnets",
+      "description": "Vehicle door magnets and custom-cut magnets",
       "products": {
-        "car-magnet-30mil": {
-          "label": "30mil Vehicle Magnet",
+        "vehicle-magnet": {
+          "label": "Vehicle Magnet",
           "pricingModel": "perPiece",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 1, "label": "1+" } ],
+          "tierBreakBy": "quantity",
+          "sizeMode": "preset",
           "sizes": [
-            { "key": "12x18", "label": "12\" x 18\"", "baseCost": 14.00 },
-            { "key": "18x24", "label": "18\" x 24\"", "baseCost": 22.00 },
-            { "key": "24x12", "label": "24\" x 12\"", "baseCost": 16.00 },
-            { "key": "24x18", "label": "24\" x 18\"", "baseCost": 22.00 },
-            { "key": "custom", "label": "Custom size", "baseCost": null, "perSqFtCost": 6.00 }
+            { "key": "18x12",  "label": "18\" x 12\"",  "width": 18, "height": 12, "baseCost": 11.95 },
+            { "key": "24x12",  "label": "24\" x 12\"",  "width": 24, "height": 12, "baseCost": 14.95 },
+            { "key": "24x18",  "label": "24\" x 18\"",  "width": 24, "height": 18, "baseCost": 20.95 },
+            { "key": "42x12",  "label": "42\" x 12\"",  "width": 42, "height": 12, "baseCost": 29.95 },
+            { "key": "72x24",  "label": "72\" x 24\"",  "width": 72, "height": 24, "baseCost": 89.70 }
           ],
-          "options": {}
+          "options": [
+            { "key": "roundedCorners", "label": "Rounded corners", "type": "checkbox", "default": false, "cost": 0 },
+            { "key": "rush",           "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "magnet_each"
+        },
+        "custom-magnet": {
+          "label": "Custom Magnets",
+          "pricingModel": "perSqInch",
+          "tiers": [ { "minQty": 1, "maxQty": null, "cost": 0.07, "label": "1+ ($0.07/sq in)" } ],
+          "tierBreakBy": "quantity",
+          "sizeMode": "custom",
+          "options": [
+            { "key": "contourCut",     "label": "Contour cut (+10%)",  "type": "percentMultiplier", "default": false, "multiplier": 1.10 },
+            { "key": "roundedCorners", "label": "Rounded corners",     "type": "checkbox",          "default": false, "cost": 0 },
+            { "key": "rush",           "label": "Rush (100% upcharge)","type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "magnet_sheet",
+          "sheetSqIn": 4608
         }
       }
     },
 
-    "posters": {
-      "label": "Posters",
-      "description": "Large format paper posters, indoor use",
+    "handheld": {
+      "label": "Handheld",
+      "description": "Paper cards and rigid hard-card sets",
       "products": {
-        "poster-paper-gloss": {
-          "label": "Gloss Poster Paper",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 2.00,
-          "minSqFt": 2,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
+        "paper": {
+          "label": "Paper",
+          "pricingModel": "perSheet",
+          "tiers": {
+            "single": [ { "minQty": 1, "maxQty": null, "cost": 2.00, "label": "1+ sheets ($2.00/sheet)" } ],
+            "double": [ { "minQty": 1, "maxQty": null, "cost": 2.00, "label": "1+ sheets ($2.00/sheet)" } ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "paper",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
               "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
               ]
-            }
-          }
+            },
+            { "key": "coating", "label": "Coating", "type": "select", "default": "none",
+              "choices": [
+                { "value": "none",  "label": "No coating",     "cost": 0 },
+                { "value": "gloss", "label": "Gloss laminate", "cost": 0 }
+              ]
+            },
+            { "key": "orientation", "label": "Orientation", "type": "select", "default": "default",
+              "choices": [
+                { "value": "default",   "label": "Default",   "cost": 0 },
+                { "value": "portrait",  "label": "Portrait",  "cost": 0 },
+                { "value": "landscape", "label": "Landscape", "cost": 0 }
+              ]
+            },
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "handheld"
         },
-        "poster-paper-matte": {
-          "label": "Matte Poster Paper",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 2.00,
-          "minSqFt": 2,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
+        "hardcard-040": {
+          "label": "Hard Card 0.04\"",
+          "pricingModel": "perSheet",
+          "quantityUnit": "sets",
+          "tiers": {
+            "single": [
+              { "minQty": 1, "maxQty": 8,    "cost": 55.00, "label": "1–8 sets" },
+              { "minQty": 9, "maxQty": null, "cost": 45.00, "label": "9+ sets" }
+            ],
+            "double": [
+              { "minQty": 1, "maxQty": 8,    "cost": 60.00, "label": "1–8 sets" },
+              { "minQty": 9, "maxQty": null, "cost": 50.00, "label": "9+ sets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "hardCard",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
               "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
               ]
-            }
-          }
+            },
+            { "key": "orientation", "label": "Orientation", "type": "select", "default": "default",
+              "choices": [
+                { "value": "default",   "label": "Default",   "cost": 0 },
+                { "value": "portrait",  "label": "Portrait",  "cost": 0 },
+                { "value": "landscape", "label": "Landscape", "cost": 0 }
+              ]
+            },
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "hardcard"
+        },
+        "hardcard-025": {
+          "label": "Hard Card 0.025\"",
+          "pricingModel": "perSheet",
+          "quantityUnit": "sets",
+          "tiers": {
+            "single": [
+              { "minQty": 1, "maxQty": 8,    "cost": 40.00, "label": "1–8 sets" },
+              { "minQty": 9, "maxQty": null, "cost": 32.80, "label": "9+ sets" }
+            ],
+            "double": [
+              { "minQty": 1, "maxQty": 8,    "cost": 45.00, "label": "1–8 sets" },
+              { "minQty": 9, "maxQty": null, "cost": 37.00, "label": "9+ sets" }
+            ]
+          },
+          "tierBreakBy": "sheets",
+          "sizesRef": "hardCard",
+          "sizeMode": "preset",
+          "options": [
+            { "key": "sides", "label": "Sides", "type": "tierVariant", "default": "single",
+              "choices": [
+                { "value": "single", "label": "Single-sided" },
+                { "value": "double", "label": "Double-sided" }
+              ]
+            },
+            { "key": "orientation", "label": "Orientation", "type": "select", "default": "default",
+              "choices": [
+                { "value": "default",   "label": "Default",   "cost": 0 },
+                { "value": "portrait",  "label": "Portrait",  "cost": 0 },
+                { "value": "landscape", "label": "Landscape", "cost": 0 }
+              ]
+            },
+            { "key": "rush", "label": "Rush (100% upcharge)", "type": "percentMultiplier", "default": false, "multiplier": 2.00 }
+          ],
+          "shippingRule": "hardcard"
         }
       }
-    },
+    }
+  },
 
-    "foamBoard": {
-      "label": "Foam Board / Gatorboard",
-      "description": "Lightweight rigid display boards",
-      "products": {
-        "foam-board-3-16": {
-          "label": "3/16\" Foam Board",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 4.50,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
-              "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
-              ]
-            }
-          }
+  "shippingRules": {
+    "banner": {
+      "description": "Banner / mesh / canvas / vinyl roll goods. $10 up to 999 sq ft, freight at 1000+ sq ft, freight when any dim ≥ 123\".",
+      "kind": "totalSqFt",
+      "tiers": [
+        { "maxSqFt": 999,  "cost": 10.00, "label": "1–999 sq ft" },
+        { "maxSqFt": null, "cost": 199.00, "label": "1000+ sq ft (freight)", "freight": true }
+      ],
+      "freightTriggers": [
+        { "kind": "anyDimensionGte", "value": 123, "cost": 199.00, "label": "123\" or larger (freight)" }
+      ]
+    },
+    "banner_simple": {
+      "description": "Simple sq-ft banner shipping with no oversize trigger (Backlite).",
+      "kind": "totalSqFt",
+      "tiers": [
+        { "maxSqFt": 999,  "cost": 10.00, "label": "1–999 sq ft" },
+        { "maxSqFt": null, "cost": 199.00, "label": "1000+ sq ft (freight)", "freight": true }
+      ]
+    },
+    "banner_stand": {
+      "description": "Econo banner stand. $10/each up to 19, freight at 20+.",
+      "kind": "perItem",
+      "tiers": [
+        { "maxItems": 19,  "cost": 10.00,  "label": "1–19 stands ($10/each)", "perItem": true },
+        { "maxItems": null,"cost": 199.00, "label": "20+ stands (freight)", "freight": true }
+      ]
+    },
+    "adhesive": {
+      "description": "Adhesive products. $10 up to 999 sq ft, freight at 1000+ sq ft, freight when any dim ≥ 123\".",
+      "kind": "totalSqFt",
+      "tiers": [
+        { "maxSqFt": 999,  "cost": 10.00, "label": "1–999 sq ft" },
+        { "maxSqFt": null, "cost": 199.00, "label": "1000+ sq ft (freight)", "freight": true }
+      ],
+      "freightTriggers": [
+        { "kind": "anyDimensionGte", "value": 123, "cost": 199.00, "label": "123\" or larger (freight)" }
+      ]
+    },
+    "rigid_sheet": {
+      "description": "Rigid sheet products (Coro / Foamcore / PVC / Polystyrene). Tiered by sheet count, banded by finished size.",
+      "kind": "sheetBands",
+      "sizeBands": [
+        {
+          "name": "24x36 and under",        "maxWidth": 24, "maxHeight": 36,
+          "tiers": [
+            { "perSheets": 3,  "cost": 10.00,  "label": "$10 per 3 sheets" },
+            { "minSheets": 58, "cost": 199.00, "label": "58+ sheets (freight)", "freight": true }
+          ]
         },
-        "foam-board-1-2": {
-          "label": "1/2\" Foam Board",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 5.50,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
-              "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
-              ]
-            }
-          }
+        {
+          "name": "24x36 to 32x48",         "minWidth": 24, "maxWidth": 32, "maxHeight": 48,
+          "tiers": [
+            { "perSheets": 3,  "cost": 15.00,  "label": "$15 per 3 sheets" },
+            { "minSheets": 22, "cost": 199.00, "label": "22+ sheets (freight)", "freight": true }
+          ]
         },
-        "gatorboard-3-16": {
-          "label": "3/16\" Gatorboard (rigid)",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 6.50,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
-              "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
-              ]
-            }
-          }
+        {
+          "name": "36x36 to 36x48",         "minWidth": 36, "maxWidth": 36, "maxHeight": 48,
+          "tiers": [
+            { "perSheets": 3,  "cost": 35.00,  "label": "$35 per 3 sheets" },
+            { "minSheets": 22, "cost": 199.00, "label": "22+ sheets (freight)", "freight": true }
+          ]
         },
-        "gatorboard-1-2": {
-          "label": "1/2\" Gatorboard (rigid)",
-          "pricingModel": "perSqFt",
-          "baseCostPerSqFt": 7.50,
-          "minSqFt": 4,
-          "sizes": "custom",
-          "options": {
-            "lamination": {
-              "label": "Lamination",
-              "type": "select",
-              "choices": [
-                { "value": "none", "label": "None", "costPerSqFt": 0 },
-                { "value": "gloss", "label": "Gloss laminate", "costPerSqFt": 1.00 },
-                { "value": "matte", "label": "Matte laminate", "costPerSqFt": 1.00 }
-              ]
-            }
-          }
+        {
+          "name": "36x48 to 48x48",         "minWidth": 36, "maxWidth": 48, "maxHeight": 48,
+          "tiers": [
+            { "maxSheets": 5,                 "cost": 50.00,  "label": "1–5 sheets" },
+            { "minSheets": 6,  "maxSheets": 9,"cost": 75.00,  "label": "6–9 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "39x72 and 24x96",        "minWidth": 24, "maxWidth": 39, "maxHeight": 96,
+          "tiers": [
+            { "maxSheets": 9,  "cost": 75.00,  "label": "1–9 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "48x96",                  "minWidth": 48, "maxWidth": 48, "maxHeight": 96,
+          "tiers": [
+            { "minSheets": 1, "cost": 199.00, "label": "1+ sheets (freight)", "freight": true }
+          ]
         }
-      }
+      ]
+    },
+    "acrylic_sheet": {
+      "description": "Acrylic / Aluminum / JBond. Same band shapes as rigid_sheet but with 10+ freight thresholds on the smaller bands.",
+      "kind": "sheetBands",
+      "sheetSqIn": 4608,
+      "sizeBands": [
+        {
+          "name": "24x36 and under",        "maxWidth": 24, "maxHeight": 36,
+          "tiers": [
+            { "perSheets": 3,  "cost": 10.00,  "label": "$10 per 3 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "24x36 to 32x48",         "minWidth": 24, "maxWidth": 32, "maxHeight": 48,
+          "tiers": [
+            { "perSheets": 3,  "cost": 15.00,  "label": "$15 per 3 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "36x36 to 36x48",         "minWidth": 36, "maxWidth": 36, "maxHeight": 48,
+          "tiers": [
+            { "perSheets": 3,  "cost": 35.00,  "label": "$35 per 3 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "36x48 to 48x48",         "minWidth": 36, "maxWidth": 48, "maxHeight": 48,
+          "tiers": [
+            { "maxSheets": 5,                 "cost": 50.00,  "label": "1–5 sheets" },
+            { "minSheets": 6,  "maxSheets": 9,"cost": 75.00,  "label": "6–9 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "39x72 and 24x96",        "minWidth": 24, "maxWidth": 39, "maxHeight": 96,
+          "tiers": [
+            { "maxSheets": 9,  "cost": 75.00,  "label": "1–9 sheets" },
+            { "minSheets": 10, "cost": 199.00, "label": "10+ sheets (freight)", "freight": true }
+          ]
+        },
+        {
+          "name": "48x96",                  "minWidth": 48, "maxWidth": 48, "maxHeight": 96,
+          "tiers": [
+            { "minSheets": 1, "cost": 199.00, "label": "1+ sheets (freight)", "freight": true }
+          ]
+        }
+      ]
+    },
+    "magnet_each": {
+      "description": "Vehicle magnets. $10 per 10 magnets, freight at 191+.",
+      "kind": "perItem",
+      "tiers": [
+        { "perItems": 10,    "cost": 10.00,  "label": "$10 per 10 magnets" },
+        { "minItems": 191,   "cost": 199.00, "label": "191+ magnets (freight)", "freight": true }
+      ]
+    },
+    "magnet_sheet": {
+      "description": "Custom magnets by sq inch. $10 per 2025 sq in, freight at 40500+ sq in.",
+      "kind": "perSqIn",
+      "tiers": [
+        { "perSqIn": 2025,    "cost": 10.00,  "label": "$10 per 2025 sq in" },
+        { "minSqIn": 40500,   "cost": 199.00, "label": "40500+ sq in (freight)", "freight": true }
+      ]
+    },
+    "handheld": {
+      "description": "Paper sheets. $10 per 100 sheets (no freight tier listed in source).",
+      "kind": "perSheet",
+      "tiers": [
+        { "perSheets": 100, "cost": 10.00, "label": "$10 per 100 sheets" }
+      ]
+    },
+    "hardcard": {
+      "description": "Hard card sets. $10 per 10 sets (no freight tier listed in source).",
+      "kind": "perSheet",
+      "tiers": [
+        { "perSheets": 10, "cost": 10.00, "label": "$10 per 10 sets" }
+      ]
     }
   },
 
   "markup": {
     "type": "tiered",
     "tiers": [
-      { "maxCost": 50, "multiplier": 2.5, "label": "Under $50" },
-      { "maxCost": 200, "multiplier": 2.0, "label": "$50–$200" },
+      { "maxCost": 50,   "multiplier": 2.5,  "label": "Under $50" },
+      { "maxCost": 200,  "multiplier": 2.0,  "label": "$50–$200" },
       { "maxCost": null, "multiplier": 1.75, "label": "Over $200" }
     ]
-  },
-
-  "quantityDiscounts": [
-    { "minQty": 1, "maxQty": 4, "discount": 0, "label": "1–4" },
-    { "minQty": 5, "maxQty": 9, "discount": 0.05, "label": "5–9 (5% off)" },
-    { "minQty": 10, "maxQty": 24, "discount": 0.10, "label": "10–24 (10% off)" },
-    { "minQty": 25, "maxQty": null, "discount": 0.15, "label": "25+ (15% off)" }
-  ]
+  }
 }

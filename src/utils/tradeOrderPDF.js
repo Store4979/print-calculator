@@ -1,14 +1,12 @@
 // ============================================================
-//  TRADE PRINT ORDER SHEET (Signs365)
+//  TRADE PRINT ORDER SHEET (Signs365) — v2
 //
-//  Single-page letter portrait PDF. Staff use this as the source of
-//  truth for transcribing the order onto signs365.com — every option
-//  and dimension is spelled out, the barcode keys it back to the
-//  shop's records, and the internal cost block (clearly marked) is
-//  for shop-floor reference only.
+//  Single-page letter portrait. Updated for the v2 pricing engine:
+//  shipping is its own line, setup fees called out separately, the
+//  active quantity/markup tiers spelled out, and any freight warning
+//  rendered as a callout the floor staff can't miss.
 //
-//  jsPDF is loaded via CDN at index.html (window.jspdf.jsPDF) — do
-//  not import it as a module.
+//  jsPDF is loaded via CDN — don't import it as a module.
 // ============================================================
 
 import { drawBarcode128 } from "../barcode128.js";
@@ -22,7 +20,6 @@ const STORE = {
 
 const LOGO_URL = "/ups-logo.png";
 let LOGO_DATA_URL = null;
-
 const ensureLogo = async () => {
   if (LOGO_DATA_URL) return LOGO_DATA_URL;
   try {
@@ -38,56 +35,40 @@ const ensureLogo = async () => {
       r.readAsDataURL(blob);
     });
     return LOGO_DATA_URL;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 };
 
 const getJsPDF = () => {
   if (typeof window === "undefined") throw new Error("PDF generation requires a browser");
   if (window.jspdf?.jsPDF) return window.jspdf.jsPDF;
   if (window.jsPDF) return window.jsPDF;
-  throw new Error("jsPDF not loaded — check the script tag in index.html");
+  throw new Error("jsPDF not loaded — check the CDN script in index.html");
 };
 
 const fmtMoney = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 
-const formatOptionValue = (opt, value) => {
-  if (!opt) return String(value ?? "");
-  if (opt.type === "checkbox") return value ? "Yes" : "No";
-  if (opt.type === "select") {
-    const choice = (opt.choices || []).find((c) => c.value === value);
-    return choice ? choice.label : String(value ?? "");
-  }
-  if (opt.type === "perEachAddon") return `${Number(value) || 0}`;
-  return String(value ?? "");
-};
-
 const formatDimensions = (orderData) => {
   const d = orderData?.dimensions;
   if (!d) return "—";
-  if (d.kind === "perSqFt") {
-    const min = d.minApplied ? `, ${d.minSqFt} sq ft min applied` : "";
-    return `${d.width}" × ${d.height}"  (${d.sqFt.toFixed(2)} sq ft${min})`;
+  if (d.kind === "preset") {
+    const piecesPer = d.piecesPerSheet ? `, ${d.piecesPerSheet}/sheet` : "";
+    return `${d.sizeLabel}${piecesPer}`;
   }
-  if (d.kind === "perPieceCustom") {
-    return `${d.width}" × ${d.height}"  (custom, ${d.sqFt.toFixed(2)} sq ft)`;
-  }
-  if (d.kind === "perPiece") {
-    return d.sizeLabel || d.sizeKey || "—";
+  if (d.kind === "custom") {
+    const sqFt = d.sqFt ? `  (${d.sqFt.toFixed(2)} sq ft)` : "";
+    return `${d.width}" × ${d.height}"${sqFt}`;
   }
   return "—";
 };
 
 const formatTier = (tier) => {
   if (!tier) return "—";
-  return `${tier.multiplier}× (${tier.label})`;
+  return `${tier.label || tier.minQty + (tier.maxQty != null ? `–${tier.maxQty}` : "+")}`;
 };
 
-const formatQtyDiscount = (qd) => {
-  if (!qd) return "—";
-  if (!qd.discount) return `0% (${qd.label})`;
-  return `${(qd.discount * 100).toFixed(0)}% off (${qd.label})`;
+const formatMarkupTier = (tier) => {
+  if (!tier) return "—";
+  return `${tier.multiplier}× (${tier.label})`;
 };
 
 const newOrderId = () => `SP-${Date.now()}`;
@@ -106,31 +87,31 @@ const savePdf = (doc, filename) => {
 };
 
 /**
- * Generate and download the Signs365 trade-print order sheet.
- * @param {object} orderData
- *   - orderId            optional — auto-generated SP-{timestamp} otherwise
- *   - category           { key, label }
- *   - product            { key, label, pricingModel }
- *   - dimensions         { kind, width?, height?, sqFt?, minApplied?, sizeLabel?, … }
- *   - quantity           number
- *   - options            { [key]: rawValue }    — current selections
- *   - optionMeta         { [key]: optionDef }   — definition (label/type/choices)
- *   - pricing            { baseCost, postDiscountCost, customerPrice, margin,
- *                          marginPct, appliedTier, appliedDiscount, … }
- *   - customer           { name, phone, email }
- *   - staffInitials      string
- *   - notes              string (optional pre-filled notes)
- * @returns {Promise<{ orderId, filename }>}
+ * Generate and download the Signs365 trade-print order sheet (v2).
+ *
+ * orderData shape (built by SpecialtyTab):
+ *   - orderId (optional)
+ *   - category, product, dimensions
+ *   - quantity, quantityUnit ("pieces" | "sets")
+ *   - sheetsNeeded
+ *   - options          {key:value}
+ *   - optionMeta       {key: <opt def>}   — used to look up labels
+ *   - appliedOptions   [{key, label, value}]  — what the engine actually applied
+ *   - pricing          { printCost, shippingCost, shippingLabel, shippingFreight,
+ *                        setupFees, customerPrintPrice, customerTotal,
+ *                        margin, marginPct,
+ *                        activeTier, activeMarkupTier,
+ *                        warnings }
+ *   - customer         { name, phone, email }
+ *   - staffInitials, notes
  */
 export async function generateTradeOrderPDF(orderData = {}) {
   const jsPDF = getJsPDF();
   const doc = new jsPDF({ orientation: "portrait", unit: "in", format: "letter" });
   const orderId = orderData.orderId || newOrderId();
 
-  // Page geometry — match the existing print order sheet for visual
-  // consistency: 0.5" margins, 7.5" content column, label col at +1.6".
   const ml = 0.5, mt = 0.5, cw = 7.5;
-  const labelW = 1.6;
+  const labelW = 1.7;
   let y = mt;
 
   const hr = (extra = 0) => {
@@ -140,24 +121,21 @@ export async function generateTradeOrderPDF(orderData = {}) {
     y += 0.04 + extra;
   };
 
-  const drawLabelValue = (label, value, opts = {}) => {
+  const drawLV = (label, value, opts = {}) => {
     const size = opts.size || 10;
-    const valueColor = opts.valueColor;
-    doc.setFontSize(size); doc.setTextColor(0, 0, 0);
+    doc.setFontSize(size);
+    doc.setTextColor(0, 0, 0);
     doc.setFont(undefined, "bold");
     doc.text(label, ml, y);
     doc.setFont(undefined, "normal");
-    if (valueColor) doc.setTextColor(...valueColor);
+    if (opts.valueColor) doc.setTextColor(...opts.valueColor);
     const wrapped = doc.splitTextToSize(String(value ?? "—"), cw - labelW);
     wrapped.forEach((line, i) => doc.text(line, ml + labelW, y + i * 0.16));
-    if (valueColor) doc.setTextColor(0, 0, 0);
+    if (opts.valueColor) doc.setTextColor(0, 0, 0);
     y += Math.max(0.18, wrapped.length * 0.16 + 0.02);
   };
 
-  // ── Header (logo + store info) ──
-  // Logo is fit within an 0.8" × 0.5" box with aspect preserved — same
-  // treatment used by addOrderSheetPage, fixed previously to avoid
-  // squashing on wide logos.
+  // ── Header ──
   const logo = await ensureLogo();
   if (logo) {
     try {
@@ -177,7 +155,7 @@ export async function generateTradeOrderPDF(orderData = {}) {
   y += 0.62;
   hr(0.06);
 
-  // ── Title + meta ──
+  // ── Title ──
   doc.setFontSize(13); doc.setTextColor(0, 0, 0); doc.setFont(undefined, "bold");
   doc.text("Trade Print Order — Signs365", ml, y);
   doc.setFont(undefined, "normal");
@@ -186,39 +164,50 @@ export async function generateTradeOrderPDF(orderData = {}) {
   y += 0.34;
   hr(0.08);
 
+  // ── Freight callout (if applicable) — front and centre so staff
+  //    knows to confirm with Signs365 before placing the order.
+  if (orderData?.pricing?.shippingFreight) {
+    doc.setFillColor(254, 226, 226);
+    doc.rect(ml, y, cw, 0.36, "F");
+    doc.setTextColor(180, 0, 0);
+    doc.setFont(undefined, "bold");
+    doc.setFontSize(11);
+    doc.text("⚠  FREIGHT REQUIRED — verify with Signs365 before placing the order", ml + 0.1, y + 0.22);
+    doc.setFont(undefined, "normal");
+    doc.setTextColor(0, 0, 0);
+    y += 0.46;
+  }
+
   // ── Job specs ──
-  doc.setFontSize(11); doc.setTextColor(0, 0, 0); doc.setFont(undefined, "bold");
+  doc.setFontSize(11); doc.setFont(undefined, "bold");
   doc.text("JOB SPECS", ml, y);
   y += 0.18;
   doc.setFont(undefined, "normal");
 
-  drawLabelValue("Category:",   orderData.category?.label || "—");
-  drawLabelValue("Product:",    orderData.product?.label  || "—");
-  drawLabelValue("Dimensions:", formatDimensions(orderData));
-  drawLabelValue("Quantity:",   String(orderData.quantity || 1));
+  drawLV("Category:",   orderData.category?.label || "—");
+  drawLV("Product:",    orderData.product?.label  || "—");
+  drawLV("Dimensions:", formatDimensions(orderData));
+  drawLV("Quantity:",   `${orderData.quantity ?? 1} ${orderData.quantityUnit || "pieces"}`);
+  if (orderData.sheetsNeeded && orderData.product?.pricingModel === "perSheet") {
+    drawLV("Sheets needed:", String(orderData.sheetsNeeded));
+  }
 
-  // Options — every selected option spelled out, one per line. This is
-  // the part staff transcribe to signs365.com so we keep it explicit
-  // (no "default" omissions; "Hemming: Yes" is more useful than blank).
-  const opts    = orderData.options    || {};
-  const optMeta = orderData.optionMeta || {};
-  const optKeys = Object.keys(optMeta);
-  if (optKeys.length) {
+  // Options spelled out — every applied option, one per line, so it
+  // can be transcribed verbatim into signs365.com.
+  if (orderData.appliedOptions?.length) {
     y += 0.04;
     doc.setFont(undefined, "bold"); doc.setFontSize(10);
     doc.text("Options:", ml, y);
     doc.setFont(undefined, "normal");
     y += 0.16;
-    optKeys.forEach((k) => {
-      const opt    = optMeta[k];
-      const valStr = formatOptionValue(opt, opts[k]);
-      const line = `${opt.label}: ${valStr}`;
+    for (const li of orderData.appliedOptions) {
+      const line = `${li.label}: ${li.value}`;
       const wrapped = doc.splitTextToSize(line, cw - 0.2);
       wrapped.forEach((ln, i) => {
         doc.text(`${i === 0 ? "•" : " "} ${ln}`, ml + 0.05, y);
         y += 0.15;
       });
-    });
+    }
   }
 
   hr(0.08);
@@ -226,17 +215,17 @@ export async function generateTradeOrderPDF(orderData = {}) {
   // ── Customer ──
   const cust = orderData.customer || {};
   if (cust.name || cust.phone || cust.email) {
-    doc.setFontSize(11); doc.setFont(undefined, "bold"); doc.setTextColor(0, 0, 0);
+    doc.setFontSize(11); doc.setFont(undefined, "bold");
     doc.text("CUSTOMER", ml, y);
     y += 0.18;
     doc.setFont(undefined, "normal");
-    drawLabelValue("Name:",  cust.name  || "—");
-    drawLabelValue("Phone:", cust.phone || "—");
-    drawLabelValue("Email:", cust.email || "—");
+    drawLV("Name:",  cust.name  || "—");
+    drawLV("Phone:", cust.phone || "—");
+    drawLV("Email:", cust.email || "—");
     hr(0.08);
   }
 
-  // ── Internal cost tracking (clearly fenced off) ──
+  // ── Internal cost block ──
   doc.setFontSize(10); doc.setFont(undefined, "bold"); doc.setTextColor(180, 0, 0);
   doc.text("INTERNAL ONLY — DO NOT GIVE TO CUSTOMER", ml, y);
   doc.setTextColor(0, 0, 0); doc.setFont(undefined, "normal");
@@ -244,29 +233,31 @@ export async function generateTradeOrderPDF(orderData = {}) {
 
   const p = orderData.pricing;
   if (p) {
-    drawLabelValue("Signs365 base cost:", fmtMoney(p.baseCost));
-    drawLabelValue("Qty discount:",        formatQtyDiscount(p.appliedDiscount));
-    drawLabelValue("Post-discount cost:", fmtMoney(p.postDiscountCost));
-    drawLabelValue("Markup tier:",        formatTier(p.appliedTier));
-    drawLabelValue("Customer price:",     fmtMoney(p.customerPrice));
-    drawLabelValue("Margin:",             `${fmtMoney(p.margin)} (${(p.marginPct || 0).toFixed(1)}%)`);
+    drawLV("Active qty tier:",  formatTier(p.activeTier));
+    drawLV("Markup tier:",      formatMarkupTier(p.activeMarkupTier));
+    drawLV("Signs365 print:",   fmtMoney(p.printCost));
+    if (p.setupFees) drawLV("Setup fees:", `${fmtMoney(p.setupFees)} (one-time)`);
+    drawLV("Signs365 ship:",    `${fmtMoney(p.shippingCost)}${p.shippingLabel ? `  (${p.shippingLabel})` : ""}`);
+    drawLV("Total cost:",       fmtMoney((p.printCost || 0) + (p.shippingCost || 0)));
+    drawLV("Customer print:",   fmtMoney(p.customerPrintPrice));
+    drawLV("Customer ship:",    fmtMoney(p.shippingCost));
+    drawLV("Customer total:",   fmtMoney(p.customerTotal));
+    drawLV("Margin:",           `${fmtMoney(p.margin)} (${(p.marginPct || 0).toFixed(1)}%)`);
   }
 
   hr(0.08);
 
-  // ── Notes ──
+  // ── Notes (lined area for handwriting) ──
   doc.setFontSize(11); doc.setFont(undefined, "bold");
   doc.text("NOTES", ml, y);
   doc.setFont(undefined, "normal");
   y += 0.18;
-  if (orderData.notes && String(orderData.notes).trim()) {
+  if (orderData.notes) {
     doc.setFontSize(10);
     const wrapped = doc.splitTextToSize(String(orderData.notes), cw);
     wrapped.forEach((line) => { doc.text(line, ml, y); y += 0.16; });
     y += 0.04;
   }
-  // Lined area for handwritten notes — fill remaining vertical space
-  // up to roughly y = 9.7" (leaving room for barcode + footer below).
   const NOTES_BOTTOM = 9.55;
   while (y < NOTES_BOTTOM) {
     doc.setDrawColor(200, 200, 200);
@@ -275,16 +266,9 @@ export async function generateTradeOrderPDF(orderData = {}) {
   }
 
   // ── Barcode + footer ──
-  // Barcode keyed on the order ID so the shop can scan back into the
-  // app's records. Drawn at a fixed y so it doesn't shift if the
-  // notes section grew.
   drawBarcode128(doc, orderId, ml, 9.85, {
-    width: 2.4,
-    height: 0.45,
-    showText: true,
-    fontSize: 9,
+    width: 2.4, height: 0.45, showText: true, fontSize: 9,
   });
-
   doc.setFontSize(9); doc.setTextColor(80, 80, 80);
   const initials = (orderData.staffInitials || "").trim() || "_______";
   const dateStr  = new Date().toLocaleDateString();

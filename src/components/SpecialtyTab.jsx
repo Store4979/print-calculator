@@ -1,14 +1,30 @@
 // ============================================================
-//  SPECIALTY / SIGNS365 TRADE-PRINT TAB
+//  SPECIALTY / SIGNS365 TRADE-PRINT TAB — v2 schema
 //
-//  Phase 3: full UI + live pricing math.
-//  - Loads pricing from src/data/signs365Pricing.json and deep-
-//    merges admin overrides from localStorage.signs365Pricing
-//    on top (Phase 5 fills that in via the admin panel).
-//  - All pricing math runs inside the component so it always sees
-//    the current state and the latest admin overrides.
-//  - "Generate Trade Order PDF" is wired as a stub here and will
-//    be filled in by Phase 4 (src/utils/tradeOrderPDF.js).
+//  Data: src/data/signs365Pricing.json (real Signs365 catalog).
+//  Admin overrides live under localStorage.signs365Pricing and
+//  deep-merge on top. Old v1 overrides (catalog rewrite) are
+//  discarded automatically.
+//
+//  Pricing engine:
+//    1. Resolve the active variant (sides), pick the right tier
+//       table, then locate the active tier by tier-break basis
+//       (totalSqFt | sheets | quantity).
+//    2. Compute per-piece base by pricingModel (perSqFt /
+//       perSheet / perSqInch / perPiece). perSheet derives sheets
+//       needed from piecesPerSheet; perSqInch optionally rolls
+//       up to sheets for shipping.
+//    3. Apply min-price floor per piece (when minPrice is set —
+//       can be a number or a per-variant {single,double} map).
+//    4. Apply option costs in order: per-sq-ft and per-linear-ft
+//       add-ons, flat per-piece add-ons, then per-each add-ons +
+//       setup fees (one-time), then percent multipliers (rush,
+//       contour) applied LAST and multiplicatively.
+//    5. Compute shipping by rule kind (totalSqFt / sheetBands /
+//       perItem / perSqIn / perSheet). Markup is applied to the
+//       print cost only; shipping passes through at cost.
+//
+//  jsPDF is loaded via CDN — don't import it as a module.
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
@@ -17,10 +33,7 @@ import { generateTradeOrderPDF } from "../utils/tradeOrderPDF.js";
 
 const LS_KEY = "signs365Pricing";
 
-// Recursive merge: arrays overwrite (so admin can replace a sizes
-// list cleanly), plain objects merge key-by-key, undefined entries
-// in the override fall back to the base default (so clearing an
-// admin field reverts to the JSON default), scalars overwrite.
+// ── Deep merge with undefined-passthrough ──────────────
 const isPlainObject = (v) => v && typeof v === "object" && !Array.isArray(v);
 const deepMerge = (base, override) => {
   if (!isPlainObject(base) || !isPlainObject(override)) return override ?? base;
@@ -33,171 +46,432 @@ const deepMerge = (base, override) => {
   return out;
 };
 
+// ── Load pricing (with v1 override migration / drop) ───
+// v1 stored a totally different shape under the same key. If the
+// stored override doesn't claim _version "2.0" or higher, drop it
+// so the v2 catalog isn't corrupted. (Prompt explicitly OKs this.)
 const loadPricing = () => {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return deepMerge(signs365PricingDefaults, JSON.parse(raw));
+    if (raw) {
+      const overrides = JSON.parse(raw);
+      const v = String(overrides?._version || "");
+      if (v && v.startsWith("2")) {
+        return deepMerge(signs365PricingDefaults, overrides);
+      }
+      // Legacy override — discard.
+      try { localStorage.removeItem(LS_KEY); } catch {}
+    }
   } catch {}
   return signs365PricingDefaults;
 };
 
+// ── Helpers ──────────────────────────────────────────
 const fmtMoney = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 
-// Default option values for a freshly selected product.
+const resolveSizes = (pricing, product) => {
+  if (Array.isArray(product.sizes)) return product.sizes;
+  if (product.sizesRef) return pricing._sharedSizes?.[product.sizesRef] || [];
+  return [];
+};
+
 const defaultOptionsFor = (product) => {
-  if (!product) return {};
   const out = {};
-  for (const [k, opt] of Object.entries(product.options || {})) {
-    if (opt.type === "checkbox")     out[k] = !!opt.default;
-    else if (opt.type === "select")  out[k] = opt.choices?.[0]?.value || "";
-    else if (opt.type === "perEachAddon") out[k] = 0;
+  for (const opt of product?.options || []) {
+    if (opt.type === "checkbox" || opt.type === "setupFee" || opt.type === "perLinearFt" || opt.type === "perSqFtAddon" || opt.type === "percentMultiplier") {
+      out[opt.key] = !!opt.default;
+    } else if (opt.type === "select" || opt.type === "tierVariant") {
+      out[opt.key] = opt.default ?? opt.choices?.[0]?.value ?? "";
+    } else if (opt.type === "perEachAddon") {
+      out[opt.key] = Number(opt.default) || 0;
+    }
   }
   return out;
 };
 
-// ── Pricing math ──────────────────────────────────────────
-// Returns null when inputs aren't ready (no product, no size, etc.).
-// All math is local — no React calls — so it's easy to reason about.
-function computePrice({ product, width, height, selectedSizeKey, quantity, selectedOptions, pricing }) {
-  if (!product || !quantity || quantity < 1) return null;
+// Pick a tier table off a product. When a tierVariant option is
+// active, product.tiers is keyed by the variant value; otherwise
+// it's a plain array.
+const tierTableFor = (product, options) => {
+  if (Array.isArray(product.tiers)) return product.tiers;
+  if (isPlainObject(product.tiers)) {
+    const variantOpt = (product.options || []).find((o) => o.type === "tierVariant");
+    const v = variantOpt ? options?.[variantOpt.key] : null;
+    if (v && product.tiers[v]) return product.tiers[v];
+    // fall back to the first variant's tier table
+    const firstKey = Object.keys(product.tiers)[0];
+    return product.tiers[firstKey] || [];
+  }
+  return [];
+};
 
-  // 1) Base cost per piece + dimension snapshot for display / PDF.
-  let perPieceCost = 0;
-  let dimensions = null;
+const findTier = (table, value) => {
+  if (!Array.isArray(table) || !table.length) return null;
+  return table.find((t) =>
+    value >= (t.minQty || 0) && (t.maxQty == null || value <= t.maxQty)
+  ) || table[table.length - 1];
+};
 
-  if (product.pricingModel === "perSqFt") {
-    const w = Number(width) || 0;
-    const h = Number(height) || 0;
-    if (w <= 0 || h <= 0) return null;
-    const rawSqFt   = (w * h) / 144;
-    const minSqFt   = Number(product.minSqFt) || 0;
-    const billedSqFt = Math.max(rawSqFt, minSqFt);
-    perPieceCost = billedSqFt * (Number(product.baseCostPerSqFt) || 0);
-    dimensions = {
-      kind: "perSqFt",
-      width: w, height: h,
-      sqFt: rawSqFt,
-      billedSqFt,
-      minApplied: rawSqFt < minSqFt,
-      minSqFt,
-    };
-  } else if (product.pricingModel === "perPiece") {
-    const size = (product.sizes || []).find((s) => s.key === selectedSizeKey);
-    if (!size) return null;
-    if (size.baseCost == null && size.perSqFtCost) {
-      // Custom-size path inside a perPiece product (e.g. 30mil magnet "custom").
-      const w = Number(width) || 0;
-      const h = Number(height) || 0;
-      if (w <= 0 || h <= 0) return null;
-      const sqFt = (w * h) / 144;
-      perPieceCost = sqFt * Number(size.perSqFtCost);
-      dimensions = {
-        kind: "perPieceCustom",
-        width: w, height: h,
-        sqFt,
-        sizeKey: size.key,
-        sizeLabel: size.label,
-      };
-    } else {
-      perPieceCost = Number(size.baseCost) || 0;
-      dimensions = {
-        kind: "perPiece",
-        sizeKey: size.key,
-        sizeLabel: size.label,
-      };
+const findMarkupTier = (markup, postDiscountCost) => {
+  const tiers = markup?.tiers || [];
+  return tiers.find((t) => t.maxCost == null || postDiscountCost <= Number(t.maxCost))
+       || tiers[tiers.length - 1]
+       || { multiplier: 1, label: "—" };
+};
+
+// piece "fits" a sheet band (rigid_sheet / acrylic_sheet). Bands
+// are expressed in min/max width+height — we sort the piece's
+// dimensions so 24×36 and 36×24 both qualify for the same band.
+const fitsBand = (pieceW, pieceH, band) => {
+  if (!pieceW || !pieceH) return false;
+  const sw = Math.min(pieceW, pieceH);
+  const lh = Math.max(pieceW, pieceH);
+  const minW = Number(band.minWidth)  || 0;
+  const maxW = Number(band.maxWidth)  || Infinity;
+  const minH = Number(band.minHeight) || 0;
+  const maxH = Number(band.maxHeight) || Infinity;
+  return sw >= minW && sw <= maxW && lh >= minH && lh <= maxH;
+};
+
+const pickBand = (rule, pieceW, pieceH) => {
+  const bands = rule?.sizeBands || [];
+  return bands.find((b) => fitsBand(pieceW, pieceH, b)) || bands[bands.length - 1];
+};
+
+// Walk a sheetBand-style tier list to pick the active row by sheets.
+const pickSheetBandTier = (band, sheets) => {
+  const tiers = band?.tiers || [];
+  for (const t of tiers) {
+    const min = Number(t.minSheets) || 0;
+    const max = t.maxSheets == null ? Infinity : Number(t.maxSheets);
+    if (sheets >= min && sheets <= max) return t;
+    // perSheets tier matches when sheets > 0 and we haven't hit a higher freight tier yet
+    if (t.perSheets && sheets > 0 && (!min || sheets >= min) && (!t.maxSheets || sheets <= t.maxSheets)) {
+      // see below — let the cost calc multiply
+      return t;
     }
-  } else {
-    return null;
+  }
+  return tiers[tiers.length - 1];
+};
+
+// ── Shipping ─────────────────────────────────────────
+function computeShipping({ pricing, product, dim, quantity, sheetsNeeded, totalSqIn, totalSqFt, pieceW, pieceH }) {
+  const ruleKey = product.shippingRule;
+  const rule = pricing.shippingRules?.[ruleKey];
+  const warnings = [];
+  if (!rule) return { cost: 0, label: "No shipping rule", warnings };
+
+  // Oversize freight triggers (any dimension ≥ N) — short-circuit.
+  for (const trigger of rule.freightTriggers || []) {
+    if (trigger.kind === "anyDimensionGte") {
+      if ((pieceW && pieceW >= trigger.value) || (pieceH && pieceH >= trigger.value)) {
+        warnings.push(trigger.label || `Oversize: ${trigger.value}\"+ → freight`);
+        return { cost: Number(trigger.cost) || 199, label: trigger.label || "Freight (oversize)", freight: true, warnings };
+      }
+    }
   }
 
-  // 2) Apply option costs / multipliers.
-  let multiplier = 1;
-  let perPieceFlatAddons = 0;
-  let perSqFtAddons      = 0;
-  let perLinearFtAddons  = 0;
-  let totalPerEachAddons = 0; // summed once for the whole order, not per piece
+  if (rule.kind === "totalSqFt") {
+    const tiers = rule.tiers || [];
+    const t = tiers.find((tt) => tt.maxSqFt == null || totalSqFt <= Number(tt.maxSqFt))
+           || tiers[tiers.length - 1];
+    if (t?.freight) warnings.push(t.label || "Freight shipping required");
+    return { cost: Number(t?.cost) || 0, label: t?.label || "—", freight: !!t?.freight, warnings };
+  }
 
-  for (const [k, opt] of Object.entries(product.options || {})) {
-    const v = selectedOptions[k];
+  if (rule.kind === "perItem") {
+    const tiers = rule.tiers || [];
+    let chosen = null;
+    for (const t of tiers) {
+      const min = Number(t.minItems) || 0;
+      const max = t.maxItems == null ? Infinity : Number(t.maxItems);
+      if (quantity >= min && quantity <= max) { chosen = t; break; }
+      if (t.perItems && quantity > 0 && quantity <= max) { chosen = t; break; }
+    }
+    if (!chosen) chosen = tiers[tiers.length - 1];
+    if (chosen?.freight) warnings.push(chosen.label || "Freight required");
+    let cost = Number(chosen?.cost) || 0;
+    if (chosen?.perItems) {
+      // "$10 per 10 magnets" — each 10-pack (or fraction) costs $cost
+      const groups = Math.max(1, Math.ceil(quantity / Number(chosen.perItems)));
+      cost = groups * Number(chosen.cost);
+    } else if (chosen?.perItem) {
+      // "$10 per stand" — multiplied by qty
+      cost = quantity * Number(chosen.cost);
+    }
+    return { cost, label: chosen?.label || "—", freight: !!chosen?.freight, warnings };
+  }
+
+  if (rule.kind === "perSheet") {
+    // $X per N sheets. sheets here can be sheetsNeeded (perSheet products)
+    // or simply quantity for per-set products.
+    const tiers = rule.tiers || [];
+    const sheets = sheetsNeeded ?? quantity;
+    let chosen = null;
+    for (const t of tiers) {
+      const min = Number(t.minSheets) || 0;
+      const max = t.maxSheets == null ? Infinity : Number(t.maxSheets);
+      if (t.perSheets) { chosen = t; }
+      else if (sheets >= min && sheets <= max) { chosen = t; break; }
+    }
+    if (!chosen) chosen = tiers[tiers.length - 1];
+    if (chosen?.freight) warnings.push(chosen.label || "Freight required");
+    let cost = Number(chosen?.cost) || 0;
+    if (chosen?.perSheets) {
+      const groups = Math.max(1, Math.ceil(sheets / Number(chosen.perSheets)));
+      cost = groups * Number(chosen.cost);
+    }
+    return { cost, label: chosen?.label || "—", freight: !!chosen?.freight, warnings };
+  }
+
+  if (rule.kind === "perSqIn") {
+    const tiers = rule.tiers || [];
+    let chosen = null;
+    for (const t of tiers) {
+      const min = Number(t.minSqIn) || 0;
+      const max = t.maxSqIn == null ? Infinity : Number(t.maxSqIn);
+      if (totalSqIn >= min && totalSqIn <= max) { chosen = t; break; }
+      if (t.perSqIn && totalSqIn > 0 && (!t.maxSqIn || totalSqIn <= t.maxSqIn)) { chosen = t; break; }
+    }
+    if (!chosen) chosen = tiers[tiers.length - 1];
+    if (chosen?.freight) warnings.push(chosen.label || "Freight required");
+    let cost = Number(chosen?.cost) || 0;
+    if (chosen?.perSqIn) {
+      const groups = Math.max(1, Math.ceil(totalSqIn / Number(chosen.perSqIn)));
+      cost = groups * Number(chosen.cost);
+    }
+    return { cost, label: chosen?.label || "—", freight: !!chosen?.freight, warnings };
+  }
+
+  if (rule.kind === "sheetBands") {
+    // For perSqInch products that ship as sheets, derive sheets from total sq in.
+    let sheets = sheetsNeeded;
+    const sheetSqIn = Number(product.sheetSqIn || rule.sheetSqIn || 4608);
+    if (sheets == null && totalSqIn) sheets = Math.max(1, Math.ceil(totalSqIn / sheetSqIn));
+    if (!sheets) sheets = 1;
+    const band = pickBand(rule, pieceW, pieceH);
+    if (!band) return { cost: 199, label: "Freight (no matching band)", freight: true, warnings: ["No band match — freight"] };
+    let chosen = null;
+    for (const t of band.tiers || []) {
+      const min = Number(t.minSheets) || 0;
+      const max = t.maxSheets == null ? Infinity : Number(t.maxSheets);
+      if (t.perSheets) { chosen = t; continue; }
+      if (sheets >= min && sheets <= max) { chosen = t; break; }
+    }
+    // If no flat tier matched but we found a perSheets one earlier, use it for low counts.
+    if (!chosen) {
+      const perSheetTier = (band.tiers || []).find((tt) => tt.perSheets);
+      const freightTier  = (band.tiers || []).find((tt) => tt.freight);
+      if (freightTier && sheets >= Number(freightTier.minSheets || 0)) chosen = freightTier;
+      else chosen = perSheetTier || (band.tiers || [])[(band.tiers || []).length - 1];
+    }
+    if (chosen?.freight) warnings.push(`${band.name}: ${chosen.label || "freight"}`);
+    let cost = Number(chosen?.cost) || 0;
+    if (chosen?.perSheets) {
+      const groups = Math.max(1, Math.ceil(sheets / Number(chosen.perSheets)));
+      cost = groups * Number(chosen.cost);
+    }
+    return { cost, label: `${band.name} · ${chosen?.label || ""}`.trim(), freight: !!chosen?.freight, warnings };
+  }
+
+  return { cost: 0, label: "(unknown rule kind)", warnings: [`Unknown shipping rule kind: ${rule.kind}`] };
+}
+
+// ── Pricing engine ───────────────────────────────────
+function computePrice({ pricing, product, width, height, selectedSizeKey, quantity, options }) {
+  if (!product || !quantity || quantity < 1) return null;
+
+  const variantOpt   = (product.options || []).find((o) => o.type === "tierVariant");
+  const variantValue = variantOpt ? options[variantOpt.key] : null;
+  const sizes        = resolveSizes(pricing, product);
+
+  // ── Size + dimension snapshot ──
+  let dim = null, pieceW = 0, pieceH = 0, pieceSqFt = 0, pieceSqIn = 0, piecesPerSheet = 1;
+  if (product.sizeMode === "preset") {
+    const s = sizes.find((x) => x.key === selectedSizeKey);
+    if (!s) return null;
+    pieceW = Number(s.width)  || 0;
+    pieceH = Number(s.height) || 0;
+    pieceSqFt = (pieceW * pieceH) / 144;
+    pieceSqIn = pieceW * pieceH;
+    piecesPerSheet = Number(s.piecesPerSheet) || 1;
+    dim = { kind: "preset", sizeKey: s.key, sizeLabel: s.label, width: pieceW, height: pieceH, sqFt: pieceSqFt, sqIn: pieceSqIn, piecesPerSheet, baseCost: s.baseCost };
+  } else if (product.sizeMode === "custom") {
+    pieceW = Number(width)  || 0;
+    pieceH = Number(height) || 0;
+    if (pieceW <= 0 || pieceH <= 0) return null;
+    pieceSqFt = (pieceW * pieceH) / 144;
+    pieceSqIn = pieceW * pieceH;
+    dim = { kind: "custom", width: pieceW, height: pieceH, sqFt: pieceSqFt, sqIn: pieceSqIn };
+  } else if (product.sizeMode === "none") {
+    dim = { kind: "none" };
+  }
+
+  // ── Tier lookup ──
+  const totalSqFt    = pieceSqFt * quantity;
+  const totalSqIn    = pieceSqIn * quantity;
+  const sheetsNeeded = Math.max(1, Math.ceil(quantity / piecesPerSheet));
+  const tierTable    = tierTableFor(product, options);
+  let tierBreakValue = quantity;
+  if (product.tierBreakBy === "totalSqFt") tierBreakValue = totalSqFt;
+  else if (product.tierBreakBy === "sheets") tierBreakValue = sheetsNeeded;
+  const activeTier = findTier(tierTable, tierBreakValue);
+  if (!activeTier) return null;
+
+  // ── Per-piece base by pricing model ──
+  // perPieceBase is for display + min-price comparison only.
+  // basePrintCost is the authoritative pre-options total — for
+  // perSheet products this is `tier.cost × sheetsNeeded`, NOT
+  // `(tier.cost / piecesPerSheet) × quantity`, because the
+  // customer always pays for whole sheets.
+  let perPieceBase = 0;
+  let basePrintCost = 0;
+  if (product.pricingModel === "perSqFt") {
+    perPieceBase  = pieceSqFt * Number(activeTier.cost);
+    basePrintCost = perPieceBase * quantity;
+  } else if (product.pricingModel === "perSheet") {
+    perPieceBase  = (Number(activeTier.cost) || 0) / piecesPerSheet;
+    basePrintCost = Number(activeTier.cost) * sheetsNeeded;
+  } else if (product.pricingModel === "perSqInch") {
+    perPieceBase  = pieceSqIn * Number(activeTier.cost);
+    basePrintCost = perPieceBase * quantity;
+  } else if (product.pricingModel === "perPiece") {
+    if (dim?.baseCost != null) perPieceBase = Number(dim.baseCost);
+    else                        perPieceBase = Number(activeTier.cost);
+    basePrintCost = perPieceBase * quantity;
+  }
+
+  // ── Min-price floor (per-piece) ──
+  // Applies to non-perSheet products. perSheet products charge
+  // by-the-sheet so a per-piece floor would double-count.
+  let minApplied = false;
+  let minPrice = 0;
+  if (typeof product.minPrice === "number") minPrice = product.minPrice;
+  else if (isPlainObject(product.minPrice) && variantValue != null) minPrice = Number(product.minPrice[variantValue]) || 0;
+  if (minPrice > 0 && perPieceBase < minPrice && product.pricingModel !== "perSheet") {
+    minApplied = true;
+    perPieceBase  = minPrice;
+    basePrintCost = minPrice * quantity;
+  }
+
+  // ── Options ──
+  let perPieceAddons    = 0;
+  let perEachOrderTotal = 0;
+  let setupFees         = 0;
+  const percentMultipliers = [];
+  const appliedOptions     = [];
+
+  for (const opt of product.options || []) {
+    if (opt.type === "tierVariant") continue;
+    const v = options[opt.key];
+
     if (opt.type === "checkbox") {
       if (v) {
-        if (typeof opt.cost === "number")           perPieceFlatAddons += opt.cost;
-        if (typeof opt.costMultiplier === "number") multiplier *= opt.costMultiplier;
+        if (typeof opt.cost === "number" && opt.cost) perPieceAddons += opt.cost;
+        if (typeof opt.costMultiplier === "number" && opt.costMultiplier !== 1)
+          percentMultipliers.push({ key: opt.key, label: opt.label, mult: opt.costMultiplier });
+        appliedOptions.push({ key: opt.key, label: opt.label, value: "Yes" });
+      }
+    } else if (opt.type === "setupFee") {
+      if (v) {
+        setupFees += Number(opt.setupFee) || 0;
+        appliedOptions.push({ key: opt.key, label: opt.label, value: `Yes (+${fmtMoney(opt.setupFee)} setup)` });
       }
     } else if (opt.type === "select") {
       const choice = (opt.choices || []).find((c) => c.value === v);
       if (choice) {
-        if (typeof choice.cost === "number")            perPieceFlatAddons += choice.cost;
-        if (typeof choice.costMultiplier === "number")  multiplier *= choice.costMultiplier;
-        if (typeof choice.costPerSqFt === "number")     perSqFtAddons    += choice.costPerSqFt;
-        if (typeof choice.costPerLinearFt === "number") perLinearFtAddons += choice.costPerLinearFt;
+        if (typeof choice.cost === "number" && choice.cost) perPieceAddons += choice.cost;
+        if (typeof choice.costPerSqFt === "number" && choice.costPerSqFt) perPieceAddons += pieceSqFt * choice.costPerSqFt;
+        if (typeof choice.costPerLinearFt === "number" && choice.costPerLinearFt && pieceW) perPieceAddons += (pieceW / 12) * choice.costPerLinearFt;
+        if (typeof choice.costMultiplier === "number" && choice.costMultiplier !== 1)
+          percentMultipliers.push({ key: opt.key, label: opt.label, mult: choice.costMultiplier });
+        appliedOptions.push({ key: opt.key, label: opt.label, value: choice.label });
+      }
+    } else if (opt.type === "perLinearFt") {
+      if (v) {
+        if (pieceW) perPieceAddons += (pieceW / 12) * (Number(opt.costPerLinearFt) || 0);
+        if (opt.setupFee) setupFees += Number(opt.setupFee) || 0;
+        appliedOptions.push({
+          key: opt.key, label: opt.label,
+          value: `Yes (${fmtMoney(opt.costPerLinearFt)}/lin ft${opt.setupFee ? ` + ${fmtMoney(opt.setupFee)} setup` : ""})`,
+        });
+      }
+    } else if (opt.type === "perSqFtAddon") {
+      if (v) {
+        perPieceAddons += pieceSqFt * (Number(opt.costPerSqFt) || 0);
+        appliedOptions.push({ key: opt.key, label: opt.label, value: `Yes (+${fmtMoney(opt.costPerSqFt)}/sq ft)` });
       }
     } else if (opt.type === "perEachAddon") {
       const count = Number(v) || 0;
-      totalPerEachAddons += count * (Number(opt.costPerEach) || 0);
+      if (count > 0) {
+        perEachOrderTotal += count * (Number(opt.costPerEach) || 0);
+        if (opt.setupFee) setupFees += Number(opt.setupFee) || 0;
+        appliedOptions.push({
+          key: opt.key, label: opt.label,
+          value: `${count} (${fmtMoney(opt.costPerEach)} ea${opt.setupFee ? ` + ${fmtMoney(opt.setupFee)} setup` : ""})`,
+        });
+      }
+    } else if (opt.type === "percentMultiplier") {
+      if (v) {
+        percentMultipliers.push({ key: opt.key, label: opt.label, mult: Number(opt.multiplier) || 1 });
+        appliedOptions.push({ key: opt.key, label: opt.label, value: `Yes (×${opt.multiplier})` });
+      }
     }
   }
 
-  let perPieceWithAddons = perPieceCost * multiplier;
+  // basePrintCost already covers the per-sheet / per-piece-base
+  // multiplied across the order. Per-piece add-ons (lamination $/sqft,
+  // pole pocket per banner, flat $ per piece) get multiplied by piece
+  // quantity. perEach add-ons (stakes, grommets) and setup fees are
+  // one-time. Percent multipliers (rush, contour) come last.
+  const perPiece = perPieceAddons; // pre-multiply across pieces
+  const addonsAcrossPieces = perPiece * quantity;
+  let printCost = basePrintCost + addonsAcrossPieces + perEachOrderTotal + setupFees;
+  for (const pm of percentMultipliers) printCost *= pm.mult;
 
-  // Per-sq-ft option costs (e.g. lamination): use billed sq ft when
-  // we have it, else raw sq ft for the perPieceCustom path.
-  const sqFtForAddons = dimensions?.billedSqFt ?? dimensions?.sqFt ?? 0;
-  if (perSqFtAddons > 0 && sqFtForAddons > 0) {
-    perPieceWithAddons += sqFtForAddons * perSqFtAddons;
-  }
+  // ── Shipping ──
+  const shipping = computeShipping({
+    pricing, product, dim, quantity, sheetsNeeded, totalSqIn, totalSqFt, pieceW, pieceH,
+  });
 
-  // Per-linear-ft option costs (e.g. pole pocket). We bill against
-  // banner WIDTH in feet — pole pockets run along the top edge (or
-  // top + bottom; the rate already encodes that).
-  if (perLinearFtAddons > 0 && dimensions?.width) {
-    const linearFt = dimensions.width / 12;
-    perPieceWithAddons += linearFt * perLinearFtAddons;
-  }
+  // ── Markup tier (print only) ──
+  const markupTier  = findMarkupTier(pricing.markup, printCost);
+  const customerPrintPrice = printCost * (Number(markupTier.multiplier) || 1);
+  const totalCost     = printCost + shipping.cost;
+  const customerTotal = customerPrintPrice + shipping.cost;
+  const margin        = customerPrintPrice - printCost;
+  const marginPct     = customerPrintPrice > 0 ? (margin / customerPrintPrice) * 100 : 0;
 
-  perPieceWithAddons += perPieceFlatAddons;
-
-  // 3) Total base cost across all pieces + the once-per-order addons.
-  const baseCost = perPieceWithAddons * quantity + totalPerEachAddons;
-
-  // 4) Quantity discount tier.
-  const qtyTier = (pricing.quantityDiscounts || []).find((d) =>
-    quantity >= (d.minQty || 0) && (d.maxQty == null || quantity <= d.maxQty)
-  );
-  const qtyDiscountPct = Number(qtyTier?.discount) || 0;
-  const postDiscountCost = baseCost * (1 - qtyDiscountPct);
-
-  // 5) Markup tier (post-discount cost determines the bracket).
-  const markupTier = (pricing.markup?.tiers || []).find((t) =>
-    t.maxCost == null || postDiscountCost <= Number(t.maxCost)
-  );
-  const markupMultiplier = Number(markupTier?.multiplier) || 1;
-  const customerPrice = postDiscountCost * markupMultiplier;
-  const margin        = customerPrice - postDiscountCost;
-  const marginPct     = customerPrice > 0 ? (margin / customerPrice) * 100 : 0;
+  const warnings = [...(shipping.warnings || [])];
+  if (minApplied) warnings.push(`Minimum price of ${fmtMoney(minPrice)} per piece applied`);
 
   return {
-    perPieceCost: perPieceWithAddons,
-    baseCost,
-    postDiscountCost,
-    customerPrice,
-    margin,
-    marginPct,
-    appliedTier: markupTier,
-    appliedDiscount: qtyTier,
-    markupMultiplier,
-    qtyDiscountPct,
-    dimensions,
-    options: { perPieceFlatAddons, perSqFtAddons, perLinearFtAddons, totalPerEachAddons, multiplier },
+    printCost,
+    shippingCost: shipping.cost,
+    shippingLabel: shipping.label,
+    shippingFreight: !!shipping.freight,
+    setupFees,
+    totalCost,
+    customerPrintPrice,
+    customerTotal,
+    margin, marginPct,
+    activeTier,
+    activeMarkupTier: markupTier,
+    appliedOptions,
+    percentMultipliers,
+    perPieceCost: perPieceBase + perPieceAddons,
+    sheetsNeeded,
+    totalSqFt, totalSqIn,
+    dim,
+    variantValue,
+    warnings,
   };
 }
 
-// ── Component ────────────────────────────────────────────
+// ── Component ────────────────────────────────────────
 export default function SpecialtyTab({ CardHeader }) {
   const [pricing, setPricing] = useState(loadPricing);
 
-  // Pick up admin edits from another tab / window. Phase 5's editor
-  // dispatches a CustomEvent so the same tab also updates.
   useEffect(() => {
     const refresh = () => setPricing(loadPricing());
     const onStorage = (e) => { if (e.key === LS_KEY) refresh(); };
@@ -216,8 +490,7 @@ export default function SpecialtyTab({ CardHeader }) {
   const [selectedSizeKey, setSelectedSizeKey] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [selectedOptions, setSelectedOptions] = useState({});
-  // Customer + staff metadata that lands on the PDF. Optional —
-  // leaving them blank just renders the matching field as "—".
+
   const [customerName,  setCustomerName]  = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -228,7 +501,7 @@ export default function SpecialtyTab({ CardHeader }) {
   const cat = pricing.categories?.[selectedCategory];
   const product = cat?.products?.[selectedProduct];
 
-  // Reset downstream state when the category or product changes.
+  // Reset propagation
   useEffect(() => {
     setSelectedProduct("");
     setSelectedSizeKey("");
@@ -242,16 +515,18 @@ export default function SpecialtyTab({ CardHeader }) {
     setSelectedOptions(defaultOptionsFor(product));
   }, [selectedProduct, product]);
 
-  const priceResult = useMemo(
-    () => computePrice({ product, width, height, selectedSizeKey, quantity, selectedOptions, pricing }),
-    [product, width, height, selectedSizeKey, quantity, selectedOptions, pricing]
+  const variantOption = useMemo(
+    () => (product?.options || []).find((o) => o.type === "tierVariant"),
+    [product]
   );
 
-  const isPerPieceCustomSelected = useMemo(() => {
-    if (!product || product.pricingModel !== "perPiece") return false;
-    const size = (product.sizes || []).find((s) => s.key === selectedSizeKey);
-    return !!size && size.baseCost == null && !!size.perSqFtCost;
-  }, [product, selectedSizeKey]);
+  const result = useMemo(
+    () => computePrice({ pricing, product, width, height, selectedSizeKey, quantity, options: selectedOptions }),
+    [pricing, product, width, height, selectedSizeKey, quantity, selectedOptions]
+  );
+
+  const sizes = useMemo(() => (product ? resolveSizes(pricing, product) : []), [pricing, product]);
+  const showCustomDims = product?.sizeMode === "custom";
 
   const handleReset = () => {
     setSelectedCategory("");
@@ -262,27 +537,24 @@ export default function SpecialtyTab({ CardHeader }) {
     setQuantity(1);
     setCustomerName(""); setCustomerPhone(""); setCustomerEmail("");
     setOrderNotes("");
-    // Staff initials persist intentionally — same employee usually
-    // generates several orders in a row.
   };
 
   const handleGeneratePdf = async () => {
-    if (generating || !priceResult) return;
+    if (generating || !result) return;
     setGenerating(true);
     try {
       const orderData = {
-        category:    cat ? { key: selectedCategory, label: cat.label } : null,
-        product:     product ? { key: selectedProduct, label: product.label, pricingModel: product.pricingModel } : null,
-        dimensions:  priceResult.dimensions || null,
+        category: cat ? { key: selectedCategory, label: cat.label } : null,
+        product:  product ? { key: selectedProduct, label: product.label, pricingModel: product.pricingModel } : null,
+        dimensions: result.dim,
         quantity,
-        options:     selectedOptions,
-        optionMeta:  product?.options || {},
-        pricing:     priceResult,
-        customer: {
-          name:  customerName.trim(),
-          phone: customerPhone.trim(),
-          email: customerEmail.trim(),
-        },
+        quantityUnit: product?.quantityUnit || "pieces",
+        sheetsNeeded: result.sheetsNeeded,
+        options:    selectedOptions,
+        optionMeta: (product?.options || []).reduce((acc, opt) => { acc[opt.key] = opt; return acc; }, {}),
+        appliedOptions: result.appliedOptions,
+        pricing: result,
+        customer:      { name: customerName.trim(), phone: customerPhone.trim(), email: customerEmail.trim() },
         staffInitials: staffInitials.trim(),
         notes:         orderNotes.trim(),
       };
@@ -295,7 +567,7 @@ export default function SpecialtyTab({ CardHeader }) {
     }
   };
 
-  const canGenerate = !!priceResult && !generating;
+  const canGenerate = !!result && !generating;
 
   // ── Render ──
   return (
@@ -312,30 +584,19 @@ export default function SpecialtyTab({ CardHeader }) {
             <div>
               <label className="field-label">Category</label>
               <div className="pc-select-wrap">
-                <select
-                  className="pc-select"
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                >
+                <select className="pc-select" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
                   <option value="">— Choose a category —</option>
                   {Object.entries(pricing.categories || {}).map(([key, c]) => (
                     <option key={key} value={key}>{c.label}</option>
                   ))}
                 </select>
               </div>
-              {cat?.description && (
-                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{cat.description}</div>
-              )}
+              {cat?.description && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{cat.description}</div>}
             </div>
             <div>
               <label className="field-label">Product</label>
               <div className="pc-select-wrap">
-                <select
-                  className="pc-select"
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  disabled={!cat}
-                >
+                <select className="pc-select" value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)} disabled={!cat}>
                   <option value="">{cat ? "— Choose a product —" : "(pick category first)"}</option>
                   {cat && Object.entries(cat.products || {}).map(([key, p]) => (
                     <option key={key} value={key}>{p.label}</option>
@@ -344,9 +605,10 @@ export default function SpecialtyTab({ CardHeader }) {
               </div>
               {product && (
                 <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                  {product.pricingModel === "perSqFt"
-                    ? `Priced per sq ft — minimum ${product.minSqFt || 0} sq ft`
-                    : "Priced per piece"}
+                  {product.pricingModel === "perSqFt"   && "Priced per sq ft"}
+                  {product.pricingModel === "perSheet"  && (product.quantityUnit === "sets" ? "Priced per set" : "Priced per printer sheet")}
+                  {product.pricingModel === "perSqInch" && `Priced per sq in${product.minPrice ? ` (min ${fmtMoney(typeof product.minPrice === "number" ? product.minPrice : Object.values(product.minPrice)[0])})` : ""}`}
+                  {product.pricingModel === "perPiece"  && "Flat per piece"}
                 </div>
               )}
             </div>
@@ -354,46 +616,48 @@ export default function SpecialtyTab({ CardHeader }) {
         </div>
       </div>
 
-      {/* Step 2 — Size + quantity (only meaningful once a product is selected) */}
       {product && (
         <div className="pc-card">
           <CardHeader
             step="2"
             stepClass="step-num-purple"
-            title="Size & quantity"
-            hint={product.pricingModel === "perSqFt"
-              ? "Enter the finished print dimensions in inches"
-              : "Pick a stock size or use a custom one"}
+            title="Size, sides & quantity"
+            hint={product.sizeMode === "preset" ? "Pick from Signs365's stock sizes" : "Custom dimensions in inches"}
           />
           <div className="pc-card-body">
-            {product.pricingModel === "perSqFt" && (
-              <div className="grid-3" style={{ marginBottom: 12 }}>
+            {variantOption && (
+              <div style={{ marginBottom: 14 }}>
+                <label className="field-label">{variantOption.label}</label>
+                <div className="chip-group">
+                  {variantOption.choices.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      className={`pc-chip pc-chip-purple ${selectedOptions[variantOption.key] === c.value ? "selected" : ""}`}
+                      onClick={() => setSelectedOptions((prev) => ({ ...prev, [variantOption.key]: c.value }))}
+                    >{c.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {product.sizeMode === "preset" && (
+              <div className="grid-2" style={{ marginBottom: 12 }}>
                 <div>
-                  <label className="field-label">Width (in)</label>
-                  <input
-                    className="pc-input"
-                    type="number"
-                    inputMode="decimal"
-                    min="1"
-                    step="0.5"
-                    value={width}
-                    onChange={(e) => setWidth(e.target.value)}
-                  />
+                  <label className="field-label">Size</label>
+                  <div className="pc-select-wrap">
+                    <select className="pc-select" value={selectedSizeKey} onChange={(e) => setSelectedSizeKey(e.target.value)}>
+                      <option value="">— Choose a size —</option>
+                      {sizes.map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}{s.piecesPerSheet ? ` (${s.piecesPerSheet}/sheet)` : ""}{s.baseCost != null ? ` — ${fmtMoney(s.baseCost)}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <div>
-                  <label className="field-label">Height (in)</label>
-                  <input
-                    className="pc-input"
-                    type="number"
-                    inputMode="decimal"
-                    min="1"
-                    step="0.5"
-                    value={height}
-                    onChange={(e) => setHeight(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="field-label">Quantity</label>
+                  <label className="field-label">{product.quantityUnit === "sets" ? "Sets" : product.pricingModel === "perSheet" ? "Pieces" : "Quantity"}</label>
                   <input
                     className="pc-input"
                     type="number"
@@ -407,89 +671,48 @@ export default function SpecialtyTab({ CardHeader }) {
               </div>
             )}
 
-            {product.pricingModel === "perPiece" && (
-              <>
-                <div className="grid-2" style={{ marginBottom: 12 }}>
-                  <div>
-                    <label className="field-label">Stock size</label>
-                    <div className="pc-select-wrap">
-                      <select
-                        className="pc-select"
-                        value={selectedSizeKey}
-                        onChange={(e) => setSelectedSizeKey(e.target.value)}
-                      >
-                        <option value="">— Choose a size —</option>
-                        {(product.sizes || []).map((s) => (
-                          <option key={s.key} value={s.key}>{s.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="field-label">Quantity</label>
-                    <input
-                      className="pc-input"
-                      type="number"
-                      inputMode="numeric"
-                      min="1"
-                      step="1"
-                      value={quantity}
-                      onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
-                    />
-                  </div>
+            {showCustomDims && (
+              <div className="grid-3" style={{ marginBottom: 12 }}>
+                <div>
+                  <label className="field-label">Width (in)</label>
+                  <input className="pc-input" type="number" inputMode="decimal" min="1" step="0.5" value={width} onChange={(e) => setWidth(e.target.value)} />
                 </div>
-                {isPerPieceCustomSelected && (
-                  <div className="grid-2" style={{ marginBottom: 4 }}>
-                    <div>
-                      <label className="field-label">Custom width (in)</label>
-                      <input
-                        className="pc-input"
-                        type="number"
-                        inputMode="decimal"
-                        min="1"
-                        step="0.5"
-                        value={width}
-                        onChange={(e) => setWidth(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="field-label">Custom height (in)</label>
-                      <input
-                        className="pc-input"
-                        type="number"
-                        inputMode="decimal"
-                        min="1"
-                        step="0.5"
-                        value={height}
-                        onChange={(e) => setHeight(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {priceResult?.dimensions?.kind === "perSqFt" && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-                {priceResult.dimensions.sqFt.toFixed(2)} sq ft
-                {priceResult.dimensions.minApplied && (
-                  <span style={{ color: "var(--amber)" }}>
-                    {" · "}Below minimum — billing the {priceResult.dimensions.minSqFt} sq ft minimum
-                  </span>
-                )}
+                <div>
+                  <label className="field-label">Height (in)</label>
+                  <input className="pc-input" type="number" inputMode="decimal" min="1" step="0.5" value={height} onChange={(e) => setHeight(e.target.value)} />
+                </div>
+                <div>
+                  <label className="field-label">Quantity</label>
+                  <input className="pc-input" type="number" inputMode="numeric" min="1" step="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
+                </div>
               </div>
             )}
-            {priceResult?.dimensions?.kind === "perPieceCustom" && (
+
+            {product.sizeMode === "none" && (
+              <div className="grid-2" style={{ marginBottom: 12 }}>
+                <div>
+                  <label className="field-label">Quantity</label>
+                  <input className="pc-input" type="number" inputMode="numeric" min="1" step="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
+                </div>
+              </div>
+            )}
+
+            {result?.dim && (result.dim.kind === "preset" || result.dim.kind === "custom") && (
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-                Custom · {priceResult.dimensions.sqFt.toFixed(2)} sq ft per piece
+                {result.dim.width}" × {result.dim.height}" · {result.dim.sqFt.toFixed(2)} sq ft per piece · total {result.totalSqFt.toFixed(2)} sq ft
+                {product.pricingModel === "perSheet" && ` · ${result.sheetsNeeded} sheet${result.sheetsNeeded === 1 ? "" : "s"} needed`}
+              </div>
+            )}
+            {result?.activeTier && (
+              <div className="specialty-tier-hint" style={{ marginTop: 6 }}>
+                Active tier: <strong>{result.activeTier.label}</strong> ({fmtMoney(result.activeTier.cost)}{product.pricingModel === "perSqFt" ? "/sq ft" : product.pricingModel === "perSheet" ? "/sheet" : product.pricingModel === "perSqInch" ? "/sq in" : "/piece"})
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Step 3 — Options */}
-      {product && Object.keys(product.options || {}).length > 0 && (
+      {product && (product.options || []).filter((o) => o.type !== "tierVariant").length > 0 && (
         <div className="pc-card">
           <CardHeader
             step="3"
@@ -498,20 +721,18 @@ export default function SpecialtyTab({ CardHeader }) {
             hint="Per-product upgrades and add-ons"
           />
           <div className="pc-card-body specialty-options">
-            {Object.entries(product.options).map(([key, opt]) => (
+            {(product.options || []).filter((o) => o.type !== "tierVariant").map((opt) => (
               <SpecialtyOption
-                key={key}
-                optKey={key}
+                key={opt.key}
                 opt={opt}
-                value={selectedOptions[key]}
-                onChange={(v) => setSelectedOptions((prev) => ({ ...prev, [key]: v }))}
+                value={selectedOptions[opt.key]}
+                onChange={(v) => setSelectedOptions((prev) => ({ ...prev, [opt.key]: v }))}
               />
             ))}
           </div>
         </div>
       )}
 
-      {/* Step 4 — Customer + staff metadata for the trade-order PDF */}
       {product && (
         <div className="pc-card">
           <CardHeader
@@ -524,112 +745,75 @@ export default function SpecialtyTab({ CardHeader }) {
             <div className="grid-3" style={{ marginBottom: 12 }}>
               <div>
                 <label className="field-label">Customer name</label>
-                <input
-                  className="pc-input"
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Walk-in OK"
-                />
+                <input className="pc-input" type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Walk-in OK" />
               </div>
               <div>
                 <label className="field-label">Phone</label>
-                <input
-                  className="pc-input"
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                />
+                <input className="pc-input" type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
               </div>
               <div>
                 <label className="field-label">Email</label>
-                <input
-                  className="pc-input"
-                  type="email"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                />
+                <input className="pc-input" type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} />
               </div>
             </div>
             <div className="grid-2" style={{ marginBottom: 12 }}>
               <div>
                 <label className="field-label">Staff initials</label>
-                <input
-                  className="pc-input"
-                  type="text"
-                  maxLength={6}
-                  value={staffInitials}
-                  onChange={(e) => setStaffInitials(e.target.value)}
-                  placeholder="e.g. JL"
-                  style={{ textTransform: "uppercase" }}
-                />
+                <input className="pc-input" type="text" maxLength={6} value={staffInitials} onChange={(e) => setStaffInitials(e.target.value)} placeholder="e.g. JL" style={{ textTransform: "uppercase" }} />
               </div>
               <div>
                 <label className="field-label">Order notes (optional)</label>
-                <input
-                  className="pc-input"
-                  type="text"
-                  value={orderNotes}
-                  onChange={(e) => setOrderNotes(e.target.value)}
-                  placeholder="anything to flag for the press operator"
-                />
+                <input className="pc-input" type="text" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} placeholder="anything to flag for Signs365" />
               </div>
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-              These are printed on the order sheet. The PDF also includes a lined
-              area below the notes for handwritten additions on the shop floor.
             </div>
           </div>
         </div>
       )}
 
-      {/* Sticky price + actions */}
+      {result?.warnings?.length > 0 && (
+        <div className="callout callout-warn" style={{ marginBottom: 14 }}>
+          <span className="callout-icon">⚠</span>
+          {result.warnings.map((w, i) => (
+            <div key={i} style={{ fontSize: 12 }}>{w}</div>
+          ))}
+        </div>
+      )}
+
       <div className="price-bar price-bar-purple">
         <div className="price-metrics">
           <div className="price-metric">
-            <div className="price-metric-label">Customer price</div>
+            <div className="price-metric-label">Customer total</div>
             <div className="price-metric-val is-total-purple">
-              {priceResult ? fmtMoney(priceResult.customerPrice) : "—"}
+              {result ? fmtMoney(result.customerTotal) : "—"}
             </div>
           </div>
           <div className="price-metric">
-            <div className="price-metric-label">Per piece</div>
+            <div className="price-metric-label">Print (after markup)</div>
             <div className="price-metric-val">
-              {priceResult ? fmtMoney(priceResult.customerPrice / Math.max(1, quantity)) : "—"}
+              {result ? fmtMoney(result.customerPrintPrice) : "—"}
             </div>
           </div>
           <div className="price-metric">
-            <div className="price-metric-label">Quantity discount</div>
+            <div className="price-metric-label">Shipping (passthrough)</div>
             <div className="price-metric-val">
-              {priceResult?.qtyDiscountPct
-                ? `${(priceResult.qtyDiscountPct * 100).toFixed(0)}% off`
-                : "—"}
+              {result ? fmtMoney(result.shippingCost) : "—"}
             </div>
           </div>
           <div className="price-metric">
             <div className="price-metric-label">Margin</div>
             <div className="price-metric-val">
-              {priceResult
-                ? `${fmtMoney(priceResult.margin)} (${priceResult.marginPct.toFixed(1)}%)`
-                : "—"}
+              {result ? `${fmtMoney(result.margin)} (${result.marginPct.toFixed(1)}%)` : "—"}
             </div>
           </div>
         </div>
         <div className="price-bar-actions">
-          <button
-            type="button"
-            className="pc-btn pc-btn-secondary"
-            onClick={handleReset}
-            title="Clear all fields"
-          >
-            Reset
-          </button>
+          <button type="button" className="pc-btn pc-btn-secondary" onClick={handleReset}>Reset</button>
           <button
             type="button"
             className="pc-btn pc-btn-purple"
             onClick={handleGeneratePdf}
             disabled={!canGenerate}
-            title={canGenerate ? "Generate the trade-order PDF" : "Pick a category, product, size, and quantity first"}
+            title={canGenerate ? "Generate the trade-order PDF" : "Pick a product, size and quantity first"}
           >
             {generating ? "Generating…" : "⬇ Generate Trade Order PDF"}
           </button>
@@ -639,48 +823,44 @@ export default function SpecialtyTab({ CardHeader }) {
   );
 }
 
-// ── Single option renderer ────────────────────────────────
-function SpecialtyOption({ optKey, opt, value, onChange }) {
-  if (opt.type === "checkbox") {
+// ── Single option renderer ────────────────────────────
+function SpecialtyOption({ opt, value, onChange }) {
+  if (opt.type === "checkbox" || opt.type === "setupFee" || opt.type === "perLinearFt" || opt.type === "perSqFtAddon" || opt.type === "percentMultiplier") {
+    const tag =
+      opt.type === "setupFee"          ? `+${fmtMoney(opt.setupFee)} setup` :
+      opt.type === "perLinearFt"       ? `${fmtMoney(opt.costPerLinearFt)}/lin ft${opt.setupFee ? ` + ${fmtMoney(opt.setupFee)} setup` : ""}` :
+      opt.type === "perSqFtAddon"      ? `+${fmtMoney(opt.costPerSqFt)}/sq ft` :
+      opt.type === "percentMultiplier" ? `×${opt.multiplier}` :
+      opt.cost ? `+${fmtMoney(opt.cost)}` : "free";
     return (
       <label className="specialty-opt specialty-opt-row">
-        <input
-          type="checkbox"
-          checked={!!value}
-          onChange={(e) => onChange(e.target.checked)}
-        />
+        <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />
         <span className="specialty-opt-label">{opt.label}</span>
-        {opt.cost > 0 && <span className="specialty-opt-cost">+{fmtMoney(opt.cost)}</span>}
-        {opt.costMultiplier && opt.costMultiplier !== 1 && (
-          <span className="specialty-opt-cost">×{opt.costMultiplier.toFixed(2)}</span>
-        )}
+        {tag !== "free" && <span className="specialty-opt-cost">{tag}</span>}
       </label>
     );
   }
+
   if (opt.type === "select") {
     return (
       <div className="specialty-opt">
         <label className="field-label">{opt.label}</label>
         <div className="pc-select-wrap">
-          <select
-            className="pc-select"
-            value={value || ""}
-            onChange={(e) => onChange(e.target.value)}
-          >
-            {(opt.choices || []).map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-                {c.cost ? ` (+${fmtMoney(c.cost)})` : ""}
-                {c.costMultiplier && c.costMultiplier !== 1 ? ` (×${c.costMultiplier})` : ""}
-                {c.costPerSqFt ? ` (+${fmtMoney(c.costPerSqFt)}/sqft)` : ""}
-                {c.costPerLinearFt ? ` (+${fmtMoney(c.costPerLinearFt)}/lin ft)` : ""}
-              </option>
-            ))}
+          <select className="pc-select" value={value || ""} onChange={(e) => onChange(e.target.value)}>
+            {(opt.choices || []).map((c) => {
+              const tag =
+                c.cost          ? ` (+${fmtMoney(c.cost)})` :
+                c.costPerSqFt   ? ` (+${fmtMoney(c.costPerSqFt)}/sq ft)` :
+                c.costPerLinearFt ? ` (+${fmtMoney(c.costPerLinearFt)}/lin ft)` :
+                c.costMultiplier && c.costMultiplier !== 1 ? ` (×${c.costMultiplier})` : "";
+              return <option key={c.value} value={c.value}>{c.label}{tag}</option>;
+            })}
           </select>
         </div>
       </div>
     );
   }
+
   if (opt.type === "perEachAddon") {
     return (
       <div className="specialty-opt specialty-opt-row">
@@ -694,9 +874,12 @@ function SpecialtyOption({ optKey, opt, value, onChange }) {
           value={value || 0}
           onChange={(e) => onChange(Math.max(0, Number(e.target.value) || 0))}
         />
-        <span className="specialty-opt-cost">+{fmtMoney(opt.costPerEach)} ea</span>
+        <span className="specialty-opt-cost">
+          {fmtMoney(opt.costPerEach)} ea{opt.setupFee ? ` + ${fmtMoney(opt.setupFee)} setup` : ""}
+        </span>
       </div>
     );
   }
+
   return null;
 }
