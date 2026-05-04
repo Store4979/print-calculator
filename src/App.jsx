@@ -1784,6 +1784,23 @@ const handleFrontFiles = async (files) => {
 
   // ─── PDF DOWNLOADS ──────────────────────────────────────
 
+// How many preview pages a sheet job needs.
+  //  • 1 file × N copies            → 1 page (every sheet is identical)
+  //  • multiple files, all fit on   → 1 page (each sheet still ends up
+  //    one sheet at the same qty       identical because the layout repeats)
+  //  • otherwise                    → min(sheetsNeeded, 20). Cap at 20 so a
+  //    50-copy shop run doesn't emit a 50-page PDF; the first 20 sheets are
+  //    plenty for the press operator to cross-check the layouts.
+  const previewPagesFor = (files, printsPerSheetVal, sheetsNeededVal) => {
+    const arr = Array.isArray(files) ? files : [];
+    if (arr.length <= 1) return 1;
+    const firstQty = Number(arr[0].qty) || 0;
+    const allSameQty  = arr.every((f) => (Number(f.qty) || 0) === firstQty);
+    const allFitOnOne = arr.length <= Math.max(1, Number(printsPerSheetVal) || 1);
+    if (allSameQty && allFitOnOne) return 1;
+    return Math.min(Math.max(1, Number(sheetsNeededVal) || 1), 20);
+  };
+
 // Render a hi-res sheet canvas for print-quality PDF embedding. Uses the
   // same drawSheet logic but at PRINT_DPI_SHEET DPI, and suppresses on-screen-
   // only guides/cut lines so the output PDF is clean.
@@ -1800,7 +1817,7 @@ const handleFrontFiles = async (files) => {
   // Hi-res render of an arbitrary ticket line item (NOT the active editor).
   // Builds the same orientation/slot params drawSheetTo expects from the
   // saved item snapshot.
-  const renderHiResForItem = async (item) => {
+  const renderHiResForItem = async (item, pageIndex = 0) => {
     const c = document.createElement("canvas");
     const dims = PRESET_SHEETS[item.sheetKey] || [8.5, 11];
     const widthIn  = item.orientation === "landscape" ? Math.max(...dims) : Math.min(...dims);
@@ -1811,7 +1828,7 @@ const handleFrontFiles = async (files) => {
     await drawSheetTo(c, {
       imageInput: itemFiles,
       rotDeg: Number(item.frontRotation) || 0,
-      pageIndex: 0,
+      pageIndex,
       placementsRef: null,
       orientedWIn: widthIn,
       orientedHIn: heightIn,
@@ -1864,10 +1881,18 @@ const handleFrontFiles = async (files) => {
       const pageOrient = pdfW>pdfH ? "landscape" : "portrait";
       const exportInput = frontFiles.length ? frontFiles : (frontImage ? [{ id:"single", file:frontImage, name:frontImage.name||"Image", rotation:0, qty:Number(prints.quantity)||1 }] : []);
 
-      const frontCanvas = await renderHiResSheet(exportInput, frontRotation, 0);
-      orderDoc.addPage([pdfW,pdfH], pageOrient);
-      orderDoc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
+      // Front previews — one page per UNIQUE sheet layout. Single-image
+      // jobs and "everything fits on one sheet" jobs need only one page;
+      // multi-file jobs that span sheets need one page per sheet so each
+      // file actually shows up in the PDF.
+      const frontPreviewPages = previewPagesFor(frontFiles, printsPerSheet, sheetsNeeded);
+      for (let pageIdx = 0; pageIdx < frontPreviewPages; pageIdx++) {
+        const frontCanvas = await renderHiResSheet(exportInput, frontRotation, pageIdx);
+        orderDoc.addPage([pdfW,pdfH], pageOrient);
+        orderDoc.addImage(canvasToPrintJpeg(frontCanvas), "JPEG", 0, 0, pdfW, pdfH);
+      }
 
+      // Back side: one image repeated, so a single preview page is fine.
       if (showBack && backImage) {
         const backCanvas = await renderHiResSheet(backImage, backRotation, 0);
         orderDoc.addPage([pdfW,pdfH], pageOrient);
@@ -1945,13 +1970,17 @@ const handleFrontFiles = async (files) => {
       const firstSku = skuMap[`${liveTicket[0].paperKey}:${liveTicket[0].sheetKey}`] || liveTicket[0].paperKey;
       addTicketOrderSheetPage(orderDoc, { jobs, summary, barcodeValue: firstSku });
 
-      // One preview page per job at print DPI.
+      // Preview pages per job — one page per unique sheet layout, so a
+      // multi-file job actually shows every file in the PDF.
       for (let i = 0; i < liveTicket.length; i++) {
         const item = liveTicket[i];
-        const { canvas, widthIn, heightIn } = await renderHiResForItem(item);
-        const orient = widthIn > heightIn ? "landscape" : "portrait";
-        orderDoc.addPage([widthIn, heightIn], orient);
-        orderDoc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+        const pages = previewPagesFor(item.frontFiles, item.printsPerSheet, item.sheetsNeeded);
+        for (let pageIdx = 0; pageIdx < pages; pageIdx++) {
+          const { canvas, widthIn, heightIn } = await renderHiResForItem(item, pageIdx);
+          const orient = widthIn > heightIn ? "landscape" : "portrait";
+          orderDoc.addPage([widthIn, heightIn], orient);
+          orderDoc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+        }
       }
     }
 
@@ -2130,14 +2159,20 @@ const handleFrontFiles = async (files) => {
     const firstH = firstItem.orientation === "landscape" ? Math.min(...firstDims) : Math.max(...firstDims);
     const doc = new (getJsPDF())({ orientation: firstW>firstH?"landscape":"portrait", unit:"in", format:[firstW, firstH] });
 
+    let placedAny = false;
     for (let i = 0; i < liveTicket.length; i++) {
-      const { canvas, widthIn, heightIn } = await renderHiResForItem(liveTicket[i]);
-      const orient = widthIn > heightIn ? "landscape" : "portrait";
-      if (i === 0) {
-        doc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
-      } else {
-        doc.addPage([widthIn, heightIn], orient);
-        doc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+      const item = liveTicket[i];
+      const pages = previewPagesFor(item.frontFiles, item.printsPerSheet, item.sheetsNeeded);
+      for (let pageIdx = 0; pageIdx < pages; pageIdx++) {
+        const { canvas, widthIn, heightIn } = await renderHiResForItem(item, pageIdx);
+        const orient = widthIn > heightIn ? "landscape" : "portrait";
+        if (!placedAny) {
+          doc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+          placedAny = true;
+        } else {
+          doc.addPage([widthIn, heightIn], orient);
+          doc.addImage(canvasToPrintJpeg(canvas), "JPEG", 0, 0, widthIn, heightIn);
+        }
       }
     }
     // Active job's back side (if any) — only the active item carries
