@@ -15,6 +15,7 @@ import CommissionDashboard from "./components/CommissionDashboard.jsx";
 import MyNumbersPanel from "./components/MyNumbersPanel.jsx";
 import SpecialtyTab from "./components/SpecialtyTab.jsx";
 import Signs365PricingEditor from "./components/Signs365PricingEditor.jsx";
+import TrainingDrawer from "./TrainingDrawer.jsx";
 import {
   ensureDbAuthenticated, savePrintJob, isSupabaseConfigured,
   getStoredEmployee, setStoredEmployee,
@@ -2507,6 +2508,81 @@ try {
     r.readAsText(file);
   };
 
+  // ─── TRAINING DRAWER HOOK ───────────────────────────────
+  // Receives a scenario `apply` config from TrainingDrawer.jsx and
+  // pre-fills the live calculator. Field names follow the drawer's
+  // schema; setter names below were verified against the actual
+  // App.jsx state (a few diverged from the integration guide:
+  //   colorMode    → setFrontColorMode
+  //   backEnabled  → setShowBack
+  //   grommetQty   → setLfGrommetCount + setLfGrommets(true)
+  //   bpWidth/bpHeight → resolved into setBpSizeKey via BLUEPRINT_SIZES
+  // lfQuantity, imposeTool, finishedW/H, totalPages, copies,
+  // numberStart are intentionally ignored — those tools own their
+  // own internal state per the integration note).
+  const applyScenario = useCallback((cfg) => {
+    if (!cfg || typeof cfg !== "object") return;
+
+    if (cfg.viewMode) setViewMode(cfg.viewMode);
+    if (cfg.tab)      { setActiveTab(cfg.tab); setViewMode("tool"); }
+
+    // Sheets & Photos
+    if (cfg.printW != null || cfg.printH != null || cfg.quantity != null) {
+      setPrints((prev) => ({
+        ...prev,
+        ...(cfg.printW   != null ? { width:    Number(cfg.printW)   } : {}),
+        ...(cfg.printH   != null ? { height:   Number(cfg.printH)   } : {}),
+        ...(cfg.quantity != null ? { quantity: Number(cfg.quantity) } : {}),
+      }));
+    }
+    if (cfg.paperKey)            setPaperKey(cfg.paperKey);
+    if (cfg.sheetKey)            setSheetKey(cfg.sheetKey);
+    if (cfg.colorMode)           setFrontColorMode(cfg.colorMode);
+    if (cfg.backEnabled != null) setShowBack(!!cfg.backEnabled);
+
+    // Large Format
+    if (cfg.lfWidth   != null) setLfWidth(Number(cfg.lfWidth));
+    if (cfg.lfHeight  != null) setLfHeight(Number(cfg.lfHeight));
+    if (cfg.lfPaperKey)        setLfPaperKey(cfg.lfPaperKey);
+    if (cfg.grommetQty != null && cfg.grommetQty > 0) {
+      setLfGrommets(true);
+      setLfGrommetCount(Number(cfg.grommetQty));
+    }
+    // lfQuantity has no matching state (LF is single-image) — ignored.
+
+    // Blueprints — translate raw W×H into the closest preset size key.
+    if (cfg.bpWidth != null && cfg.bpHeight != null) {
+      const w = Number(cfg.bpWidth), h = Number(cfg.bpHeight);
+      const match =
+        BLUEPRINT_SIZES.find((s) => s.w === w && s.h === h) ||
+        BLUEPRINT_SIZES.find((s) => Math.min(s.w, s.h) === Math.min(w, h)
+                                 && Math.max(s.w, s.h) === Math.max(w, h));
+      if (match) setBpSizeKey(match.key);
+    }
+    if (cfg.bpQty != null) setBpQty(Number(cfg.bpQty));
+
+    // Quick Quote
+    if (cfg.quotePrintW         != null) setQuotePrintW(Number(cfg.quotePrintW));
+    if (cfg.quotePrintH         != null) setQuotePrintH(Number(cfg.quotePrintH));
+    if (cfg.quoteQty            != null) setQuoteQty(Number(cfg.quoteQty));
+    if (cfg.quoteFrontColorMode)         setQuoteFrontColorMode(cfg.quoteFrontColorMode);
+    if (cfg.quoteBackEnabled    != null) setQuoteBackEnabled(!!cfg.quoteBackEnabled);
+    if (cfg.quoteShowAllPapers  != null) setQuoteShowAllPapers(!!cfg.quoteShowAllPapers);
+
+    // Specialty / Signs365 — local state lives inside SpecialtyTab,
+    // so we hand the config off via a CustomEvent. SpecialtyTab
+    // listens (same pattern it already uses for the admin
+    // "signs365PricingUpdated" event) and seeds itself.
+    if (cfg.specialty && typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(new CustomEvent("specialtyApplyScenario", { detail: cfg.specialty }));
+      } catch {}
+    }
+
+    // Impose / BookletMaker / DataMerge: scenarios just switch tabs;
+    // no deeper prefill (those tools own their internal state).
+  }, []);
+
   const currentPaper = paperTypes.find(p=>p.key===paperKey)||{label:paperKey,sheets:[]};
   const comboAllowed = (sheetKeysForPaper[paperKey]||[]).includes(sheetKey);
   const effectiveQty = frontFiles.length ? frontFiles.reduce((s,f)=>s+(Number(f.qty)||0),0) : (Number(prints.quantity)||0);
@@ -3779,6 +3855,8 @@ try {
       </div>{/* /content-wrap */}
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
+
+      <TrainingDrawer onApplyScenario={applyScenario} />
 
       {pendingSaveJob && (
         <SaveJobDialog

@@ -27,7 +27,7 @@
 //  jsPDF is loaded via CDN — don't import it as a module.
 // ============================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import signs365PricingDefaults from "../data/signs365Pricing.json";
 import { generateTradeOrderPDF } from "../utils/tradeOrderPDF.js";
 
@@ -501,19 +501,72 @@ export default function SpecialtyTab({ CardHeader }) {
   const cat = pricing.categories?.[selectedCategory];
   const product = cat?.products?.[selectedProduct];
 
-  // Reset propagation
+  // Pending prefill ref. The TrainingDrawer (or any future caller)
+  // dispatches a "specialtyApplyScenario" CustomEvent and we stash the
+  // detail here. The category/product reset effects below consume the
+  // ref instead of clearing, so a scenario's sizeKey / width / height /
+  // options actually survive the cascade.
+  const pendingPrefillRef = useRef(null);
+
+  // Reset propagation when category changes — but if we have a pending
+  // prefill targeting the new category, walk straight to the product.
   useEffect(() => {
+    const pending = pendingPrefillRef.current;
+    if (pending && pending.category === selectedCategory) {
+      setSelectedProduct(pending.product || "");
+      return;
+    }
     setSelectedProduct("");
     setSelectedSizeKey("");
     setSelectedOptions({});
     setWidth(""); setHeight("");
   }, [selectedCategory]);
 
+  // Same idea on product change: prefill takes precedence over the
+  // default reset behaviour.
   useEffect(() => {
+    const pending = pendingPrefillRef.current;
+    if (pending && pending.product === selectedProduct) {
+      pendingPrefillRef.current = null;
+      setSelectedSizeKey(pending.sizeKey || "");
+      setWidth(pending.width  != null ? String(pending.width)  : "");
+      setHeight(pending.height != null ? String(pending.height) : "");
+      if (pending.quantity != null) setQuantity(Math.max(1, Number(pending.quantity) || 1));
+      setSelectedOptions({ ...defaultOptionsFor(product), ...(pending.options || {}) });
+      return;
+    }
     setSelectedSizeKey("");
     setWidth(""); setHeight("");
     setSelectedOptions(defaultOptionsFor(product));
   }, [selectedProduct, product]);
+
+  // External-prefill listener (TrainingDrawer scenarios). Picks up
+  // wherever in the cascade we are: different category → set
+  // category and let the reset effects walk the rest; same category
+  // / different product → skip straight to product; everything same
+  // → apply size + options inline.
+  useEffect(() => {
+    const onApply = (e) => {
+      const cfg = e?.detail;
+      if (!cfg || typeof cfg !== "object") return;
+      pendingPrefillRef.current = cfg;
+      if (cfg.category && cfg.category !== selectedCategory) {
+        setSelectedCategory(cfg.category);
+      } else if (cfg.product && cfg.product !== selectedProduct) {
+        setSelectedProduct(cfg.product);
+      } else {
+        // Same category AND product — apply directly, no cascade needed.
+        pendingPrefillRef.current = null;
+        if (cfg.sizeKey) setSelectedSizeKey(cfg.sizeKey);
+        if (cfg.width  != null) setWidth(String(cfg.width));
+        if (cfg.height != null) setHeight(String(cfg.height));
+        if (cfg.quantity != null) setQuantity(Math.max(1, Number(cfg.quantity) || 1));
+        if (product) setSelectedOptions((prev) => ({ ...prev, ...(cfg.options || {}) }));
+      }
+    };
+    window.addEventListener("specialtyApplyScenario", onApply);
+    return () => window.removeEventListener("specialtyApplyScenario", onApply);
+  }, [selectedCategory, selectedProduct, product]);
 
   const variantOption = useMemo(
     () => (product?.options || []).find((o) => o.type === "tierVariant"),
