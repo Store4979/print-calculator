@@ -756,10 +756,11 @@ export default function BookletMaker({ CardHeader, pricingProps }) {
           hint="Choose your finished booklet dimensions"
         />
         <div className="pc-card-body">
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }} data-tour="booklet-preset">
             {BOOKLET_PRESETS.map(p => (
               <button
                 key={p.key}
+                data-tour={`booklet-preset-${p.key}`}
                 className={`pc-btn ${presetKey === p.key ? "pc-btn-primary" : "pc-btn-secondary"}`}
                 style={{ minWidth: 160, textAlign: "left", padding: "10px 16px", height: "auto" }}
                 onClick={() => setPresetKey(p.key)}
@@ -796,7 +797,7 @@ export default function BookletMaker({ CardHeader, pricingProps }) {
             <>
               <div style={{ marginBottom: 12 }}>
                 <label className="field-label">Paper Type</label>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} data-tour="booklet-paper-type">
                   {availablePapers.map(pt => (
                     <button
                       key={pt.key}
@@ -806,10 +807,10 @@ export default function BookletMaker({ CardHeader, pricingProps }) {
                   ))}
                 </div>
               </div>
-              
+
               <div style={{ marginBottom: 12 }}>
                 <label className="field-label">Color Mode</label>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6 }} data-tour="booklet-color-mode">
                   <button
                     className={`pc-btn pc-btn-sm ${colorMode === "color" ? "pc-btn-primary" : "pc-btn-secondary"}`}
                     onClick={() => setColorMode("color")}
@@ -865,6 +866,7 @@ export default function BookletMaker({ CardHeader, pricingProps }) {
           
           {/* Drop zone */}
           <div
+            data-tour="booklet-upload"
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}

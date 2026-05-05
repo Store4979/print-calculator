@@ -777,6 +777,7 @@ export default function DataMerge({ CardHeader, pricingProps }) {
           />
 
           <div
+            data-tour="datamerge-template-upload"
             onClick={() => templateInputRef.current?.click()}
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -840,7 +841,7 @@ export default function DataMerge({ CardHeader, pricingProps }) {
               <>
                 <div style={{ marginBottom: 12 }}>
                   <label className="field-label">Paper Type</label>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} data-tour="datamerge-paper-type">
                     {paperTypes.map(pt => (
                       <button
                         key={pt.key}
@@ -853,7 +854,7 @@ export default function DataMerge({ CardHeader, pricingProps }) {
 
                 <div style={{ marginBottom: 12 }}>
                   <label className="field-label">Sheet Size</label>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} data-tour="datamerge-sheet-size">
                     {availableSheetKeys.map(sk => (
                       <button
                         key={sk}
@@ -863,10 +864,10 @@ export default function DataMerge({ CardHeader, pricingProps }) {
                     ))}
                   </div>
                 </div>
-                
+
                 <div style={{ marginBottom: 12 }}>
                   <label className="field-label">Color Mode</label>
-                  <div style={{ display: "flex", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 6 }} data-tour="datamerge-color-mode">
                     <button
                       className={`pc-btn pc-btn-sm ${colorMode === "color" ? "pc-btn-primary" : "pc-btn-secondary"}`}
                       onClick={() => setColorMode("color")}
@@ -971,7 +972,7 @@ export default function DataMerge({ CardHeader, pricingProps }) {
                 </div>
               </div>
             ) : (
-              <button className="pc-btn pc-btn-secondary" onClick={() => csvInputRef.current?.click()}
+              <button data-tour="datamerge-csv-upload" className="pc-btn pc-btn-secondary" onClick={() => csvInputRef.current?.click()}
                 style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <TableIcon /> Upload CSV File
               </button>
