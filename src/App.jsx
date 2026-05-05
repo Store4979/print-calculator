@@ -563,10 +563,11 @@ function Toggle({ checked, onChange }) {
   );
 }
 
-function Chip({ label, selected, onClick, color="" }) {
+function Chip({ label, selected, onClick, color="", dataTour }) {
   return (
     <button
       type="button"
+      data-tour={dataTour}
       className={`pc-chip ${color ? `pc-chip-${color}` : ""} ${selected ? "selected" : ""}`}
       onClick={onClick}
     >
@@ -575,9 +576,9 @@ function Chip({ label, selected, onClick, color="" }) {
   );
 }
 
-function AddonCard({ emoji, name, price, selected, onToggle }) {
+function AddonCard({ emoji, name, price, selected, onToggle, dataTour }) {
   return (
-    <div className={`addon-card ${selected ? "selected" : ""}`} onClick={onToggle}>
+    <div data-tour={dataTour} className={`addon-card ${selected ? "selected" : ""}`} onClick={onToggle}>
       <div className="addon-check">{selected && <Icon.Check />}</div>
       <div className="addon-emoji">{emoji}</div>
       <div className="addon-name">{name}</div>
@@ -626,9 +627,9 @@ function UploadZone({ hasFile, label, subLabel, types, onFiles, inputRef }) {
   );
 }
 
-function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total" }) {
+function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour }) {
   return (
-    <div className={`price-bar ${accentClass}`}>
+    <div data-tour={dataTour} className={`price-bar ${accentClass}`}>
       <div className="price-metrics">
         {metrics.map(({ label, value, big }) => (
           <div key={label} className="price-metric">
@@ -638,15 +639,16 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
         ))}
       </div>
       <div className="price-bar-actions">
-        <button className="pc-btn pc-btn-secondary" onClick={onDownload}>
+        <button data-tour={downloadTour} className="pc-btn pc-btn-secondary" onClick={onDownload}>
           <Icon.Download /> Generate Quote
         </button>
-        <button className="pc-btn pc-btn-secondary" onClick={onOrder}>
+        <button data-tour={orderTour} className="pc-btn pc-btn-secondary" onClick={onOrder}>
           <Icon.Send /> Email
         </button>
         {onCompleteSale && (
           <button
             type="button"
+            data-tour={completeSaleTour}
             className="pc-btn pc-btn-complete-sale"
             onClick={onCompleteSale}
             disabled={!completeSaleEnabled}
@@ -2649,6 +2651,7 @@ try {
               )
             )}
             <button
+              data-tour="header-quote"
               className="pc-btn pc-btn-secondary pc-btn-sm"
               onClick={() => setViewMode(v => v==="quote"?"tool":"quote")}
               style={{ gap:6 }}
@@ -2658,6 +2661,7 @@ try {
             </button>
             {isSupabaseConfigured && (
               <button
+                data-tour="header-job-history"
                 className="pc-btn pc-btn-secondary pc-btn-sm"
                 onClick={openJobHistory}
                 style={{ gap:6 }}
@@ -2666,7 +2670,7 @@ try {
                 📋 Job History
               </button>
             )}
-            <button className="pc-btn pc-btn-admin" onClick={handleAdminClick} style={{ display:"flex", alignItems:"center", gap:5 }}>
+            <button data-tour="header-admin" className="pc-btn pc-btn-admin" onClick={handleAdminClick} style={{ display:"flex", alignItems:"center", gap:5 }}>
               <Icon.Admin />
               {isAdmin && showAdmin ? "Close Admin" : "Admin"}
             </button>
@@ -2688,6 +2692,7 @@ try {
 ].map(tab => (
               <button
                 key={tab.id}
+                data-tour={`tab-${tab.id}`}
                 className={`service-tab ${activeTab===tab.id ? (tab.id==="paper"?"active":tab.id==="large"?"active active-amber":tab.id==="impose"?"active active-green":tab.id==="specialty"?"active active-purple":"active active-blue") : ""}`}
                 onClick={() => setActiveTab(tab.id)}
               >
@@ -2712,32 +2717,32 @@ try {
                 <div className="grid-3" style={{ marginBottom:14 }}>
                   <div>
                     <label className="field-label">Print width (in)</label>
-                    <input className="pc-input" type="number" value={quotePrintW} min="0.5" step="0.25" onChange={e=>setQuotePrintW(+e.target.value||0)} />
+                    <input data-tour="quote-print-w" className="pc-input" type="number" value={quotePrintW} min="0.5" step="0.25" onChange={e=>setQuotePrintW(+e.target.value||0)} />
                   </div>
                   <div>
                     <label className="field-label">Print height (in)</label>
-                    <input className="pc-input" type="number" value={quotePrintH} min="0.5" step="0.25" onChange={e=>setQuotePrintH(+e.target.value||0)} />
+                    <input data-tour="quote-print-h" className="pc-input" type="number" value={quotePrintH} min="0.5" step="0.25" onChange={e=>setQuotePrintH(+e.target.value||0)} />
                   </div>
                   <div>
                     <label className="field-label">Quantity</label>
-                    <input className="pc-input" type="number" value={quoteQty} min="1" onChange={e=>setQuoteQty(+e.target.value||0)} />
+                    <input data-tour="quote-qty" className="pc-input" type="number" value={quoteQty} min="1" onChange={e=>setQuoteQty(+e.target.value||0)} />
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:14 }}>
-                  <div>
+                  <div data-tour="quote-color">
                     <label className="field-label">Front color</label>
                     <div className="chip-group">
                       <Chip label="Color" selected={quoteFrontColorMode==="color"} onClick={()=>setQuoteFrontColorMode("color")} />
                       <Chip label="B&W"   selected={quoteFrontColorMode==="bw"}    onClick={()=>setQuoteFrontColorMode("bw")} />
                     </div>
                   </div>
-                  <div>
+                  <div data-tour="quote-double-sided">
                     <div className="toggle-row" style={{ padding:0, border:0, gap:8 }}>
                       <span className="field-label" style={{ marginBottom:0 }}>Double-sided</span>
                       <Toggle checked={quoteBackEnabled} onChange={setQuoteBackEnabled} />
                     </div>
                   </div>
-                  <div>
+                  <div data-tour="quote-all-papers">
                     <div className="toggle-row" style={{ padding:0, border:0, gap:8 }}>
                       <span className="field-label" style={{ marginBottom:0 }}>All paper types</span>
                       <Toggle checked={quoteShowAllPapers} onChange={setQuoteShowAllPapers} />
@@ -2745,7 +2750,7 @@ try {
                   </div>
                 </div>
                 <div style={{ overflowX:"auto", borderRadius:"var(--radius)", border:"1px solid var(--border)" }}>
-                  <table className="quote-table">
+                  <table data-tour="quote-table" className="quote-table">
                     <thead>
                       <tr>
                         <th>Paper</th>
@@ -3264,9 +3269,9 @@ try {
                 {/* Sheet size chips */}
                 <div style={{ marginBottom:16 }}>
                   <label className="field-label">Sheet size</label>
-                  <div className="chip-group">
+                  <div className="chip-group" data-tour="sheet-size">
                     {Object.keys(PRESET_SHEETS).map(sk => (
-                      <Chip key={sk} label={sk} selected={sheetKey===sk} onClick={()=>setSheetKey(sk)} />
+                      <Chip key={sk} label={sk} selected={sheetKey===sk} onClick={()=>setSheetKey(sk)} dataTour={`sheet-size-${sk}`} />
                     ))}
                   </div>
                 </div>
@@ -3275,7 +3280,7 @@ try {
                   <div>
                     <label className="field-label">Paper type</label>
                     <div className="pc-select-wrap">
-                      <select className="pc-select" value={paperKey} onChange={e=>setPaperKey(e.target.value)}>
+                      <select data-tour="paper-type" className="pc-select" value={paperKey} onChange={e=>setPaperKey(e.target.value)}>
                         {paperTypes.map(pt => <option key={pt.key} value={pt.key}>{pt.label}</option>)}
                       </select>
                     </div>
@@ -3292,7 +3297,7 @@ try {
                   </div>
                   <div>
                     <label className="field-label">Orientation</label>
-                    <div className="chip-group">
+                    <div className="chip-group" data-tour="orientation">
                       <Chip label="Portrait"  selected={orientation==="portrait"}  onClick={()=>setOrientation("portrait")} />
                       <Chip label="Landscape" selected={orientation==="landscape"} onClick={()=>setOrientation("landscape")} />
                     </div>
@@ -3308,7 +3313,7 @@ try {
 
                 {/* Color mode */}
                 <div style={{ display:"flex", gap:20, flexWrap:"wrap", marginBottom:16 }}>
-                  <div>
+                  <div data-tour="front-color-mode">
                     <label className="field-label">Front color</label>
                     <div className="chip-group">
                       <Chip label="Color" selected={frontColorMode==="color"} onClick={()=>setFrontColorMode("color")} />
@@ -3316,7 +3321,7 @@ try {
                     </div>
                   </div>
                   {showBack && (
-                    <div>
+                    <div data-tour="back-color-mode">
                       <label className="field-label">Back color</label>
                       <div className="chip-group">
                         <Chip label="Color" selected={backColorMode==="color"} onClick={()=>setBackColorMode("color")} />
@@ -3328,7 +3333,7 @@ try {
 
                 {/* Toggles */}
                 <div>
-                  <div className="toggle-row">
+                  <div className="toggle-row" data-tour="back-side-toggle">
                     <div><div className="toggle-label-text">Double-sided</div><div className="toggle-label-sub">Print on front &amp; back</div></div>
                     <Toggle checked={showBack} onChange={setShowBack} />
                   </div>
@@ -3351,16 +3356,16 @@ try {
                 <div className="grid-auto" style={{ marginBottom:14 }}>
                   <div>
                     <label className="field-label">Print width (in)</label>
-                    <input className="pc-input" type="number" value={prints.width} min="0.25" step="0.25" onChange={e=>setPrints(p=>({...p,width:+e.target.value||0}))} />
+                    <input data-tour="print-width" className="pc-input" type="number" value={prints.width} min="0.25" step="0.25" onChange={e=>setPrints(p=>({...p,width:+e.target.value||0}))} />
                   </div>
                   <div>
                     <label className="field-label">Print height (in)</label>
-                    <input className="pc-input" type="number" value={prints.height} min="0.25" step="0.25" onChange={e=>setPrints(p=>({...p,height:+e.target.value||0}))} />
+                    <input data-tour="print-height" className="pc-input" type="number" value={prints.height} min="0.25" step="0.25" onChange={e=>setPrints(p=>({...p,height:+e.target.value||0}))} />
                   </div>
                   {!frontFiles.length && (
                     <div>
                       <label className="field-label">Quantity</label>
-                      <input className="pc-input" type="number" value={prints.quantity} min="1" onChange={e=>setPrints(p=>({...p,quantity:+e.target.value||0}))} />
+                      <input data-tour="quantity" className="pc-input" type="number" value={prints.quantity} min="1" onChange={e=>setPrints(p=>({...p,quantity:+e.target.value||0}))} />
                     </div>
                   )}
                   <div>
@@ -3408,6 +3413,7 @@ try {
                   style={{ display:"none" }}
                   onChange={e=>{ if(e.target.files.length) handleFrontFiles(Array.from(e.target.files)); e.target.value=""; }}
                 />
+                <div data-tour="upload-front">
                 <UploadZone
                   hasFile={frontFiles.length>0 || !!frontImage}
                   label={`${frontFiles.length} file${frontFiles.length!==1?"s":""} ready — drop more to add`}
@@ -3416,6 +3422,7 @@ try {
                   onFiles={handleFrontFiles}
                   inputRef={frontInputRef}
                 />
+                </div>
 
                 {frontFiles.length>0 && (
                   <div className="file-list">
@@ -3601,6 +3608,10 @@ try {
             {/* Price Bar — single-job mode keeps the original metrics; multi-job
                 shows ticket-wide totals using the grouped discount logic. */}
             <PriceBar
+              dataTour="price-bar"
+              downloadTour="download-order"
+              orderTour="email-order"
+              completeSaleTour="complete-sale"
               accentClass="price-bar-teal"
               totalClass="is-total"
               metrics={ticket.length > 1 ? [
@@ -3637,16 +3648,16 @@ try {
                 <div className="grid-auto" style={{ marginBottom:16 }}>
                   <div>
                     <label className="field-label">Width (in)</label>
-                    <input className="pc-input" type="number" value={lfWidth} min="1" max="36" step="0.5" onChange={e=>setLfWidth(Math.min(36,Math.max(0.1,+e.target.value||0.1)))} />
+                    <input data-tour="lf-width" className="pc-input" type="number" value={lfWidth} min="1" max="36" step="0.5" onChange={e=>setLfWidth(Math.min(36,Math.max(0.1,+e.target.value||0.1)))} />
                   </div>
                   <div>
                     <label className="field-label">Height (in)</label>
-                    <input className="pc-input" type="number" value={lfHeight} min="1" step="0.5" onChange={e=>setLfHeight(Math.max(0.1,+e.target.value||0.1))} />
+                    <input data-tour="lf-height" className="pc-input" type="number" value={lfHeight} min="1" step="0.5" onChange={e=>setLfHeight(Math.max(0.1,+e.target.value||0.1))} />
                   </div>
                   <div>
                     <label className="field-label">Media type</label>
                     <div className="pc-select-wrap">
-                      <select className="pc-select" value={lfPaperKey} onChange={e=>setLfPaperKey(e.target.value)}>
+                      <select data-tour="lf-paper-type" className="pc-select" value={lfPaperKey} onChange={e=>setLfPaperKey(e.target.value)}>
                         {lfPaperTypes.map(pt => <option key={pt.key} value={pt.key}>{pt.label}</option>)}
                       </select>
                     </div>
@@ -3658,7 +3669,7 @@ try {
                       />
                     )}
                   </div>
-                  <div>
+                  <div data-tour="lf-color-mode">
                     <label className="field-label">Color mode</label>
                     <div className="chip-group">
                       <Chip label="Color" selected={lfColorMode==="color"} onClick={()=>setLfColorMode("color")} color="amber" />
@@ -3683,13 +3694,13 @@ try {
                 <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10 }}>Add-ons</div>
                 <div className="addon-grid">
                   <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                    <AddonCard emoji="🔩" name="Grommets" price={`$${(lfAddonPricing.grommetEach||0).toFixed(2)}/ea`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)} />
+                    <AddonCard dataTour="lf-grommet-toggle" emoji="🔩" name="Grommets" price={`$${(lfAddonPricing.grommetEach||0).toFixed(2)}/ea`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)} />
                     {lfGrommets && upsellFlags.lfAddons?.grommets && (
                       <UpsellToggle checked={lfUpsellGrommets} onChange={setLfUpsellGrommets} />
                     )}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                    <AddonCard emoji="🧊" name="Foam Core" price={`+$${lfAddonPricing.foamCore}`} selected={lfFoamCore} onToggle={()=>setLfFoamCore(v=>!v)} />
+                    <AddonCard dataTour="lf-foamcore-toggle" emoji="🧊" name="Foam Core" price={`+$${lfAddonPricing.foamCore}`} selected={lfFoamCore} onToggle={()=>setLfFoamCore(v=>!v)} />
                     {lfFoamCore && upsellFlags.lfAddons?.foamCore && (
                       <UpsellToggle checked={lfUpsellFoamCore} onChange={setLfUpsellFoamCore} />
                     )}
@@ -3698,7 +3709,7 @@ try {
                 {lfGrommets && (
                   <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:10, fontSize:12 }}>
                     <label className="field-label" style={{ marginBottom:0 }}>Number of grommets:</label>
-                    <input className="pc-input" type="number" min="1" max="50" value={lfGrommetCount} style={{ width:70, height:34 }}
+                    <input data-tour="lf-grommet-count" className="pc-input" type="number" min="1" max="50" value={lfGrommetCount} style={{ width:70, height:34 }}
                       onChange={e=>setLfGrommetCount(Math.max(1,+e.target.value||1))} />
                     <span style={{ color:"var(--text-muted)" }}>
                       = <strong style={{ color:"var(--text)" }}>${((lfAddonPricing.grommetEach||0) * lfGrommetCount).toFixed(2)}</strong>
@@ -3713,6 +3724,7 @@ try {
               <CardHeader step="2" stepClass="step-num-amber" title="Upload Artwork" hint="High-res recommended for large prints" />
               <div className="pc-card-body">
                 <input ref={lfInputRef} type="file" accept="image/*,application/pdf" style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) handleLfFile([e.target.files[0]]); e.target.value=""; }} />
+                <div data-tour="lf-upload">
                 <UploadZone
                   hasFile={!!lfImage}
                   label={lfImage ? (lfImage.name||"Artwork loaded") : ""}
@@ -3720,6 +3732,7 @@ try {
                   onFiles={handleLfFile}
                   inputRef={lfInputRef}
                 />
+                </div>
                 {lfImage && (
                   <div className="canvas-wrap" style={{ marginTop:12 }}>
                     <canvas ref={lfRef} style={{ width:"100%", maxHeight:300, objectFit:"contain" }} />
@@ -3736,6 +3749,10 @@ try {
 
             {/* Price Bar */}
             <PriceBar
+              dataTour="lf-price-bar"
+              downloadTour="lf-download-order"
+              orderTour="lf-email-order"
+              completeSaleTour="lf-complete-sale"
               accentClass="price-bar-amber"
               totalClass="is-total-amber"
               metrics={[
@@ -3762,12 +3779,12 @@ try {
             <div className="pc-card">
               <CardHeader step="1" stepClass="step-num-blue" title="Blueprint Size" hint="20lb plain bond · B&W only" />
               <div className="pc-card-body">
-                <div className="bp-size-grid">
+                <div className="bp-size-grid" data-tour="bp-size">
                   {BLUEPRINT_SIZES.map(s => {
                     const aspectW = Math.min(30, Math.round(s.w/s.h * 26));
                     const aspectH = Math.min(30, Math.round(s.h/s.w * 26));
                     return (
-                      <div key={s.key} className={`bp-size-card ${bpSizeKey===s.key?"selected":""}`} onClick={()=>setBpSizeKey(s.key)}>
+                      <div key={s.key} data-tour={`bp-size-${s.key}`} className={`bp-size-card ${bpSizeKey===s.key?"selected":""}`} onClick={()=>setBpSizeKey(s.key)}>
                         <div className="bp-size-visual" style={{ width:aspectW, height:aspectH }} />
                         <div className="bp-size-label">{s.label}</div>
                       </div>
@@ -3784,7 +3801,7 @@ try {
                 <div className="grid-2" style={{ marginBottom:14 }}>
                   <div>
                     <label className="field-label">Number of sheets</label>
-                    <input className="pc-input" type="number" value={bpQty} min="1" onChange={e=>setBpQty(Math.max(1,+e.target.value||1))} />
+                    <input data-tour="bp-quantity" className="pc-input" type="number" value={bpQty} min="1" onChange={e=>setBpQty(Math.max(1,+e.target.value||1))} />
                   </div>
                   <div>
                     <label className="field-label">Per sheet cost</label>
@@ -3803,6 +3820,7 @@ try {
               <CardHeader step="3" stepClass="step-num-blue" title="Upload Blueprint Files" />
               <div className="pc-card-body">
                 <input ref={bpInputRef} type="file" accept="image/*,application/pdf" style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) handleBpFile([e.target.files[0]]); e.target.value=""; }} />
+                <div data-tour="bp-upload">
                 <UploadZone
                   hasFile={!!bpFile}
                   label={bpFile ? (bpFile.name||"Blueprint loaded") : ""}
@@ -3810,6 +3828,7 @@ try {
                   onFiles={handleBpFile}
                   inputRef={bpInputRef}
                 />
+                </div>
                 <div className="canvas-wrap" style={{ marginTop:12 }}>
                   <canvas ref={bpRef} style={{ width:"100%", maxHeight:260 }} />
                 </div>
@@ -3818,6 +3837,10 @@ try {
 
             {/* Price Bar */}
             <PriceBar
+              dataTour="bp-price-bar"
+              downloadTour="bp-download-order"
+              orderTour="bp-email-order"
+              completeSaleTour="bp-complete-sale"
               accentClass="price-bar-blue"
               totalClass="is-total-blue"
               metrics={[
@@ -3856,7 +3879,40 @@ try {
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
 
-      <TrainingDrawer onApplyScenario={applyScenario} />
+      <TrainingDrawer
+        onApplyScenario={applyScenario}
+        liveState={{
+          activeTab, viewMode, isAdmin, showAdmin,
+          paperKey, sheetKey, orientation,
+          printW: prints.width, printH: prints.height, quantity: prints.quantity,
+          frontColorMode, backColorMode, showBack,
+          hasFrontFile: frontFiles.length > 0 || !!frontImage,
+          lfPaperKey, lfWidth, lfHeight, lfColorMode,
+          lfGrommets, lfGrommetCount, lfFoamCore,
+          hasLfFile: !!lfImage,
+          bpSizeKey, bpQty, hasBpFile: !!bpFile,
+          quotePrintW, quotePrintH, quoteQty,
+          quoteFrontColorMode, quoteBackEnabled, quoteShowAllPapers,
+          liveTotal: ticket.length > 1 ? ticketTotal
+                   : activeTab === "large" ? lfTotalWithDiscount
+                   : activeTab === "blueprint" ? bpTotal
+                   : (activeLine?.lineTotal ?? totalPrice),
+          liveSheets: activeTab === "blueprint" ? bpQty : sheetsNeeded,
+        }}
+        pricingData={{
+          paperTypes, lfPaperTypes,
+          sheetKeysForPaper,
+          sheetPricing: pricing,
+          lfPricing,
+          blueprintPricing: bpPricing,
+          sheetMarkupPerPaper: markupPerPaper,
+          lfMarkupPerPaper,
+          quantityDiscounts, lfQuantityDiscounts,
+          backSideFactor,
+          lfAddonPricing,
+          previewMargin, previewSpacing,
+        }}
+      />
 
       {pendingSaveJob && (
         <SaveJobDialog
@@ -4152,10 +4208,12 @@ function ImposePanel({ CardHeader, pricingProps }) {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Tool:</span>
             <button
+              data-tour="impose-tool-booklet"
               className={`pc-btn pc-btn-sm ${imposeTool === "booklet" ? "pc-btn-primary" : "pc-btn-secondary"}`}
               onClick={() => setImposeTool("booklet")}
             >📖 Booklet Maker</button>
             <button
+              data-tour="impose-tool-datamerge"
               className={`pc-btn pc-btn-sm ${imposeTool === "datamerge" ? "pc-btn-primary" : "pc-btn-secondary"}`}
               onClick={() => setImposeTool("datamerge")}
             >🔢 Data Merge</button>
