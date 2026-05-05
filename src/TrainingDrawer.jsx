@@ -306,7 +306,7 @@ const CATEGORIES = [
           printH: 7,
           quantity: 20,
           paperKey: "photo_glossy",
-          sheetKey: "5x7",
+          sheetKey: "8.5x11",
           colorMode: "color",
           backEnabled: false,
         },
@@ -1035,6 +1035,328 @@ const CATEGORIES = [
           sheetKey: "8.5x11",
           colorMode: "color",
           backEnabled: false,
+        },
+      },
+    ],
+  },
+
+  // ───────────────────────────────────────────────────────
+  //  CATEGORY 6: SPECIALTY / SIGNS365 TRADE PRINTING
+  // ───────────────────────────────────────────────────────
+  {
+    id: "specialty",
+    label: "Specialty (Signs365)",
+    icon: "🪧",
+    color: "var(--purple)",
+    bg: "var(--purple-light)",
+    description: "Banners, yard signs, magnets, decals — outsourced to Signs365",
+    scenarios: [
+      {
+        id: "sp-banner-13oz",
+        title: "Grand-opening vinyl banner (3×8 ft)",
+        difficulty: "intermediate",
+        duration: "4 min",
+        customerSays: "I'm opening a new shop and I need a 3 by 8 foot banner with grommets to hang on the side of the building.",
+        learningGoals: [
+          "Switch to the Specialty tab",
+          "Pick the right banner stock (13oz vinyl is the everyday default)",
+          "Toggle grommets and read the per-sq-ft tier price live",
+          "Read the Signs365 trade-order PDF for transcribing onto signs365.com",
+        ],
+        steps: [
+          {
+            title: "Open the Specialty tab",
+            body: "Anything we don't print in-house — vinyl banners, yard signs, vehicle magnets, decals — runs through Signs365. The Specialty tab is the trade-print front end. The price you'll see is YOUR cost from Signs365 plus our markup, plus shipping passed through.",
+            field: "tab:specialty",
+          },
+          {
+            title: "Pick Banners → 13oz HD Vinyl Banner",
+            body: "Category: Banners. Product: 13oz HD Vinyl Banner. 13oz is the everyday outdoor stock; 18oz is for premium / double-sided. Mesh is for fence wrap.",
+            field: "category",
+            value: "Banners → 13oz Vinyl",
+          },
+          {
+            title: "Enter dimensions in inches",
+            body: "Customer said 3×8 feet. Convert to inches: 36 wide × 96 tall. Quantity 1. The price bar updates instantly — you'll see the per-piece base, the qty-tier, the markup tier, and the shipping line.",
+            field: "size",
+            value: "36 × 96, qty 1",
+          },
+          {
+            title: "Confirm grommets — they're free on 13oz",
+            body: "13oz Vinyl includes grommets at no extra cost (Signs365 default is every 2 ft). Just leave the toggle on. Pole pockets DO cost extra ($1/lin ft + $10 setup) — only add if the customer wants a pole pocket finish.",
+            field: "options",
+            value: "Grommets on",
+          },
+          {
+            title: "Read the trade-order PDF",
+            body: "Click Generate Trade Order PDF. It prints a single-page sheet with every option spelled out, an 'INTERNAL ONLY' cost block, the active tier, and a barcode. Staff use it as the source of truth when transcribing the order onto signs365.com.",
+            field: "priceBar",
+          },
+        ],
+        expectedTotal: "$75–$95 customer total (varies with markup)",
+        tips: [
+          "13oz Vinyl is single-sided. If the customer wants double-sided printing on a vinyl banner, switch to 18oz Vinyl and pick 'Double-sided' — the cost roughly doubles.",
+          "Always sanity-check the shipping line. A 36×96 banner is well under 999 sq ft so it ships at the $10 base; the 123\" oversize trigger is for very wide banners only.",
+        ],
+        pitfalls: [
+          "Don't confuse the Customer Total (with markup + shipping) with the Signs365 print cost (your cost, before markup). The PDF labels them clearly.",
+          "Don't enter feet — the calculator treats those numbers as inches. 3×8 entered as feet would be a tiny banner.",
+        ],
+        apply: {
+          tab: "specialty",
+          specialty: {
+            category: "banners",
+            product: "13oz-vinyl",
+            width: 36, height: 96,
+            quantity: 1,
+            options: { grommets: true, polePocket: false, welding: false, rope: false, windSlits: false, rush: false },
+          },
+        },
+      },
+
+      {
+        id: "sp-yard-signs",
+        title: "Political yard signs (25 × 18×24 Coro)",
+        difficulty: "intermediate",
+        duration: "4 min",
+        customerSays: "We need 25 yard signs, 18 by 24, single-sided, with the wire stakes.",
+        learningGoals: [
+          "Use a perSheet product with preset sizes",
+          "See the active quantity tier shift as you scale up",
+          "Add per-each step stakes (one per sign)",
+          "Understand sheets-needed vs piece-quantity",
+        ],
+        steps: [
+          {
+            title: "Open Specialty → Rigid Signs",
+            body: "Coroplast yard signs are 'rigid' on Signs365 even though they're flexible. Pick Category: Rigid Signs, Product: Coro 4mm. (10mm is heavy-duty for harsher weather.)",
+            field: "category",
+            value: "Rigid Signs → Coro 4mm",
+          },
+          {
+            title: "Pick the stock size 18×24",
+            body: "Coro is priced PER SHEET, not per piece. The size dropdown shows '18\" × 24\" (8/sheet)' — meaning 8 yard signs cut from one master sheet. Pick that. Sides: Single-sided.",
+            field: "size",
+            value: "18×24 (8 per sheet) · Single-sided",
+          },
+          {
+            title: "Enter pieces (yard signs), not sheets",
+            body: "Type 25 in the quantity field. The calculator derives sheets-needed: 25 ÷ 8 = ceil(3.125) = 4 sheets. The hint under the dimensions confirms it.",
+            field: "quantity",
+            value: "25",
+          },
+          {
+            title: "Read the active tier",
+            body: "4 sheets puts you in the '1–9 sheets' tier at $44/sheet → $176 base. The active-tier hint right below the size shows this. If the customer ordered 90 yard signs (12 sheets), you'd jump to the 10–50 tier at $33/sheet — point that out as upsell motivation.",
+            field: "priceBar",
+          },
+          {
+            title: "Add 25 standard wire stakes",
+            body: "In Options, set 'Standard wire step stakes' to 25 (one per sign). Stakes are $1.25 each — added once across the order, not per piece. That's $31.25 added to your Signs365 cost.",
+            field: "options",
+            value: "Stakes: 25",
+          },
+          {
+            title: "Generate the PDF and order",
+            body: "The PDF spells out 'Sides: Single-sided', 'Standard wire step stakes: 25 ($1.25 ea)', the tier label, the shipping band, and the customer total. Staff transcribe each option into signs365.com line by line.",
+            field: "priceBar",
+          },
+        ],
+        expectedTotal: "$400–$500 customer total",
+        tips: [
+          "If they ask for double-sided yard signs, just switch the Sides chip — the tier table swaps to the double-sided rates ($55/$44/$40).",
+          "Bigger orders cross thresholds: 51+ sheets gets the cheapest tier ($30/sheet for 4mm Single). Quote tiered upsells when you can.",
+        ],
+        pitfalls: [
+          "Don't enter quantity as sheets. If you type '4' thinking '4 sheets', you'll quote them 32 yard signs of base, not 25. Always type the customer's piece count.",
+          "Stakes setup-fee scenarios: 'Grommets' on Coro has a $15 setup fee, but stakes don't. Pay attention to the option's footer text.",
+        ],
+        apply: {
+          tab: "specialty",
+          specialty: {
+            category: "rigidSigns",
+            product: "coro-4mm",
+            sizeKey: "18x24",
+            quantity: 25,
+            options: { sides: "single", stakes: 25, stakesHd: 0, grommets: 0, customCut: false, contourCut: false, glossFinish: 0, scoreFold: false, rush: false },
+          },
+        },
+      },
+
+      {
+        id: "sp-vehicle-magnet",
+        title: "Vehicle door magnet pair",
+        difficulty: "beginner",
+        duration: "3 min",
+        customerSays: "I want two door magnets for my plumbing van — same design on both, 24 by 12.",
+        learningGoals: [
+          "Use a perPiece product with preset sizes",
+          "See per-piece flat pricing (no sq-ft math)",
+          "Read shipping that's keyed on magnet count",
+        ],
+        steps: [
+          {
+            title: "Open Specialty → Magnets",
+            body: "Magnets has two products: Vehicle Magnet (preset sizes, sold per piece) and Custom Magnets (any size, priced per square inch). For van doors you almost always want the Vehicle Magnet preset — Signs365 cuts to the listed sizes.",
+            field: "category",
+            value: "Magnets → Vehicle Magnet",
+          },
+          {
+            title: "Pick the 24×12 size",
+            body: "The size dropdown shows the catalog: 18×12 ($11.95), 24×12 ($14.95), 24×18 ($20.95), 42×12, 72×24. 24×12 is the standard van-door size. Each magnet is priced flat — no sq-ft math.",
+            field: "size",
+            value: "24\" × 12\" — $14.95",
+          },
+          {
+            title: "Quantity 2 (one per door)",
+            body: "Set qty to 2. Print cost = $14.95 × 2 = $29.90. Shipping for magnets is 'per 10 magnets, $10' — 1 to 10 magnets ships at $10 flat.",
+            field: "quantity",
+            value: "2",
+          },
+          {
+            title: "Read the customer total",
+            body: "Print $29.90 → markup tier 'Under $50' (2.5×) → customer print $74.75. Shipping passes through at $10. Customer total ≈ $84.75. The PDF lists 'Vehicle Magnet 24×12 — qty 2' so signs365.com is a copy-paste.",
+            field: "priceBar",
+          },
+        ],
+        expectedTotal: "≈ $85 customer total",
+        tips: [
+          "Customer wants a custom size (e.g. 30×10)? Switch to 'Custom Magnets' — that's per square inch ($0.07/sq in). Door magnets at standard sizes are cheaper, so steer customers to the presets when possible.",
+          "Rounded corners on Vehicle Magnets are FREE — toggle on at the customer's request, no upcharge.",
+        ],
+        pitfalls: [
+          "Don't pick the 'Custom magnet' product for a standard size — you'll lose the bulk pricing.",
+          "Vehicle magnets ship as a pack. If the customer also orders banners, those ship separately. The PDF shows one shipping line per Specialty job; combined orders need separate sheets.",
+        ],
+        apply: {
+          tab: "specialty",
+          specialty: {
+            category: "magnets",
+            product: "vehicle-magnet",
+            sizeKey: "24x12",
+            quantity: 2,
+            options: { roundedCorners: false, rush: false },
+          },
+        },
+      },
+
+      {
+        id: "sp-window-cling-min",
+        title: "Tiny window cling — minimum-price floor",
+        difficulty: "intermediate",
+        duration: "3 min",
+        customerSays: "I need 5 small window clings for our front door — about 4 inches square, store hours.",
+        learningGoals: [
+          "Use a perSqInch product (price per sq inch)",
+          "Recognize when the minimum-price floor kicks in",
+          "Read the warning callout when a min-price applies",
+        ],
+        steps: [
+          {
+            title: "Open Specialty → Adhesive Products",
+            body: "Window Cling lives under Adhesive. Pick Category: Adhesive Products, Product: Window Cling.",
+            field: "category",
+            value: "Adhesive → Window Cling",
+          },
+          {
+            title: "Enter custom dimensions 4×4",
+            body: "Window Cling is custom-size. Width 4, height 4. Quantity 5. Per-piece sq-in math: 4×4 = 16 sq in × $0.02 = $0.32 per piece — way under the $2.88 minimum.",
+            field: "size",
+            value: "4\" × 4\", qty 5",
+          },
+          {
+            title: "See the minimum-price warning",
+            body: "Above the price bar a yellow callout reads 'Minimum price of $2.88 per piece applied'. That's because Window Cling has a per-piece floor: even though the math says $0.32, Signs365 charges $2.88 minimum per piece. So your real per-piece base is $2.88 × 5 = $14.40.",
+            field: "priceBar",
+          },
+          {
+            title: "Quote the customer",
+            body: "Print $14.40 → markup tier 'Under $50' (2.5×) → customer print $36.00. Shipping passes through at the $10 base. Customer total ≈ $46.00. Mention to the customer that there's no extra charge for application instructions on the PDF — just useful info.",
+            field: "priceBar",
+          },
+        ],
+        expectedTotal: "≈ $46 customer total",
+        tips: [
+          "Window Cling has 'Application' (Inside/Outside) and 'Viewable' (Inside/Outside) selectors. They don't change the price but they DO change the file Signs365 needs — confirm with the customer and pick the right combo before downloading the PDF.",
+          "If they want bigger clings (say 18×24), the per-sq-in math actually beats the minimum: 432 sq in × $0.02 = $8.64 per piece. The floor only matters for tiny clings.",
+        ],
+        pitfalls: [
+          "Don't quote the un-floored math by mistake. Look for the warning callout — it's there to tell you the floor kicked in.",
+          "Window Cling is single-sided. If the customer wants viewable from BOTH sides (true two-way visibility), they want a different product (Dualview or One Way Window) — different category.",
+        ],
+        apply: {
+          tab: "specialty",
+          specialty: {
+            category: "adhesive",
+            product: "window-cling",
+            width: 4, height: 4,
+            quantity: 5,
+            options: { contourCut: false, application: "inside", viewable: "inside" },
+          },
+        },
+      },
+
+      {
+        id: "sp-acrylic-plaque",
+        title: "Acrylic plaque with stand-offs",
+        difficulty: "advanced",
+        duration: "5 min",
+        customerSays: "I want a 12 by 18 acrylic donor plaque with the silver stand-offs on the corners — four of them.",
+        learningGoals: [
+          "Use perSqInch with a min-price floor",
+          "Add a setupFee option (rounded corners)",
+          "Add per-each stand-offs",
+          "Recognize how Signs365 ships acrylic in sheet bands",
+        ],
+        steps: [
+          {
+            title: "Open Specialty → Rigid Signs → Acrylic",
+            body: "Acrylic on Signs365 is priced at $0.10 per square inch with a $14.40 per-piece minimum. It ships as sheets (4608 sq in per sheet, the standard 48×96 stock).",
+            field: "category",
+            value: "Rigid Signs → Acrylic",
+          },
+          {
+            title: "Enter dimensions 12×18",
+            body: "Width 12, height 18. Quantity 1. Per piece: 12×18 = 216 sq in × $0.10 = $21.60. Above the $14.40 minimum, so the floor doesn't kick in here.",
+            field: "size",
+            value: "12\" × 18\", qty 1",
+          },
+          {
+            title: "Add 4 silver stand-offs",
+            body: "Options: 'Stand-off (Silver)' = 4. Each is $2.50, so +$10. They're per-each — added once across the order, not per piece. Black stand-offs are pricier ($3.50/ea); 'Additional' versions are spare hardware customers buy in addition to the corner set.",
+            field: "options",
+            value: "Stand-off Silver: 4",
+          },
+          {
+            title: "Toggle Rounded corners (setup fee $5)",
+            body: "If the customer wants rounded corners (looks classier on a plaque), toggle the option. It's a one-time $5 setup fee — not per piece. The PDF will note 'Rounded corners: Yes (+$5 setup)'.",
+            field: "options",
+            value: "Rounded corners: Yes",
+          },
+          {
+            title: "Read shipping carefully",
+            body: "Acrylic ships per the rigid-sheet bands. 12×18 fits in '24×36 and under', $10 per 3 sheets. 1 sheet → $10 shipping. Larger acrylic (say 24×36) would still fit the same band; 48×48 would jump bands and tiers.",
+            field: "priceBar",
+          },
+        ],
+        expectedTotal: "≈ $90 customer total",
+        tips: [
+          "Stand-offs are sold by Signs365 as accessory hardware. If the customer is going to attach the plaque themselves, they need the stand-offs from this order — point that out.",
+          "Acrylic is heavy. Anything 48×96 ships freight ($199). Quote freight openly so the customer doesn't get surprised.",
+        ],
+        pitfalls: [
+          "Don't forget the $5 rounded-corner setup is a one-time fee, not per piece. Customers often think the fee scales with quantity — it doesn't.",
+          "Don't confuse Stand-off (initial set, typically 4 per plaque) with Additional Stand-off (spare/extras the customer wants on top). Both are listed because Signs365 lists them that way.",
+        ],
+        apply: {
+          tab: "specialty",
+          specialty: {
+            category: "rigidSigns",
+            product: "acrylic",
+            width: 12, height: 18,
+            quantity: 1,
+            options: { contourCut: false, roundedCorners: true, standOffSilver: 4, standOffBlack: 0, addStandOffSilver: 0, addStandOffBlack: 0 },
+          },
         },
       },
     ],
