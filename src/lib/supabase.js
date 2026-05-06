@@ -66,6 +66,155 @@ export const fetchPrintJobs = async ({ limit = 200 } = {}) => {
   return data || [];
 };
 
+// ── Job-files storage (bucket: job-files) ───────────────────
+// Files are stored under jobs/{jobId}/{filename}. The bucket is
+// private; reads happen via short-lived signed URLs. Filenames
+// inside a job folder are de-duplicated with a numeric suffix.
+const JOB_FILES_BUCKET = "job-files";
+const SIGNED_URL_TTL_S = 3600;
+
+const safeStorageName = (name) =>
+  String(name || "file")
+    // Supabase storage rejects keys with characters outside a fairly
+    // narrow set. Strip anything weird; keep letters/numbers/.-_()
+    .replace(/[^\w.\-()+ ]/g, "_")
+    .replace(/\s+/g, "_")
+    .slice(0, 180);
+
+const dedupeName = (name, taken) => {
+  if (!taken.has(name)) { taken.add(name); return name; }
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext  = dot > 0 ? name.slice(dot)    : "";
+  for (let i = 2; i < 999; i++) {
+    const candidate = `${stem}_${i}${ext}`;
+    if (!taken.has(candidate)) { taken.add(candidate); return candidate; }
+  }
+  // give up — append a timestamp
+  const fallback = `${stem}_${Date.now()}${ext}`;
+  taken.add(fallback);
+  return fallback;
+};
+
+// Upload a list of files into jobs/{jobId}/. `items` is an array of
+// { file: File|Blob, name: string, side: string, qty?: number, rotation?: number }.
+// `onProgress(done, total, label)` is invoked after each upload.
+// Returns an array of records (one per item, in the same order):
+//   { name, path, size, type, side, qty, rotation, error? }
+export const uploadJobFiles = async (jobId, items, onProgress) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!jobId) throw new Error("jobId is required.");
+
+  const taken = new Set();
+  const results = [];
+  const total = items.length;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const original = safeStorageName(item.name || item.file?.name || `file-${i+1}`);
+    const finalName = dedupeName(original, taken);
+    const path = `jobs/${jobId}/${finalName}`;
+
+    if (typeof onProgress === "function") {
+      try { onProgress(i, total, finalName); } catch {}
+    }
+
+    const { data, error } = await supabase.storage
+      .from(JOB_FILES_BUCKET)
+      .upload(path, item.file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: item.file?.type || "application/octet-stream",
+      });
+
+    if (error) {
+      console.error(`uploadJobFiles: failed on ${path}:`, error);
+      results.push({
+        name: finalName,
+        path: null,
+        size: item.file?.size || 0,
+        type: item.file?.type || "",
+        side: item.side || "front",
+        qty: Number(item.qty) || 1,
+        rotation: Number(item.rotation) || 0,
+        error: error.message || String(error),
+      });
+    } else {
+      results.push({
+        name: finalName,
+        path: data?.path || path,
+        size: item.file?.size || 0,
+        type: item.file?.type || "",
+        side: item.side || "front",
+        qty: Number(item.qty) || 1,
+        rotation: Number(item.rotation) || 0,
+      });
+    }
+  }
+
+  if (typeof onProgress === "function") {
+    try { onProgress(total, total, ""); } catch {}
+  }
+
+  return results;
+};
+
+// Save a print_jobs row with a pre-generated id so the storage path
+// (jobs/{id}/...) is known before insert. Returns the saved row.
+export const savePrintJobWithId = async (jobRow) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!jobRow?.id) throw new Error("jobRow.id is required.");
+  const { data, error } = await supabase
+    .from("print_jobs")
+    .insert(jobRow)
+    .select("id, created_at")
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+// Download a stored file as a Blob.
+export const downloadJobFile = async (path) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!path) throw new Error("path is required.");
+  const { data, error } = await supabase.storage
+    .from(JOB_FILES_BUCKET)
+    .download(path);
+  if (error) throw error;
+  return data; // Blob
+};
+
+// Mint a short-lived signed URL — used for thumbnail previews and
+// download buttons that link out to the file directly.
+export const getJobFileSignedUrl = async (path, ttlSeconds = SIGNED_URL_TTL_S) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  if (!path) return null;
+  const { data, error } = await supabase.storage
+    .from(JOB_FILES_BUCKET)
+    .createSignedUrl(path, ttlSeconds);
+  if (error) {
+    console.warn("getJobFileSignedUrl failed for", path, error);
+    return null;
+  }
+  return data?.signedUrl || null;
+};
+
+// Best-effort cleanup. Returns the number of paths the API confirmed
+// it removed; never throws — caller can log the result.
+export const deleteJobFiles = async (paths) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const list = (paths || []).filter(Boolean);
+  if (!list.length) return 0;
+  const { data, error } = await supabase.storage
+    .from(JOB_FILES_BUCKET)
+    .remove(list);
+  if (error) {
+    console.warn("deleteJobFiles failed:", error);
+    return 0;
+  }
+  return data?.length || 0;
+};
+
 // ── Employees ──────────────────────────────────────────────
 // PINs are 4-digit station identifiers, not security credentials.
 // The schema enforces format and uniqueness; we still validate here
