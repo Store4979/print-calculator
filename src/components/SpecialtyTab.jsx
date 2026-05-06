@@ -154,6 +154,76 @@ const pickSheetBandTier = (band, sheets) => {
   return tiers[tiers.length - 1];
 };
 
+// ── Signs365 96"×48" sheet-stock cap (rigid signs + magnets) ──
+// Signs365 sources rigid sheet at 96"×48" max. A piece "fits" if you
+// can rotate it onto the long axis: min(w,h) ≤ 48 AND max(w,h) ≤ 96.
+const SIZE_CAPPED_CATEGORIES = new Set(["rigidSigns", "magnets"]);
+const SIZE_CAP_LONG = 96;
+const SIZE_CAP_SHORT = 48;
+
+const isSizeCappedCategory = (categoryKey) => SIZE_CAPPED_CATEGORIES.has(categoryKey);
+
+const isOverSizeCap = (w, h) => {
+  if (!(w > 0) || !(h > 0)) return false;
+  const short = Math.min(w, h);
+  const long  = Math.max(w, h);
+  return short > SIZE_CAP_SHORT || long > SIZE_CAP_LONG;
+};
+
+// Pure panel-split helper. Returns the layout that covers w × h with
+// the fewest 96×48-or-smaller rectangular panels; ties broken by
+// least wasted area. Each panel is the design-area chunk rounded up
+// to nearest 0.25" (slightly oversized to avoid underprint at seams).
+const computePanelSplit = (w, h) => {
+  if (!(w > 0) || !(h > 0)) return null;
+
+  const ceilQuarter = (n) => Math.ceil(n * 4) / 4;
+
+  const layoutOf = (panelsAlongLong, panelsAlongShort, longDim, shortDim) => {
+    if (panelsAlongLong < 1 || panelsAlongShort < 1) return null;
+    const panelLong  = ceilQuarter(longDim  / panelsAlongLong);
+    const panelShort = ceilQuarter(shortDim / panelsAlongShort);
+    const total = panelsAlongLong * panelsAlongShort;
+    const totalArea = (panelLong * panelsAlongLong) * (panelShort * panelsAlongShort);
+    const designArea = longDim * shortDim;
+    return { total, panelLong, panelShort, panelsAlongLong, panelsAlongShort,
+             waste: Math.max(0, totalArea - designArea) };
+  };
+
+  const longDim  = Math.max(w, h);
+  const shortDim = Math.min(w, h);
+
+  // Orientation A: long side runs along the 96" panel axis.
+  const a = layoutOf(
+    Math.ceil(longDim  / SIZE_CAP_LONG),
+    Math.ceil(shortDim / SIZE_CAP_SHORT),
+    longDim, shortDim
+  );
+  // Orientation B: long side runs along the 48" panel axis.
+  const b = layoutOf(
+    Math.ceil(longDim  / SIZE_CAP_SHORT),
+    Math.ceil(shortDim / SIZE_CAP_LONG),
+    longDim, shortDim
+  );
+
+  const candidates = [a, b].filter(Boolean);
+  if (!candidates.length) return null;
+
+  candidates.sort((x, y) => x.total - y.total || x.waste - y.waste);
+  const pick = candidates[0];
+
+  // Map back to W×H labels (longest dim first in display).
+  const wIsLong = w >= h;
+  return {
+    totalPanels: pick.total,
+    panelsW: wIsLong ? pick.panelsAlongLong : pick.panelsAlongShort,
+    panelsH: wIsLong ? pick.panelsAlongShort : pick.panelsAlongLong,
+    panelW:  wIsLong ? pick.panelLong       : pick.panelShort,
+    panelH:  wIsLong ? pick.panelShort      : pick.panelLong,
+    extreme: longDim > 200 || shortDim > 200,
+  };
+};
+
 // ── Shipping ─────────────────────────────────────────
 function computeShipping({ pricing, product, dim, quantity, sheetsNeeded, totalSqIn, totalSqFt, pieceW, pieceH }) {
   const ruleKey = product.shippingRule;
@@ -497,6 +567,7 @@ export default function SpecialtyTab({ CardHeader }) {
   const [staffInitials, setStaffInitials] = useState("");
   const [orderNotes,    setOrderNotes]    = useState("");
   const [generating,    setGenerating]    = useState(false);
+  const [showPanelSplit, setShowPanelSplit] = useState(false);
 
   const cat = pricing.categories?.[selectedCategory];
   const product = cat?.products?.[selectedProduct];
@@ -581,6 +652,21 @@ export default function SpecialtyTab({ CardHeader }) {
   const sizes = useMemo(() => (product ? resolveSizes(pricing, product) : []), [pricing, product]);
   const showCustomDims = product?.sizeMode === "custom";
 
+  // Soft cap: rigid sheet stock + magnets are 96×48 max at Signs365.
+  // Pull dims from result.dim (works for both preset and custom modes).
+  const sizeCap = useMemo(() => {
+    if (!product || !isSizeCappedCategory(selectedCategory)) return null;
+    const w = result?.dim?.width;
+    const h = result?.dim?.height;
+    if (!isOverSizeCap(w, h)) return null;
+    return { w, h, split: computePanelSplit(w, h) };
+  }, [product, selectedCategory, result]);
+
+  // Auto-collapse the panel-split detail when warning state changes.
+  useEffect(() => {
+    if (!sizeCap) setShowPanelSplit(false);
+  }, [sizeCap]);
+
   const handleReset = () => {
     setSelectedCategory("");
     setSelectedProduct("");
@@ -634,7 +720,7 @@ export default function SpecialtyTab({ CardHeader }) {
         />
         <div className="pc-card-body">
           <div className="grid-2" style={{ marginBottom: 16 }}>
-            <div>
+            <div data-tour="specialty-category">
               <label className="field-label">Category</label>
               <div className="pc-select-wrap">
                 <select className="pc-select" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
@@ -646,7 +732,7 @@ export default function SpecialtyTab({ CardHeader }) {
               </div>
               {cat?.description && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{cat.description}</div>}
             </div>
-            <div>
+            <div data-tour="specialty-product">
               <label className="field-label">Product</label>
               <div className="pc-select-wrap">
                 <select className="pc-select" value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)} disabled={!cat}>
@@ -696,7 +782,7 @@ export default function SpecialtyTab({ CardHeader }) {
 
             {product.sizeMode === "preset" && (
               <div className="grid-2" style={{ marginBottom: 12 }}>
-                <div>
+                <div data-tour="specialty-size-preset">
                   <label className="field-label">Size</label>
                   <div className="pc-select-wrap">
                     <select className="pc-select" value={selectedSizeKey} onChange={(e) => setSelectedSizeKey(e.target.value)}>
@@ -709,7 +795,7 @@ export default function SpecialtyTab({ CardHeader }) {
                     </select>
                   </div>
                 </div>
-                <div>
+                <div data-tour="specialty-quantity">
                   <label className="field-label">{product.quantityUnit === "sets" ? "Sets" : product.pricingModel === "perSheet" ? "Pieces" : "Quantity"}</label>
                   <input
                     className="pc-input"
@@ -726,15 +812,15 @@ export default function SpecialtyTab({ CardHeader }) {
 
             {showCustomDims && (
               <div className="grid-3" style={{ marginBottom: 12 }}>
-                <div>
+                <div data-tour="specialty-width">
                   <label className="field-label">Width (in)</label>
                   <input className="pc-input" type="number" inputMode="decimal" min="1" step="0.5" value={width} onChange={(e) => setWidth(e.target.value)} />
                 </div>
-                <div>
+                <div data-tour="specialty-height">
                   <label className="field-label">Height (in)</label>
                   <input className="pc-input" type="number" inputMode="decimal" min="1" step="0.5" value={height} onChange={(e) => setHeight(e.target.value)} />
                 </div>
-                <div>
+                <div data-tour="specialty-quantity">
                   <label className="field-label">Quantity</label>
                   <input className="pc-input" type="number" inputMode="numeric" min="1" step="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
                 </div>
@@ -743,9 +829,58 @@ export default function SpecialtyTab({ CardHeader }) {
 
             {product.sizeMode === "none" && (
               <div className="grid-2" style={{ marginBottom: 12 }}>
-                <div>
+                <div data-tour="specialty-quantity">
                   <label className="field-label">Quantity</label>
                   <input className="pc-input" type="number" inputMode="numeric" min="1" step="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
+                </div>
+              </div>
+            )}
+
+            {sizeCap && (
+              <div data-tour="specialty-size-warning" className="callout callout-warn specialty-size-warning" style={{ marginTop: 14 }}>
+                <span className="callout-icon">⚠</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                    Size exceeds Signs365 maximum
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    Signs365 prints rigid signs and magnets up to <strong>96″ × 48″</strong> max.
+                    Your design is <strong>{sizeCap.w}″ × {sizeCap.h}″</strong>.
+                    {sizeCap.split && (
+                      <> We suggest splitting into <strong>{sizeCap.split.totalPanels} panels</strong> of approximately <strong>{sizeCap.split.panelW}″ × {sizeCap.split.panelH}″</strong> each.</>
+                    )}
+                  </div>
+                  {sizeCap.split?.extreme && (
+                    <div style={{ fontSize: 12, marginTop: 6, color: "var(--text-muted)" }}>
+                      This is a large multi-panel job — consider whether the customer would prefer a fabric or vinyl banner (no rigid-sheet limit).
+                    </div>
+                  )}
+                  {sizeCap.split && (
+                    <button
+                      type="button"
+                      data-tour="specialty-panel-split-button"
+                      className="pc-btn pc-btn-secondary pc-btn-xs"
+                      style={{ marginTop: 8 }}
+                      onClick={() => setShowPanelSplit((v) => !v)}
+                    >
+                      {showPanelSplit ? "Hide panel split" : "Show panel split"}
+                    </button>
+                  )}
+                  {showPanelSplit && sizeCap.split && (
+                    <div data-tour="specialty-panel-split-result" className="specialty-panel-split">
+                      <div className="specialty-panel-split-header">Suggested layout</div>
+                      <div className="specialty-panel-split-grid">
+                        <div><span style={{ color: "var(--text-muted)" }}>Panels across:</span> <strong>{sizeCap.split.panelsW}</strong></div>
+                        <div><span style={{ color: "var(--text-muted)" }}>Panels down:</span> <strong>{sizeCap.split.panelsH}</strong></div>
+                        <div><span style={{ color: "var(--text-muted)" }}>Total panels:</span> <strong>{sizeCap.split.totalPanels}</strong></div>
+                        <div><span style={{ color: "var(--text-muted)" }}>Each panel:</span> <strong>{sizeCap.split.panelW}″ × {sizeCap.split.panelH}″</strong></div>
+                      </div>
+                      <div className="specialty-panel-split-note">
+                        Quote each panel as its own line item against the {sizeCap.split.panelW}″ × {sizeCap.split.panelH}″ piece size.
+                        Most customers don't notice the seam from a few feet away — confirm placement with the customer before ordering.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -832,7 +967,7 @@ export default function SpecialtyTab({ CardHeader }) {
         </div>
       )}
 
-      <div className="price-bar price-bar-purple">
+      <div data-tour="specialty-price-bar" className="price-bar price-bar-purple">
         <div className="price-metrics">
           <div className="price-metric">
             <div className="price-metric-label">Customer total</div>
