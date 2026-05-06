@@ -17,7 +17,8 @@ import SpecialtyTab from "./components/SpecialtyTab.jsx";
 import Signs365PricingEditor from "./components/Signs365PricingEditor.jsx";
 import TrainingDrawer from "./TrainingDrawer.jsx";
 import {
-  ensureDbAuthenticated, savePrintJob, isSupabaseConfigured,
+  ensureDbAuthenticated, savePrintJob, savePrintJobWithId,
+  uploadJobFiles, downloadJobFile, isSupabaseConfigured,
   getStoredEmployee, setStoredEmployee,
   listEmployees, createEmployee, setEmployeeActive,
   fetchCommissionSettings, insertTransaction,
@@ -907,10 +908,11 @@ function PriceCalculatorApp() {
       alert("Retry failed: " + (e?.message || String(e)));
     }
   };
-  // pendingSaveJob: { row, jobType, label } — if non-null, the save-to-db
+  // pendingSaveJob: { row, label, filesToSave } — if non-null, the save-to-db
   // confirmation dialog is open. The PDF has already been downloaded.
   const [pendingSaveJob, setPendingSaveJob] = useState(null);
   const [savingJob, setSavingJob] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null); // { done, total, label }
   const [savedJobToast, setSavedJobToast] = useState("");
   const [isAdmin, setIsAdmin]       = useState(false);
 
@@ -1628,9 +1630,15 @@ const handleFrontFiles = async (files) => {
   // job to Supabase. Each download function builds the row and
   // hands it to requestSaveJob, which opens the confirmation
   // modal (and password prompt if needed).
-  const requestSaveJob = (row, label) => {
+  const requestSaveJob = (row, label, filesToSave = []) => {
     if (!isSupabaseConfigured) return; // silently skip if env vars missing
-    setPendingSaveJob({ row, label });
+    // Pre-generate the job id so storage uploads can land at jobs/{id}/...
+    // before the row is inserted. The print_jobs default would otherwise
+    // be assigned at insert time, which is too late for the bucket path.
+    const id = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    setPendingSaveJob({ row: { ...row, id }, label, filesToSave: filesToSave || [] });
   };
 
   const buildSheetJobRow = () => {
@@ -1988,7 +1996,39 @@ const handleFrontFiles = async (files) => {
     }
 
     savePdf(orderDoc, liveTicket.length > 1 ? "print_order_ticket.pdf" : "print_order_sheet.pdf");
-    requestSaveJob(buildSheetJobRow(), liveTicket.length > 1 ? `Ticket (${liveTicket.length} jobs)` : "Sheets / Photos");
+    // Collect all uploaded files across the live ticket — each ticket
+    // entry's frontFiles are saved with side="front", and the active
+    // editor's backImage rides along on the active job. Files without
+    // a real File/Blob handle (e.g. items rehydrated from history) are
+    // skipped silently.
+    const filesToSave = [];
+    liveTicket.forEach((it, idx) => {
+      (it.frontFiles || []).forEach((f) => {
+        if (!f.file) return;
+        const prefix = liveTicket.length > 1 ? `job${idx + 1}_` : "";
+        filesToSave.push({
+          file: f.file,
+          name: prefix + (f.name || f.file.name || "file"),
+          side: "front",
+          qty: f.qty,
+          rotation: f.rotation,
+        });
+      });
+    });
+    if (showBack && backImage instanceof Blob) {
+      filesToSave.push({
+        file: backImage,
+        name: backImage.name || "back",
+        side: "back",
+        qty: 1,
+        rotation: backRotation || 0,
+      });
+    }
+    requestSaveJob(
+      buildSheetJobRow(),
+      liveTicket.length > 1 ? `Ticket (${liveTicket.length} jobs)` : "Sheets / Photos",
+      filesToSave,
+    );
   };
 
   const downloadLfPDF = async () => {
@@ -2016,7 +2056,17 @@ const handleFrontFiles = async (files) => {
     orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
 
     savePdf(orderDoc, "large_format_with_order_sheet.pdf");
-    requestSaveJob(buildLfJobRow(), "Large Format");
+    const lfFiles = [];
+    if (lfImage instanceof Blob) {
+      lfFiles.push({
+        file: lfImage,
+        name: lfImage.name || "artwork",
+        side: "front",
+        qty: 1,
+        rotation: 0,
+      });
+    }
+    requestSaveJob(buildLfJobRow(), "Large Format", lfFiles);
   };
 
   const downloadBlueprintPDF = async () => {
@@ -2039,25 +2089,58 @@ const handleFrontFiles = async (files) => {
       orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
     }
     savePdf(orderDoc, "blueprint_with_order_sheet.pdf");
-    requestSaveJob(buildBlueprintJobRow(), "Blueprints");
+    const bpFiles = [];
+    if (bpFile instanceof Blob) {
+      bpFiles.push({
+        file: bpFile,
+        name: bpFile.name || "blueprint",
+        side: "front",
+        qty: bpQty || 1,
+        rotation: 0,
+      });
+    }
+    requestSaveJob(buildBlueprintJobRow(), "Blueprints", bpFiles);
   };
 
   // ─── SAVE-TO-DB CONFIRM ────────────────────────────────
+  // Two-phase: upload any attached files to job-files/jobs/{id}/...
+  // first, then insert the print_jobs row with the resulting
+  // file_urls[] records. If some uploads fail we still save the row,
+  // but surface which files failed in the toast.
   const confirmSaveJob = async (extra={}) => {
     if (!pendingSaveJob) return;
     if (!ensureDbAuthenticated()) return;
     setSavingJob(true);
+    setUploadProgress(null);
     try {
-      const merged = { ...pendingSaveJob.row, ...extra };
-      const saved = await savePrintJob(merged);
+      const baseRow = pendingSaveJob.row;
+      const filesToSave = pendingSaveJob.filesToSave || [];
+      let fileUrls = [];
+      if (filesToSave.length > 0) {
+        const uploadResults = await uploadJobFiles(
+          baseRow.id,
+          filesToSave,
+          (done, total, label) => setUploadProgress({ done, total, label }),
+        );
+        fileUrls = uploadResults;
+      }
+      const merged = { ...baseRow, ...extra, file_urls: fileUrls };
+      const saved = await savePrintJobWithId(merged);
       setPendingSaveJob(null);
+      setUploadProgress(null);
       const idShort = saved?.id ? saved.id.slice(0, 8) : "saved";
-      setSavedJobToast(`Saved · job ${idShort}`);
-      setTimeout(() => setSavedJobToast(""), 3500);
+      const failed = fileUrls.filter(f => !f.path).length;
+      const okCount = fileUrls.length - failed;
+      const fileMsg = fileUrls.length > 0
+        ? ` · ${okCount}/${fileUrls.length} file${fileUrls.length === 1 ? "" : "s"}${failed ? " (some failed)" : ""}`
+        : "";
+      setSavedJobToast(`Saved · job ${idShort}${fileMsg}`);
+      setTimeout(() => setSavedJobToast(""), 4000);
     } catch (e) {
       alert("Could not save job: " + (e?.message || String(e)));
     } finally {
       setSavingJob(false);
+      setUploadProgress(null);
     }
   };
   const dismissSaveJob = () => { if (!savingJob) setPendingSaveJob(null); };
@@ -2066,6 +2149,172 @@ const handleFrontFiles = async (files) => {
     if (!isSupabaseConfigured) { alert("Supabase isn't configured."); return; }
     if (!ensureDbAuthenticated()) return;
     setShowJobHistory(true);
+  };
+
+  // ─── REPRODUCE JOB ──────────────────────────────────────
+  // Restore a previously-saved job back into the live calculator —
+  // settings + uploaded files. Multi-job sheet tickets restore the
+  // full ticket; single-job rows restore as the lone editor entry.
+  const reproduceJob = async (job) => {
+    if (!job) return;
+    if (!ensureDbAuthenticated()) return;
+    try {
+      // 1. Pull every file blob in parallel; missing/failed downloads
+      //    are skipped (we still restore settings).
+      const fileRecords = Array.isArray(job.file_urls) ? job.file_urls : [];
+      const downloaded = await Promise.all(
+        fileRecords.map(async (rec) => {
+          if (!rec?.path) return { rec, file: null };
+          try {
+            const blob = await downloadJobFile(rec.path);
+            const file = new File([blob], rec.name || "file", {
+              type: rec.type || blob.type || "application/octet-stream",
+            });
+            return { rec, file };
+          } catch (err) {
+            console.warn("reproduceJob: failed to download", rec.path, err);
+            return { rec, file: null };
+          }
+        })
+      );
+
+      // 2. Restore per job type.
+      const jobType = job.job_type;
+      const details = job.job_details || {};
+
+      if (jobType === "sheets") {
+        setViewMode("tool");
+        setActiveTab("paper");
+
+        // Multi-job ticket → rebuild every line. Single-job → seed the
+        // editor directly.
+        if (Array.isArray(details.ticket) && details.ticket.length > 1) {
+          // Group front files by job index using the "jobN_" prefix the
+          // save flow added. Files without a recognizable prefix go to
+          // job 1.
+          const filesByJob = new Map();
+          for (const { rec, file } of downloaded) {
+            if (!file || rec.side !== "front") continue;
+            const m = /^job(\d+)_/.exec(rec.name || "");
+            const idx = m ? Number(m[1]) - 1 : 0;
+            if (!filesByJob.has(idx)) filesByJob.set(idx, []);
+            filesByJob.get(idx).push({
+              id: `tk-${idx}-${filesByJob.get(idx).length}`,
+              file,
+              name: (rec.name || "").replace(/^job\d+_/, ""),
+              qty: rec.qty || 1,
+              rotation: rec.rotation || 0,
+            });
+          }
+          const newTicket = details.ticket.map((t, idx) => ({
+            id: crypto.randomUUID ? crypto.randomUUID() : `tk-${Date.now()}-${idx}`,
+            paperKey: t.paperKey,
+            sheetKey: t.sheetKey,
+            orientation: t.orientation || "portrait",
+            printWidth:  Number(t.printWidth)  || 0,
+            printHeight: Number(t.printHeight) || 0,
+            printQuantity: Number(t.printQuantity) || 0,
+            frontFiles: filesByJob.get(idx) || [],
+            frontColorMode: t.colorMode || "color",
+            backColorMode: t.backColorMode || "bw",
+            showBack: t.sides === "Front + Back",
+            backImage: null,
+            sheetsNeeded: Number(t.sheetsNeeded) || 0,
+            perSheetTotal: Number(t.perSheetPrice) || 0,
+            printsPerSheet: Number(t.printsPerSheet) || 1,
+            totalPrintQty: Number(t.printQuantity) || 0,
+          }));
+          setTicket(newTicket);
+          setActiveTicketIdx(0);
+          // Editor mirrors the active ticket entry.
+          const first = details.ticket[0];
+          if (first) {
+            if (first.paperKey) setPaperKey(first.paperKey);
+            if (first.sheetKey) setSheetKey(first.sheetKey);
+            if (first.orientation) setOrientation(first.orientation);
+            if (first.colorMode)   setFrontColorMode(first.colorMode);
+            if (first.backColorMode) setBackColorMode(first.backColorMode);
+            setShowBack(first.sides === "Front + Back");
+            setPrints({
+              width:  Number(first.printWidth)  || 0,
+              height: Number(first.printHeight) || 0,
+              quantity: Number(first.printQuantity) || 0,
+            });
+          }
+          setFrontFiles(filesByJob.get(0) || []);
+        } else {
+          // Single-job restore — seed the editor straight from the row.
+          if (job.paper_key)  setPaperKey(job.paper_key);
+          if (job.sheet_size) setSheetKey(job.sheet_size);
+          if (job.orientation) setOrientation(job.orientation);
+          if (job.color_mode)  setFrontColorMode(job.color_mode);
+          if (details.backColorMode) setBackColorMode(details.backColorMode);
+          setShowBack(job.sides === "Front + Back");
+          const sz = details.prints || {};
+          setPrints({
+            width:  Number(sz.width)  || Number(job.print_size?.split("x")?.[0]) || 0,
+            height: Number(sz.height) || Number(job.print_size?.split("x")?.[1]) || 0,
+            quantity: Number(sz.quantity) || Number(job.quantity) || 0,
+          });
+          const newFronts = [];
+          let backRestored = null;
+          for (const { rec, file } of downloaded) {
+            if (!file) continue;
+            if (rec.side === "back") {
+              backRestored = file;
+            } else {
+              newFronts.push({
+                id: `rh-${newFronts.length}-${Date.now()}`,
+                file, name: rec.name, qty: rec.qty || 1, rotation: rec.rotation || 0,
+              });
+            }
+          }
+          setFrontFiles(newFronts);
+          setBackImage(backRestored);
+          // Single-line ticket so totals re-derive from the live editor.
+          setTicket([createEmptyJob({
+            paperKey: job.paper_key,
+            sheetKey: job.sheet_size,
+            orientation: job.orientation || "portrait",
+          })]);
+          setActiveTicketIdx(0);
+        }
+      } else if (jobType === "large-format") {
+        setViewMode("tool");
+        setActiveTab("large");
+        if (job.paper_key) setLfPaperKey(job.paper_key);
+        const dW = Number(details.widthIn)  || Number(job.print_size?.split("x")?.[0]);
+        const dH = Number(details.heightIn) || Number(job.print_size?.split("x")?.[1]);
+        if (dW) setLfWidth(dW);
+        if (dH) setLfHeight(dH);
+        if (job.color_mode) setLfColorMode(job.color_mode);
+        const grom = job.addons?.grommets;
+        setLfGrommets(!!grom);
+        if (grom?.count) setLfGrommetCount(grom.count);
+        setLfFoamCore(!!job.addons?.foamCore);
+        const lfFile = downloaded.find(d => d.file)?.file || null;
+        setLfImage(lfFile);
+      } else if (jobType === "blueprints") {
+        setViewMode("tool");
+        setActiveTab("blueprint");
+        if (details.sizeKey) setBpSizeKey(details.sizeKey);
+        if (job.quantity)    setBpQty(Number(job.quantity) || 1);
+        const bpRehyd = downloaded.find(d => d.file)?.file || null;
+        setBpFile(bpRehyd);
+      } else {
+        alert(`Reproduce isn't supported for job type "${jobType}" yet.`);
+        return;
+      }
+
+      setShowJobHistory(false);
+      const failed = downloaded.filter(d => d.rec?.path && !d.file).length;
+      const note = failed > 0 ? ` (${failed} file${failed === 1 ? "" : "s"} couldn't be downloaded)` : "";
+      setSavedJobToast(`Reproduced job · ${downloaded.length - failed} file${(downloaded.length - failed) === 1 ? "" : "s"} restored${note}`);
+      setTimeout(() => setSavedJobToast(""), 4000);
+    } catch (e) {
+      console.error("reproduceJob failed:", e);
+      alert("Could not reproduce job: " + (e?.message || String(e)));
+    }
   };
 
   // ─── EMAIL ORDER ────────────────────────────────────────
@@ -3918,13 +4167,20 @@ try {
         <SaveJobDialog
           label={pendingSaveJob.label}
           row={pendingSaveJob.row}
+          fileCount={(pendingSaveJob.filesToSave || []).length}
+          uploadProgress={uploadProgress}
           saving={savingJob}
           onCancel={dismissSaveJob}
           onConfirm={confirmSaveJob}
         />
       )}
 
-      {showJobHistory && <JobHistory onClose={() => setShowJobHistory(false)} />}
+      {showJobHistory && (
+        <JobHistory
+          onClose={() => setShowJobHistory(false)}
+          onReproduce={reproduceJob}
+        />
+      )}
 
       {showEmployeeLogin && (
         <EmployeeLogin
@@ -3959,7 +4215,7 @@ try {
 // Asks the user whether to persist the current print job, plus
 // optional customer fields. Receives the row builder output and
 // merges customer fields when the user confirms.
-function SaveJobDialog({ label, row, saving, onCancel, onConfirm }) {
+function SaveJobDialog({ label, row, fileCount = 0, uploadProgress, saving, onCancel, onConfirm }) {
   const [name, setName]   = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -3973,6 +4229,11 @@ function SaveJobDialog({ label, row, saving, onCancel, onConfirm }) {
       notes:          notes.trim() || null,
     });
   };
+  const uploadingLabel = uploadProgress
+    ? (uploadProgress.done < uploadProgress.total
+        ? `Uploading ${uploadProgress.done + 1} of ${uploadProgress.total}${uploadProgress.label ? ` — ${uploadProgress.label}` : ""}…`
+        : "Saving job record…")
+    : null;
   return (
     <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !saving && onCancel()}>
       <form className="pc-dialog" onClick={e => e.stopPropagation()} onSubmit={submit}>
@@ -4000,7 +4261,21 @@ function SaveJobDialog({ label, row, saving, onCancel, onConfirm }) {
           <span>Total: <strong>${Number(row.total_price||0).toFixed(2)}</strong></span>
           <span>{row.print_size || row.sheet_size}</span>
           {row.quantity != null && <span>Qty {row.quantity}</span>}
+          {fileCount > 0 && <span>📎 {fileCount} file{fileCount === 1 ? "" : "s"}</span>}
         </div>
+        {saving && uploadingLabel && (
+          <div className="save-job-progress">
+            <div className="save-job-progress-track">
+              <div
+                className="save-job-progress-fill"
+                style={{ width: uploadProgress && uploadProgress.total > 0
+                  ? `${Math.round((uploadProgress.done / uploadProgress.total) * 100)}%`
+                  : "10%" }}
+              />
+            </div>
+            <div className="save-job-progress-label">{uploadingLabel}</div>
+          </div>
+        )}
         <div className="pc-dialog-actions">
           <button type="button" className="pc-btn pc-btn-secondary" onClick={onCancel} disabled={saving}>No, skip</button>
           <button type="submit" className="pc-btn pc-btn-success" disabled={saving}>
