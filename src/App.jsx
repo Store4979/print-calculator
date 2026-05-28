@@ -333,6 +333,27 @@ const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn) => 
   return best || { cols:1, rows:1, count:1, printRotated:false, sheetOrientation };
 };
 
+// Reduce a best-fit layout to at most `cap` prints per sheet while keeping
+// the cell geometry (size + rotation) identical, so the front and back of
+// a duplex job stay registered. `count` carries the true number of prints
+// actually placed; cols*rows may be slightly larger when `cap` isn't a
+// clean rectangle (the extra cells are left blank by the draw loop).
+const capFit = (fit, cap) => {
+  if (!fit) return fit;
+  const max = fit.count || 1;
+  const c = Math.max(1, Math.min(Number(cap) || max, max));
+  if (c >= max) return { ...fit, count: max };
+  let cols, rows;
+  if (fit.cols >= fit.rows) {
+    cols = Math.min(c, fit.cols);
+    rows = Math.ceil(c / cols);
+  } else {
+    rows = Math.min(c, fit.rows);
+    cols = Math.ceil(c / rows);
+  }
+  return { ...fit, cols, rows, count: c };
+};
+
 // Draw an image centered at (cx, cy) and stretched to EXACTLY fill boxW ×
 // boxH. Aspect ratio is NOT preserved — the image ends up at the user's
 // requested print size regardless of its natural proportions. `userRotDeg`
@@ -750,7 +771,11 @@ const drawSheetTo = (canvas, {
   const startX = Math.round((wPx - gridW)/2);
   const startY = Math.round((hPx - gridH)/2);
 
-  const cap = cols * rows;
+  // `count` may cap below the full cols*rows grid (user chose fewer prints
+  // per sheet); the extra grid cells are left blank so front/back stay
+  // registered against the same geometry.
+  const gridCells = cols * rows;
+  const cap = Math.max(1, Math.min(gridCells, Number(frontSlotInfo?.count) || gridCells));
   const workList = [];
   items.forEach(it => { const q = it.qty || 0; if (q > 0) for (let i = 0; i < q; i++) workList.push(it); else workList.push(it); });
   const startIdx = pageIndex * cap;
@@ -775,6 +800,7 @@ const drawSheetTo = (canvas, {
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         const slotIdx = row * cols + col;
+        if (slotIdx >= cap) continue; // capped: leave surplus grid cells blank
         const it = pageItems[slotIdx % pageItems.length];
         if (!it) continue;
         const x = startX + col*(printWPx+spacingPx);
@@ -832,6 +858,7 @@ const createEmptyJob = (overrides = {}) => ({
   frontRotation: 0,
   showCutLines: true,
   showGuides: true,
+  perSheetCap: null, // null = max fit; number = capped prints/sheet
   // upsell claim (employee sets this if they suggested the paper)
   upsellPaper: false,
   // computed snapshot (kept in sync by auto-save)
@@ -942,6 +969,9 @@ function PriceCalculatorApp() {
   const [backColorMode, setBackColorMode]   = useState("bw");
   const [showBack, setShowBack]     = useState(false);
   const [showCutLines, setShowCutLines]   = useState(true);
+  // null = pack as many prints per sheet as fit (default). A number caps
+  // prints/sheet below the max — e.g. 1-up of a 5×7 on letter.
+  const [perSheetCap, setPerSheetCap]     = useState(null);
   const [showGuides, setShowGuides] = useState(true);
   const [prints, setPrints]         = useState({ width:3.5, height:2, quantity:100 });
   const [previewSide, setPreviewSide] = useState("front");
@@ -1225,7 +1255,13 @@ function PriceCalculatorApp() {
   const orientedHIn = orientation==="landscape" ? Math.min(...sheetDims) : Math.max(...sheetDims);
 
   // ── Best fit calculation ──
-  const frontSlotInfo = computeBestFit(prints.width, prints.height, orientedWIn, orientedHIn, previewMargin, previewSpacing, false);
+  // maxFit = densest packing; effectiveCap honors the user's per-sheet
+  // choice (clamped to the max). frontSlotInfo is the capped layout that
+  // both the preview and the print render share.
+  const maxFit = computeBestFit(prints.width, prints.height, orientedWIn, orientedHIn, previewMargin, previewSpacing, false);
+  const maxPerSheet = maxFit?.count || 1;
+  const effectivePerSheet = perSheetCap == null ? maxPerSheet : Math.max(1, Math.min(perSheetCap, maxPerSheet));
+  const frontSlotInfo = capFit(maxFit, effectivePerSheet);
   const printsPerSheet = frontSlotInfo?.count || 1;
 
   const totalPrintQty = frontFiles.length
@@ -1477,7 +1513,7 @@ const handleFrontFiles = async (files) => {
     paperKey, sheetKey, orientation, frontColorMode, backColorMode, showBack,
     printWidth: prints.width, printHeight: prints.height, printQuantity: prints.quantity,
     frontFiles, backImage, backRotation, frontRotation,
-    showCutLines, showGuides,
+    showCutLines, showGuides, perSheetCap,
     // computed snapshot (used by ticket summaries)
     printsPerSheet, totalPrintQty, sheetsNeeded, perSheetTotal,
   });
@@ -1502,6 +1538,7 @@ const handleFrontFiles = async (files) => {
     setFrontRotation(Number(item.frontRotation) || 0);
     setShowCutLines(item.showCutLines ?? true);
     setShowGuides(item.showGuides ?? true);
+    setPerSheetCap(item.perSheetCap ?? null);
     setSelectedFrontId(null);
     setFrontPreviewPage(0);
   };
@@ -1522,7 +1559,7 @@ const handleFrontFiles = async (files) => {
   }, [
     paperKey, sheetKey, orientation, frontColorMode, backColorMode, showBack,
     prints, frontFiles, backImage, backRotation, frontRotation,
-    showCutLines, showGuides,
+    showCutLines, showGuides, perSheetCap,
     printsPerSheet, totalPrintQty, sheetsNeeded, perSheetTotal,
     activeTicketIdx,
   ]);
@@ -1819,8 +1856,8 @@ const handleFrontFiles = async (files) => {
     const c = document.createElement("canvas");
     await drawSheet(c, imageInput, rotDeg, pageIndex, null, {
       dpi: PRINT_DPI_SHEET,
-      showGuides: false,
-      showCutLines: false,
+      showGuides: false,            // margin guides are a setup aid — never printed
+      showCutLines: showCutLines,   // cut lines DO print when the toggle is on
     });
     return c;
   };
@@ -1834,7 +1871,8 @@ const handleFrontFiles = async (files) => {
     const widthIn  = item.orientation === "landscape" ? Math.max(...dims) : Math.min(...dims);
     const heightIn = item.orientation === "landscape" ? Math.min(...dims) : Math.max(...dims);
     const itemPrints = { width: item.printWidth, height: item.printHeight, quantity: item.printQuantity };
-    const fit = computeBestFit(item.printWidth, item.printHeight, widthIn, heightIn, previewMargin, previewSpacing);
+    const itemMaxFit = computeBestFit(item.printWidth, item.printHeight, widthIn, heightIn, previewMargin, previewSpacing);
+    const fit = capFit(itemMaxFit, item.perSheetCap == null ? (itemMaxFit?.count || 1) : item.perSheetCap);
     const itemFiles = (Array.isArray(item.frontFiles) && item.frontFiles.length) ? item.frontFiles : null;
     await drawSheetTo(c, {
       imageInput: itemFiles,
@@ -1846,7 +1884,8 @@ const handleFrontFiles = async (files) => {
       prints: itemPrints,
       frontSlotInfo: fit,
       previewMargin, previewSpacing,
-      showGuides: false, showCutLines: false,
+      showGuides: false,
+      showCutLines: item.showCutLines ?? false,
       dpi: PRINT_DPI_SHEET,
     });
     return { canvas: c, widthIn, heightIn };
@@ -3587,7 +3626,7 @@ try {
                     <Toggle checked={showBack} onChange={setShowBack} />
                   </div>
                   <div className="toggle-row">
-                    <div><div className="toggle-label-text">Show cut lines</div><div className="toggle-label-sub">Visible in preview only</div></div>
+                    <div><div className="toggle-label-text">Show cut lines</div><div className="toggle-label-sub">Dashed trim guides — printed on the final output</div></div>
                     <Toggle checked={showCutLines} onChange={setShowCutLines} />
                   </div>
                   <div className="toggle-row">
@@ -3618,7 +3657,7 @@ try {
                     </div>
                   )}
                   <div>
-                    <label className="field-label">Fits per sheet</label>
+                    <label className="field-label">Prints per sheet</label>
                     <input className="pc-input pc-input-readonly" type="text" readOnly value={printsPerSheet} />
                   </div>
                   <div>
@@ -3626,9 +3665,31 @@ try {
                     <input className="pc-input pc-input-readonly" type="text" readOnly value={sheetsNeeded} />
                   </div>
                 </div>
+
+                {maxPerSheet > 1 && (
+                  <div style={{ marginBottom:12 }}>
+                    <label className="field-label">Prints per sheet ({maxPerSheet} fit)</label>
+                    <div className="chip-group">
+                      {Array.from({ length: maxPerSheet }, (_, i) => i + 1).map(n => (
+                        <Chip
+                          key={n}
+                          label={n === maxPerSheet ? `${n} (max)` : (n === 1 ? "1 per sheet" : `${n}`)}
+                          selected={effectivePerSheet === n}
+                          onClick={() => setPerSheetCap(n === maxPerSheet ? null : n)}
+                        />
+                      ))}
+                    </div>
+                    <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6 }}>
+                      Fewer per sheet uses more paper. Front &amp; back stay aligned for double-sided jobs.
+                    </div>
+                  </div>
+                )}
+
                 <div className="callout callout-info">
                   <span className="callout-icon"><Icon.Info /></span>
-                  Layout is calculated automatically — we fit as many prints as possible per sheet using a {frontSlotInfo?.cols||0}×{frontSlotInfo?.rows||0} grid.
+                  {effectivePerSheet < maxPerSheet
+                    ? `Printing ${effectivePerSheet} per sheet (${frontSlotInfo?.cols||0}×${frontSlotInfo?.rows||0} grid) — ${maxPerSheet} would fit at max density.`
+                    : `Packing as many prints as fit per sheet using a ${frontSlotInfo?.cols||0}×${frontSlotInfo?.rows||0} grid.`}
                 </div>
               </div>
             </div>
