@@ -457,7 +457,7 @@ const PrintIcon = () => (
 
 // ── COMPONENT ──────────────────────────────────────────────
 
-export default function BookletMaker({ CardHeader, pricingProps }) {
+export default function BookletMaker({ CardHeader, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
   // Pricing props from parent
   const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
   
@@ -553,7 +553,37 @@ export default function BookletMaker({ CardHeader, pricingProps }) {
   const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(numSheets) : 1;
   const totalPrice = perSheetTotal * numSheets * discountFactor;
   const hasPricing = availablePapers.length > 0 && perSheetTotal > 0;
-  
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const paperLabel = availablePapers.find(p => p.key === selectedPaperKey)?.label || selectedPaperKey;
+  const completeSaleEnabled = !!currentEmployee && hasPricing && totalPrice > 0;
+
+  // Report a sale snapshot up to App for the shared Complete Sale pipeline.
+  useEffect(() => {
+    if (typeof onSnapshotChange !== "function") return;
+    if (!hasPricing || !(totalPrice > 0) || totalPages <= 0) { onSnapshotChange(null); return; }
+    onSnapshotChange({
+      serviceType: "booklet",
+      total: round2(totalPrice),
+      baseSubtotal: round2(totalPrice),
+      upsellSubtotal: 0,
+      lineItems: [{
+        kind: "booklet",
+        pages: totalPages,
+        copies: 1,
+        sheets: numSheets,
+        stock: paperLabel,
+        colorMode,
+        duplex: true,
+        lineTotal: round2(totalPrice),
+        upsell: false,
+      }],
+    });
+  }, [totalPrice, totalPages, numSheets, paperLabel, colorMode, hasPricing, onSnapshotChange]);
+
+  useEffect(() => () => {
+    if (typeof onSnapshotChange === "function") onSnapshotChange(null);
+  }, [onSnapshotChange]);
+
   // ── File Loading ──
   const addFiles = useCallback(async (files) => {
     setLoading(true);
@@ -1300,25 +1330,38 @@ export default function BookletMaker({ CardHeader, pricingProps }) {
                 </div>
               )}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="pc-btn pc-btn-secondary"
-                disabled={generating || !withinPaperSize}
-                onClick={handlePrint}
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <PrintIcon />
-                Print
-              </button>
-              <button
-                className="pc-btn pc-btn-success"
-                disabled={generating || !withinPaperSize}
-                onClick={handleGenerate}
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <DownloadIcon />
-                {generating ? "Generating..." : "Download PDF"}
-              </button>
+            <div className="price-bar-action-col">
+              <div className="price-bar-actions">
+                <button
+                  className="pc-btn pc-btn-ghost"
+                  disabled={generating || !withinPaperSize}
+                  onClick={handlePrint}
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <PrintIcon />
+                  Print
+                </button>
+                <button
+                  className="pc-btn pc-btn-ghost"
+                  disabled={generating || !withinPaperSize}
+                  onClick={handleGenerate}
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <DownloadIcon />
+                  {generating ? "Generating..." : "Download PDF"}
+                </button>
+                <button
+                  type="button"
+                  data-tour="booklet-complete-sale"
+                  className="pc-btn pc-btn-complete-sale is-primary-action"
+                  onClick={onCompleteSale}
+                  disabled={!completeSaleEnabled}
+                  title={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+                >
+                  ✓ Complete Sale
+                </button>
+              </div>
+              <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
             </div>
           </div>
         </div>

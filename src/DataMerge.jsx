@@ -362,7 +362,7 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove, onSelect, i
 
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
-export default function DataMerge({ CardHeader, pricingProps }) {
+export default function DataMerge({ CardHeader, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
   // Pricing props from parent
   const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
   
@@ -450,7 +450,35 @@ export default function DataMerge({ CardHeader, pricingProps }) {
   const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(sheetsNeeded) : 1;
   const totalPrice = perSheetPrice * sheetsNeeded * discountFactor;
   const hasPricing = paperTypes.length > 0 && perSheetPrice > 0;
-  
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const dmPaperLabel = paperTypes.find(p => p.key === selectedPaperKey)?.label || selectedPaperKey;
+  const completeSaleEnabled = !!currentEmployee && hasPricing && totalPrice > 0;
+
+  // Report a sale snapshot up to App for the shared Complete Sale pipeline.
+  useEffect(() => {
+    if (typeof onSnapshotChange !== "function") return;
+    if (!hasPricing || !(totalPrice > 0) || totalRecords <= 0) { onSnapshotChange(null); return; }
+    onSnapshotChange({
+      serviceType: "data_merge",
+      total: round2(totalPrice),
+      baseSubtotal: round2(totalPrice),
+      upsellSubtotal: 0,
+      lineItems: [{
+        kind: "data_merge",
+        records: totalRecords,
+        paperLabel: dmPaperLabel,
+        sheetKey: selectedSheetKey,
+        colorMode,
+        lineTotal: round2(totalPrice),
+        upsell: false,
+      }],
+    });
+  }, [totalPrice, totalRecords, dmPaperLabel, selectedSheetKey, colorMode, hasPricing, onSnapshotChange]);
+
+  useEffect(() => () => {
+    if (typeof onSnapshotChange === "function") onSnapshotChange(null);
+  }, [onSnapshotChange]);
+
   // Auto-select first available sheet key when paper changes
   useEffect(() => {
     const keys = sheetKeysForPaper[selectedPaperKey] || [];
@@ -1240,16 +1268,29 @@ export default function DataMerge({ CardHeader, pricingProps }) {
                 </div>
               )}
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="pc-btn pc-btn-success"
-                disabled={generating}
-                onClick={handleGenerate}
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <DownloadIcon />
-                {generating ? "Generating..." : `Download ${totalRecords} Records`}
-              </button>
+            <div className="price-bar-action-col">
+              <div className="price-bar-actions">
+                <button
+                  className="pc-btn pc-btn-ghost"
+                  disabled={generating}
+                  onClick={handleGenerate}
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <DownloadIcon />
+                  {generating ? "Generating..." : `Download ${totalRecords} Records`}
+                </button>
+                <button
+                  type="button"
+                  data-tour="datamerge-complete-sale"
+                  className="pc-btn pc-btn-complete-sale is-primary-action"
+                  onClick={onCompleteSale}
+                  disabled={!completeSaleEnabled}
+                  title={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+                >
+                  ✓ Complete Sale
+                </button>
+              </div>
+              <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
             </div>
           </div>
         </div>

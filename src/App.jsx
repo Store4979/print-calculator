@@ -559,6 +559,7 @@ const Icon = {
   Printer:  () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
   Ruler:    () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.3 8.7 8.7 21.3c-1 1-2.5 1-3.4 0l-2.6-2.6c-1-1-1-2.5 0-3.4L15.3 2.7c1-1 2.5-1 3.4 0l2.6 2.6c1 1 1 2.5 0 3.4Z"/><path d="m7.5 10.5 2 2"/><path d="m10.5 7.5 2 2"/><path d="m13.5 4.5 2 2"/><path d="m4.5 13.5 2 2"/></svg>,
   Blueprint:() => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
+  Sign:     () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="11" rx="2"/><line x1="12" y1="15" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="11" x2="13" y2="11"/></svg>,
   Upload:   () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
   Download: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
   Send:     () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><polyline points="22 7 12 2 2 7"/><line x1="12" y1="22" x2="12" y2="2"/></svg>,
@@ -660,24 +661,29 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
           </div>
         ))}
       </div>
-      <div className="price-bar-actions">
-        <button data-tour={downloadTour} className="pc-btn pc-btn-secondary" onClick={onDownload}>
-          <Icon.Download /> Generate Quote
-        </button>
-        <button data-tour={orderTour} className="pc-btn pc-btn-secondary" onClick={onOrder}>
-          <Icon.Send /> Email
-        </button>
-        {onCompleteSale && (
-          <button
-            type="button"
-            data-tour={completeSaleTour}
-            className="pc-btn pc-btn-complete-sale"
-            onClick={onCompleteSale}
-            disabled={!completeSaleEnabled}
-            title={completeSaleHint || "Log this as a completed sale"}
-          >
-            ✓ Complete Sale
+      <div className="price-bar-action-col">
+        <div className="price-bar-actions">
+          <button data-tour={downloadTour} className="pc-btn pc-btn-ghost" onClick={onDownload}>
+            <Icon.Download /> Generate Quote
           </button>
+          <button data-tour={orderTour} className="pc-btn pc-btn-ghost" onClick={onOrder}>
+            <Icon.Send /> Email
+          </button>
+          {onCompleteSale && (
+            <button
+              type="button"
+              data-tour={completeSaleTour}
+              className="pc-btn pc-btn-complete-sale is-primary-action"
+              onClick={onCompleteSale}
+              disabled={!completeSaleEnabled}
+              title={completeSaleHint || "Log this as a completed sale"}
+            >
+              ✓ Complete Sale
+            </button>
+          )}
+        </div>
+        {onCompleteSale && (
+          <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
         )}
       </div>
     </div>
@@ -943,7 +949,31 @@ function PriceCalculatorApp() {
   const [savedJobToast, setSavedJobToast] = useState("");
   const [isAdmin, setIsAdmin]       = useState(false);
 
+  // Snapshot reported up by the Specialty / Booklet / Data-Merge child tabs
+  // so the shared Complete Sale pipeline can log their sales. Shape matches
+  // what buildSaleSnapshot() returns for the built-in tabs.
+  const [childSnapshot, setChildSnapshot] = useState(null);
+
+  // Persistent "order for…" customer, shared across every tab for one walk-up.
+  const [orderCustomer, setOrderCustomer] = useState(() => {
+    try { const raw = localStorage.getItem("orderCustomer"); return raw ? JSON.parse(raw) : { name: "", phone: "" }; }
+    catch { return { name: "", phone: "" }; }
+  });
+
+  // Quick-start presets for the paper tab (recent configs + user-pinned).
+  const [recentConfigs, setRecentConfigs] = useState(() => {
+    try { const raw = localStorage.getItem("paperRecentConfigs"); return raw ? JSON.parse(raw) : []; }
+    catch { return []; }
+  });
+  const [pinnedConfigs, setPinnedConfigs] = useState(() => {
+    try { const raw = localStorage.getItem("paperPinnedConfigs"); return raw ? JSON.parse(raw) : []; }
+    catch { return []; }
+  });
+
   useEffect(() => { try { localStorage.setItem("activeTab", activeTab); } catch {} }, [activeTab]);
+  useEffect(() => { try { localStorage.setItem("orderCustomer", JSON.stringify(orderCustomer)); } catch {} }, [orderCustomer]);
+  useEffect(() => { try { localStorage.setItem("paperRecentConfigs", JSON.stringify(recentConfigs)); } catch {} }, [recentConfigs]);
+  useEffect(() => { try { localStorage.setItem("paperPinnedConfigs", JSON.stringify(pinnedConfigs)); } catch {} }, [pinnedConfigs]);
 
   // ── Job ticket (Sheets & Photos only) ──
   // The editor state below represents the CURRENTLY ACTIVE line item.
@@ -1896,6 +1926,7 @@ const handleFrontFiles = async (files) => {
     const liveTicket = ticket.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it);
     const hasAnyFiles = liveTicket.some(it => (it.frontFiles||[]).length > 0) || !!frontImage;
     if (!hasAnyFiles) { alert("Upload at least one image before downloading."); return; }
+    pushRecentConfig();
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
 
@@ -2367,9 +2398,9 @@ const handleFrontFiles = async (files) => {
       let orderSheetPdfBase64 = null;
       if (orderSheetBlob) { const s = await blobToB64(orderSheetBlob); orderSheetPdfBase64 = s.startsWith(prefix)?s.slice(prefix.length):s; }
       if (jobPdfBase64.length > 10*1024*1024) { alert("PDF too large to send automatically. Please download and email manually."); return false; }
-      const name  = window.prompt("Your name (for the order)?") || "";
+      const name  = window.prompt("Your name (for the order)?", orderCustomer.name || "") || "";
       const email = window.prompt("Your email (for confirmation)?") || "";
-      const phone = window.prompt("Your phone number (optional)?") || "";
+      const phone = window.prompt("Your phone number (optional)?", orderCustomer.phone || "") || "";
       const orderId = `JOB-${Date.now()}`;
 
       const buildOrder = () => {
@@ -2668,6 +2699,11 @@ const handleFrontFiles = async (files) => {
         }],
       };
     }
+    // Specialty + Impose (Booklet / Data Merge) report their own snapshot
+    // up through onSnapshotChange; we just hand it to the shared pipeline.
+    if (activeTab === "specialty" || activeTab === "impose") {
+      return childSnapshot && childSnapshot.total > 0 ? childSnapshot : null;
+    }
     return null;
   };
 
@@ -2691,6 +2727,67 @@ const handleFrontFiles = async (files) => {
     } else if (activeTab === "blueprint") {
       setBpFile(null);
     }
+    // Child tabs own their internal state; just clear the reported snapshot
+    // so a stale total can't be re-sold.
+    setChildSnapshot(null);
+    // Fresh sale starts with a clean customer.
+    setOrderCustomer({ name: "", phone: "" });
+  };
+
+  // ── Quick-start presets (paper tab) ──
+  // Compact config pushed on a successful paper sale / quote, applied back
+  // via the existing editor setters (no new imposition path).
+  const configsEqual = (a, b) =>
+    a && b && a.sheetKey === b.sheetKey && a.paperKey === b.paperKey &&
+    a.frontColorMode === b.frontColorMode && !!a.showBack === !!b.showBack &&
+    Number(a.width) === Number(b.width) && Number(a.height) === Number(b.height);
+
+  const pushRecentConfig = () => {
+    const cfg = {
+      sheetKey, paperKey, frontColorMode, showBack: !!showBack,
+      width: prints.width, height: prints.height,
+    };
+    setRecentConfigs(prev => {
+      const deduped = prev.filter(c => !configsEqual(c, cfg));
+      return [cfg, ...deduped].slice(0, 6);
+    });
+  };
+
+  const applyQuickConfig = (cfg) => {
+    if (!cfg) return;
+    if (cfg.paperKey)        setPaperKey(cfg.paperKey);
+    if (cfg.sheetKey)        setSheetKey(cfg.sheetKey);
+    if (cfg.frontColorMode)  setFrontColorMode(cfg.frontColorMode);
+    setShowBack(!!cfg.showBack);
+    setPrints(p => ({
+      ...p,
+      width:  Number(cfg.width)  || p.width,
+      height: Number(cfg.height) || p.height,
+    }));
+  };
+
+  const togglePinConfig = (cfg) => {
+    setPinnedConfigs(prev => {
+      const exists = prev.some(c => configsEqual(c, cfg));
+      if (exists) return prev.filter(c => !configsEqual(c, cfg));
+      return [cfg, ...prev].slice(0, 4);
+    });
+  };
+
+  const quickStartChips = (() => {
+    const pins = pinnedConfigs.map(c => ({ cfg: c, pinned: true }));
+    const recents = recentConfigs
+      .filter(c => !pinnedConfigs.some(p => configsEqual(p, c)))
+      .slice(0, 4)
+      .map(c => ({ cfg: c, pinned: false }));
+    return [...pins, ...recents];
+  })();
+
+  const quickChipLabel = (cfg) => {
+    const paperLabel = paperTypes.find(p => p.key === cfg.paperKey)?.label || cfg.paperKey;
+    const color = cfg.frontColorMode === "bw" ? "B&W" : "Color";
+    const sides = cfg.showBack ? " · 2-sided" : "";
+    return `${cfg.sheetKey} · ${color} · ${paperLabel}${sides}`;
   };
 
   const requestCompleteSale = () => {
@@ -2735,6 +2832,7 @@ const handleFrontFiles = async (files) => {
       }
       setTimeout(() => setSavedJobToast(""), 4000);
       setPendingSalesCount(loadPendingTransactions().length);
+      if (activeTab === "paper") pushRecentConfig();
       resetActiveTabForNextSale();
     } finally {
       setCompletingSale(false);
@@ -2975,7 +3073,7 @@ try {
   { id:"paper",     label:"Sheets & Photos", icon:<Icon.Printer />, pill:"🖨",  pillBg:"#e0f4f7", activeColor:"var(--teal)" },
   { id:"large",     label:"Large Format",    icon:<Icon.Ruler />,   pill:"📐",  pillBg:"#fef3c7", activeColor:"var(--amber)" },
   { id:"blueprint", label:"Blueprints",      icon:<Icon.Blueprint/>,pill:"📋",  pillBg:"#dbeafe", activeColor:"var(--blue)"  },
-  { id:"specialty", label:"Specialty",       icon:<Icon.Ruler />,   pill:"🪧",  pillBg:"#f3e8ff", activeColor:"var(--purple)" },
+  { id:"specialty", label:"Specialty",       icon:<Icon.Sign />,    pill:"🪧",  pillBg:"#f3e8ff", activeColor:"var(--purple)" },
   { id:"impose",    label:"Impose",          icon:<BookletIcon />,  pill:"📖",  pillBg:"#dcfce7", activeColor:"var(--green)" },
 ].map(tab => (
               <button
@@ -2991,6 +3089,34 @@ try {
           </div>
         </div>
       </nav>
+
+      {/* ── ORDER-FOR CUSTOMER BAR (visible on every tab) ── */}
+      <div className="order-customer-bar" data-tour="order-customer">
+        <div className="order-customer-inner">
+          <span className="order-customer-label">Order for</span>
+          <input
+            className="pc-input order-customer-input"
+            type="text"
+            placeholder="Customer name (optional)"
+            value={orderCustomer.name}
+            onChange={e => setOrderCustomer(c => ({ ...c, name: e.target.value }))}
+          />
+          <input
+            className="pc-input order-customer-input order-customer-phone"
+            type="tel"
+            placeholder="Phone"
+            value={orderCustomer.phone}
+            onChange={e => setOrderCustomer(c => ({ ...c, phone: e.target.value }))}
+          />
+          {(orderCustomer.name || orderCustomer.phone) && (
+            <button
+              type="button"
+              className="pc-btn pc-btn-secondary pc-btn-xs order-customer-clear"
+              onClick={() => setOrderCustomer({ name: "", phone: "" })}
+            >New customer</button>
+          )}
+        </div>
+      </div>
 
       <div className="content-wrap">
 
@@ -3535,6 +3661,30 @@ try {
         ════════════════════════════════════════ */}
         {activeTab==="paper" && viewMode==="tool" && (
           <>
+            {quickStartChips.length > 0 && (
+              <div className="quick-start" data-tour="quick-start">
+                <span className="quick-start-label">Quick start</span>
+                <div className="quick-start-chips">
+                  {quickStartChips.map(({ cfg, pinned }, i) => (
+                    <span key={i} className={`quick-chip ${pinned ? "is-pinned" : ""}`}>
+                      <button
+                        type="button"
+                        className="quick-chip-apply"
+                        onClick={() => applyQuickConfig(cfg)}
+                        title="Apply this setup"
+                      >{quickChipLabel(cfg)}</button>
+                      <button
+                        type="button"
+                        className={`quick-chip-pin ${pinned ? "is-pinned" : ""}`}
+                        onClick={() => togglePinConfig(cfg)}
+                        title={pinned ? "Unpin" : "Pin to front"}
+                        aria-label={pinned ? "Unpin preset" : "Pin preset"}
+                      >{pinned ? "★" : "☆"}</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <TicketBar
               ticket={ticket}
               ticketLines={ticketLines}
@@ -4172,17 +4322,28 @@ try {
             PANEL: SPECIALTY (Signs365 trade printing)
         ════════════════════════════════════════ */}
         {activeTab==="specialty" && viewMode==="tool" && (
-          <SpecialtyTab CardHeader={CardHeader} />
+          <SpecialtyTab
+            CardHeader={CardHeader}
+            onSnapshotChange={setChildSnapshot}
+            currentEmployee={currentEmployee}
+            onCompleteSale={requestCompleteSale}
+          />
         )}
 
         {/* ════════════════════════════════════════
             PANEL: IMPOSE (BOOKLET MAKER)
         ════════════════════════════════════════ */}
 {activeTab==="impose" && viewMode==="tool" && (
-  <ImposePanel CardHeader={CardHeader} pricingProps={{
-    paperTypes, sheetKeysForPaper, pricing, quantityDiscounts,
-    backSideFactor, getSheetDiscountFactor,
-  }} />
+  <ImposePanel
+    CardHeader={CardHeader}
+    onSnapshotChange={setChildSnapshot}
+    currentEmployee={currentEmployee}
+    onCompleteSale={requestCompleteSale}
+    pricingProps={{
+      paperTypes, sheetKeysForPaper, pricing, quantityDiscounts,
+      backSideFactor, getSheetDiscountFactor,
+    }}
+  />
 )}
 
       </div>{/* /content-wrap */}
@@ -4254,6 +4415,7 @@ try {
         <CompleteSaleDialog
           pending={pendingSale}
           busy={completingSale}
+          defaultNotes={orderCustomer.name || ""}
           onConfirm={confirmCompleteSale}
           onCancel={() => !completingSale && setPendingSale(null)}
         />
@@ -4352,8 +4514,8 @@ function SaveJobDialog({ label, row, fileCount = 0, uploadProgress, saving, onCa
 // Confirmation modal shown when the employee clicks "Complete Sale".
 // Re-runs the commission math locally so the displayed numbers always
 // match what gets written to the transactions row.
-function CompleteSaleDialog({ pending, busy, onConfirm, onCancel }) {
-  const [notes, setNotes] = useState("");
+function CompleteSaleDialog({ pending, busy, defaultNotes = "", onConfirm, onCancel }) {
+  const [notes, setNotes] = useState(defaultNotes);
   const { snapshot, employee, settings } = pending;
   const c = computeCommission(snapshot.baseSubtotal, snapshot.upsellSubtotal, settings);
   const submit = (e) => { e?.preventDefault?.(); onConfirm(notes); };
@@ -4399,6 +4561,10 @@ function CompleteSaleDialog({ pending, busy, onConfirm, onCancel }) {
                   {li.kind === "lf_media"   && `${li.width}×${li.height} ${li.paperLabel}`}
                   {li.kind === "lf_addon"   && `${li.name}${li.count ? ` ×${li.count}` : ""}`}
                   {li.kind === "blueprint"  && `${li.label} blueprints ×${li.quantity}`}
+                  {li.kind === "specialty"  && `${li.productLabel || "Specialty"}${li.dimensions ? ` (${li.dimensions})` : ""}${li.quantity ? ` ×${li.quantity}` : ""}`}
+                  {li.kind === "specialty_shipping" && "Shipping (passthrough)"}
+                  {li.kind === "booklet"    && `Booklet: ${li.pages ?? "?"}pg × ${li.copies ?? 1} on ${li.stock || "stock"}${li.duplex ? " (duplex)" : ""}`}
+                  {li.kind === "data_merge" && `Data Merge: ${li.records ?? 0} records on ${li.paperLabel || li.paper || "stock"} ${li.sheetKey || ""}`.trim()}
                 </span>
                 <span>
                   {li.upsell && <span className="complete-sale-upsell-pill">⬆ upsell</span>}
@@ -4535,7 +4701,7 @@ function TicketBar({
 }
 
 // ─── IMPOSE PANEL (sub-tool selector) ──────────────────────
-function ImposePanel({ CardHeader, pricingProps }) {
+function ImposePanel({ CardHeader, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
   const [imposeTool, setImposeTool] = useState("booklet");
   return (
     <>
@@ -4556,8 +4722,8 @@ function ImposePanel({ CardHeader, pricingProps }) {
           </div>
         </div>
       </div>
-      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} pricingProps={pricingProps} />}
-      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} pricingProps={pricingProps} />}
+      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
+      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
     </>
   );
 }

@@ -68,6 +68,7 @@ const loadPricing = () => {
 
 // ── Helpers ──────────────────────────────────────────
 const fmtMoney = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 const resolveSizes = (pricing, product) => {
   if (Array.isArray(product.sizes)) return product.sizes;
@@ -539,7 +540,7 @@ function computePrice({ pricing, product, width, height, selectedSizeKey, quanti
 }
 
 // ── Component ────────────────────────────────────────
-export default function SpecialtyTab({ CardHeader }) {
+export default function SpecialtyTab({ CardHeader, onSnapshotChange, currentEmployee, onCompleteSale }) {
   const [pricing, setPricing] = useState(loadPricing);
 
   useEffect(() => {
@@ -648,6 +649,40 @@ export default function SpecialtyTab({ CardHeader }) {
     () => computePrice({ pricing, product, width, height, selectedSizeKey, quantity, options: selectedOptions }),
     [pricing, product, width, height, selectedSizeKey, quantity, selectedOptions]
   );
+
+  // Report a sale snapshot up to App so the shared Complete Sale pipeline
+  // can log this order. Markup applies to the print cost only; shipping is a
+  // separate non-upsell line that passes through at cost.
+  useEffect(() => {
+    if (typeof onSnapshotChange !== "function") return;
+    if (!result || !(result.customerTotal > 0)) { onSnapshotChange(null); return; }
+    const lineItems = [{
+      kind: "specialty",
+      productLabel: product?.label || selectedProduct,
+      category: selectedCategory,
+      dimensions: (result.dim?.width && result.dim?.height) ? `${result.dim.width}×${result.dim.height} in` : null,
+      quantity,
+      lineTotal: round2(result.customerPrintPrice),
+      upsell: false,
+    }];
+    if (result.shippingCost > 0) {
+      lineItems.push({ kind: "specialty_shipping", lineTotal: round2(result.shippingCost), upsell: false });
+    }
+    onSnapshotChange({
+      serviceType: "specialty",
+      total: round2(result.customerTotal),
+      baseSubtotal: round2(result.customerTotal),
+      upsellSubtotal: 0,
+      lineItems,
+    });
+  }, [result, product, selectedProduct, selectedCategory, quantity, onSnapshotChange]);
+
+  // Clear the reported snapshot when this tab unmounts.
+  useEffect(() => () => {
+    if (typeof onSnapshotChange === "function") onSnapshotChange(null);
+  }, [onSnapshotChange]);
+
+  const completeSaleEnabled = !!currentEmployee && !!result && result.customerTotal > 0;
 
   const sizes = useMemo(() => (product ? resolveSizes(pricing, product) : []), [pricing, product]);
   const showCustomDims = product?.sizeMode === "custom";
@@ -994,17 +1029,30 @@ export default function SpecialtyTab({ CardHeader }) {
             </div>
           </div>
         </div>
-        <div className="price-bar-actions">
-          <button type="button" className="pc-btn pc-btn-secondary" onClick={handleReset}>Reset</button>
-          <button
-            type="button"
-            className="pc-btn pc-btn-purple"
-            onClick={handleGeneratePdf}
-            disabled={!canGenerate}
-            title={canGenerate ? "Generate the trade-order PDF" : "Pick a product, size and quantity first"}
-          >
-            {generating ? "Generating…" : "⬇ Generate Trade Order PDF"}
-          </button>
+        <div className="price-bar-action-col">
+          <div className="price-bar-actions">
+            <button type="button" className="pc-btn pc-btn-ghost" onClick={handleReset}>Reset</button>
+            <button
+              type="button"
+              className="pc-btn pc-btn-ghost"
+              onClick={handleGeneratePdf}
+              disabled={!canGenerate}
+              title={canGenerate ? "Generate the trade-order PDF" : "Pick a product, size and quantity first"}
+            >
+              {generating ? "Generating…" : "⬇ Trade Order PDF"}
+            </button>
+            <button
+              type="button"
+              data-tour="specialty-complete-sale"
+              className="pc-btn pc-btn-complete-sale is-primary-action"
+              onClick={onCompleteSale}
+              disabled={!completeSaleEnabled}
+              title={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+            >
+              ✓ Complete Sale
+            </button>
+          </div>
+          <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
         </div>
       </div>
     </>
