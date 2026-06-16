@@ -2181,6 +2181,120 @@ body {
   box-shadow: none;
 }
 
+/* ── PriceBar action hierarchy (Complete Sale = primary) ── */
+.price-bar-action-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.price-bar-caption {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+/* Ghost = clearly secondary next to the filled Complete Sale */
+.pc-btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.pc-btn-ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+/* Bump the primary action's visual weight */
+.pc-btn-complete-sale.is-primary-action {
+  padding: 11px 22px;
+  font-size: 14px;
+}
+@media (max-width: 640px) {
+  .price-bar-action-col { align-items: stretch; width: 100%; }
+  .price-bar-actions { width: 100%; }
+  .price-bar-actions .pc-btn { flex: 1 1 auto; justify-content: center; }
+  .pc-btn-complete-sale.is-primary-action { flex-basis: 100%; order: -1; }
+  .price-bar-caption { text-align: center; }
+}
+
+/* ── Order-for customer bar (under service tabs) ── */
+.order-customer-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.order-customer-inner {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.order-customer-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.order-customer-input { height: 34px; font-size: 13px; flex: 1 1 200px; min-width: 140px; }
+.order-customer-phone { flex: 0 1 150px; }
+.order-customer-clear { flex-shrink: 0; }
+@media (max-width: 640px) {
+  .order-customer-input, .order-customer-phone { flex: 1 1 100%; }
+}
+
+/* ── Quick-start presets (paper tab) ── */
+.quick-start {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.quick-start-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.quick-start-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.quick-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.quick-chip.is-pinned { border-color: var(--teal); }
+.quick-chip-apply {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.quick-chip-apply:hover { background: var(--teal-light); color: var(--teal); }
+.quick-chip-pin {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--border);
+  padding: 0 9px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-subtle);
+}
+.quick-chip-pin.is-pinned { color: var(--teal); }
+.quick-chip-pin:hover { background: var(--surface-2); }
+
 /* Complete-sale confirmation dialog */
 .complete-sale-dialog {
   width: min(560px, 100%);
