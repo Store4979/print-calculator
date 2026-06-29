@@ -15,10 +15,12 @@ import CommissionDashboard from "./components/CommissionDashboard.jsx";
 import MyNumbersPanel from "./components/MyNumbersPanel.jsx";
 import SpecialtyTab from "./components/SpecialtyTab.jsx";
 import Signs365PricingEditor from "./components/Signs365PricingEditor.jsx";
+import PrintQueue from "./components/PrintQueue.jsx";
 import TrainingDrawer from "./TrainingDrawer.jsx";
 import {
   ensureDbAuthenticated, savePrintJob, savePrintJobWithId,
   uploadJobFiles, downloadJobFile, isSupabaseConfigured,
+  supabase,
   getStoredEmployee, setStoredEmployee,
   listEmployees, createEmployee, setEmployeeActive,
   fetchCommissionSettings, insertTransaction,
@@ -954,6 +956,9 @@ function PriceCalculatorApp() {
   // what buildSaleSnapshot() returns for the built-in tabs.
   const [childSnapshot, setChildSnapshot] = useState(null);
 
+  // Live count of waiting customer uploads — drives the Print Queue tab badge.
+  const [queueCount, setQueueCount] = useState(0);
+
   // Persistent "order for…" customer, shared across every tab for one walk-up.
   const [orderCustomer, setOrderCustomer] = useState(() => {
     try { const raw = localStorage.getItem("orderCustomer"); return raw ? JSON.parse(raw) : { name: "", phone: "" }; }
@@ -974,6 +979,27 @@ function PriceCalculatorApp() {
   useEffect(() => { try { localStorage.setItem("orderCustomer", JSON.stringify(orderCustomer)); } catch {} }, [orderCustomer]);
   useEffect(() => { try { localStorage.setItem("paperRecentConfigs", JSON.stringify(recentConfigs)); } catch {} }, [recentConfigs]);
   useEffect(() => { try { localStorage.setItem("paperPinnedConfigs", JSON.stringify(pinnedConfigs)); } catch {} }, [pinnedConfigs]);
+
+  // Print Queue badge: keep a live count of today's waiting uploads via its
+  // own lightweight realtime subscription so the badge updates on any tab.
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+    let cancelled = false;
+    const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Detroit" }).format(new Date());
+    const refresh = async () => {
+      const { count } = await supabase
+        .from("pending_jobs")
+        .select("id", { count: "exact", head: true })
+        .eq("job_date", today());
+      if (!cancelled) setQueueCount(count || 0);
+    };
+    refresh();
+    const ch = supabase
+      .channel("pending_jobs_badge")
+      .on("postgres_changes", { event: "*", schema: "public", table: "pending_jobs" }, refresh)
+      .subscribe();
+    return () => { cancelled = true; supabase.removeChannel(ch); };
+  }, []);
 
   // ── Job ticket (Sheets & Photos only) ──
   // The editor state below represents the CURRENTLY ACTIVE line item.
@@ -1490,6 +1516,15 @@ const handleFrontFiles = async (files) => {
     } finally {
       setProcessingFiles(false);
     }
+  };
+
+  // Print Queue → "Send to Calculator": reuse the exact Sheets & Photos
+  // intake path, then switch to the paper tab.
+  const handleQueueFileToCalculator = async (file) => {
+    if (!file) return;
+    await handleFrontFiles([file]);
+    setActiveTab("paper");
+    setViewMode("tool");
   };
 
   const handleBackFile = async (files) => {
@@ -3075,6 +3110,7 @@ try {
   { id:"blueprint", label:"Blueprints",      icon:<Icon.Blueprint/>,pill:"📋",  pillBg:"#dbeafe", activeColor:"var(--blue)"  },
   { id:"specialty", label:"Specialty",       icon:<Icon.Sign />,    pill:"🪧",  pillBg:"#f3e8ff", activeColor:"var(--purple)" },
   { id:"impose",    label:"Impose",          icon:<BookletIcon />,  pill:"📖",  pillBg:"#dcfce7", activeColor:"var(--green)" },
+  ...(isSupabaseConfigured ? [{ id:"queue", label:"Print Queue", icon:<Icon.Send />, pill:"📥", pillBg:"#e0f4f7", activeColor:"var(--teal)", badge: queueCount }] : []),
 ].map(tab => (
               <button
                 key={tab.id}
@@ -3084,6 +3120,7 @@ try {
               >
                 <span className="tab-icon-pill" data-tooltip={tab.label} style={{ background: activeTab===tab.id ? pillActiveBg(tab.id) : tab.pillBg }}>{tab.pill}</span>
                 {tab.label}
+                {tab.badge > 0 && <span className="tab-badge">{tab.badge}</span>}
               </button>
             ))}
           </div>
@@ -4346,6 +4383,13 @@ try {
   />
 )}
 
+        {/* ════════════════════════════════════════
+            PANEL: PRINT QUEUE (customer self-serve uploads)
+        ════════════════════════════════════════ */}
+        {activeTab==="queue" && (
+          <PrintQueue onSendToCalculator={handleQueueFileToCalculator} />
+        )}
+
       </div>{/* /content-wrap */}
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
@@ -4735,6 +4779,7 @@ function pillActiveBg(id) {
   if (id==="blueprint") return "#bfdbfe";
   if (id==="impose")    return "#bbf7d0";
   if (id==="specialty") return "#ddd6fe";
+  if (id==="queue")     return "#b3e8f0";
   return "#e5e7eb";
 }
 
