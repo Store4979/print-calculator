@@ -92,3 +92,49 @@ create policy "anon_rw_commission_settings"
   to anon, authenticated
   using (true)
   with check (true);
+
+-- ============================================================
+--  Customer self-serve uploads — pending_jobs + storage
+--  Files live in the PRIVATE 'customer-uploads' bucket; this row holds
+--  only metadata + storage paths. Anon may SELECT (the in-store staff
+--  queue subscribes with the publishable key); INSERT/UPDATE/DELETE go
+--  through service-role Netlify functions only, so the public key can't
+--  write or tamper. Files are gated behind signed URLs minted
+--  server-side, so a leaked path is not file access. Same trusted-staff
+--  / public-anon model as the commission tables above.
+-- ============================================================
+
+create table if not exists public.pending_jobs (
+  id            uuid primary key default gen_random_uuid(),
+  created_at    timestamptz not null default now(),
+  customer_name text not null,
+  job_date      text not null,                       -- 'YYYY-MM-DD' in America/Detroit
+  queue_number  int  not null,                       -- per-day position shown to customer/staff
+  files         jsonb not null default '[]'::jsonb,  -- [{ name, path, type, page_count }]
+  notes         text,
+  source        text not null default 'upload'       -- 'upload' | 'link'
+);
+
+create index if not exists pending_jobs_created_at_idx on public.pending_jobs (created_at);
+create index if not exists pending_jobs_job_date_idx    on public.pending_jobs (job_date);
+
+alter table public.pending_jobs enable row level security;
+alter table public.pending_jobs replica identity full;  -- full old row on realtime DELETE events
+
+-- Anon: read-only (staff queue + realtime). NO anon write policy on purpose —
+-- only the service role (Netlify functions) mutates this table.
+drop policy if exists "anon_select_pending_jobs" on public.pending_jobs;
+create policy "anon_select_pending_jobs"
+  on public.pending_jobs
+  for select
+  to anon, authenticated
+  using (true);
+
+-- Make the table emit realtime events.
+alter publication supabase_realtime add table public.pending_jobs;
+
+-- Private bucket for customer files. No storage.objects policies needed:
+-- the service role bypasses RLS, and clients up/download via signed URLs/tokens.
+insert into storage.buckets (id, name, public)
+values ('customer-uploads', 'customer-uploads', false)
+on conflict (id) do nothing;

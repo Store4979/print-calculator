@@ -3185,3 +3185,81 @@ body {
   }
 }
 
+
+/* ============================================================
+   PRINT QUEUE (customer self-serve uploads)
+   ============================================================ */
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.queue-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--surface);
+}
+.queue-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.queue-num {
+  font-weight: 800;
+  color: var(--teal-dark, var(--teal));
+  font-size: 15px;
+}
+.queue-name { font-weight: 700; color: var(--text); }
+.queue-wait { font-size: 12px; color: var(--text-muted); }
+.queue-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--teal-dark, var(--teal));
+  background: var(--teal-light);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.queue-notes {
+  margin-top: 6px;
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.queue-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.queue-file-chip {
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}

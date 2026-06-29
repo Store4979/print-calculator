@@ -11,6 +11,13 @@
   VITE_SUPABASE_URL      = "https://gmxyisjjaxtpycsmmzef.supabase.co"
   VITE_SUPABASE_ANON_KEY = "sb_publishable_2pMOMFvyFD_LXPXgfYeREg_2g2PMVaU"
 
+# Customer self-serve upload page. MUST stay above the SPA catch-all below,
+# or "/upload" gets rewritten to the calculator's index.html.
+[[redirects]]
+  from = "/upload"
+  to = "/upload.html"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
