@@ -16,7 +16,9 @@ export const handler = async () => {
   if (!SB_KEY || !SB_URL) {
     return { statusCode: 500, body: "Supabase env not configured" };
   }
-  const supabase = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
+  let supabase;
+  try { supabase = createClient(String(SB_URL).trim(), String(SB_KEY).trim(), { auth: { persistSession: false } }); }
+  catch (e) { return { statusCode: 500, body: "Supabase init failed: " + (e?.message || String(e)) }; }
 
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: stale } = await supabase
