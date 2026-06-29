@@ -5,18 +5,24 @@
 import { createClient } from "@supabase/supabase-js";
 
 const BUCKET = "customer-uploads";
-const supabase = createClient(
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } }
-);
+const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Lazily construct the client AFTER the env guard. createClient() throws
+// synchronously when the key/url is falsy, so building it at module scope
+// turns a missing env var into an opaque 502 (crash on import) instead of
+// the clean 500 below.
+let _supabase = null;
+const getSupabase = () => (_supabase ||= createClient(SB_URL, SB_KEY, { auth: { persistSession: false } }));
 
 const bad = (code, error) => ({ statusCode: code, body: JSON.stringify({ ok: false, error }) });
 const ok  = (obj)         => ({ statusCode: 200,  body: JSON.stringify({ ok: true, ...obj }) });
 
 export const handler = async (event) => {
   if (event.httpMethod !== "POST") return bad(405, "Method Not Allowed");
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return bad(500, "Service role key not configured");
+  if (!SB_KEY) return bad(500, "Service role key not configured");
+  if (!SB_URL) return bad(500, "Supabase URL not configured");
+  const supabase = getSupabase();
 
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }

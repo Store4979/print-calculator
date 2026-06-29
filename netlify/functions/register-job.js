@@ -4,18 +4,21 @@
 // table but never write it.
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } }
-);
+const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Lazy client — see start-upload.js for why this must not run at import.
+let _supabase = null;
+const getSupabase = () => (_supabase ||= createClient(SB_URL, SB_KEY, { auth: { persistSession: false } }));
 
 const bad = (code, error) => ({ statusCode: code, body: JSON.stringify({ ok: false, error }) });
 const ok  = (obj)         => ({ statusCode: 200,  body: JSON.stringify({ ok: true, ...obj }) });
 
 export const handler = async (event) => {
   if (event.httpMethod !== "POST") return bad(405, "Method Not Allowed");
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return bad(500, "Service role key not configured");
+  if (!SB_KEY) return bad(500, "Service role key not configured");
+  if (!SB_URL) return bad(500, "Supabase URL not configured");
+  const supabase = getSupabase();
 
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }
