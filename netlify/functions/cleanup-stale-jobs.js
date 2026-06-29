@@ -5,15 +5,19 @@
 import { createClient } from "@supabase/supabase-js";
 
 const BUCKET = "customer-uploads";
-const supabase = createClient(
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } }
-);
+const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export const config = { schedule: "@hourly" };
 
 export const handler = async () => {
+  // Build the client lazily so a missing env var is a clean no-op, not an
+  // import-time crash (see start-upload.js).
+  if (!SB_KEY || !SB_URL) {
+    return { statusCode: 500, body: "Supabase env not configured" };
+  }
+  const supabase = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
+
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: stale } = await supabase
     .from("pending_jobs")
