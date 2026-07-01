@@ -10,7 +10,7 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/supabase-js": "2.109.0",
     "heic2any": "^0.0.4",
     "nodemailer": "^6.9.0",
     "qrcode": "^1.5.4",
