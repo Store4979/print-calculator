@@ -310,6 +310,22 @@ const canvasToPrintJpeg = (canvas, quality=PDF_JPEG_QUALITY) => canvas.toDataURL
 
 const getFileExt = (name="") => (name.split(".").pop()||"").toUpperCase().slice(0,4) || "IMG";
 
+// Draws large-format artwork onto `canvas` at widthIn×heightIn, honoring the
+// file's own rotation. Delegates the actual stretch-fill + rotation + huge-
+// canvas DPI capping to renderSingleImageCanvas/drawImageFill (same helpers
+// used for Sheets & Photos and the LF PDF export) so none of that math is
+// duplicated here. `dpi` defaults to the on-screen preview resolution;
+// PDF export call sites pass PRINT_DPI_LF for print-quality output.
+const drawLfArtworkToCanvas = async (canvas, file, rotationDeg, widthIn, heightIn, dpi=DPI) => {
+  if (!canvas || !file) return;
+  let img;
+  try { img = await fileToImage(file); }
+  catch { canvas.width = inchesToPx(widthIn); canvas.height = inchesToPx(heightIn); return; }
+  const rendered = renderSingleImageCanvas(img, widthIn, heightIn, { dpi, fill:"stretch", userRotDeg:Number(rotationDeg)||0 });
+  canvas.width = rendered.width; canvas.height = rendered.height;
+  canvas.getContext("2d").drawImage(rendered, 0, 0);
+};
+
 // Fit calculator. Honors the supplied sheetW/sheetH orientation (caller picks
 // portrait vs landscape). Only the print-rotation is swept to maximize count.
 const computeBestFit = (printW, printH, sheetW, sheetH, marginIn, spacingIn) => {
@@ -1089,7 +1105,9 @@ function PriceCalculatorApp() {
   const [lfGrommets, setLfGrommets]       = useState(false);
   const [lfGrommetCount, setLfGrommetCount] = useState(4);
   const [lfFoamCore, setLfFoamCore]       = useState(false);
-  const [lfImage, setLfImage]   = useState(null);
+  const [lfFiles, setLfFiles]   = useState([]); // [{ id, file, name, rotation, qty }]
+  const [selectedLfId, setSelectedLfId] = useState(null);
+  const [lfCopiesPerFile, setLfCopiesPerFile] = useState(1);
   const lfRef      = useRef(null);
   const lfInputRef = useRef(null);
 
@@ -1343,12 +1361,16 @@ function PriceCalculatorApp() {
   const totalPrice = perSheetTotal * sheetsNeeded * discountFactor;
 
   // ── Pricing calculations: Large Format ──
-  const lfAreaSqFt = (lfWidth * lfHeight) / 144;
+  const lfTotalQty = lfFiles.reduce((s,f) => s + (Number(f.qty)||0), 0);
+  const lfSelectedFile = lfFiles.find(f => f.id === selectedLfId) || lfFiles[0] || null;
+  const lfAreaSqFtEach = (lfWidth * lfHeight) / 144;
+  const lfTotalSqFt = lfAreaSqFtEach * lfTotalQty;
   const lfSelectedPricing = normalizeEntry(lfPricing[lfPaperKey]||{});
-  const lfBase = lfColorMode==="color" ? lfSelectedPricing.priceColor*lfAreaSqFt : lfSelectedPricing.priceBW*lfAreaSqFt;
-  const lfAddonsTotal = (lfGrommets ? (lfAddonPricing.grommetEach||0) * (lfGrommetCount||0) : 0) + (lfFoamCore ? (lfAddonPricing.foamCore||0) : 0);
+  const lfPerSqFtPrice = lfColorMode==="color" ? lfSelectedPricing.priceColor : lfSelectedPricing.priceBW;
+  const lfBase = lfPerSqFtPrice * lfTotalSqFt;
+  const lfAddonsTotal = (lfGrommets ? (lfAddonPricing.grommetEach||0) * (lfGrommetCount||0) * lfTotalQty : 0) + (lfFoamCore ? (lfAddonPricing.foamCore||0) * lfTotalQty : 0);
   const getLfDiscountFactor = (sqft) => { let b=0; lfQuantityDiscounts.forEach(t => { if (sqft>=(t.minSqFt||0)) b=Math.max(b,Number(t.discountPercent)||0); }); return 1-b/100; };
-  const lfDiscountFactor = getLfDiscountFactor(lfAreaSqFt);
+  const lfDiscountFactor = getLfDiscountFactor(lfTotalSqFt);
   const lfTotalWithDiscount = (lfBase + lfAddonsTotal) * lfDiscountFactor;
 
   // ── Pricing calculations: Blueprints ──
@@ -1424,28 +1446,14 @@ function PriceCalculatorApp() {
   }, [backImage, backRotation, sheetKey, orientation, prints, showCutLines, showGuides, showBack, drawSheet]);
 
   // ── LF Canvas ──
-  // Stretch-to-fill at the user's requested lfWidth × lfHeight so the preview
-  // matches what will print. Auto-orients the artwork 90° when its natural
-  // orientation disagrees with the target, but still fills the full area
-  // regardless of aspect.
+  // Shows whichever file is currently selected, stretched to fill the user's
+  // requested lfWidth × lfHeight (matches what will print) with that file's
+  // own rotation applied.
   useEffect(() => {
-    const canvas = lfRef.current; if (!canvas || !lfImage) return;
-    let cancelled = false;
-    const ctx = canvas.getContext("2d");
-    const wPx = inchesToPx(lfWidth); const hPx = inchesToPx(lfHeight);
-    canvas.width=wPx; canvas.height=hPx;
-    ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,wPx,hPx);
-    const url = URL.createObjectURL(lfImage);
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      drawImageFill(ctx, img, wPx/2, hPx/2, wPx, hPx, 0);
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); };
-    img.src = url;
-    return () => { cancelled = true; URL.revokeObjectURL(url); };
-  }, [lfImage, lfWidth, lfHeight]);
+    if (!lfRef.current || !lfSelectedFile) return;
+    drawLfArtworkToCanvas(lfRef.current, lfSelectedFile.file, lfSelectedFile.rotation, lfWidth, lfHeight)
+      .catch(() => {});
+  }, [lfSelectedFile, lfWidth, lfHeight]);
 
   // ── Blueprint Canvas ──
   // Blueprints are drawn to-scale, so we keep "fit" (letterbox) to preserve
@@ -1534,12 +1542,31 @@ const handleFrontFiles = async (files) => {
     finally { setProcessingFiles(false); }
   };
 
-  const handleLfFile = async (files) => {
-    if (!files[0]) return;
+  const handleLfFiles = async (files) => {
     setProcessingFiles(true);
-    try { setLfImage(await normalizeUpload(files[0])); }
-    finally { setProcessingFiles(false); }
+    try {
+      const newItems = [];
+      for (const f of files) {
+        if (isPdfFile(f)) {
+          // Extract ALL pages from the PDF as individual items
+          const pages = await pdfFileToAllPages(f);
+          for (const pg of pages) {
+            newItems.push({ id:`lf_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:lfCopiesPerFile });
+          }
+        } else {
+          newItems.push({ id:`lf_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:lfCopiesPerFile });
+        }
+      }
+      setLfFiles(prev => [...prev, ...newItems]);
+      if (newItems[0]) setSelectedLfId(newItems[0].id);
+    } finally {
+      setProcessingFiles(false);
+    }
   };
+
+  const removeLfFile = (id) => setLfFiles(prev => prev.filter(f => f.id!==id));
+  const updateLfFileQty = (id, qty) => setLfFiles(prev => prev.map(f => f.id===id ? {...f, qty:Math.max(0,qty)} : f));
+  const rotateLfFile = (id) => setLfFiles(prev => prev.map(f => f.id===id ? {...f, rotation:((f.rotation||0)+90)%360} : f));
 
   const handleBpFile = async (files) => {
     if (!files[0]) return;
@@ -1860,16 +1887,19 @@ const handleFrontFiles = async (files) => {
       print_size: `${lfWidth}x${lfHeight}`,
       orientation: lfWidth>=lfHeight ? "landscape" : "portrait",
       color_mode: lfColorMode,
-      quantity: 1,
+      quantity: lfTotalQty,
       total_price: Number(lfTotalWithDiscount.toFixed(2)),
-      file_names: lfImage ? [lfImage.name||"artwork"] : [],
+      file_names: lfFiles.map(f => f.name || "artwork"),
       addons: {
         grommets: lfGrommets ? { count: lfGrommetCount, eachPrice: lfAddonPricing.grommetEach||0 } : null,
         foamCore: lfFoamCore ? { price: lfAddonPricing.foamCore||0 } : null,
       },
       job_details: {
         widthIn: lfWidth, heightIn: lfHeight,
-        areaSqFt: Number(lfAreaSqFt.toFixed(3)),
+        areaSqFtEach: Number(lfAreaSqFtEach.toFixed(3)),
+        areaSqFt: Number(lfTotalSqFt.toFixed(3)),
+        totalQty: lfTotalQty,
+        fileCount: lfFiles.length,
       },
     };
   };
@@ -2137,7 +2167,7 @@ const handleFrontFiles = async (files) => {
   };
 
   const downloadLfPDF = async () => {
-    if (!lfImage) { alert("Upload a large format image first."); return; }
+    if (!lfFiles.length) { alert("Upload large format artwork first."); return; }
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const lfPaper = lfPaperTypes.find(p=>p.key===lfPaperKey)||{label:lfPaperKey};
@@ -2146,32 +2176,38 @@ const handleFrontFiles = async (files) => {
       { label:"Size:", value:`${lfWidth}×${lfHeight} in` },
       { label:"Orientation:", value:lfWidth>=lfHeight?"landscape":"portrait" },
       { label:"Color:", value:lfColorMode==="bw"?"B/W":"Color" },
-      { label:"Add-ons:", value:[lfGrommets?`Grommets ×${lfGrommetCount} ($${((lfAddonPricing.grommetEach||0)*lfGrommetCount).toFixed(2)})`:null,lfFoamCore?`Foam Core ($${(lfAddonPricing.foamCore||0).toFixed(2)})`:null].filter(Boolean).join(", ")||"None" },
+      { label:"Total qty:", value:lfTotalQty },
+      { label:"Add-ons:", value:[lfGrommets?`Grommets ×${lfGrommetCount}/print ($${((lfAddonPricing.grommetEach||0)*lfGrommetCount*lfTotalQty).toFixed(2)})`:null,lfFoamCore?`Foam Core ($${((lfAddonPricing.foamCore||0)*lfTotalQty).toFixed(2)})`:null].filter(Boolean).join(", ")||"None" },
     ];
     const totals = [{ label:"Estimated total:", value:`$${lfTotalWithDiscount.toFixed(2)}` }];
-    addOrderSheetPage(orderDoc, { jobType:"Large Format", details, totals, files: lfImage?[lfImage.name||"artwork"]:[] });
+    const orderFiles = lfFiles.map((f,i)=>`${i+1}. ${f.name}  —  qty: ${f.qty}`);
+    addOrderSheetPage(orderDoc, { jobType:"Large Format", details, totals, files: orderFiles });
 
-    // Render the artwork at LF print DPI, stretched to fill the user's
-    // requested lfWidth × lfHeight (aspect preserved only if it already
-    // matches — the user has explicitly asked for this size).
+    // One artwork page per unique file (not repeated per qty — qty is a
+    // print-shop instruction conveyed via the order sheet). Rendered at LF
+    // print DPI, stretched to fill the user's requested lfWidth × lfHeight,
+    // with each file's own rotation applied.
     const pdfW=lfWidth, pdfH=lfHeight, orient=pdfW>=pdfH?"landscape":"portrait";
-    const img = await fileToImage(lfImage);
-    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "stretch" });
-    orderDoc.addPage([pdfW,pdfH],orient);
-    orderDoc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
+    for (const f of lfFiles) {
+      const c = document.createElement("canvas");
+      await drawLfArtworkToCanvas(c, f.file, f.rotation, lfWidth, lfHeight, PRINT_DPI_LF);
+      orderDoc.addPage([pdfW,pdfH],orient);
+      orderDoc.addImage(canvasToPrintJpeg(c), "JPEG", 0, 0, pdfW, pdfH);
+    }
 
     savePdf(orderDoc, "large_format_with_order_sheet.pdf");
-    const lfFiles = [];
-    if (lfImage instanceof Blob) {
-      lfFiles.push({
-        file: lfImage,
-        name: lfImage.name || "artwork",
+    const filesToSave = [];
+    lfFiles.forEach((f) => {
+      if (!f.file) return;
+      filesToSave.push({
+        file: f.file,
+        name: f.name || f.file.name || "artwork",
         side: "front",
-        qty: 1,
-        rotation: 0,
+        qty: f.qty,
+        rotation: f.rotation,
       });
-    }
-    requestSaveJob(buildLfJobRow(), "Large Format", lfFiles);
+    });
+    requestSaveJob(buildLfJobRow(), "Large Format", filesToSave);
   };
 
   const downloadBlueprintPDF = async () => {
@@ -2397,8 +2433,16 @@ const handleFrontFiles = async (files) => {
         setLfGrommets(!!grom);
         if (grom?.count) setLfGrommetCount(grom.count);
         setLfFoamCore(!!job.addons?.foamCore);
-        const lfFile = downloaded.find(d => d.file)?.file || null;
-        setLfImage(lfFile);
+        const restoredLf = [];
+        for (const { rec, file } of downloaded) {
+          if (!file) continue;
+          restoredLf.push({
+            id: `lf-rh-${restoredLf.length}-${Date.now()}`,
+            file, name: rec.name, qty: rec.qty || 1, rotation: rec.rotation || 0,
+          });
+        }
+        setLfFiles(restoredLf);
+        setSelectedLfId(restoredLf[0]?.id ?? null);
       } else if (jobType === "blueprints") {
         setViewMode("tool");
         setActiveTab("blueprint");
@@ -2475,8 +2519,8 @@ const handleFrontFiles = async (files) => {
           }
         }
         if (jobType==="large-format") {
-          const addons = [lfGrommets?`Grommets ×${lfGrommetCount}`:null,lfFoamCore?"Foam Core":null].filter(Boolean);
-          largeFormatItems.push({ name:"Large Format", sku:lfPaperKey, specs:`${lfWidth}"×${lfHeight}" • ${lfPaperKey} • ${lfColorMode.toUpperCase()}${addons.length?" • "+addons.join(", "):""}`, qty:1, unitPrice:lfTotalWithDiscount, total:lfTotalWithDiscount });
+          const addons = [lfGrommets?`Grommets ×${lfGrommetCount}/print`:null,lfFoamCore?"Foam Core":null].filter(Boolean);
+          largeFormatItems.push({ name:"Large Format", sku:lfPaperKey, specs:`${lfWidth}"×${lfHeight}" • ${lfPaperKey} • ${lfColorMode.toUpperCase()}${addons.length?" • "+addons.join(", "):""} • ${lfFiles.length} design${lfFiles.length!==1?"s":""}`, qty:lfTotalQty, unitPrice:lfTotalQty>0?lfTotalWithDiscount/lfTotalQty:lfTotalWithDiscount, total:lfTotalWithDiscount });
         }
         if (jobType==="blueprints") {
           blueprintItems.push({ name:"Blueprints", sku:"plain_20lb", specs:`${bpSizeObj.label} • ${bpWidth}"×${bpHeight}" • B/W`, qty:bpQty, unitPrice:bpQty>0?bpTotal/bpQty:bpTotal, total:bpTotal });
@@ -2492,7 +2536,7 @@ const handleFrontFiles = async (files) => {
         deepLinkUrl: `${window.location.origin}${window.location.pathname}?job=${encodeURIComponent(orderId)}`,
         order,
         jobType,
-        details: { jobType, user:{ name, email, phone }, sheet:{ sheetKey,orientation,prints,paperKey,frontColorMode,backColorMode,showBack,sheetsNeeded,totalPrice:totalPrice.toFixed(2) }, largeFormat:{ width:lfWidth,height:lfHeight,paperKey:lfPaperKey,colorMode:lfColorMode,addons:{grommets:lfGrommets,grommetCount:lfGrommetCount,foamCore:lfFoamCore},lfTotal:lfTotalWithDiscount.toFixed(2) }, blueprints:{ size:bpSizeKey,width:bpWidth,height:bpHeight,qty:bpQty,paperKey:"plain_20lb",colorMode:"bw",psf:bpPsf.toFixed(4),areaPerSheetSqFt:bpAreaPerSheetSqFt.toFixed(3),totalSqFt:bpTotalSqFt.toFixed(3),total:bpTotal.toFixed(2) } },
+        details: { jobType, user:{ name, email, phone }, sheet:{ sheetKey,orientation,prints,paperKey,frontColorMode,backColorMode,showBack,sheetsNeeded,totalPrice:totalPrice.toFixed(2) }, largeFormat:{ width:lfWidth,height:lfHeight,paperKey:lfPaperKey,colorMode:lfColorMode,totalQty:lfTotalQty,fileCount:lfFiles.length,addons:{grommets:lfGrommets,grommetCount:lfGrommetCount,foamCore:lfFoamCore},lfTotal:lfTotalWithDiscount.toFixed(2) }, blueprints:{ size:bpSizeKey,width:bpWidth,height:bpHeight,qty:bpQty,paperKey:"plain_20lb",colorMode:"bw",psf:bpPsf.toFixed(4),areaPerSheetSqFt:bpAreaPerSheetSqFt.toFixed(3),totalSqFt:bpTotalSqFt.toFixed(3),total:bpTotal.toFixed(2) } },
         jobPdfBase64, orderSheetPdfBase64,
       };
       const resp = await fetch("/.netlify/functions/send-print-job", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
@@ -2604,17 +2648,22 @@ const handleFrontFiles = async (files) => {
   };
 
   const orderLargeFormatJob = async () => {
-    if (!lfImage) { alert("Please upload a large format image first."); return; }
-    const pdfW=lfWidth, pdfH=lfHeight;
-    const doc = new (getJsPDF())({ orientation:pdfW>=pdfH?"landscape":"portrait", unit:"in", format:[pdfW,pdfH] });
-    const img = await fileToImage(lfImage);
-    const hiRes = renderSingleImageCanvas(img, pdfW, pdfH, { dpi: PRINT_DPI_LF, fill: "stretch" });
-    doc.addImage(canvasToPrintJpeg(hiRes), "JPEG", 0, 0, pdfW, pdfH);
+    if (!lfFiles.length) { alert("Please upload large format artwork first."); return; }
+    const pdfW=lfWidth, pdfH=lfHeight, orient=pdfW>=pdfH?"landscape":"portrait";
+    const doc = new (getJsPDF())({ orientation:orient, unit:"in", format:[pdfW,pdfH] });
+    for (let i=0; i<lfFiles.length; i++) {
+      const f = lfFiles[i];
+      if (i>0) doc.addPage([pdfW,pdfH],orient);
+      const c = document.createElement("canvas");
+      await drawLfArtworkToCanvas(c, f.file, f.rotation, lfWidth, lfHeight, PRINT_DPI_LF);
+      doc.addImage(canvasToPrintJpeg(c), "JPEG", 0, 0, pdfW, pdfH);
+    }
     const jobBlob = doc.output("blob");
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const lfPaper = lfPaperTypes.find(p=>p.key===lfPaperKey)||{label:lfPaperKey};
-    addOrderSheetPage(orderDoc,{ jobType:"Large Format", details:[{label:"Paper:",value:lfPaper.label},{label:"Size:",value:`${lfWidth}×${lfHeight} in`},{label:"Color:",value:lfColorMode==="bw"?"B/W":"Color"}], totals:[{label:"Estimated total:",value:`$${lfTotalWithDiscount.toFixed(2)}`}], files:lfImage?[lfImage.name||"artwork"]:[] });
+    const orderFiles = lfFiles.map((f,i)=>`${i+1}. ${f.name}  —  qty: ${f.qty}`);
+    addOrderSheetPage(orderDoc,{ jobType:"Large Format", details:[{label:"Paper:",value:lfPaper.label},{label:"Size:",value:`${lfWidth}×${lfHeight} in`},{label:"Color:",value:lfColorMode==="bw"?"B/W":"Color"},{label:"Total qty:",value:lfTotalQty}], totals:[{label:"Estimated total:",value:`$${lfTotalWithDiscount.toFixed(2)}`}], files:orderFiles });
     await sendOrderEmail("large-format", jobBlob, orderDoc.output("blob"));
   };
 
@@ -2678,8 +2727,8 @@ const handleFrontFiles = async (files) => {
     if (activeTab === "large") {
       const factor = lfDiscountFactor;
       const paperCost     = lfBase * factor;
-      const grommetsCost  = (lfGrommets ? (lfAddonPricing.grommetEach || 0) * (lfGrommetCount || 0) : 0) * factor;
-      const foamCoreCost  = (lfFoamCore ? (lfAddonPricing.foamCore || 0) : 0) * factor;
+      const grommetsCost  = (lfGrommets ? (lfAddonPricing.grommetEach || 0) * (lfGrommetCount || 0) * lfTotalQty : 0) * factor;
+      const foamCoreCost  = (lfFoamCore ? (lfAddonPricing.foamCore || 0) * lfTotalQty : 0) * factor;
       let base = 0, upsell = 0;
       const lineItems = [];
       lineItems.push({
@@ -2687,7 +2736,8 @@ const handleFrontFiles = async (files) => {
         paperKey: lfPaperKey,
         paperLabel: lfPaperTypes.find(p => p.key === lfPaperKey)?.label || lfPaperKey,
         width: lfWidth, height: lfHeight,
-        areaSqFt: Number(lfAreaSqFt.toFixed(3)),
+        quantity: lfTotalQty,
+        areaSqFt: Number(lfTotalSqFt.toFixed(3)),
         colorMode: lfColorMode,
         lineTotal: round2(paperCost),
         upsell: !!lfUpsellPaper,
@@ -2753,7 +2803,8 @@ const handleFrontFiles = async (files) => {
       setSelectedFrontId(null);
       setFrontPreviewPage(0);
     } else if (activeTab === "large") {
-      setLfImage(null);
+      setLfFiles([]);
+      setSelectedLfId(null);
       setLfGrommets(false);
       setLfFoamCore(false);
       setLfUpsellPaper(false);
@@ -4176,7 +4227,7 @@ try {
                 </div>
 
                 <div style={{ fontSize:12, color:"var(--text-muted)", marginBottom:16, display:"flex", gap:12, flexWrap:"wrap" }}>
-                  <span>Area: <strong style={{ color:"var(--text)" }}>{lfAreaSqFt.toFixed(2)} sq ft</strong></span>
+                  <span>Area (per print): <strong style={{ color:"var(--text)" }}>{lfAreaSqFtEach.toFixed(2)} sq ft</strong></span>
                   <span>Orientation: <strong style={{ color:"var(--text)" }}>{lfWidth>=lfHeight?"Landscape":"Portrait"}</strong></span>
                 </div>
 
@@ -4218,24 +4269,86 @@ try {
 
             {/* Step 2 — Upload */}
             <div className="pc-card">
-              <CardHeader step="2" stepClass="step-num-amber" title="Upload Artwork" hint="High-res recommended for large prints" />
+              <CardHeader
+                step="2"
+                stepClass="step-num-amber"
+                title="Upload Artwork"
+                hint="High-res recommended for large prints — upload multiple designs if needed"
+                right={
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <label className="field-label" style={{ marginBottom:0 }}>Default qty</label>
+                    <input
+                      className="pc-input"
+                      type="number"
+                      style={{ width:70, height:34, fontSize:13 }}
+                      value={lfCopiesPerFile}
+                      min="1"
+                      onChange={e=>setLfCopiesPerFile(Math.max(1,+e.target.value||1))}
+                    />
+                  </div>
+                }
+              />
               <div className="pc-card-body">
-                <input ref={lfInputRef} type="file" accept="image/*,application/pdf" style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) handleLfFile([e.target.files[0]]); e.target.value=""; }} />
+                <input
+                  ref={lfInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,application/pdf"
+                  style={{ display:"none" }}
+                  onChange={e=>{ if(e.target.files.length) handleLfFiles(Array.from(e.target.files)); e.target.value=""; }}
+                />
                 <div data-tour="lf-upload">
                 <UploadZone
-                  hasFile={!!lfImage}
-                  label={lfImage ? (lfImage.name||"Artwork loaded") : ""}
+                  hasFile={lfFiles.length>0}
+                  label={`${lfFiles.length} file${lfFiles.length!==1?"s":""} ready — drop more to add`}
+                  subLabel="or click to browse"
                   types={["PNG","JPG","PDF"]}
-                  onFiles={handleLfFile}
+                  onFiles={handleLfFiles}
                   inputRef={lfInputRef}
                 />
                 </div>
-                {lfImage && (
+
+                {lfFiles.length>0 && (
+                  <div className="file-list">
+                    {lfFiles.map(f => (
+                      <div
+                        key={f.id}
+                        className={`file-row ${selectedLfId===f.id?"selected":""}`}
+                        onClick={()=>setSelectedLfId(f.id)}
+                      >
+                        <div className="file-thumb">{getFileExt(f.name)}</div>
+                        <div className="file-info">
+                          <div className="file-name">{f.name}</div>
+                          <div className="file-meta">{f.rotation?`Rotated ${f.rotation}°`:""}</div>
+                        </div>
+                        <div className="file-qty-wrap">
+                          <span className="file-qty-label">Qty</span>
+                          <input
+                            className="file-qty-input"
+                            type="number"
+                            value={f.qty}
+                            min="0"
+                            onClick={e=>e.stopPropagation()}
+                            onChange={e=>updateLfFileQty(f.id, +e.target.value||0)}
+                          />
+                        </div>
+                        <button className="file-action-btn rotate-btn" title="Rotate 90°" onClick={e=>{e.stopPropagation();rotateLfFile(f.id);}}>
+                          <Icon.Rotate />
+                        </button>
+                        <button className="file-action-btn" title="Remove" onClick={e=>{e.stopPropagation();removeLfFile(f.id);}}>
+                          <Icon.X />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {lfSelectedFile && (
                   <div className="canvas-wrap" style={{ marginTop:12 }}>
                     <canvas ref={lfRef} style={{ width:"100%", maxHeight:300, objectFit:"contain" }} />
                   </div>
                 )}
-                {!lfImage && (
+                {lfFiles.length===0 && (
                   <div className="callout callout-warn" style={{ marginTop:12 }}>
                     <span className="callout-icon"><Icon.Warn /></span>
                     For best results at {lfWidth}×{lfHeight}", provide artwork at 150–300 DPI minimum.
@@ -4254,14 +4367,15 @@ try {
               totalClass="is-total-amber"
               metrics={[
                 { label:"Dimensions",      value:`${lfWidth} × ${lfHeight} in` },
-                { label:"Area",            value:`${lfAreaSqFt.toFixed(2)} sq ft` },
+                { label:"Total qty",       value:lfTotalQty },
+                { label:"Area",            value:`${lfTotalSqFt.toFixed(2)} sq ft` },
                 { label:"Add-ons",         value:[lfGrommets&&`Grom. ×${lfGrommetCount}`, lfFoamCore&&"Foam Core"].filter(Boolean).join(", ")||"None" },
                 { label:"Estimated total", value:`$${lfTotalWithDiscount.toFixed(2)}`, big:true },
               ]}
               onDownload={downloadLfPDF}
               onOrder={orderLargeFormatJob}
               onCompleteSale={requestCompleteSale}
-              completeSaleEnabled={!!currentEmployee && lfTotalWithDiscount > 0 && !!lfImage}
+              completeSaleEnabled={!!currentEmployee && lfTotalWithDiscount > 0 && lfFiles.length>0}
               completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
             />
           </>
@@ -4404,7 +4518,7 @@ try {
           hasFrontFile: frontFiles.length > 0 || !!frontImage,
           lfPaperKey, lfWidth, lfHeight, lfColorMode,
           lfGrommets, lfGrommetCount, lfFoamCore,
-          hasLfFile: !!lfImage,
+          hasLfFile: lfFiles.length > 0,
           bpSizeKey, bpQty, hasBpFile: !!bpFile,
           quotePrintW, quotePrintH, quoteQty,
           quoteFrontColorMode, quoteBackEnabled, quoteShowAllPapers,
@@ -4602,7 +4716,7 @@ function CompleteSaleDialog({ pending, busy, defaultNotes = "", onConfirm, onCan
               <li key={i}>
                 <span>
                   {li.kind === "sheet_line" && `Job ${li.jobNumber}: ${li.quantity}× ${li.printSize} on ${li.paperLabel}`}
-                  {li.kind === "lf_media"   && `${li.width}×${li.height} ${li.paperLabel}`}
+                  {li.kind === "lf_media"   && `${li.width}×${li.height} ${li.paperLabel}${li.quantity ? ` ×${li.quantity}` : ""}`}
                   {li.kind === "lf_addon"   && `${li.name}${li.count ? ` ×${li.count}` : ""}`}
                   {li.kind === "blueprint"  && `${li.label} blueprints ×${li.quantity}`}
                   {li.kind === "specialty"  && `${li.productLabel || "Specialty"}${li.dimensions ? ` (${li.dimensions})` : ""}${li.quantity ? ` ×${li.quantity}` : ""}`}
