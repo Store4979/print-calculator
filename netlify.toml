@@ -4,7 +4,7 @@
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
   MISE_DISABLE = "1"
   # Supabase: anon key is a public client key (RLS gates real access).
   # Override these in the Netlify dashboard if you rotate them.
