@@ -11,6 +11,11 @@
   VITE_SUPABASE_URL      = "https://gmxyisjjaxtpycsmmzef.supabase.co"
   VITE_SUPABASE_ANON_KEY = "sb_publishable_2pMOMFvyFD_LXPXgfYeREg_2g2PMVaU"
 
+# Bundle package.json into every function — changes each bundle's digest so
+# Netlify re-uploads them all onto the current (Node 22) runtime.
+[functions]
+  included_files = ["package.json"]
+
 # Customer self-serve upload page. MUST stay above the SPA catch-all below,
 # or "/upload" gets rewritten to the calculator's index.html.
 [[redirects]]
