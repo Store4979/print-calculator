@@ -6,6 +6,7 @@
 //  durable link. Actions: Open/Print, Send to Calculator, Picked Up.
 // ============================================================
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase, isSupabaseConfigured } from "../lib/supabase.js";
 
 // ── Module-scope helpers (no component state) ──
@@ -256,7 +257,12 @@ export default function PrintQueue({ onSendToCalculator }) {
         </div>
       </div>
 
-      {showQr && (
+      {/* Portaled to <body>: this modal lives inside a .pc-card, whose
+          hover transform (translateY) turns the card into the containing
+          block for position:fixed — the backdrop then anchors/clips to the
+          card (overflow:hidden) and flickers as :hover toggles. Rendering
+          through a portal escapes any ancestor transform for good. */}
+      {showQr && createPortal(
         <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => setShowQr(false)}>
           <div className="pc-dialog" onClick={(e) => e.stopPropagation()} style={{ textAlign: "center" }}>
             <div className="pc-dialog-title">Scan to send a file</div>
@@ -270,7 +276,8 @@ export default function PrintQueue({ onSendToCalculator }) {
               <button className="pc-btn pc-btn-primary" onClick={printQr} disabled={!qrUrl}>Print sign</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
