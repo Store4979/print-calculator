@@ -1131,7 +1131,8 @@ body {
   position: fixed; inset: 0;
   background: rgba(15, 23, 42, 0.55);
   display: flex; align-items: center; justify-content: center;
-  z-index: 80;
+  /* Above all app chrome: .app-header (200), .mobile-num-bar (9999), PriceBar. */
+  z-index: 10000;
   padding: 24px;
   animation: fadeIn 0.18s ease-out;
 }
@@ -1168,7 +1169,7 @@ body {
   padding: 10px 18px; border-radius: 999px;
   font-size: 13px; font-weight: 600;
   box-shadow: 0 6px 20px rgba(0, 129, 152, 0.35);
-  z-index: 90;
+  z-index: 10010; /* toasts stay visible above modals */
   animation: toastIn 0.25s ease-out;
 }
 

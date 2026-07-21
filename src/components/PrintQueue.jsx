@@ -158,7 +158,8 @@ export default function PrintQueue({ onSendToCalculator }) {
     setShowQr(true);
     try {
       const QRCode = (await import("qrcode")).default;
-      const dataUrl = await QRCode.toDataURL(uploadUrl, { width: 480, margin: 2 });
+      // 520 = exactly 2x the 260px display size -> clean integer downscale.
+      const dataUrl = await QRCode.toDataURL(uploadUrl, { width: 520, margin: 2 });
       setQrUrl(dataUrl);
     } catch {
       setQrUrl("");
@@ -261,7 +262,7 @@ export default function PrintQueue({ onSendToCalculator }) {
             <div className="pc-dialog-title">Scan to send a file</div>
             <div className="pc-dialog-sub">Customers scan this to upload from their phone.</div>
             {qrUrl
-              ? <img src={qrUrl} alt="Upload QR code" style={{ width: 260, height: 260, margin: "8px auto" }} />
+              ? <img src={qrUrl} alt="Upload QR code" style={{ width: 260, height: 260, margin: "8px auto", display: "block", background: "#fff", padding: 10, borderRadius: 8, imageRendering: "pixelated" }} />
               : <div style={{ padding: 40, color: "var(--text-muted)" }}>Generating…</div>}
             <div style={{ fontWeight: 700, wordBreak: "break-all", marginTop: 4 }}>{uploadUrl}</div>
             <div className="pc-dialog-actions" style={{ marginTop: 14 }}>
