@@ -55,6 +55,28 @@
   --slate: #475569;
   --slate-light: #f1f5f9;
   --slate-mid: #cbd5e1;
+
+  /* Spacing scale — shared component classes consume these; one-off
+     inline styles migrate opportunistically (Phase 1: classes only). */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 28px;
+  --sp-8: 32px;
+
+  /* Type scale */
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+
+  /* Minimum interactive size on touch layouts (applied ≤640px) */
+  --touch-target: 44px;
 }
 
 /* ============================================
@@ -187,14 +209,14 @@ body {
 .service-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   padding: 10px 18px 13px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   font-family: var(--font);
   cursor: pointer;
@@ -248,12 +270,12 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  margin-bottom: 16px;
+  margin-bottom: var(--sp-4);
   overflow: hidden;
 }
 
 .pc-card-header {
-  padding: 14px 20px;
+  padding: 14px var(--sp-5);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -286,7 +308,7 @@ body {
 .step-num-purple { background: var(--purple); }
 
 .pc-card-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text);
 }
@@ -298,7 +320,7 @@ body {
 }
 
 .pc-card-body {
-  padding: 20px;
+  padding: var(--sp-5);
 }
 
 /* ============================================
@@ -318,8 +340,8 @@ body {
   height: 40px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0 12px;
-  font-size: 14px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-base);
   font-family: var(--font);
   color: var(--text);
   background: var(--surface);
@@ -375,7 +397,7 @@ body {
 .chip-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: var(--sp-2); /* ≥8px so 44px touch targets don't crowd on mobile */
 }
 
 .pc-chip {
@@ -384,7 +406,7 @@ body {
   border: 1.5px solid var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   font-family: var(--font);
   cursor: pointer;
@@ -420,7 +442,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 11px 0;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .toggle-row + .toggle-row {
@@ -428,7 +450,7 @@ body {
 }
 
 .toggle-label-text {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text);
   line-height: 1.3;
@@ -811,17 +833,19 @@ body {
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 16px 20px;
+  padding: var(--sp-4) var(--sp-5);
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
   box-shadow: var(--shadow);
   position: sticky;
   bottom: 16px;
   z-index: 10;
+  /* Slide up from bottom (consolidated from the former duplicate rule) */
+  animation: pcSlideUp 0.3s ease-out;
 }
 
 .price-bar-teal   { border-color: var(--teal-mid); }
@@ -831,7 +855,7 @@ body {
 
 .price-metrics {
   display: flex;
-  gap: 20px;
+  gap: var(--sp-5);
   flex-wrap: wrap;
   align-items: baseline;
 }
@@ -839,7 +863,7 @@ body {
 .price-metric { }
 
 .price-metric-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-subtle);
   text-transform: uppercase;
@@ -875,7 +899,7 @@ body {
   gap: 7px;
   padding: 9px 18px;
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   font-family: var(--font);
   cursor: pointer;
@@ -2190,10 +2214,74 @@ body {
   gap: 6px;
 }
 .price-bar-caption {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   line-height: 1.2;
 }
+
+/* ⋯ overflow toggle on the compact mobile bar — hidden on desktop */
+.price-bar-more {
+  display: none;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  padding: 8px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .price-bar.pb-compact .price-bar-more { display: inline-flex; align-items: center; justify-content: center; min-height: var(--touch-target); }
+}
+
+/* Inline price delta shown at the point of decision (display-only) */
+.price-delta {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.price-delta.is-negative { color: var(--green); }
+
+/* Progressive-disclosure section ("More options") */
+.pc-collapsible {
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-3);
+}
+.pc-collapsible-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: var(--sp-3) 0;
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.pc-collapsible-head:hover { color: var(--text); }
+.pc-collapsible-chevron {
+  transition: transform 0.2s ease;
+  font-size: var(--fs-xs);
+}
+.pc-collapsible.is-open .pc-collapsible-chevron { transform: rotate(180deg); }
+/* Height animation without JS measuring: grid 0fr → 1fr */
+.pc-collapsible-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s ease;
+}
+.pc-collapsible.is-open .pc-collapsible-body { grid-template-rows: 1fr; }
+.pc-collapsible-inner { overflow: hidden; }
+@media (max-width: 640px) {
+  .pc-collapsible-head { min-height: var(--touch-target); }
+}
+
 /* Ghost = clearly secondary next to the filled Complete Sale */
 .pc-btn-ghost {
   background: transparent;
@@ -2555,10 +2643,7 @@ body {
   50%      { transform: scale(1.08); opacity: 1;   }
 }
 
-/* Price bar slide up from bottom */
-.price-bar {
-  animation: pcSlideUp 0.3s ease-out;
-}
+/* Price bar slide-up keyframes (animation applied in the base .price-bar rule) */
 @keyframes pcSlideUp {
   from { transform: translateY(40px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
@@ -2713,16 +2798,60 @@ body {
   .pc-card-body { padding: 14px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr 1fr; }
   .grid-3.force-col { grid-template-columns: 1fr; }
-  .price-bar { position: static; }
+  /* Custom bars (Specialty/Booklet/DataMerge markup) keep their prior
+     non-sticky mobile behavior; only the shared PriceBar component
+     (.pb-compact) stays sticky, in its compact form below.
+     Follow-up: migrate those three to the shared component. */
+  .price-bar:not(.pb-compact) { position: static; }
   .price-metric-val.is-total,
   .price-metric-val.is-total-amber,
   .price-metric-val.is-total-blue,
-  .price-metric-val.is-total-purple { font-size: 22px; }
+  .price-metric-val.is-total-purple { font-size: var(--fs-xl); }
   .addon-grid { grid-template-columns: 1fr 1fr 1fr; }
 
   input, select, textarea { font-size: 16px !important; }
-  .pc-input, .pc-select { height: 44px; font-size: 16px; }
+  .pc-input, .pc-select { height: var(--touch-target); font-size: 16px; }
   .file-qty-input { height: 36px; font-size: 16px; }
+
+  /* Minimum touch targets (Feature 1) */
+  .pc-btn, .pc-chip, .service-tab { min-height: var(--touch-target); }
+  .toggle-row { min-height: var(--touch-target); }
+
+  /* Compact sticky price bar (Feature 2) — shared PriceBar only.
+     Collapsed: total + Complete Sale + ⋯ overflow. Expanded: full bar. */
+  .price-bar.pb-compact {
+    position: sticky;
+    bottom: 8px;
+  }
+  .price-bar.pb-compact:not(.pb-expanded) {
+    padding: 10px 14px;
+    gap: var(--sp-3);
+    flex-wrap: nowrap;
+  }
+  .price-bar.pb-compact:not(.pb-expanded) .price-metric:not([data-metric="total"]) {
+    display: none;
+  }
+  .price-bar.pb-compact:not(.pb-expanded) .price-bar-actions .pc-btn-ghost {
+    display: none;
+  }
+  .price-bar.pb-compact:not(.pb-expanded) .price-bar-caption {
+    display: none;
+  }
+  .price-bar.pb-compact:not(.pb-expanded) .price-bar-action-col {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .price-bar.pb-compact:not(.pb-expanded) .price-bar-actions {
+    width: auto;
+    flex-wrap: nowrap;
+  }
+  .price-bar.pb-compact:not(.pb-expanded) .pc-btn-complete-sale.is-primary-action {
+    flex-basis: auto;
+    order: 0;
+    padding: 10px 16px;
+  }
 }
 
 @media (max-width: 400px) {

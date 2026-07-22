@@ -617,13 +617,14 @@ function Chip({ label, selected, onClick, color="", dataTour }) {
   );
 }
 
-function AddonCard({ emoji, name, price, selected, onToggle, dataTour }) {
+function AddonCard({ emoji, name, price, selected, onToggle, dataTour, delta }) {
   return (
     <div data-tour={dataTour} className={`addon-card ${selected ? "selected" : ""}`} onClick={onToggle}>
       <div className="addon-check">{selected && <Icon.Check />}</div>
       <div className="addon-emoji">{emoji}</div>
       <div className="addon-name">{name}</div>
       <div className="addon-price">{price}</div>
+      {delta}
     </div>
   );
 }
@@ -668,12 +669,17 @@ function UploadZone({ hasFile, label, subLabel, types, onFiles, inputRef }) {
   );
 }
 
-function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour }) {
+function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour, compactOnMobile = true }) {
+  // Mobile-only: the bar renders compact (total + Complete Sale + ⋯) and
+  // the ⋯ button expands it to full height. Desktop layout is unaffected —
+  // the pb-compact styles are scoped inside the 640px media query.
+  const [expanded, setExpanded] = useState(false);
+  const compactClass = compactOnMobile ? `pb-compact ${expanded ? "pb-expanded" : ""}` : "";
   return (
-    <div data-tour={dataTour} className={`price-bar ${accentClass}`}>
+    <div data-tour={dataTour} className={`price-bar ${accentClass} ${compactClass}`}>
       <div className="price-metrics">
         {metrics.map(({ label, value, big }) => (
-          <div key={label} className="price-metric">
+          <div key={label} className="price-metric" data-metric={big ? "total" : undefined}>
             <div className="price-metric-label">{label}</div>
             <div className={`price-metric-val ${big ? totalClass : ""}`}>{value}</div>
           </div>
@@ -699,10 +705,83 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
               ✓ Complete Sale
             </button>
           )}
+          {compactOnMobile && (
+            <button
+              type="button"
+              className="price-bar-more"
+              onClick={() => setExpanded(v => !v)}
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse price details" : "Show price details and more actions"}
+            >
+              {expanded ? "✕" : "⋯"}
+            </button>
+          )}
         </div>
         {onCompleteSale && (
           <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Muted inline "+$X.XX" cost-impact hint shown beside a control. Display
+// only — callers pass values already computed by the pricing code; nothing
+// here re-derives math. Negative values (savings) render green.
+function PriceDelta({ value, suffix = "" }) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || Math.abs(n) < 0.005) return null;
+  const sign = n < 0 ? "−" : "+";
+  return (
+    <span className={`price-delta ${n < 0 ? "is-negative" : ""}`}>
+      {sign}${Math.abs(n).toFixed(2)}{suffix}
+    </span>
+  );
+}
+
+// Registry of open/close handlers so the training spotlight can force a
+// section open before measuring a target inside it.
+// (TrainingDrawer dispatches "trainingSpotlight" CustomEvents; each
+// mounted Collapsible listens and expands itself when the targeted
+// element lives inside it.)
+function Collapsible({ id, label = "More options", children }) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(`disclosure:${id}`) === "1"; } catch { return false; }
+  });
+  const bodyRef = useRef(null);
+
+  const toggle = () => {
+    setOpen(v => {
+      const next = !v;
+      try { localStorage.setItem(`disclosure:${id}`, next ? "1" : "0"); } catch {}
+      return next;
+    });
+  };
+
+  // Auto-expand when the training drawer spotlights a child target, so
+  // collapsed sections never hide tour targets.
+  useEffect(() => {
+    const onSpotlight = (e) => {
+      const target = e?.detail?.target;
+      if (!target || !bodyRef.current) return;
+      if (bodyRef.current.querySelector(`[data-tour="${target}"]`)) {
+        setOpen(true);
+      }
+    };
+    window.addEventListener("trainingSpotlight", onSpotlight);
+    return () => window.removeEventListener("trainingSpotlight", onSpotlight);
+  }, []);
+
+  return (
+    <div className={`pc-collapsible ${open ? "is-open" : ""}`}>
+      <button type="button" className="pc-collapsible-head" onClick={toggle} aria-expanded={open}>
+        <span>{label}</span>
+        <span className="pc-collapsible-chevron" aria-hidden="true">▼</span>
+      </button>
+      <div className="pc-collapsible-body">
+        <div className="pc-collapsible-inner" ref={bodyRef}>
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -3788,7 +3867,7 @@ try {
             />
 
             {/* Step 1 — Print Setup */}
-            <div className="pc-card">
+            <div className="pc-card" data-tour="paper-setup-card">
               <CardHeader step="1" title="Print Setup" hint="Sheet size, paper type &amp; color" />
               <div className="pc-card-body">
 
@@ -3837,21 +3916,38 @@ try {
                   </div>
                 )}
 
-                {/* Color mode */}
+                {/* Color mode — unselected chip shows its exact per-sheet delta
+                    (the two per-sheet prices are already in scope; display only). */}
                 <div style={{ display:"flex", gap:20, flexWrap:"wrap", marginBottom:16 }}>
                   <div data-tour="front-color-mode">
                     <label className="field-label">Front color</label>
                     <div className="chip-group">
-                      <Chip label="Color" selected={frontColorMode==="color"} onClick={()=>setFrontColorMode("color")} />
-                      <Chip label="B&W"   selected={frontColorMode==="bw"}    onClick={()=>setFrontColorMode("bw")} />
+                      <Chip
+                        label={frontColorMode==="bw"
+                          ? <>Color <PriceDelta value={selectedPricing.priceColor - selectedPricing.priceBW} suffix="/sheet" /></>
+                          : "Color"}
+                        selected={frontColorMode==="color"} onClick={()=>setFrontColorMode("color")} />
+                      <Chip
+                        label={frontColorMode==="color"
+                          ? <>B&W <PriceDelta value={selectedPricing.priceBW - selectedPricing.priceColor} suffix="/sheet" /></>
+                          : "B&W"}
+                        selected={frontColorMode==="bw"}    onClick={()=>setFrontColorMode("bw")} />
                     </div>
                   </div>
                   {showBack && (
                     <div data-tour="back-color-mode">
                       <label className="field-label">Back color</label>
                       <div className="chip-group">
-                        <Chip label="Color" selected={backColorMode==="color"} onClick={()=>setBackColorMode("color")} />
-                        <Chip label="B&W"   selected={backColorMode==="bw"}    onClick={()=>setBackColorMode("bw")} />
+                        <Chip
+                          label={backColorMode==="bw"
+                            ? <>Color <PriceDelta value={(selectedPricing.priceColor - selectedPricing.priceBW) * backSideFactor} suffix="/sheet" /></>
+                            : "Color"}
+                          selected={backColorMode==="color"} onClick={()=>setBackColorMode("color")} />
+                        <Chip
+                          label={backColorMode==="color"
+                            ? <>B&W <PriceDelta value={(selectedPricing.priceBW - selectedPricing.priceColor) * backSideFactor} suffix="/sheet" /></>
+                            : "B&W"}
+                          selected={backColorMode==="bw"}    onClick={()=>setBackColorMode("bw")} />
                       </div>
                     </div>
                   )}
@@ -3860,17 +3956,35 @@ try {
                 {/* Toggles */}
                 <div>
                   <div className="toggle-row" data-tour="back-side-toggle">
-                    <div><div className="toggle-label-text">Double-sided</div><div className="toggle-label-sub">Print on front &amp; back</div></div>
+                    <div>
+                      <div className="toggle-label-text">
+                        Double-sided{" "}
+                        {/* Display-only cost impact: composes the same in-scope values
+                            the pricing code already computed (back per-sheet price ×
+                            sheets × applied discount). Sign flips when already on. */}
+                        <span data-tour="price-delta-backside">
+                          <PriceDelta
+                            value={(showBack ? -1 : 1)
+                              * (backColorMode === "color" ? selectedPricing.priceColor : selectedPricing.priceBW)
+                              * backSideFactor * sheetsNeeded
+                              * (activeLine?.appliedDiscountFactor ?? getSheetDiscountFactor(sheetsNeeded))}
+                          />
+                        </span>
+                      </div>
+                      <div className="toggle-label-sub">Print on front &amp; back</div>
+                    </div>
                     <Toggle checked={showBack} onChange={setShowBack} />
                   </div>
-                  <div className="toggle-row">
-                    <div><div className="toggle-label-text">Show cut lines</div><div className="toggle-label-sub">Dashed trim guides — printed on the final output</div></div>
-                    <Toggle checked={showCutLines} onChange={setShowCutLines} />
-                  </div>
-                  <div className="toggle-row">
-                    <div><div className="toggle-label-text">Show margin guides</div></div>
-                    <Toggle checked={showGuides} onChange={setShowGuides} />
-                  </div>
+                  <Collapsible id="paper-advanced" label="More options">
+                    <div className="toggle-row">
+                      <div><div className="toggle-label-text">Show cut lines</div><div className="toggle-label-sub">Dashed trim guides — printed on the final output</div></div>
+                      <Toggle checked={showCutLines} onChange={setShowCutLines} />
+                    </div>
+                    <div className="toggle-row">
+                      <div><div className="toggle-label-text">Show margin guides</div></div>
+                      <Toggle checked={showGuides} onChange={setShowGuides} />
+                    </div>
+                  </Collapsible>
                 </div>
               </div>
             </div>
@@ -3905,22 +4019,24 @@ try {
                 </div>
 
                 {maxPerSheet > 1 && (
-                  <div style={{ marginBottom:12 }}>
-                    <label className="field-label">Prints per sheet ({maxPerSheet} fit)</label>
-                    <div className="chip-group">
-                      {Array.from({ length: maxPerSheet }, (_, i) => i + 1).map(n => (
-                        <Chip
-                          key={n}
-                          label={n === maxPerSheet ? `${n} (max)` : (n === 1 ? "1 per sheet" : `${n}`)}
-                          selected={effectivePerSheet === n}
-                          onClick={() => setPerSheetCap(n === maxPerSheet ? null : n)}
-                        />
-                      ))}
+                  <Collapsible id="paper-imposition-advanced" label="More options">
+                    <div style={{ marginBottom:12 }}>
+                      <label className="field-label">Prints per sheet ({maxPerSheet} fit)</label>
+                      <div className="chip-group">
+                        {Array.from({ length: maxPerSheet }, (_, i) => i + 1).map(n => (
+                          <Chip
+                            key={n}
+                            label={n === maxPerSheet ? `${n} (max)` : (n === 1 ? "1 per sheet" : `${n}`)}
+                            selected={effectivePerSheet === n}
+                            onClick={() => setPerSheetCap(n === maxPerSheet ? null : n)}
+                          />
+                        ))}
+                      </div>
+                      <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6 }}>
+                        Fewer per sheet uses more paper. Front &amp; back stay aligned for double-sided jobs.
+                      </div>
                     </div>
-                    <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6 }}>
-                      Fewer per sheet uses more paper. Front &amp; back stay aligned for double-sided jobs.
-                    </div>
-                  </div>
+                  </Collapsible>
                 )}
 
                 <div className="callout callout-info">
@@ -4190,7 +4306,7 @@ try {
         {activeTab==="large" && viewMode==="tool" && (
           <>
             {/* Step 1 — Specifications */}
-            <div className="pc-card">
+            <div className="pc-card" data-tour="lf-setup-card">
               <CardHeader step="1" stepClass="step-num-amber" title="Print Specifications" hint="Max width: 36 inches" />
               <div className="pc-card-body">
                 <div className="grid-auto" style={{ marginBottom:16 }}>
@@ -4242,13 +4358,15 @@ try {
                 <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10 }}>Add-ons</div>
                 <div className="addon-grid">
                   <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                    <AddonCard dataTour="lf-grommet-toggle" emoji="🔩" name="Grommets" price={`$${(lfAddonPricing.grommetEach||0).toFixed(2)}/ea`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)} />
+                    <AddonCard dataTour="lf-grommet-toggle" emoji="🔩" name="Grommets" price={`$${(lfAddonPricing.grommetEach||0).toFixed(2)}/ea`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)}
+                      delta={!lfGrommets && lfTotalQty > 0 ? <PriceDelta value={(lfAddonPricing.grommetEach||0) * (lfGrommetCount||0) * lfTotalQty * lfDiscountFactor} /> : null} />
                     {lfGrommets && upsellFlags.lfAddons?.grommets && (
                       <UpsellToggle checked={lfUpsellGrommets} onChange={setLfUpsellGrommets} />
                     )}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                    <AddonCard dataTour="lf-foamcore-toggle" emoji="🧊" name="Foam Core" price={`+$${lfAddonPricing.foamCore}`} selected={lfFoamCore} onToggle={()=>setLfFoamCore(v=>!v)} />
+                    <AddonCard dataTour="lf-foamcore-toggle" emoji="🧊" name="Foam Core" price={`+$${lfAddonPricing.foamCore}`} selected={lfFoamCore} onToggle={()=>setLfFoamCore(v=>!v)}
+                      delta={!lfFoamCore && lfTotalQty > 0 ? <PriceDelta value={(lfAddonPricing.foamCore||0) * lfTotalQty * lfDiscountFactor} /> : null} />
                     {lfFoamCore && upsellFlags.lfAddons?.foamCore && (
                       <UpsellToggle checked={lfUpsellFoamCore} onChange={setLfUpsellFoamCore} />
                     )}
@@ -4387,7 +4505,7 @@ try {
         {activeTab==="blueprint" && viewMode==="tool" && (
           <>
             {/* Step 1 — Size */}
-            <div className="pc-card">
+            <div className="pc-card" data-tour="bp-setup-card">
               <CardHeader step="1" stepClass="step-num-blue" title="Blueprint Size" hint="20lb plain bond · B&W only" />
               <div className="pc-card-body">
                 <div className="bp-size-grid" data-tour="bp-size">
@@ -4863,7 +4981,7 @@ function ImposePanel({ CardHeader, pricingProps, onSnapshotChange, currentEmploy
   const [imposeTool, setImposeTool] = useState("booklet");
   return (
     <>
-      <div className="pc-card" style={{ marginBottom: 16 }}>
+      <div className="pc-card" data-tour="impose-setup-card" style={{ marginBottom: 16 }}>
         <div className="pc-card-body" style={{ padding: "12px 20px" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Tool:</span>

@@ -906,6 +906,12 @@ function Spotlight({ targetId, instruction, onMisclick, shakeKey }) {
 
   useEffect(() => {
     if (!targetId) { setRect(null); return; }
+    // Announce the target before measuring so collapsed "More options"
+    // sections (Collapsible in App.jsx) can auto-expand if the target
+    // lives inside them; the 250ms re-measure interval below then picks
+    // up the expanded position. Same CustomEvent pattern the app already
+    // uses for cross-component signals (e.g. specialtyApplyScenario).
+    try { window.dispatchEvent(new CustomEvent("trainingSpotlight", { detail: { target: targetId } })); } catch {}
     let raf = 0;
     const measure = () => {
       const el = document.querySelector(`[data-tour="${targetId}"]`);
