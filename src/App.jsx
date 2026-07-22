@@ -24,6 +24,7 @@ import {
   getStoredEmployee, setStoredEmployee,
   listEmployees, createEmployee, setEmployeeActive,
   fetchCommissionSettings, insertTransaction,
+  findEmployeeByPin,
 } from "./lib/supabase.js";
 import {
   computeCommission, saveTransactionWithFallback, drainPendingTransactions,
@@ -105,6 +106,50 @@ const LS = {
 
 let UPS_LOGO_DATA_URL = "/ups-logo.png";
 let UPS_LOGO_PDF_DATA_URL = null;
+
+// ─── KIOSK MODE ─────────────────────────────────────────────
+// ?mode=kiosk turns the same SPA into a customer-facing self-serve
+// skin. The URL param is the single source of truth — entering and
+// exiting both navigate, so a full reload re-derives everything and
+// the flag can stay a module constant.
+const KIOSK_MODE = typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("mode") === "kiosk";
+// Tabs a customer may use. Impose (staff imposition tooling) and the
+// Print Queue never render in kiosk; product tiles are filtered
+// against this same list so tiles and tabs can't drift apart.
+const KIOSK_TABS = ["paper", "large", "blueprint", "specialty"];
+
+const enterKioskMode = () => {
+  const url = new URL(window.location.href);
+  url.searchParams.set("mode", "kiosk");
+  window.location.assign(url.toString());
+};
+const exitKioskMode = () => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("mode");
+  window.location.assign(url.toString());
+};
+
+// Same queue plumbing the customer /upload page uses (UploadApp.jsx) —
+// signed upload into the private bucket, then a service-role insert.
+const KIOSK_UPLOAD_BUCKET = "customer-uploads";
+const KIOSK_MAX_BYTES = 50 * 1024 * 1024;
+const KIOSK_ACCEPT = [
+  "image/*",
+  "application/pdf",
+  ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+].join(",");
+async function callQueueFn(name, payload) {
+  const res = await fetch(`/.netlify/functions/${name}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
+  let json = {};
+  try { json = await res.json(); } catch { /* non-JSON */ }
+  if (!res.ok || !json.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  return json;
+}
 
 // ─── HELPERS ────────────────────────────────────────────────
 
@@ -669,12 +714,43 @@ function UploadZone({ hasFile, label, subLabel, types, onFiles, inputRef }) {
   );
 }
 
-function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour, compactOnMobile = true, downloadLabel = "Generate Quote", orderLabel = "Email", downloadDisabled = false, orderDisabled = false }) {
+function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour, compactOnMobile = true, downloadLabel = "Generate Quote", orderLabel = "Email", downloadDisabled = false, orderDisabled = false, kioskAction = null }) {
   // Mobile-only: the bar renders compact (total + Complete Sale + ⋯) and
   // the ⋯ button expands it to full height. Desktop layout is unaffected —
   // the pb-compact styles are scoped inside the 640px media query.
   const [expanded, setExpanded] = useState(false);
-  const compactClass = compactOnMobile ? `pb-compact ${expanded ? "pb-expanded" : ""}` : "";
+  const compactClass = (compactOnMobile && !kioskAction) ? `pb-compact ${expanded ? "pb-expanded" : ""}` : "";
+  // kioskAction: { label, onClick, disabled } — replaces every staff action
+  // with a single customer-facing button. Callers in kiosk mode omit the
+  // staff handlers entirely, so no alert()/prompt() path is reachable here.
+  if (kioskAction) {
+    return (
+      <div data-tour={dataTour} className={`price-bar ${accentClass}`}>
+        <div className="price-metrics">
+          {metrics.map(({ label, value, big }) => (
+            <div key={label} className="price-metric" data-metric={big ? "total" : undefined}>
+              <div className="price-metric-label">{label}</div>
+              <div className={`price-metric-val ${big ? totalClass : ""}`}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="price-bar-action-col">
+          <div className="price-bar-actions">
+            <button
+              type="button"
+              className="pc-btn pc-btn-complete-sale is-primary-action kiosk-send-btn"
+              onClick={kioskAction.onClick}
+              disabled={!!kioskAction.disabled}
+              title={kioskAction.disabled ? "Set up your product first" : "Send this quote to the counter"}
+            >
+              📥 {kioskAction.label || "Send to counter"}
+            </button>
+          </div>
+          <div className="price-bar-caption">Prices include everything — pay at the counter</div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div data-tour={dataTour} className={`price-bar ${accentClass} ${compactClass}`}>
       <div className="price-metrics">
@@ -850,25 +926,33 @@ const pulseSetupCard = (anchor) => {
   }, 80);
 };
 
-function ProductTiles({ onPick }) {
+function ProductTiles({ onPick, presets = PRODUCT_PRESETS, bare = false }) {
+  const tiles = (
+    <div className="product-tiles">
+      {presets.map(t => (
+        <button
+          key={t.id}
+          type="button"
+          data-tour={`product-tile-${t.id}`}
+          className="product-tile"
+          style={{ "--tile-accent": t.accent }}
+          onClick={() => onPick(t)}
+        >
+          <span className="product-tile-emoji" aria-hidden="true">{t.emoji}</span>
+          <span className="product-tile-label">{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+  // bare: kiosk renders the strip without the Collapsible wrapper — the
+  // kiosk skin hides every .pc-collapsible, and the tiles must survive that.
+  if (bare) {
+    return <div className="product-tiles-wrap" data-tour="product-tiles">{tiles}</div>;
+  }
   return (
     <div className="product-tiles-wrap" data-tour="product-tiles">
       <Collapsible id="product-tiles" label="Start a job" defaultOpen>
-        <div className="product-tiles">
-          {PRODUCT_PRESETS.map(t => (
-            <button
-              key={t.id}
-              type="button"
-              data-tour={`product-tile-${t.id}`}
-              className="product-tile"
-              style={{ "--tile-accent": t.accent }}
-              onClick={() => onPick(t)}
-            >
-              <span className="product-tile-emoji" aria-hidden="true">{t.emoji}</span>
-              <span className="product-tile-label">{t.label}</span>
-            </button>
-          ))}
-        </div>
+        {tiles}
       </Collapsible>
     </div>
   );
@@ -1085,7 +1169,14 @@ const fireConfetti = () => {
 
 function PriceCalculatorApp() {
   // ── Tab / view state ──
-  const [activeTab, setActiveTab]   = useState(() => { try { return localStorage.getItem("activeTab") || "paper"; } catch { return "paper"; }});
+  const [activeTab, setActiveTab]   = useState(() => {
+    try {
+      const stored = localStorage.getItem("activeTab") || "paper";
+      // A staff session may have left "queue"/"impose" behind — those tabs
+      // don't exist in kiosk, so fall back to paper there.
+      return KIOSK_MODE && !KIOSK_TABS.includes(stored) ? "paper" : stored;
+    } catch { return "paper"; }
+  });
   const [viewMode, setViewMode]     = useState("tool"); // "tool" | "quote"
   const [showAdmin, setShowAdmin]   = useState(false);
   const [adminView, setAdminView]   = useState("pricing"); // "pricing" | "commissions"
@@ -1106,6 +1197,40 @@ function PriceCalculatorApp() {
     setShowEmployeeLogin(true);
   };
   const [showMyNumbers, setShowMyNumbers] = useState(false);
+
+  // ── Kiosk mode (customer-facing skin) ──
+  // showKioskExit: the hidden staff PIN dialog (5 logo taps in 3s).
+  // kioskSheet: { snapshot, seedFiles } while the "Send to counter"
+  //   sheet is open — name/phone live INSIDE the sheet component, so
+  //   every close path unmounts it and the fields can't leak between
+  //   customers. specialtyResetKey remounts SpecialtyTab on full reset.
+  const [showKioskExit, setShowKioskExit] = useState(false);
+  const [kioskSheet, setKioskSheet] = useState(null);
+  const [specialtyResetKey, setSpecialtyResetKey] = useState(0);
+  const [kioskAttract, setKioskAttract] = useState(false);
+  const kioskTapsRef = useRef([]);
+  const handleLogoTap = () => {
+    if (!KIOSK_MODE) return;
+    const now = Date.now();
+    kioskTapsRef.current = [...kioskTapsRef.current.filter(t => now - t < 3000), now];
+    if (kioskTapsRef.current.length >= 5) {
+      kioskTapsRef.current = [];
+      setShowKioskExit(true);
+    }
+  };
+
+  // Inline file-intake errors (corrupt/unreadable uploads). Replaces the
+  // silent-unhandled-rejection failure mode in BOTH modes; kiosk copy adds
+  // "ask at the counter". Auto-clears so an abandoned kiosk heals itself.
+  const [intakeError, setIntakeError] = useState("");
+  useEffect(() => {
+    if (!intakeError) return;
+    const t = setTimeout(() => setIntakeError(""), 10000);
+    return () => clearTimeout(t);
+  }, [intakeError]);
+  const intakeFailMsg = (names) =>
+    `Couldn't read ${names.map(n => `“${n}”`).join(", ")} — the file may be damaged or in a format we can't open. ` +
+    (KIOSK_MODE ? "Try a different file, or ask at the counter and we'll help." : "Try re-exporting the file.");
 
   // Manual retry of the offline transactions queue. Surfaced via the
   // pending-sync badge in the header. Silent if there's nothing pending.
@@ -1684,23 +1809,33 @@ function PriceCalculatorApp() {
 
 const handleFrontFiles = async (files) => {
     setProcessingFiles(true);
+    setIntakeError("");
+    // Per-file try/catch: one corrupt PDF used to abort the whole batch as a
+    // silent unhandled rejection — now good files still land and the bad one
+    // surfaces as an inline message (never alert()).
+    const failed = [];
     try {
       const newItems = [];
       for (const f of files) {
-        if (isPdfFile(f)) {
-          // Extract ALL pages from the PDF as individual items
-          const pages = await pdfFileToAllPages(f);
-          for (const pg of pages) {
-            newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:copiesPerFile });
+        try {
+          if (isPdfFile(f)) {
+            // Extract ALL pages from the PDF as individual items
+            const pages = await pdfFileToAllPages(f);
+            for (const pg of pages) {
+              newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:copiesPerFile });
+            }
+          } else {
+            newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:copiesPerFile });
           }
-        } else {
-          newItems.push({ id:`f_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:copiesPerFile });
-        }
+        } catch { failed.push(f?.name || "file"); }
       }
-      setFrontFiles(prev => [...prev, ...newItems]);
-      if (newItems[0]) setSelectedFrontId(newItems[0].id);
+      if (newItems.length) {
+        setFrontFiles(prev => [...prev, ...newItems]);
+        setSelectedFrontId(newItems[0].id);
+      }
     } finally {
       setProcessingFiles(false);
+      if (failed.length) setIntakeError(intakeFailMsg(failed));
     }
   };
 
@@ -1716,29 +1851,38 @@ const handleFrontFiles = async (files) => {
   const handleBackFile = async (files) => {
     if (!files[0]) return;
     setProcessingFiles(true);
+    setIntakeError("");
     try { setBackImage(await normalizeUpload(files[0])); }
+    catch { setIntakeError(intakeFailMsg([files[0]?.name || "file"])); }
     finally { setProcessingFiles(false); }
   };
 
   const handleLfFiles = async (files) => {
     setProcessingFiles(true);
+    setIntakeError("");
+    const failed = [];
     try {
       const newItems = [];
       for (const f of files) {
-        if (isPdfFile(f)) {
-          // Extract ALL pages from the PDF as individual items
-          const pages = await pdfFileToAllPages(f);
-          for (const pg of pages) {
-            newItems.push({ id:`lf_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:lfCopiesPerFile });
+        try {
+          if (isPdfFile(f)) {
+            // Extract ALL pages from the PDF as individual items
+            const pages = await pdfFileToAllPages(f);
+            for (const pg of pages) {
+              newItems.push({ id:`lf_${Date.now()}_${Math.random()}`, file:pg, name:pg.name, rotation:0, qty:lfCopiesPerFile });
+            }
+          } else {
+            newItems.push({ id:`lf_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:lfCopiesPerFile });
           }
-        } else {
-          newItems.push({ id:`lf_${Date.now()}_${Math.random()}`, file:f, name:f.name, rotation:0, qty:lfCopiesPerFile });
-        }
+        } catch { failed.push(f?.name || "file"); }
       }
-      setLfFiles(prev => [...prev, ...newItems]);
-      if (newItems[0]) setSelectedLfId(newItems[0].id);
+      if (newItems.length) {
+        setLfFiles(prev => [...prev, ...newItems]);
+        setSelectedLfId(newItems[0].id);
+      }
     } finally {
       setProcessingFiles(false);
+      if (failed.length) setIntakeError(intakeFailMsg(failed));
     }
   };
 
@@ -1749,7 +1893,9 @@ const handleFrontFiles = async (files) => {
   const handleBpFile = async (files) => {
     if (!files[0]) return;
     setProcessingFiles(true);
+    setIntakeError("");
     try { setBpFile(await normalizeUpload(files[0])); }
+    catch { setIntakeError(intakeFailMsg([files[0]?.name || "file"])); }
     finally { setProcessingFiles(false); }
   };
 
@@ -3000,6 +3146,130 @@ const handleFrontFiles = async (files) => {
     setOrderCustomer({ name: "", phone: "" });
   };
 
+  // ─── KIOSK ACTIONS ──────────────────────────────────────
+  // Wipe EVERY tab back to a fresh state for the next walk-up customer.
+  // Unlike resetActiveTabForNextSale (active tab only), the kiosk reset
+  // covers all tabs because the next customer inherits the whole device.
+  const kioskFullReset = () => {
+    setKioskSheet(null);       // unmounts the sheet → name/phone state gone
+    setShowKioskExit(false);
+    setIntakeError("");
+    // Sheets & Photos
+    const fresh = createEmptyJob({ paperKey: paperTypes[0]?.key || paperKey, sheetKey: "8.5x11" });
+    isLoadingFromTicketRef.current = true;
+    setTicket([fresh]);
+    setActiveTicketIdx(0);
+    applyJobToEditor(fresh);
+    setFrontImage(null);
+    setSelectedFrontId(null);
+    setFrontPreviewPage(0);
+    setCopiesPerFile(1);
+    // Large Format (back to the state initializer defaults)
+    setLfFiles([]);
+    setSelectedLfId(null);
+    setLfWidth(24); setLfHeight(36);
+    setLfColorMode("color");
+    setLfGrommets(false); setLfGrommetCount(4);
+    setLfFoamCore(false);
+    setLfUpsellPaper(false); setLfUpsellGrommets(false); setLfUpsellFoamCore(false);
+    setLfCopiesPerFile(1);
+    // Blueprints
+    setBpFile(null);
+    setBpSizeKey("24x36");
+    setBpQty(25);
+    // Specialty owns its state — remount it via key bump.
+    setSpecialtyResetKey(k => k + 1);
+    setChildSnapshot(null);
+    setOrderCustomer({ name: "", phone: "" });
+    setActiveTab("paper");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+  };
+  // Idle timers read the latest reset through a ref so the effect below
+  // can subscribe to window events exactly once.
+  const kioskFullResetRef = useRef(() => {});
+  kioskFullResetRef.current = kioskFullReset;
+
+  // Kiosk idle behavior: 60s without a touch → pulse the tiles strip
+  // (attractor); 3 minutes → full reset so the next customer never sees
+  // the previous customer's job, name, or phone number.
+  useEffect(() => {
+    if (!KIOSK_MODE) return;
+    let attractT, resetT;
+    const arm = () => {
+      clearTimeout(attractT); clearTimeout(resetT);
+      setKioskAttract(false);
+      attractT = setTimeout(() => setKioskAttract(true), 60_000);
+      resetT   = setTimeout(() => kioskFullResetRef.current(), 180_000);
+    };
+    const evs = ["pointerdown", "keydown", "touchstart", "wheel"];
+    evs.forEach(ev => window.addEventListener(ev, arm, { passive: true }));
+    arm();
+    return () => {
+      clearTimeout(attractT); clearTimeout(resetT);
+      evs.forEach(ev => window.removeEventListener(ev, arm));
+    };
+  }, []);
+
+  // Files already loaded into the active tab's preview seed the submit
+  // sheet so the customer doesn't have to upload the same artwork twice.
+  const collectActiveTabFiles = () => {
+    const named = (f, fallback) => ({ file: f.file, name: f.name || f.file?.name || fallback });
+    if (activeTab === "paper")     return frontFiles.filter(f => f.file).map(f => named(f, "artwork"));
+    if (activeTab === "large")     return lfFiles.filter(f => f.file).map(f => named(f, "artwork"));
+    if (activeTab === "blueprint") return bpFile ? [{ file: bpFile, name: bpFile.name || "blueprint" }] : [];
+    return []; // specialty quotes usually have no local file — dropzone covers it
+  };
+
+  // Compact quote summary for the queue card's notes column (≤500 chars,
+  // matching register-job's server-side cap). Config + price are the
+  // must-keep part; the file list is truncated first when space runs out.
+  const kioskQuoteSummary = (snapshot, fileNames = [], phone = "") => {
+    const LIMIT = 500;
+    const items = (snapshot?.lineItems || []).map(li => {
+      if (li.kind === "sheet_line") return `${li.printSize} ${li.paperLabel} ${li.colorMode} ${li.sides} ×${li.quantity}`;
+      if (li.kind === "lf_media")   return `${li.width}×${li.height}" ${li.paperLabel} ×${li.quantity}`;
+      if (li.kind === "lf_addon")   return `${li.name}${li.count ? ` ×${li.count}` : ""}`;
+      if (li.kind === "blueprint")  return `${li.label} blueprint ×${li.quantity}`;
+      return li.description || li.label || li.name || "item";
+    }).join("; ");
+    let base = `[Kiosk quote] ${items || snapshot?.serviceType || "print job"} | Total $${Number(snapshot?.total || 0).toFixed(2)}`;
+    if (phone) base += ` | Ph: ${phone}`;
+    if (base.length > LIMIT) return base.slice(0, LIMIT - 1) + "…";
+    if (fileNames.length) {
+      const withFiles = `${base} | Files: ${fileNames.join(", ")}`;
+      if (withFiles.length <= LIMIT) return withFiles;
+      const room = LIMIT - base.length - 12; // " | Files: " + ellipsis
+      if (room > 8) return `${base} | Files: ${fileNames.join(", ").slice(0, room)}…`;
+    }
+    return base;
+  };
+
+  const openKioskSheet = () => {
+    const snapshot = buildSaleSnapshot();
+    if (!snapshot || !(snapshot.total > 0)) return;
+    setKioskSheet({ snapshot, seedFiles: collectActiveTabFiles() });
+  };
+
+  // Shared-PriceBar shim handed to SpecialtyTab in kiosk mode: keeps the
+  // customer-facing math, swaps every staff action for "Send to counter",
+  // and strips staff-only metrics (margin / markup / passthrough wording).
+  const KioskPriceBar = (props) => (
+    <PriceBar
+      accentClass={props.accentClass}
+      totalClass={props.totalClass}
+      compactOnMobile={false}
+      metrics={(props.metrics || [])
+        .filter(m => !/margin|markup/i.test(m.label))
+        .map(m => m.label === "Shipping (passthrough)" ? { ...m, label: "Shipping" }
+                : m.label === "Customer total" ? { ...m, label: "Estimated total" } : m)}
+      kioskAction={{
+        label: "Send to counter",
+        onClick: openKioskSheet,
+        disabled: !(childSnapshot && childSnapshot.total > 0),
+      }}
+    />
+  );
+
   // ── Quick-start presets (paper tab) ──
   // Compact config pushed on a successful paper sale / quote, applied back
   // via the existing editor setters (no new imposition path).
@@ -3316,7 +3586,9 @@ try {
       {/* ── HEADER ──────────────────────────────────────── */}
       <header className="app-header">
         <div className="app-header-inner">
-          <div className="header-logo">
+          {/* In kiosk mode the logo doubles as the hidden exit gesture:
+              5 taps within 3 seconds opens a staff PIN prompt. */}
+          <div className="header-logo" onClick={handleLogoTap}>
             <div className="header-logo-icon">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
@@ -3327,6 +3599,7 @@ try {
               <div className="header-logo-text-sub">The UPS Store #4979</div>
             </div>
           </div>
+          {!KIOSK_MODE && (
           <div className="header-actions">
             {isSupabaseConfigured && pendingSalesCount > 0 && (
               <button
@@ -3394,6 +3667,7 @@ try {
               {isAdmin && showAdmin ? "Close Admin" : "Admin"}
             </button>
           </div>
+          )}
         </div>
       </header>
 
