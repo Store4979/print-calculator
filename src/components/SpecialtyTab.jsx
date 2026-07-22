@@ -746,7 +746,7 @@ export default function SpecialtyTab({ CardHeader, onSnapshotChange, currentEmpl
   // ── Render ──
   return (
     <>
-      <div className="pc-card">
+      <div className="pc-card" data-tour="specialty-setup-card">
         <CardHeader
           step="1"
           stepClass="step-num-purple"
