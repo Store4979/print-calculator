@@ -1,3 +1,12 @@
 package-lock.json
 node_modules/
 dist/
+
+# Local env overrides. NOTE: .env itself is tracked on purpose — it holds only
+# the client-safe publishable Supabase values (also committed in netlify.toml).
+.env.local
+.env.*.local
+
+# OS noise
+.DS_Store
+Thumbs.db
