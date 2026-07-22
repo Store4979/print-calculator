@@ -540,7 +540,7 @@ function computePrice({ pricing, product, width, height, selectedSizeKey, quanti
 }
 
 // ── Component ────────────────────────────────────────
-export default function SpecialtyTab({ CardHeader, onSnapshotChange, currentEmployee, onCompleteSale }) {
+export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnapshotChange, currentEmployee, onCompleteSale }) {
   const [pricing, setPricing] = useState(loadPricing);
 
   useEffect(() => {
@@ -649,6 +649,29 @@ export default function SpecialtyTab({ CardHeader, onSnapshotChange, currentEmpl
     () => computePrice({ pricing, product, width, height, selectedSizeKey, quantity, options: selectedOptions }),
     [pricing, product, width, height, selectedSizeKey, quantity, selectedOptions]
   );
+
+  // Display-only price deltas for toggle-like options: computePrice is pure,
+  // so the exact customer-total impact of enabling an option — through every
+  // tier/markup boundary — is just a second call with that option flipped on.
+  // Enum (select/tierVariant) and quantity-like (perEachAddon) options are
+  // skipped. Memoized with the same deps as `result` so typing dimensions
+  // recomputes once per keystroke, not per option render.
+  const TOGGLE_OPTION_TYPES = ["checkbox", "setupFee", "perLinearFt", "perSqFtAddon", "percentMultiplier"];
+  const optionDeltas = useMemo(() => {
+    if (!result || !product || !(quantity > 0)) return {};
+    const out = {};
+    for (const opt of product.options || []) {
+      if (!TOGGLE_OPTION_TYPES.includes(opt.type)) continue;
+      if (selectedOptions[opt.key]) continue; // unchecked options only
+      const flipped = computePrice({
+        pricing, product, width, height, selectedSizeKey, quantity,
+        options: { ...selectedOptions, [opt.key]: true },
+      });
+      if (flipped) out[opt.key] = flipped.customerTotal - result.customerTotal;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, pricing, product, width, height, selectedSizeKey, quantity, selectedOptions]);
 
   // Report a sale snapshot up to App so the shared Complete Sale pipeline
   // can log this order. Markup applies to the print cost only; shipping is a
@@ -950,6 +973,9 @@ export default function SpecialtyTab({ CardHeader, onSnapshotChange, currentEmpl
                 opt={opt}
                 value={selectedOptions[opt.key]}
                 onChange={(v) => setSelectedOptions((prev) => ({ ...prev, [opt.key]: v }))}
+                delta={PriceDelta && optionDeltas[opt.key] != null
+                  ? <PriceDelta value={optionDeltas[opt.key]} />
+                  : null}
               />
             ))}
           </div>
@@ -1002,65 +1028,35 @@ export default function SpecialtyTab({ CardHeader, onSnapshotChange, currentEmpl
         </div>
       )}
 
-      <div data-tour="specialty-price-bar" className="price-bar price-bar-purple">
-        <div className="price-metrics">
-          <div className="price-metric">
-            <div className="price-metric-label">Customer total</div>
-            <div className="price-metric-val is-total-purple">
-              {result ? fmtMoney(result.customerTotal) : "—"}
-            </div>
-          </div>
-          <div className="price-metric">
-            <div className="price-metric-label">Print (after markup)</div>
-            <div className="price-metric-val">
-              {result ? fmtMoney(result.customerPrintPrice) : "—"}
-            </div>
-          </div>
-          <div className="price-metric">
-            <div className="price-metric-label">Shipping (passthrough)</div>
-            <div className="price-metric-val">
-              {result ? fmtMoney(result.shippingCost) : "—"}
-            </div>
-          </div>
-          <div className="price-metric">
-            <div className="price-metric-label">Margin</div>
-            <div className="price-metric-val">
-              {result ? `${fmtMoney(result.margin)} (${result.marginPct.toFixed(1)}%)` : "—"}
-            </div>
-          </div>
-        </div>
-        <div className="price-bar-action-col">
-          <div className="price-bar-actions">
-            <button type="button" className="pc-btn pc-btn-ghost" onClick={handleReset}>Reset</button>
-            <button
-              type="button"
-              className="pc-btn pc-btn-ghost"
-              onClick={handleGeneratePdf}
-              disabled={!canGenerate}
-              title={canGenerate ? "Generate the trade-order PDF" : "Pick a product, size and quantity first"}
-            >
-              {generating ? "Generating…" : "⬇ Trade Order PDF"}
-            </button>
-            <button
-              type="button"
-              data-tour="specialty-complete-sale"
-              className="pc-btn pc-btn-complete-sale is-primary-action"
-              onClick={onCompleteSale}
-              disabled={!completeSaleEnabled}
-              title={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
-            >
-              ✓ Complete Sale
-            </button>
-          </div>
-          <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
-        </div>
+      {/* Reset has no PriceBar equivalent — lives in the tab body above the bar. */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <button type="button" className="pc-btn pc-btn-ghost pc-btn-sm" onClick={handleReset}>Reset</button>
       </div>
+
+      <PriceBar
+        dataTour="specialty-price-bar"
+        completeSaleTour="specialty-complete-sale"
+        accentClass="price-bar-purple"
+        totalClass="is-total-purple"
+        metrics={[
+          { label:"Customer total",         value: result ? fmtMoney(result.customerTotal) : "—", big:true },
+          { label:"Print (after markup)",   value: result ? fmtMoney(result.customerPrintPrice) : "—" },
+          { label:"Shipping (passthrough)", value: result ? fmtMoney(result.shippingCost) : "—" },
+          { label:"Margin",                 value: result ? `${fmtMoney(result.margin)} (${result.marginPct.toFixed(1)}%)` : "—" },
+        ]}
+        onDownload={handleGeneratePdf}
+        downloadLabel={generating ? "Generating…" : "⬇ Trade Order PDF"}
+        downloadDisabled={!canGenerate}
+        onCompleteSale={onCompleteSale}
+        completeSaleEnabled={completeSaleEnabled}
+        completeSaleHint={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+      />
     </>
   );
 }
 
 // ── Single option renderer ────────────────────────────
-function SpecialtyOption({ opt, value, onChange }) {
+function SpecialtyOption({ opt, value, onChange, delta = null }) {
   if (opt.type === "checkbox" || opt.type === "setupFee" || opt.type === "perLinearFt" || opt.type === "perSqFtAddon" || opt.type === "percentMultiplier") {
     const tag =
       opt.type === "setupFee"          ? `+${fmtMoney(opt.setupFee)} setup` :
@@ -1073,6 +1069,7 @@ function SpecialtyOption({ opt, value, onChange }) {
         <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />
         <span className="specialty-opt-label">{opt.label}</span>
         {tag !== "free" && <span className="specialty-opt-cost">{tag}</span>}
+        {delta}
       </label>
     );
   }

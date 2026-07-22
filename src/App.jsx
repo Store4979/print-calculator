@@ -669,7 +669,7 @@ function UploadZone({ hasFile, label, subLabel, types, onFiles, inputRef }) {
   );
 }
 
-function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour, compactOnMobile = true }) {
+function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour, compactOnMobile = true, downloadLabel = "Generate Quote", orderLabel = "Email", downloadDisabled = false, orderDisabled = false }) {
   // Mobile-only: the bar renders compact (total + Complete Sale + ⋯) and
   // the ⋯ button expands it to full height. Desktop layout is unaffected —
   // the pb-compact styles are scoped inside the 640px media query.
@@ -687,12 +687,19 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
       </div>
       <div className="price-bar-action-col">
         <div className="price-bar-actions">
-          <button data-tour={downloadTour} className="pc-btn pc-btn-ghost" onClick={onDownload}>
-            <Icon.Download /> Generate Quote
-          </button>
-          <button data-tour={orderTour} className="pc-btn pc-btn-ghost" onClick={onOrder}>
-            <Icon.Send /> Email
-          </button>
+          {/* Download/order render only when a handler exists (migrated tabs
+              omit actions they don't have). Icons show only with the default
+              labels so custom labels like "Print" don't get a mismatched glyph. */}
+          {onDownload && (
+            <button data-tour={downloadTour} className="pc-btn pc-btn-ghost" onClick={onDownload} disabled={downloadDisabled}>
+              {downloadLabel === "Generate Quote" && <Icon.Download />} {downloadLabel}
+            </button>
+          )}
+          {onOrder && (
+            <button data-tour={orderTour} className="pc-btn pc-btn-ghost" onClick={onOrder} disabled={orderDisabled}>
+              {orderLabel === "Email" && <Icon.Send />} {orderLabel}
+            </button>
+          )}
           {onCompleteSale && (
             <button
               type="button"
@@ -744,9 +751,12 @@ function PriceDelta({ value, suffix = "" }) {
 // (TrainingDrawer dispatches "trainingSpotlight" CustomEvents; each
 // mounted Collapsible listens and expands itself when the targeted
 // element lives inside it.)
-function Collapsible({ id, label = "More options", children }) {
+function Collapsible({ id, label = "More options", defaultOpen = false, children }) {
   const [open, setOpen] = useState(() => {
-    try { return localStorage.getItem(`disclosure:${id}`) === "1"; } catch { return false; }
+    try {
+      const stored = localStorage.getItem(`disclosure:${id}`);
+      return stored == null ? defaultOpen : stored === "1";
+    } catch { return defaultOpen; }
   });
   const bodyRef = useRef(null);
 
@@ -783,6 +793,76 @@ function Collapsible({ id, label = "More options", children }) {
           {children}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── PRODUCT-FIRST ENTRY TILES ─────────────────────────────
+// Customer-language entry points ("Flyers", "Banners"…) that route through
+// the existing applyScenario(cfg). Every cfg key is a real repo constant:
+// paper keys / sheet keys from pricing.json, BLUEPRINT_SIZES presets,
+// Specialty category/product/size ids from signs365Pricing.json.
+// `anchor` is the tab's Phase-1 step-1 card data-tour id (scroll + pulse).
+const PRODUCT_PRESETS = [
+  { id:"flyers",    label:"Flyers",         emoji:"🖨", accent:"var(--teal)",   anchor:"paper-setup-card",
+    cfg:{ tab:"paper", paperKey:"20lb", sheetKey:"8.5x11", colorMode:"color", backEnabled:false, printW:8.5, printH:11, quantity:100 } },
+  { id:"photos",    label:"Photos",         emoji:"📷", accent:"var(--teal)",   anchor:"paper-setup-card",
+    // No dedicated photo stock exists in pricing.json — 100 LB Text Gloss
+    // (100t) is the store's photo paper, same as the training scenario.
+    cfg:{ tab:"paper", paperKey:"100t", sheetKey:"8.5x11", colorMode:"color", backEnabled:false, printW:4, printH:6, quantity:20 } },
+  { id:"bizcards",  label:"Business Cards", emoji:"💼", accent:"var(--teal)",   anchor:"paper-setup-card",
+    cfg:{ tab:"paper", paperKey:"110c", sheetKey:"8.5x11", colorMode:"color", backEnabled:true, printW:3.5, printH:2, quantity:250 } },
+  { id:"posters",   label:"Posters",        emoji:"🖼", accent:"var(--amber)",  anchor:"lf-setup-card",
+    // grommetQty:0 explicitly clears grommets left on by a prior banner job.
+    cfg:{ tab:"large", lfWidth:24, lfHeight:36, lfPaperKey:"hp_gloss_photo", grommetQty:0 } },
+  { id:"banners",   label:"Banners",        emoji:"🎌", accent:"var(--purple)", anchor:"specialty-setup-card",
+    // Explicit option defaults: the same-category/same-product prefill path
+    // MERGES options over current state, so a prior rush/pole-pocket choice
+    // would stick without these.
+    cfg:{ tab:"specialty", specialty:{ category:"banners", product:"13oz-vinyl", width:36, height:96, quantity:1,
+      options:{ polePocket:false, welding:false, grommets:true, rope:false, windSlits:false, rush:false } } } },
+  { id:"blueprints",label:"Blueprints",     emoji:"📋", accent:"var(--blue)",   anchor:"bp-setup-card",
+    cfg:{ tab:"blueprint", bpWidth:24, bpHeight:36, bpQty:8 } },
+  { id:"booklets",  label:"Booklets",       emoji:"📖", accent:"var(--green)",  anchor:"impose-setup-card",
+    cfg:{ tab:"impose" } },
+  { id:"signs",     label:"Signs",          emoji:"🪧", accent:"var(--purple)", anchor:"specialty-setup-card",
+    // Same merge caveat as Banners: seed every coro-4mm option default.
+    cfg:{ tab:"specialty", specialty:{ category:"rigidSigns", product:"coro-4mm", sizeKey:"24x36-5pp", quantity:1,
+      options:{ sides:"single", stakes:0, stakesHd:0, grommets:0, customCut:false, contourCut:false, glossFinish:0, scoreFold:false, rush:false } } } },
+];
+
+// Scroll the target tab's step-1 card into view and pulse it briefly.
+// Delayed a tick so the tab switch has rendered the card first.
+const pulseSetupCard = (anchor) => {
+  setTimeout(() => {
+    const el = document.querySelector(`[data-tour="${anchor}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.classList.add("tile-pulse");
+    setTimeout(() => el.classList.remove("tile-pulse"), 1300);
+  }, 80);
+};
+
+function ProductTiles({ onPick }) {
+  return (
+    <div className="product-tiles-wrap" data-tour="product-tiles">
+      <Collapsible id="product-tiles" label="Start a job" defaultOpen>
+        <div className="product-tiles">
+          {PRODUCT_PRESETS.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              data-tour={`product-tile-${t.id}`}
+              className="product-tile"
+              style={{ "--tile-accent": t.accent }}
+              onClick={() => onPick(t)}
+            >
+              <span className="product-tile-emoji" aria-hidden="true">{t.emoji}</span>
+              <span className="product-tile-label">{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </Collapsible>
     </div>
   );
 }
@@ -1070,10 +1150,22 @@ function PriceCalculatorApp() {
     catch { return []; }
   });
 
+  // Quick-start presets for the Large Format tab (mirrors the paper pair).
+  const [lfRecentConfigs, setLfRecentConfigs] = useState(() => {
+    try { const raw = localStorage.getItem("lfRecentConfigs"); return raw ? JSON.parse(raw) : []; }
+    catch { return []; }
+  });
+  const [lfPinnedConfigs, setLfPinnedConfigs] = useState(() => {
+    try { const raw = localStorage.getItem("lfPinnedConfigs"); return raw ? JSON.parse(raw) : []; }
+    catch { return []; }
+  });
+
   useEffect(() => { try { localStorage.setItem("activeTab", activeTab); } catch {} }, [activeTab]);
   useEffect(() => { try { localStorage.setItem("orderCustomer", JSON.stringify(orderCustomer)); } catch {} }, [orderCustomer]);
   useEffect(() => { try { localStorage.setItem("paperRecentConfigs", JSON.stringify(recentConfigs)); } catch {} }, [recentConfigs]);
   useEffect(() => { try { localStorage.setItem("paperPinnedConfigs", JSON.stringify(pinnedConfigs)); } catch {} }, [pinnedConfigs]);
+  useEffect(() => { try { localStorage.setItem("lfRecentConfigs", JSON.stringify(lfRecentConfigs)); } catch {} }, [lfRecentConfigs]);
+  useEffect(() => { try { localStorage.setItem("lfPinnedConfigs", JSON.stringify(lfPinnedConfigs)); } catch {} }, [lfPinnedConfigs]);
 
   // Print Queue badge: keep a live count of today's waiting uploads via its
   // own lightweight realtime subscription so the badge updates on any tab.
@@ -2247,6 +2339,7 @@ const handleFrontFiles = async (files) => {
 
   const downloadLfPDF = async () => {
     if (!lfFiles.length) { alert("Upload large format artwork first."); return; }
+    pushLfRecentConfig();
     await ensureLogoPdfDataUrl();
     const orderDoc = new (getJsPDF())({ orientation:"portrait", unit:"in", format:"letter" });
     const lfPaper = lfPaperTypes.find(p=>p.key===lfPaperKey)||{label:lfPaperKey};
@@ -2728,6 +2821,7 @@ const handleFrontFiles = async (files) => {
 
   const orderLargeFormatJob = async () => {
     if (!lfFiles.length) { alert("Please upload large format artwork first."); return; }
+    pushLfRecentConfig();
     const pdfW=lfWidth, pdfH=lfHeight, orient=pdfW>=pdfH?"landscape":"portrait";
     const doc = new (getJsPDF())({ orientation:orient, unit:"in", format:[pdfW,pdfH] });
     for (let i=0; i<lfFiles.length; i++) {
@@ -2955,6 +3049,60 @@ const handleFrontFiles = async (files) => {
     return `${cfg.sheetKey} · ${color} · ${paperLabel}${sides}`;
   };
 
+  // ── Quick-start presets: Large Format ──
+  // Same ring-buffer/pin mechanics as the paper set; separate equality
+  // helper because the config shapes share no fields.
+  const lfConfigsEqual = (a, b) =>
+    a && b && a.lfPaperKey === b.lfPaperKey &&
+    Number(a.lfWidth) === Number(b.lfWidth) && Number(a.lfHeight) === Number(b.lfHeight) &&
+    !!a.grommets === !!b.grommets && Number(a.grommetCount || 0) === Number(b.grommetCount || 0);
+
+  const pushLfRecentConfig = () => {
+    const cfg = {
+      lfPaperKey, lfWidth, lfHeight,
+      grommets: !!lfGrommets, grommetCount: lfGrommetCount,
+    };
+    setLfRecentConfigs(prev => {
+      const deduped = prev.filter(c => !lfConfigsEqual(c, cfg));
+      return [cfg, ...deduped].slice(0, 6);
+    });
+  };
+
+  // Applied via direct setters (not applyScenario): a chip with
+  // grommets:false must clear grommets, which applyScenario's
+  // grommetQty>0-only path historically couldn't express.
+  const applyLfQuickConfig = (cfg) => {
+    if (!cfg) return;
+    if (cfg.lfPaperKey) setLfPaperKey(cfg.lfPaperKey);
+    if (cfg.lfWidth)  setLfWidth(Number(cfg.lfWidth));
+    if (cfg.lfHeight) setLfHeight(Number(cfg.lfHeight));
+    setLfGrommets(!!cfg.grommets);
+    if (cfg.grommets && cfg.grommetCount) setLfGrommetCount(Number(cfg.grommetCount));
+  };
+
+  const toggleLfPinConfig = (cfg) => {
+    setLfPinnedConfigs(prev => {
+      const exists = prev.some(c => lfConfigsEqual(c, cfg));
+      if (exists) return prev.filter(c => !lfConfigsEqual(c, cfg));
+      return [cfg, ...prev].slice(0, 4);
+    });
+  };
+
+  const lfQuickStartChips = (() => {
+    const pins = lfPinnedConfigs.map(c => ({ cfg: c, pinned: true }));
+    const recents = lfRecentConfigs
+      .filter(c => !lfPinnedConfigs.some(p => lfConfigsEqual(p, c)))
+      .slice(0, 4)
+      .map(c => ({ cfg: c, pinned: false }));
+    return [...pins, ...recents];
+  })();
+
+  const lfQuickChipLabel = (cfg) => {
+    const mediaLabel = lfPaperTypes.find(p => p.key === cfg.lfPaperKey)?.label || cfg.lfPaperKey;
+    const grom = cfg.grommets ? ` · Grommets ×${cfg.grommetCount || 0}` : " · No grommets";
+    return `${cfg.lfWidth}×${cfg.lfHeight} · ${mediaLabel}${grom}`;
+  };
+
   const requestCompleteSale = () => {
     if (!isSupabaseConfigured) { alert("Sales database isn't configured."); return; }
     if (!currentEmployee) {
@@ -2998,6 +3146,7 @@ const handleFrontFiles = async (files) => {
       setTimeout(() => setSavedJobToast(""), 4000);
       setPendingSalesCount(loadPendingTransactions().length);
       if (activeTab === "paper") pushRecentConfig();
+      else if (activeTab === "large") pushLfRecentConfig();
       resetActiveTabForNextSale();
     } finally {
       setCompletingSale(false);
@@ -3100,6 +3249,10 @@ try {
     if (cfg.grommetQty != null && cfg.grommetQty > 0) {
       setLfGrommets(true);
       setLfGrommetCount(Number(cfg.grommetQty));
+    } else if (cfg.grommetQty === 0) {
+      // Explicit 0 clears grommets (product tiles use this so a poster
+      // preset doesn't inherit grommets from a prior banner job).
+      setLfGrommets(false);
     }
     // lfQuantity has no matching state (LF is single-image) — ignored.
 
@@ -3228,6 +3381,11 @@ try {
           </div>
         </div>
       </header>
+
+      {/* ── PRODUCT-FIRST ENTRY TILES ───────────────────── */}
+      {viewMode === "tool" && (
+        <ProductTiles onPick={(t) => { applyScenario(t.cfg); pulseSetupCard(t.anchor); }} />
+      )}
 
       {/* ── SERVICE TABS ────────────────────────────────── */}
       <nav className="service-nav">
@@ -4305,6 +4463,30 @@ try {
         ════════════════════════════════════════ */}
         {activeTab==="large" && viewMode==="tool" && (
           <>
+            {lfQuickStartChips.length > 0 && (
+              <div className="quick-start" data-tour="lf-quick-start">
+                <span className="quick-start-label">Quick start</span>
+                <div className="quick-start-chips">
+                  {lfQuickStartChips.map(({ cfg, pinned }, i) => (
+                    <span key={i} className={`quick-chip ${pinned ? "is-pinned" : ""}`}>
+                      <button
+                        type="button"
+                        className="quick-chip-apply"
+                        onClick={() => applyLfQuickConfig(cfg)}
+                        title="Apply this setup"
+                      >{lfQuickChipLabel(cfg)}</button>
+                      <button
+                        type="button"
+                        className={`quick-chip-pin ${pinned ? "is-pinned" : ""}`}
+                        onClick={() => toggleLfPinConfig(cfg)}
+                        title={pinned ? "Unpin" : "Pin to front"}
+                        aria-label={pinned ? "Unpin preset" : "Pin preset"}
+                      >{pinned ? "★" : "☆"}</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* Step 1 — Specifications */}
             <div className="pc-card" data-tour="lf-setup-card">
               <CardHeader step="1" stepClass="step-num-amber" title="Print Specifications" hint="Max width: 36 inches" />
@@ -4593,6 +4775,8 @@ try {
         {activeTab==="specialty" && viewMode==="tool" && (
           <SpecialtyTab
             CardHeader={CardHeader}
+            PriceBar={PriceBar}
+            PriceDelta={PriceDelta}
             onSnapshotChange={setChildSnapshot}
             currentEmployee={currentEmployee}
             onCompleteSale={requestCompleteSale}
@@ -4605,6 +4789,7 @@ try {
 {activeTab==="impose" && viewMode==="tool" && (
   <ImposePanel
     CardHeader={CardHeader}
+    PriceBar={PriceBar}
     onSnapshotChange={setChildSnapshot}
     currentEmployee={currentEmployee}
     onCompleteSale={requestCompleteSale}
@@ -4977,7 +5162,7 @@ function TicketBar({
 }
 
 // ─── IMPOSE PANEL (sub-tool selector) ──────────────────────
-function ImposePanel({ CardHeader, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
+function ImposePanel({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
   const [imposeTool, setImposeTool] = useState("booklet");
   return (
     <>
@@ -4998,8 +5183,8 @@ function ImposePanel({ CardHeader, pricingProps, onSnapshotChange, currentEmploy
           </div>
         </div>
       </div>
-      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
-      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
+      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} PriceBar={PriceBar} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
+      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} PriceBar={PriceBar} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
     </>
   );
 }

@@ -362,7 +362,7 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove, onSelect, i
 
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
-export default function DataMerge({ CardHeader, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
+export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
   // Pricing props from parent
   const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
   
@@ -1244,57 +1244,25 @@ export default function DataMerge({ CardHeader, pricingProps, onSnapshotChange, 
 
       {/* Action Bar */}
       {template && fields.length > 0 && totalRecords > 0 && (
-        <div className="price-bar" style={{ position: "sticky", bottom: 0, zIndex: 50 }}>
-          <div className="price-bar-inner price-bar-green" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-            <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
-              <div className="price-metric">
-                <div className="price-metric-label">Records</div>
-                <div className="price-metric-val">{totalRecords}</div>
-              </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Paper</div>
-                <div className="price-metric-val" style={{ fontSize: 12 }}>
-                  {paperTypes.find(p => p.key === selectedPaperKey)?.label || "—"} · {selectedSheetKey}
-                </div>
-              </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Per sheet</div>
-                <div className="price-metric-val" style={{ fontSize: 12 }}>${perSheetPrice.toFixed(2)}</div>
-              </div>
-              {hasPricing && (
-                <div className="price-metric">
-                  <div className="price-metric-label">Estimated total</div>
-                  <div className="price-metric-val" style={{ color: "var(--green)", fontSize: 20 }}>${totalPrice.toFixed(2)}</div>
-                </div>
-              )}
-            </div>
-            <div className="price-bar-action-col">
-              <div className="price-bar-actions">
-                <button
-                  className="pc-btn pc-btn-ghost"
-                  disabled={generating}
-                  onClick={handleGenerate}
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  <DownloadIcon />
-                  {generating ? "Generating..." : `Download ${totalRecords} Records`}
-                </button>
-                <button
-                  type="button"
-                  data-tour="datamerge-complete-sale"
-                  className="pc-btn pc-btn-complete-sale is-primary-action"
-                  onClick={onCompleteSale}
-                  disabled={!completeSaleEnabled}
-                  title={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
-                >
-                  ✓ Complete Sale
-                </button>
-              </div>
-              <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
-            </div>
-          </div>
-        </div>
-      )}
+        PriceBar && (
+        <PriceBar
+          completeSaleTour="datamerge-complete-sale"
+          accentClass="price-bar-green"
+          totalClass="is-total-green"
+          metrics={[
+            { label:"Records",   value: totalRecords },
+            { label:"Paper",     value: `${paperTypes.find(p => p.key === selectedPaperKey)?.label || "—"} · ${selectedSheetKey}` },
+            { label:"Per sheet", value: `$${perSheetPrice.toFixed(2)}` },
+            ...(hasPricing ? [{ label:"Estimated total", value: `$${totalPrice.toFixed(2)}`, big:true }] : []),
+          ]}
+          onDownload={handleGenerate}
+          downloadLabel={generating ? "Generating..." : `Download ${totalRecords} Records`}
+          downloadDisabled={generating}
+          onCompleteSale={onCompleteSale}
+          completeSaleEnabled={completeSaleEnabled}
+          completeSaleHint={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+        />
+      ))}
     </>
   );
 }

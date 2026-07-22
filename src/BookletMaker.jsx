@@ -457,7 +457,7 @@ const PrintIcon = () => (
 
 // ── COMPONENT ──────────────────────────────────────────────
 
-export default function BookletMaker({ CardHeader, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
+export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
   // Pricing props from parent
   const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
   
@@ -1306,65 +1306,28 @@ export default function BookletMaker({ CardHeader, pricingProps, onSnapshotChang
         </div>
       )}
       
-      {/* Action Bar */}
-      {totalPages > 0 && (
-        <div className="price-bar" style={{ position: "sticky", bottom: 0, zIndex: 50 }}>
-          <div className="price-bar-inner price-bar-green" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-            <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
-              <div className="price-metric">
-                <div className="price-metric-label">Sheets</div>
-                <div className="price-metric-val">{numSheets}</div>
-              </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Finished</div>
-                <div className="price-metric-val">{preset.finishedW}×{preset.finishedH}"</div>
-              </div>
-              <div className="price-metric">
-                <div className="price-metric-label">Paper</div>
-                <div className="price-metric-val" style={{ fontSize: 12 }}>{availablePapers.find(p=>p.key===selectedPaperKey)?.label || "—"}</div>
-              </div>
-              {hasPricing && (
-                <div className="price-metric">
-                  <div className="price-metric-label">Estimated total</div>
-                  <div className="price-metric-val" style={{ color: "var(--green)", fontSize: 20 }}>${totalPrice.toFixed(2)}</div>
-                </div>
-              )}
-            </div>
-            <div className="price-bar-action-col">
-              <div className="price-bar-actions">
-                <button
-                  className="pc-btn pc-btn-ghost"
-                  disabled={generating || !withinPaperSize}
-                  onClick={handlePrint}
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  <PrintIcon />
-                  Print
-                </button>
-                <button
-                  className="pc-btn pc-btn-ghost"
-                  disabled={generating || !withinPaperSize}
-                  onClick={handleGenerate}
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  <DownloadIcon />
-                  {generating ? "Generating..." : "Download PDF"}
-                </button>
-                <button
-                  type="button"
-                  data-tour="booklet-complete-sale"
-                  className="pc-btn pc-btn-complete-sale is-primary-action"
-                  onClick={onCompleteSale}
-                  disabled={!completeSaleEnabled}
-                  title={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
-                >
-                  ✓ Complete Sale
-                </button>
-              </div>
-              <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
-            </div>
-          </div>
-        </div>
+      {/* Action Bar — shared PriceBar (Phase 2 migration) */}
+      {totalPages > 0 && PriceBar && (
+        <PriceBar
+          completeSaleTour="booklet-complete-sale"
+          accentClass="price-bar-green"
+          totalClass="is-total-green"
+          metrics={[
+            { label:"Sheets",   value: numSheets },
+            { label:"Finished", value: `${preset.finishedW}×${preset.finishedH}"` },
+            { label:"Paper",    value: availablePapers.find(p=>p.key===selectedPaperKey)?.label || "—" },
+            ...(hasPricing ? [{ label:"Estimated total", value: `$${totalPrice.toFixed(2)}`, big:true }] : []),
+          ]}
+          onOrder={handlePrint}
+          orderLabel="Print"
+          orderDisabled={generating || !withinPaperSize}
+          onDownload={handleGenerate}
+          downloadLabel={generating ? "Generating..." : "Download PDF"}
+          downloadDisabled={generating || !withinPaperSize}
+          onCompleteSale={onCompleteSale}
+          completeSaleEnabled={completeSaleEnabled}
+          completeSaleHint={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+        />
       )}
     </>
   );
