@@ -805,16 +805,23 @@ function Collapsible({ id, label = "More options", defaultOpen = false, children
 // `anchor` is the tab's Phase-1 step-1 card data-tour id (scroll + pulse).
 const PRODUCT_PRESETS = [
   { id:"flyers",    label:"Flyers",         emoji:"🖨", accent:"var(--teal)",   anchor:"paper-setup-card",
-    cfg:{ tab:"paper", paperKey:"20lb", sheetKey:"8.5x11", colorMode:"color", backEnabled:false, printW:8.5, printH:11, quantity:100 } },
+    cfg:{ tab:"paper", paperKey:"20lb", sheetKey:"8.5x11", colorMode:"color", backEnabled:false, printW:8.5, printH:11, quantity:100,
+      orientation:"portrait", perSheetCap:null } },
   { id:"photos",    label:"Photos",         emoji:"📷", accent:"var(--teal)",   anchor:"paper-setup-card",
     // No dedicated photo stock exists in pricing.json — 100 LB Text Gloss
     // (100t) is the store's photo paper, same as the training scenario.
-    cfg:{ tab:"paper", paperKey:"100t", sheetKey:"8.5x11", colorMode:"color", backEnabled:false, printW:4, printH:6, quantity:20 } },
+    // perSheetCap:null resets a leftover 1-per-sheet cap that would
+    // otherwise silently ~4x the sheet count for 4×6s.
+    cfg:{ tab:"paper", paperKey:"100t", sheetKey:"8.5x11", colorMode:"color", backEnabled:false, printW:4, printH:6, quantity:20,
+      orientation:"portrait", perSheetCap:null } },
   { id:"bizcards",  label:"Business Cards", emoji:"💼", accent:"var(--teal)",   anchor:"paper-setup-card",
-    cfg:{ tab:"paper", paperKey:"110c", sheetKey:"8.5x11", colorMode:"color", backEnabled:true, printW:3.5, printH:2, quantity:250 } },
+    // backColorMode:"color" so a prior job's B&W back can't mis-quote a
+    // color-both-sides card.
+    cfg:{ tab:"paper", paperKey:"110c", sheetKey:"8.5x11", colorMode:"color", backEnabled:true, backColorMode:"color", printW:3.5, printH:2, quantity:250,
+      orientation:"portrait", perSheetCap:null } },
   { id:"posters",   label:"Posters",        emoji:"🖼", accent:"var(--amber)",  anchor:"lf-setup-card",
     // grommetQty:0 explicitly clears grommets left on by a prior banner job.
-    cfg:{ tab:"large", lfWidth:24, lfHeight:36, lfPaperKey:"hp_gloss_photo", grommetQty:0 } },
+    cfg:{ tab:"large", lfWidth:24, lfHeight:36, lfPaperKey:"hp_gloss_photo", lfColorMode:"color", grommetQty:0 } },
   { id:"banners",   label:"Banners",        emoji:"🎌", accent:"var(--purple)", anchor:"specialty-setup-card",
     // Explicit option defaults: the same-category/same-product prefill path
     // MERGES options over current state, so a prior rush/pole-pocket choice
@@ -3241,11 +3248,19 @@ try {
     if (cfg.sheetKey)            setSheetKey(cfg.sheetKey);
     if (cfg.colorMode)           setFrontColorMode(cfg.colorMode);
     if (cfg.backEnabled != null) setShowBack(!!cfg.backEnabled);
+    // Additive sticky-state fields (product tiles): omitted → untouched,
+    // exactly the pre-existing behavior. Reset values mirror each state's
+    // initializer: orientation "portrait", backColorMode "bw",
+    // perSheetCap null (= max fit — meaningful, so presence-checked).
+    if (cfg.orientation)         setOrientation(cfg.orientation);
+    if (cfg.backColorMode)       setBackColorMode(cfg.backColorMode);
+    if ("perSheetCap" in cfg)    setPerSheetCap(cfg.perSheetCap);
 
     // Large Format
     if (cfg.lfWidth   != null) setLfWidth(Number(cfg.lfWidth));
     if (cfg.lfHeight  != null) setLfHeight(Number(cfg.lfHeight));
     if (cfg.lfPaperKey)        setLfPaperKey(cfg.lfPaperKey);
+    if (cfg.lfColorMode)       setLfColorMode(cfg.lfColorMode); // initializer default "color"
     if (cfg.grommetQty != null && cfg.grommetQty > 0) {
       setLfGrommets(true);
       setLfGrommetCount(Number(cfg.grommetQty));
