@@ -3581,7 +3581,7 @@ try {
   // ─── RENDER ─────────────────────────────────────────────
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${KIOSK_MODE ? "kiosk-root" : ""} ${KIOSK_MODE && kioskAttract ? "kiosk-attract" : ""}`}>
 
       {/* ── HEADER ──────────────────────────────────────── */}
       <header className="app-header">
@@ -3671,9 +3671,24 @@ try {
         </div>
       </header>
 
+      {/* ── KIOSK WELCOME BANNER ────────────────────────── */}
+      {KIOSK_MODE && (
+        <div className="kiosk-welcome">
+          <div className="kiosk-welcome-title">Get an instant price</div>
+          <div className="kiosk-welcome-sub">Pick a product below to start</div>
+        </div>
+      )}
+
       {/* ── PRODUCT-FIRST ENTRY TILES ───────────────────── */}
+      {/* Kiosk renders the strip unwrapped (the skin hides every collapsible)
+          and filters presets to the customer-visible tabs, so Booklets/impose
+          drops out without hardcoding its id. */}
       {viewMode === "tool" && (
-        <ProductTiles onPick={(t) => { applyScenario(t.cfg); pulseSetupCard(t.anchor); }} />
+        <ProductTiles
+          onPick={(t) => { applyScenario(t.cfg); pulseSetupCard(t.anchor); }}
+          bare={KIOSK_MODE}
+          presets={KIOSK_MODE ? PRODUCT_PRESETS.filter(p => KIOSK_TABS.includes(p.cfg.tab)) : PRODUCT_PRESETS}
+        />
       )}
 
       {/* ── SERVICE TABS ────────────────────────────────── */}
@@ -3688,7 +3703,7 @@ try {
   { id:"specialty", label:"Specialty",       icon:<Icon.Sign />,    pill:"🪧",  pillBg:"#f3e8ff", activeColor:"var(--purple)" },
   { id:"impose",    label:"Impose",          icon:<BookletIcon />,  pill:"📖",  pillBg:"#dcfce7", activeColor:"var(--green)" },
   ...(isSupabaseConfigured ? [{ id:"queue", label:"Print Queue", icon:<Icon.Send />, pill:"📥", pillBg:"#e0f4f7", activeColor:"var(--teal)", badge: queueCount }] : []),
-].map(tab => (
+].filter(tab => !KIOSK_MODE || KIOSK_TABS.includes(tab.id)).map(tab => (
               <button
                 key={tab.id}
                 data-tour={`tab-${tab.id}`}
@@ -3705,6 +3720,8 @@ try {
       </nav>
 
       {/* ── ORDER-FOR CUSTOMER BAR (visible on every tab) ── */}
+      {/* Staff-only: the kiosk collects name/phone in its submit sheet. */}
+      {!KIOSK_MODE && (
       <div className="order-customer-bar" data-tour="order-customer">
         <div className="order-customer-inner">
           <span className="order-customer-label">Order for</span>
@@ -3731,8 +3748,23 @@ try {
           )}
         </div>
       </div>
+      )}
 
       <div className="content-wrap">
+
+        {/* Inline file-intake error (corrupt/unreadable upload) — replaces
+            the old silent failure; kiosk copy adds "ask at the counter". */}
+        {intakeError && (
+          <div className="callout callout-warn kiosk-intake-error" style={{ marginBottom:14 }} role="alert">
+            <span className="callout-icon"><Icon.Warn /></span>
+            <span style={{ flex:1 }}>{intakeError}</span>
+            <button
+              type="button"
+              className="pc-btn pc-btn-secondary pc-btn-xs"
+              onClick={() => setIntakeError("")}
+            >Dismiss</button>
+          </div>
+        )}
 
         {/* ════════════════════════════════════════
             QUICK QUOTE VIEW
@@ -3836,6 +3868,20 @@ try {
               )}
 
               {adminView === "pricing" && (<>
+              {/* Kiosk / customer self-serve mode. Reloads into ?mode=kiosk;
+                  exit is the hidden 5-tap-on-logo → staff PIN gesture. */}
+              <div className="callout callout-info" style={{ marginBottom:16, alignItems:"center" }}>
+                <span className="callout-icon">🖥️</span>
+                <span style={{ flex:1 }}>
+                  <strong>Customer Kiosk mode</strong> — a self-serve skin for the counter tablet.
+                  Exit by tapping the store logo 5 times, then entering any employee PIN.
+                </span>
+                <button
+                  type="button"
+                  className="pc-btn pc-btn-primary pc-btn-sm"
+                  onClick={enterKioskMode}
+                >Enter Kiosk Mode</button>
+              </div>
               <p style={{ fontSize:12, color:"var(--text-muted)", marginBottom:16 }}>
                 Settings are stored in localStorage. Export to <code>pricing.json</code> and place in <code>public/</code> to deploy universally.
               </p>
@@ -4275,7 +4321,7 @@ try {
         ════════════════════════════════════════ */}
         {activeTab==="paper" && viewMode==="tool" && (
           <>
-            {quickStartChips.length > 0 && (
+            {!KIOSK_MODE && quickStartChips.length > 0 && (
               <div className="quick-start" data-tour="quick-start">
                 <span className="quick-start-label">Quick start</span>
                 <div className="quick-start-chips">
@@ -4299,6 +4345,7 @@ try {
                 </div>
               </div>
             )}
+            {!KIOSK_MODE && (
             <TicketBar
               ticket={ticket}
               ticketLines={ticketLines}
@@ -4312,6 +4359,7 @@ try {
               onAdd={addJobToTicket}
               onRemove={removeJobFromTicket}
             />
+            )}
 
             {/* Step 1 — Print Setup */}
             <div className="pc-card" data-tour="paper-setup-card">
@@ -4743,6 +4791,11 @@ try {
               onCompleteSale={requestCompleteSale}
               completeSaleEnabled={!!currentEmployee && (ticketTotal > 0 || totalPrice > 0)}
               completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
+              kioskAction={KIOSK_MODE ? {
+                label: "Send to counter",
+                onClick: openKioskSheet,
+                disabled: !((ticket.length > 1 ? ticketTotal : (activeLine?.lineTotal ?? totalPrice)) > 0),
+              } : null}
             />
           </>
         )}
@@ -4752,7 +4805,7 @@ try {
         ════════════════════════════════════════ */}
         {activeTab==="large" && viewMode==="tool" && (
           <>
-            {lfQuickStartChips.length > 0 && (
+            {!KIOSK_MODE && lfQuickStartChips.length > 0 && (
               <div className="quick-start" data-tour="lf-quick-start">
                 <span className="quick-start-label">Quick start</span>
                 <div className="quick-start-chips">
@@ -4966,6 +5019,11 @@ try {
               onCompleteSale={requestCompleteSale}
               completeSaleEnabled={!!currentEmployee && lfTotalWithDiscount > 0 && lfFiles.length>0}
               completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
+              kioskAction={KIOSK_MODE ? {
+                label: "Send to counter",
+                onClick: openKioskSheet,
+                disabled: !(lfTotalWithDiscount > 0),
+              } : null}
             />
           </>
         )}
@@ -5054,6 +5112,11 @@ try {
               onCompleteSale={requestCompleteSale}
               completeSaleEnabled={!!currentEmployee && bpTotal > 0}
               completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
+              kioskAction={KIOSK_MODE ? {
+                label: "Send to counter",
+                onClick: openKioskSheet,
+                disabled: !(bpTotal > 0),
+              } : null}
             />
           </>
         )}
@@ -5063,8 +5126,9 @@ try {
         ════════════════════════════════════════ */}
         {activeTab==="specialty" && viewMode==="tool" && (
           <SpecialtyTab
+            key={KIOSK_MODE ? `kiosk-${specialtyResetKey}` : "staff"}
             CardHeader={CardHeader}
-            PriceBar={PriceBar}
+            PriceBar={KIOSK_MODE ? KioskPriceBar : PriceBar}
             PriceDelta={PriceDelta}
             onSnapshotChange={setChildSnapshot}
             currentEmployee={currentEmployee}
@@ -5100,6 +5164,7 @@ try {
 
       <MobileNumberBar open={numBarOpen} onDone={blurActive} onClear={clearActive} onNudge={nudgeActive} />
 
+      {!KIOSK_MODE && (
       <TrainingDrawer
         onApplyScenario={applyScenario}
         liveState={{
@@ -5134,6 +5199,26 @@ try {
           previewMargin, previewSpacing,
         }}
       />
+      )}
+
+      {/* ── KIOSK: hidden staff-exit PIN prompt (5 logo taps) ── */}
+      {KIOSK_MODE && showKioskExit && (
+        <KioskExitDialog
+          onExit={exitKioskMode}
+          onCancel={() => setShowKioskExit(false)}
+        />
+      )}
+
+      {/* ── KIOSK: "Send to counter" submit sheet ── */}
+      {KIOSK_MODE && kioskSheet && (
+        <KioskSubmitSheet
+          snapshot={kioskSheet.snapshot}
+          seedFiles={kioskSheet.seedFiles}
+          buildNotes={kioskQuoteSummary}
+          onClose={() => setKioskSheet(null)}
+          onDone={kioskFullReset}
+        />
+      )}
 
       {pendingSaveJob && (
         <SaveJobDialog
@@ -5180,6 +5265,221 @@ try {
 
       {savedJobToast && <div className="pc-toast">{savedJobToast}</div>}
 
+    </div>
+  );
+}
+
+// ─── KIOSK: STAFF-EXIT PIN DIALOG ──────────────────────────
+// Reached only via the hidden 5-tap-on-logo gesture. Verifies the PIN
+// against the employees table WITHOUT signing anyone in (a customer must
+// never leave a staffer logged in), then strips ?mode=kiosk and reloads.
+function KioskExitDialog({ onExit, onCancel }) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (busy) return;
+    setErr("");
+    setBusy(true);
+    try {
+      const emp = await findEmployeeByPin(pin.trim());
+      if (emp) { onExit(); return; } // navigates away; no state to restore
+      setErr("That PIN wasn't recognized.");
+      setPin("");
+    } catch {
+      setErr("Couldn't verify right now. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !busy && onCancel()}>
+      <form className="pc-dialog kiosk-exit-dialog" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="pc-dialog-title">Staff exit</div>
+        <div className="pc-dialog-sub">Enter your employee PIN to leave kiosk mode.</div>
+        <input
+          className="pc-input"
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          autoFocus
+          value={pin}
+          onChange={e => setPin(e.target.value)}
+          placeholder="PIN"
+          style={{ marginTop: 12, textAlign: "center", letterSpacing: "0.3em", fontSize: 20 }}
+        />
+        {err && <div className="callout callout-warn" style={{ marginTop: 10 }}><span className="callout-icon">⚠</span>{err}</div>}
+        <div className="pc-dialog-actions" style={{ marginTop: 16 }}>
+          <button type="button" className="pc-btn pc-btn-secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="submit" className="pc-btn pc-btn-primary" disabled={busy || pin.trim().length < 3}>
+            {busy ? "Checking…" : "Exit kiosk"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ─── KIOSK: "SEND TO COUNTER" SUBMIT SHEET ─────────────────
+// Customer-facing. Collects a first name (required) + phone (optional),
+// requires at least one file (seeded from the tab's preview, plus an
+// inline dropzone), uploads via the same start-upload → uploadToSignedUrl
+// → register-job path as /upload, then shows a queue number. name/phone
+// live in this component so every unmount clears them (privacy). All
+// failures surface inline — never alert().
+function KioskSubmitSheet({ snapshot, seedFiles = [], buildNotes, onClose, onDone }) {
+  const [name, setName]   = useState("");
+  const [phone, setPhone] = useState("");
+  const [files, setFiles] = useState(() => seedFiles.map((f, i) => ({ id: `seed_${i}`, file: f.file, name: f.name })));
+  const [busy, setBusy]   = useState(false);
+  const [status, setStatus] = useState("");
+  const [err, setErr]     = useState("");
+  const [done, setDone]   = useState(null); // { queueNumber }
+  const fileInputRef = useRef(null);
+
+  // Confirmation auto-reset after 20s so the next customer starts clean.
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => onDone(), 20_000);
+    return () => clearTimeout(t);
+  }, [done]);
+
+  const addFiles = (picked) => {
+    const list = Array.from(picked || []).filter(Boolean);
+    if (!list.length) return;
+    const tooBig = list.filter(f => f.size > KIOSK_MAX_BYTES).map(f => f.name);
+    const okFiles = list.filter(f => f.size <= KIOSK_MAX_BYTES);
+    setErr(tooBig.length ? `${tooBig.join(", ")} — too large (max 50 MB each).` : "");
+    setFiles(prev => [...prev, ...okFiles.map((f, i) => ({ id: `add_${Date.now()}_${i}`, file: f, name: f.name }))]);
+  };
+  const removeFile = (id) => setFiles(prev => prev.filter(f => f.id !== id));
+
+  const canSend = !busy && name.trim() && files.length > 0;
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!canSend) return;
+    setErr("");
+    setBusy(true);
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        throw new Error("Sending isn't available right now — please ask at the counter.");
+      }
+      const fileRecords = [];
+      for (let i = 0; i < files.length; i++) {
+        const item = files[i];
+        setStatus(`Uploading ${i + 1} of ${files.length}…`);
+        const { path, token } = await callQueueFn("start-upload", {
+          fileName: item.name, fileType: item.file?.type || "application/octet-stream",
+        });
+        const { error: upErr } = await supabase.storage
+          .from(KIOSK_UPLOAD_BUCKET)
+          .uploadToSignedUrl(path, token, item.file);
+        if (upErr) throw new Error(upErr.message || "Upload failed. Please try again.");
+        fileRecords.push({ name: item.name, path, type: item.file?.type || "application/octet-stream" });
+      }
+      setStatus("Adding you to the queue…");
+      const notes = buildNotes(snapshot, files.map(f => f.name), phone.trim());
+      const { job } = await callQueueFn("register-job", {
+        customerName: name.trim(), notes, source: "kiosk", files: fileRecords,
+      });
+      setDone({ queueNumber: job.queue_number });
+    } catch (e2) {
+      setErr(e2?.message || String(e2));
+    } finally {
+      setBusy(false);
+      setStatus("");
+    }
+  };
+
+  if (done) {
+    return (
+      <div className="pc-dialog-backdrop" role="dialog" aria-modal="true">
+        <div className="pc-dialog kiosk-sheet kiosk-confirm" onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize: 52, textAlign: "center" }}>✅</div>
+          <div className="pc-dialog-title" style={{ textAlign: "center" }}>You're in the queue!</div>
+          <div className="kiosk-queue-number">#{done.queueNumber}</div>
+          <div className="pc-dialog-sub" style={{ textAlign: "center" }}>
+            Show this number at the counter — we'll take it from here.
+          </div>
+          <div className="pc-dialog-actions" style={{ justifyContent: "center", marginTop: 18 }}>
+            <button type="button" className="pc-btn pc-btn-primary kiosk-send-btn" onClick={onDone}>Start a new order</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !busy && onClose()}>
+      <form className="pc-dialog kiosk-sheet" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="pc-dialog-title">Send this quote to the counter</div>
+        <div className="pc-dialog-summary" style={{ marginTop: 6, marginBottom: 14 }}>
+          <span>Estimated total: <strong>${Number(snapshot?.total || 0).toFixed(2)}</strong></span>
+        </div>
+
+        <label className="field-label">Your first name</label>
+        <input
+          className="pc-input kiosk-input"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="First name"
+          autoFocus
+        />
+
+        <label className="field-label" style={{ marginTop: 12 }}>Phone (optional)</label>
+        <input
+          className="pc-input kiosk-input"
+          type="tel"
+          value={phone}
+          onChange={e => setPhone(e.target.value)}
+          placeholder="So we can text you when it's ready"
+        />
+
+        <label className="field-label" style={{ marginTop: 12 }}>Files ({files.length})</label>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={KIOSK_ACCEPT}
+          style={{ display: "none" }}
+          onChange={e => { addFiles(e.target.files); e.target.value = ""; }}
+        />
+        <div
+          className="kiosk-dropzone"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
+        >
+          <div className="kiosk-dropzone-icon">📎</div>
+          <div>Tap to add your file{files.length ? "s" : ""}</div>
+          <div className="upload-sub">PNG, JPG, PDF, Office docs · up to 50 MB</div>
+        </div>
+        {files.length > 0 && (
+          <div className="kiosk-file-list">
+            {files.map(f => (
+              <div key={f.id} className="kiosk-file-row">
+                <span className="kiosk-file-name" title={f.name}>{f.name}</span>
+                <button type="button" className="pc-btn pc-btn-secondary pc-btn-xs" onClick={() => removeFile(f.id)} disabled={busy}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {files.length === 0 && (
+          <div className="pc-card-hint" style={{ marginTop: 8 }}>Add at least one file so we can print your order.</div>
+        )}
+
+        {err && <div className="callout callout-warn" style={{ marginTop: 12 }}><span className="callout-icon">⚠</span>{err}</div>}
+        {busy && status && <div className="pc-card-hint" style={{ marginTop: 12 }}>{status}</div>}
+
+        <div className="pc-dialog-actions" style={{ marginTop: 18 }}>
+          <button type="button" className="pc-btn pc-btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="pc-btn pc-btn-primary kiosk-send-btn" disabled={!canSend}>
+            {busy ? "Sending…" : "Send to counter"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

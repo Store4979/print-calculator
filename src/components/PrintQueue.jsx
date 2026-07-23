@@ -227,6 +227,7 @@ export default function PrintQueue({ onSendToCalculator }) {
                   <span className="queue-name">{job.customer_name}</span>
                   <span className="queue-wait">{minutesWaiting(job.created_at)}</span>
                   {job.source === "link" && <span className="queue-tag">link</span>}
+                  {job.source === "kiosk" && <span className="queue-tag queue-tag-kiosk">🖥️ Kiosk</span>}
                 </div>
 
                 {job.notes && <div className="queue-notes">“{job.notes}”</div>}

@@ -3448,3 +3448,112 @@ body {
   60%  { box-shadow: 0 0 0 10px rgba(0, 129, 152, 0.12); }
   100% { box-shadow: 0 0 0 0 rgba(0, 129, 152, 0); }
 }
+
+/* ══════════════════════════════════════════════════════════
+   KIOSK MODE — customer self-serve skin (.kiosk-root)
+   Scoped entirely under .kiosk-root so staff mode is untouched.
+   ══════════════════════════════════════════════════════════ */
+.kiosk-root {
+  /* Bigger touch targets and type for a walk-up tablet. */
+  --touch-target: 56px;
+  --fs-sm: 15px;
+  --fs-base: 16px;
+  --fs-md: 18px;
+  --fs-lg: 22px;
+  --fs-xl: 28px;
+}
+.kiosk-root .pc-btn { min-height: var(--touch-target); }
+.kiosk-root .pc-input,
+.kiosk-root .pc-select { min-height: var(--touch-target); font-size: var(--fs-md); }
+
+/* Hide any in-card progressive-disclosure collapsibles — a customer sees
+   the essentials only. The product-tiles strip is rendered UNWRAPPED in
+   kiosk (bare), so it is unaffected by this rule. */
+.kiosk-root .pc-card .pc-collapsible { display: none; }
+
+/* Welcome banner */
+.kiosk-welcome {
+  text-align: center;
+  padding: 22px 16px 6px;
+}
+.kiosk-welcome-title {
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  color: var(--text);
+}
+.kiosk-welcome-sub {
+  font-size: var(--fs-md);
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* Single customer-facing action button on the price bar */
+.kiosk-send-btn {
+  min-height: var(--touch-target);
+  font-size: var(--fs-md);
+  font-weight: 800;
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+/* 60s attractor: gently pulse the product tiles to invite a touch */
+.kiosk-attract .product-tiles-wrap {
+  animation: kioskAttract 1.8s ease-in-out infinite;
+}
+@keyframes kioskAttract {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.015); }
+}
+
+/* Intake-error callout gets a touch more presence on the kiosk */
+.kiosk-intake-error { align-items: center; }
+
+/* ── Kiosk submit sheet + exit dialog ── */
+.kiosk-sheet {
+  max-width: 460px;
+  width: 100%;
+}
+.kiosk-input { font-size: var(--fs-md); }
+.kiosk-dropzone {
+  margin-top: 8px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 20px 14px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: border-color 0.15s, background 0.15s;
+}
+.kiosk-dropzone:hover { border-color: var(--teal); background: var(--teal-light); }
+.kiosk-dropzone-icon { font-size: 30px; }
+.kiosk-file-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.kiosk-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2, #f4f6f8);
+  border-radius: 8px;
+  padding: 6px 8px 6px 12px;
+}
+.kiosk-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+.kiosk-confirm { text-align: center; }
+.kiosk-queue-number {
+  font-size: 46px;
+  font-weight: 900;
+  color: var(--teal);
+  text-align: center;
+  margin: 6px 0;
+}
+.kiosk-exit-dialog { max-width: 360px; }
+
+/* Kiosk source chip on staff queue cards */
+.queue-tag-kiosk {
+  color: var(--purple, #7c3aed);
+  background: #f3e8ff;
+}
