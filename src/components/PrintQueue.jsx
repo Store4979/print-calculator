@@ -37,7 +37,7 @@ const minutesWaiting = (createdAt) => {
 const fileIcon = (type = "") =>
   type === "application/pdf" ? "📄" : type.startsWith("image/") ? "🖼️" : "📑";
 
-export default function PrintQueue({ onSendToCalculator }) {
+export default function PrintQueue({ onSendToCalculator, storeName = "The UPS Store #4979" }) {
   const [jobs, setJobs]     = useState([]);
   const [loading, setLoad]  = useState(true);
   const [error, setError]   = useState("");
@@ -177,7 +177,7 @@ export default function PrintQueue({ onSendToCalculator }) {
        <h2>Send us your file to print</h2>
        <img src="${qrUrl}" style="width:380px;height:380px;" />
        <p style="font-size:18px;font-weight:bold;">${uploadUrl}</p>
-       <p>The UPS Store #4979</p>
+       <p>${storeName}</p>
        <script>window.onload=function(){window.print();}</script>
        </body></html>`
     );

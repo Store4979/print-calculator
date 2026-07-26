@@ -30,6 +30,11 @@ import {
   computeCommission, saveTransactionWithFallback, drainPendingTransactions,
   loadPendingTransactions,
 } from "./lib/commissions.js";
+import {
+  fetchStoreConfig, publishStoreConfig,
+  getSession, onAuthChange, getRoleForSession, isAdminRole, signOut,
+} from "./lib/storeConfig.js";
+import AdminLogin from "./components/AdminLogin.jsx";
 
 // ─── CONSTANTS ──────────────────────────────────────────────
 
@@ -1258,6 +1263,22 @@ function PriceCalculatorApp() {
   const [savedJobToast, setSavedJobToast] = useState("");
   const [isAdmin, setIsAdmin]       = useState(false);
 
+  // ── Store profile (Phase A) ──
+  // Defaults to the hard-coded UPS block so the app renders instantly;
+  // fetchStoreConfig() replaces it from Supabase on boot (and mutates the
+  // module-level UPS_STORE so the PDF/email helpers pick it up too).
+  const [storeProfile, setStoreProfile] = useState(() => ({ ...UPS_STORE, logo: UPS_LOGO_DATA_URL }));
+
+  // ── Admin auth (Phase A) ──
+  // Real Supabase Auth for the admin panel, replacing the client-side
+  // password prompt. `authRole` is the signed-in user's role at this store
+  // (owner/manager/staff/null). isAdmin is derived: owner/manager only.
+  const [authSession, setAuthSession] = useState(null);
+  const [authRole, setAuthRole]       = useState(null);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [publishing, setPublishing]   = useState(false);
+  const [publishMsg, setPublishMsg]   = useState("");
+
   // Snapshot reported up by the Specialty / Booklet / Data-Merge child tabs
   // so the shared Complete Sale pipeline can log their sales. Shape matches
   // what buildSaleSnapshot() returns for the built-in tabs.
@@ -1588,11 +1609,10 @@ function PriceCalculatorApp() {
 
 // ── Load pricing.json ──
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/pricing.json", { cache:"no-store" });
-        if (!res.ok) return;
-        const json = await res.json();
+    // Apply a pricing.json-shaped config object to state + the localStorage
+    // cache. Used for BOTH the Supabase config and the pricing.json fallback
+    // so the field-mapping lives in exactly one place.
+    const applyConfigJson = (json) => {
         if (json.paperTypes)       { setPaperTypes(json.paperTypes);       localStorage.setItem(LS.PAPER_TYPES, JSON.stringify(json.paperTypes)); }
         if (json.sheetKeysForPaper){ setSheetKeysForPaper(json.sheetKeysForPaper); localStorage.setItem(LS.SHEET_KEYS, JSON.stringify(json.sheetKeysForPaper)); }
         if (json.lfPaperTypes)     { setLfPaperTypes(json.lfPaperTypes);   localStorage.setItem(LS.LF_PAPER_TYPES, JSON.stringify(json.lfPaperTypes)); }
@@ -1619,10 +1639,79 @@ function PriceCalculatorApp() {
         if (json.blueprintPricing) { setBpPricing(json.blueprintPricing); localStorage.setItem(LS.BP_PRICING, JSON.stringify(json.blueprintPricing)); }
         if (typeof json.previewMargin==="number")  setPreviewMargin(json.previewMargin);
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
+        if (json.skuMap && typeof json.skuMap === "object") setSkuMap(json.skuMap);
         if (json.upsellFlags && typeof json.upsellFlags === "object") setUpsellFlags(json.upsellFlags);
         if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
+    };
+
+    // Apply the store profile: React state (drives the header) + the
+    // module-level UPS_STORE / logo consumed by the PDF + email helpers.
+    const applyStoreProfile = (p) => {
+      if (!p) return;
+      setStoreProfile((prev) => ({ ...prev, ...p }));
+      if (p.name)    UPS_STORE.name    = p.name;
+      if (p.address) UPS_STORE.address = p.address;
+      if (p.phone)   UPS_STORE.phone   = p.phone;
+      if (p.email)   UPS_STORE.email   = p.email;
+      if (p.logo && p.logo !== UPS_LOGO_DATA_URL) {
+        UPS_LOGO_DATA_URL = p.logo;   // reset cached PDF logo so it re-derives
+        UPS_LOGO_PDF_DATA_URL = null;
+      }
+    };
+
+    (async () => {
+      // 1) Supabase config is the source of truth (Phase A). On success we
+      //    also refresh the localStorage cache via applyConfigJson so the
+      //    next boot renders instantly even if Supabase is briefly down.
+      try {
+        const cfg = await fetchStoreConfig();
+        if (cfg && cfg.pricing
+            && Array.isArray(cfg.pricing.paperTypes) && cfg.pricing.paperTypes.length
+            && cfg.pricing.sheetPricing && Object.keys(cfg.pricing.sheetPricing).length) {
+          applyConfigJson(cfg.pricing);
+          applyStoreProfile(cfg.storeProfile);
+          return;
+        }
+      } catch {}
+      // 2) Fallback: the bundled pricing.json (pre-Phase-A behavior, intact).
+      try {
+        const res = await fetch("/pricing.json", { cache:"no-store" });
+        if (!res.ok) return;
+        applyConfigJson(await res.json());
       } catch {}
     })();
+  }, []);
+
+  // ── Admin auth bootstrap (Phase A) ──
+  // Reads any persisted session, resolves the store role, and keeps both in
+  // sync on sign-in/out. isAdmin is owner/manager only — staff can sign in
+  // but do not get the admin panel.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let alive = true;
+
+    // Resolve role from a known session and sync admin state. Role-lookup
+    // failures leave the current admin state untouched (don't lock out an
+    // owner over a transient blip); an explicit non-admin role clears it.
+    const syncRole = async (session) => {
+      if (!alive) return;
+      setAuthSession(session);
+      if (!session) { if (alive) { setAuthRole(null); setIsAdmin(false); } return; }
+      try {
+        const role = await getRoleForSession(session);
+        if (!alive) return;
+        setAuthRole(role);
+        setIsAdmin(isAdminRole(role));
+      } catch { /* transient — keep whatever admin state we had */ }
+    };
+
+    (async () => { await syncRole(await getSession()); })();
+
+    // Supabase-js can deadlock if you call auth methods synchronously inside
+    // onAuthStateChange; getRoleForSession makes no auth call and we defer to
+    // a microtask via setTimeout(0) to stay safely outside the auth lock.
+    const off = onAuthChange((session) => { setTimeout(() => syncRole(session), 0); });
+    return () => { alive = false; off && off(); };
   }, []);
 
   // ── Derived: sheet dimensions ──
@@ -3433,17 +3522,55 @@ const handleFrontFiles = async (files) => {
   // ─── ADMIN ACTIONS ──────────────────────────────────────
 
   const handleAdminClick = () => {
-    if (!isAdmin) {
-      const pwd = window.prompt("Enter admin password");
-      if (pwd==="store4979") { setIsAdmin(true); setShowAdmin(true); }
-      else alert("Incorrect password.");
-    } else {
-      setShowAdmin(v => !v);
+    if (isAdmin) { setShowAdmin(v => !v); return; }
+    // Phase A: real Supabase Auth. When Supabase is configured the admin
+    // gate is the sign-in modal; the legacy password prompt only survives
+    // as a fallback so a misconfigured deploy can never lock staff out.
+    if (isSupabaseConfigured) { setShowAdminLogin(true); return; }
+    const pwd = window.prompt("Enter admin password");
+    if (pwd === "store4979") { setIsAdmin(true); setShowAdmin(true); }
+    else if (pwd !== null) alert("Incorrect password.");
+  };
+
+  const handleAdminSignOut = async () => {
+    await signOut();
+    setIsAdmin(false);
+    setShowAdmin(false);
+    setAuthRole(null);
+    setAuthSession(null);
+  };
+
+  // The single source of truth for the current price book, shaped like
+  // pricing.json. Used by both "Export pricing.json" and "Publish to Cloud".
+  const buildConfigJson = () => ({
+    paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing: pricing, lfPricing,
+    sheetQtyDiscounts: quantityDiscounts, lfQtyDiscounts: lfQuantityDiscounts,
+    sheetMarkupPerPaper: markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor,
+    lfAddonPricing, blueprintPricing: bpPricing, previewMargin, previewSpacing,
+    upsellFlags, signs365Pricing: signs365Overrides,
+  });
+
+  // Push the current in-memory price book + store profile to Supabase.
+  // RLS requires an authenticated owner/manager; publishStoreConfig throws
+  // a clear message otherwise. The pricing.json export stays as a backup.
+  const handlePublishToCloud = async () => {
+    if (publishing) return;
+    if (!window.confirm("Publish the current pricing to the cloud? This updates the live price book for this store.")) return;
+    setPublishing(true);
+    setPublishMsg("");
+    try {
+      await publishStoreConfig(buildConfigJson(), storeProfile);
+      setPublishMsg("✓ Published to cloud.");
+    } catch (e) {
+      setPublishMsg("⚠ " + (e?.message || String(e)));
+    } finally {
+      setPublishing(false);
+      setTimeout(() => setPublishMsg(""), 6000);
     }
   };
 
   const exportPricingJson = () => {
-    const json = { paperTypes, sheetKeysForPaper, lfPaperTypes, sheetPricing:pricing, lfPricing, sheetQtyDiscounts:quantityDiscounts, lfQtyDiscounts:lfQuantityDiscounts, sheetMarkupPerPaper:markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor, lfAddonPricing, blueprintPricing:bpPricing, previewMargin, previewSpacing, upsellFlags, signs365Pricing: signs365Overrides };
+    const json = buildConfigJson();
     const blob = new Blob([JSON.stringify(json,null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href=url; a.download="pricing.json";
@@ -3596,7 +3723,7 @@ try {
             </div>
             <div>
               <div className="header-logo-text-primary">Print Calculator</div>
-              <div className="header-logo-text-sub">The UPS Store #4979</div>
+              <div className="header-logo-text-sub">{storeProfile.name}</div>
             </div>
           </div>
           {!KIOSK_MODE && (
@@ -3846,7 +3973,15 @@ try {
         ════════════════════════════════════════ */}
         {isAdmin && showAdmin && (
           <div className="admin-section" style={{ marginBottom:16 }}>
-            <div className="admin-section-header">⚙️ Admin Panel</div>
+            <div className="admin-section-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+              <span>⚙️ Admin Panel</span>
+              {authSession?.user?.email && (
+                <span style={{ fontSize:12, fontWeight:400, display:"flex", alignItems:"center", gap:8 }}>
+                  <span title={`Role: ${authRole || "—"}`}>{authSession.user.email}{authRole ? ` · ${authRole}` : ""}</span>
+                  <button type="button" className="pc-btn pc-btn-secondary pc-btn-sm" onClick={handleAdminSignOut}>Sign out</button>
+                </span>
+              )}
+            </div>
             <div className="admin-section-body">
               <div className="admin-view-tabs">
                 <button
@@ -3883,15 +4018,30 @@ try {
                 >Enter Kiosk Mode</button>
               </div>
               <p style={{ fontSize:12, color:"var(--text-muted)", marginBottom:16 }}>
-                Settings are stored in localStorage. Export to <code>pricing.json</code> and place in <code>public/</code> to deploy universally.
+                Edits save instantly to this device. <strong>Publish to Cloud</strong> makes them the live price book for every device (Supabase). Export/Import <code>pricing.json</code> remains as a manual backup.
               </p>
-              <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:16 }}>
+              <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:8, alignItems:"center" }}>
+                {isSupabaseConfigured && (
+                  <button
+                    className="pc-btn pc-btn-primary pc-btn-sm"
+                    onClick={handlePublishToCloud}
+                    disabled={publishing || !isAdminRole(authRole)}
+                    title={isAdminRole(authRole) ? "Push current pricing to the cloud" : "Sign in as owner/manager to publish"}
+                  >
+                    {publishing ? "Publishing…" : "☁ Publish to Cloud"}
+                  </button>
+                )}
                 <button className="pc-btn pc-btn-secondary pc-btn-sm" onClick={exportPricingJson}>Export pricing.json</button>
                 <label className="pc-btn pc-btn-secondary pc-btn-sm" style={{ cursor:"pointer" }}>
                   Import pricing.json
                   <input type="file" accept="application/json" style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) importPricingJson(e.target.files[0]); e.target.value=""; }} />
                 </label>
               </div>
+              {publishMsg && (
+                <div style={{ fontSize:12, marginBottom:12, color: publishMsg.startsWith("✓") ? "var(--success, #157347)" : "var(--danger, #b02a37)" }}>
+                  {publishMsg}
+                </div>
+              )}
               <hr className="pc-divider" />
 
               {/* Upsell items */}
@@ -5157,7 +5307,7 @@ try {
             PANEL: PRINT QUEUE (customer self-serve uploads)
         ════════════════════════════════════════ */}
         {activeTab==="queue" && (
-          <PrintQueue onSendToCalculator={handleQueueFileToCalculator} />
+          <PrintQueue onSendToCalculator={handleQueueFileToCalculator} storeName={storeProfile.name} />
         )}
 
       </div>{/* /content-wrap */}
@@ -5243,6 +5393,13 @@ try {
         <EmployeeLogin
           onLogin={handleEmployeeLogin}
           onCancel={() => setShowEmployeeLogin(false)}
+        />
+      )}
+
+      {showAdminLogin && (
+        <AdminLogin
+          onClose={() => setShowAdminLogin(false)}
+          onSuccess={() => { setShowAdminLogin(false); setIsAdmin(true); setShowAdmin(true); }}
         />
       )}
 
