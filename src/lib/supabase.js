@@ -13,9 +13,18 @@ const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON);
 
+// Phase A: real admin auth (owner/manager sign-in) needs the session to
+// persist across reloads. This is safe for the counter tool — when no one
+// is signed in, requests use the anon key exactly as before, and every
+// existing table policy grants both `anon` and `authenticated`, so a
+// logged-in admin session does not change job/commission/employee access.
 export const supabase = isSupabaseConfigured
   ? createClient(SUPABASE_URL, SUPABASE_ANON, {
-      auth: { persistSession: false, autoRefreshToken: false },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        storageKey: "printcalc_auth_v1",
+      },
     })
   : null;
 

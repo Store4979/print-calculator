@@ -6,8 +6,16 @@
 //  signed upload tokens minted by Netlify functions; this page only
 //  ever uses the public anon key.
 // ============================================================
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabase.js";
+import { fetchStoreProfile } from "./lib/storeConfig.js";
+
+// Default profile — shown instantly and if Supabase is unreachable.
+const DEFAULT_PROFILE = {
+  name: "The UPS Store #4979",
+  address: "4352 Bay Road, Saginaw MI 48603",
+  phone: "989.790.9701",
+};
 
 const BUCKET = "customer-uploads";
 const MAX_BYTES = 50 * 1024 * 1024; // 50 MB per file
@@ -113,6 +121,21 @@ export default function UploadApp() {
   const [status, setStatus]   = useState("");    // progress line while sending
   const [error, setError]     = useState("");
   const [done, setDone]       = useState(null);  // { name, queueNumber }
+  const [profile, setProfile] = useState(DEFAULT_PROFILE); // store branding (Phase A)
+
+  // Load the store profile so this customer page is white-labelled from the
+  // DB rather than hard-coded. Falls back to DEFAULT_PROFILE on any failure.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const p = await fetchStoreProfile();
+      if (alive && p) {
+        setProfile({ name: p.name || DEFAULT_PROFILE.name, address: p.address || DEFAULT_PROFILE.address, phone: p.phone || DEFAULT_PROFILE.phone });
+        if (p.name) { try { document.title = `Send a File to Print — ${p.name}`; } catch {} }
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const handlePick = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -209,7 +232,7 @@ export default function UploadApp() {
             Send another file
           </button>
         </div>
-        <p className="mt-6 text-xs text-slate-400">The UPS Store #4979 · 4352 Bay Road, Saginaw</p>
+        <p className="mt-6 text-xs text-slate-400">{profile.name} · {profile.address}</p>
       </div>
     );
   }
@@ -219,7 +242,7 @@ export default function UploadApp() {
     <div className="min-h-screen bg-slate-50 px-5 py-8">
       <div className="w-full max-w-md mx-auto">
         <header className="text-center mb-6">
-          <div className="text-2xl font-extrabold text-slate-900">The UPS Store #4979</div>
+          <div className="text-2xl font-extrabold text-slate-900">{profile.name}</div>
           <div className="text-slate-500 mt-1">Send us your file to print</div>
         </header>
 
@@ -309,7 +332,7 @@ export default function UploadApp() {
         </div>
 
         <p className="mt-6 text-center text-xs text-slate-400">
-          4352 Bay Road, Saginaw MI · 989.790.9701
+          {profile.address} · {profile.phone}
         </p>
       </div>
     </div>
