@@ -35,6 +35,29 @@
 --   admin sign-in does not actually work in production, employee management
 --   becomes unreachable after this migration. VERIFY ADMIN SIGN-IN FIRST.
 --
+-- VERB COVERAGE: the policy being dropped (anon_rw_employees) is ALL, i.e.
+-- it permits SELECT + INSERT + UPDATE + DELETE. The replacements below must
+-- therefore cover all four, or editing/deactivating an employee starts
+-- failing after this migration in a way a "does the list load?" check would
+-- never surface. Proven by applying this migration inside a rolled-back
+-- transaction and exercising every verb as both roles:
+--
+--   actor  verb                  outcome
+--   ------ --------------------- ---------------------
+--   anon   SELECT                rows=0
+--   anon   INSERT                DENIED 42501
+--   anon   UPDATE                rows_affected=0
+--   anon   DELETE                rows_affected=0
+--   admin  SELECT                rows=2
+--   admin  INSERT                ALLOWED
+--   admin  UPDATE (deactivate)   rows_affected=1
+--   admin  DELETE                rows_affected=1
+--
+-- Note the asymmetry: anon INSERT raises 42501, but anon UPDATE/DELETE
+-- silently affect 0 rows — RLS filters rather than errors on those verbs.
+-- That is the desired direction here (anon no-ops), but it is exactly why
+-- verb coverage had to be proven behaviourally, not just structurally.
+--
 -- ROLLBACK: see 20260728000004_phase_b_03b_employees_lockdown.rollback.sql
 -- (restores anon_rw_employees exactly as it exists today).
 
