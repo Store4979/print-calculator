@@ -14,6 +14,11 @@ export default function EmployeeLogin({ onLogin, onCancel, title = "Employee Sig
   const [pin, setPin]     = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy]   = useState(false);
+  // Distinguishes "we couldn't reach the store config" from "wrong PIN".
+  // Without this the open-of-day failure looks identical to a rejected PIN
+  // and staff burn minutes retyping a PIN that was correct all along.
+  const [configError, setConfigError] = useState(false);
+  const lastPinRef = useRef("");
   // Submit guard so the auto-submit effect doesn't fire twice when
   // StrictMode double-invokes effects in dev.
   const submittedRef = useRef(false);
@@ -26,8 +31,10 @@ export default function EmployeeLogin({ onLogin, onCancel, title = "Employee Sig
       return;
     }
     submittedRef.current = true;
+    lastPinRef.current = value;
     setBusy(true);
     setError("");
+    setConfigError(false);
     try {
       const emp = await findEmployeeByPin(value);
       if (!emp) {
@@ -39,12 +46,24 @@ export default function EmployeeLogin({ onLogin, onCancel, title = "Employee Sig
         onLogin?.(emp);
       }
     } catch (e) {
+      // Infrastructure failure — NOT a bad PIN. Keep the entered digits so
+      // Retry costs one tap instead of a full re-entry.
+      const isConfig = e?.name === "StoreUnavailableError";
+      setConfigError(isConfig);
       setError(e?.message || String(e));
-      setPin("");
+      if (!isConfig) setPin("");
       submittedRef.current = false;
     } finally {
       setBusy(false);
     }
+  };
+
+  const retry = () => {
+    if (busy) return;
+    setError("");
+    setConfigError(false);
+    submittedRef.current = false;
+    submit(lastPinRef.current || pin);
   };
 
   const press = (k) => {
@@ -90,6 +109,15 @@ export default function EmployeeLogin({ onLogin, onCancel, title = "Employee Sig
 
         <div className="emp-login-error" role="alert" aria-live="polite">
           {error || " "}
+          {configError && (
+            <button
+              type="button"
+              className="pc-btn pc-btn-secondary pc-btn-xs"
+              style={{ marginLeft: 8 }}
+              onClick={retry}
+              disabled={busy}
+            >{busy ? "Retrying…" : "Retry"}</button>
+          )}
         </div>
 
         <div className="emp-login-keypad">

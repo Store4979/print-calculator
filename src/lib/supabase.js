@@ -249,7 +249,14 @@ let _storeScopeCache = null;
 // "wrong PIN" (authentication). The kiosk exit path depends on this
 // distinction to avoid locking staff out of the tablet.
 export class StoreUnavailableError extends Error {
-  constructor(msg = "Couldn't identify this store.") { super(msg); this.name = "StoreUnavailableError"; }
+  // Copy matters operationally: staff PIN login now depends on store config
+  // loading, which is a NEW open-of-day failure mode. If this reads like a
+  // rejected PIN, staff will retype a correct PIN over and over. It must
+  // name the real cause and point at the connection.
+  constructor(msg = "Store configuration not loaded — check the connection and try again.") {
+    super(msg);
+    this.name = "StoreUnavailableError";
+  }
 }
 
 export const resolveStoreScope = async (hint = null) => {

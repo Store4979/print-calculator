@@ -5469,6 +5469,14 @@ function KioskExitDialog({ onExit, onCancel, storeIdHint = null }) {
       // unreachable, profile never loaded, offline fallback with no id) the
       // PIN check is impossible — and a kiosk with no exit is a tablet
       // bricked behind Guided Access with no way back to the counter tool.
+      //
+      // WHAT THE FALLBACK ACCEPTS, precisely: the admin password
+      // (ADMIN_FALLBACK_PASSWORD) — a shared secret staff already know and
+      // the same value the offline admin gate uses. It does NOT skip the
+      // prompt, and it does NOT accept "any 4-digit PIN": a customer
+      // mashing 4 digits cannot leave kiosk mode. Some credential is always
+      // required; only the *verifier* changes when Postgres is unreachable.
+      //
       // Exiting kiosk only removes the customer skin: Admin still requires
       // Supabase Auth and completing a sale still requires an employee PIN,
       // so the blast radius is "staff UI visible", not "privilege granted".
