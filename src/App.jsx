@@ -112,6 +112,12 @@ const LS = {
 let UPS_LOGO_DATA_URL = "/ups-logo.png";
 let UPS_LOGO_PDF_DATA_URL = null;
 
+// Client-side admin password. Intentional (see CLAUDE.md): it is the
+// OFFLINE fallback only — when Supabase is configured the admin gate is
+// Supabase Auth via AdminLogin. Also the kiosk exit escape hatch when the
+// store can't be resolved, so a tablet is never bricked behind Guided Access.
+const ADMIN_FALLBACK_PASSWORD = "store4979";
+
 // ─── KIOSK MODE ─────────────────────────────────────────────
 // ?mode=kiosk turns the same SPA into a customer-facing self-serve
 // skin. The URL param is the single source of truth — entering and
@@ -3528,7 +3534,7 @@ const handleFrontFiles = async (files) => {
     // as a fallback so a misconfigured deploy can never lock staff out.
     if (isSupabaseConfigured) { setShowAdminLogin(true); return; }
     const pwd = window.prompt("Enter admin password");
-    if (pwd === "store4979") { setIsAdmin(true); setShowAdmin(true); }
+    if (pwd === ADMIN_FALLBACK_PASSWORD) { setIsAdmin(true); setShowAdmin(true); }
     else if (pwd !== null) alert("Incorrect password.");
   };
 
@@ -5356,6 +5362,10 @@ try {
         <KioskExitDialog
           onExit={exitKioskMode}
           onCancel={() => setShowKioskExit(false)}
+          // May be undefined (storeProfile starts as the offline constant,
+          // which has no id) — the dialog then resolves by slug and, failing
+          // that, falls back to the offline password rather than locking out.
+          storeIdHint={storeProfile?.id || null}
         />
       )}
 
@@ -5430,22 +5440,46 @@ try {
 // Reached only via the hidden 5-tap-on-logo gesture. Verifies the PIN
 // against the employees table WITHOUT signing anyone in (a customer must
 // never leave a staffer logged in), then strips ?mode=kiosk and reloads.
-function KioskExitDialog({ onExit, onCancel }) {
+function KioskExitDialog({ onExit, onCancel, storeIdHint = null }) {
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [offline, setOffline] = useState(false);
   const submit = async (e) => {
     e?.preventDefault?.();
     if (busy) return;
+    const value = pin.trim();
     setErr("");
     setBusy(true);
     try {
-      const emp = await findEmployeeByPin(pin.trim());
+      // Offline escape hatch, deliberately checked first once we know the
+      // store can't be resolved — see the fail-open rationale below.
+      if (offline) {
+        if (value === ADMIN_FALLBACK_PASSWORD) { onExit(); return; }
+        setErr("That password wasn't recognized.");
+        setPin("");
+        return;
+      }
+      const emp = await findEmployeeByPin(value, storeIdHint ? { storeId: storeIdHint } : null);
       if (emp) { onExit(); return; } // navigates away; no state to restore
       setErr("That PIN wasn't recognized.");
       setPin("");
-    } catch {
-      setErr("Couldn't verify right now. Try again.");
+    } catch (e2) {
+      // FAIL OPEN, deliberately. If the store can't be resolved (Supabase
+      // unreachable, profile never loaded, offline fallback with no id) the
+      // PIN check is impossible — and a kiosk with no exit is a tablet
+      // bricked behind Guided Access with no way back to the counter tool.
+      // Exiting kiosk only removes the customer skin: Admin still requires
+      // Supabase Auth and completing a sale still requires an employee PIN,
+      // so the blast radius is "staff UI visible", not "privilege granted".
+      if (e2?.name === "StoreUnavailableError" || !isSupabaseConfigured) {
+        if (value === ADMIN_FALLBACK_PASSWORD) { onExit(); return; }
+        setOffline(true);
+        setErr("Can't reach the server. Enter the admin password to exit.");
+        setPin("");
+      } else {
+        setErr("Couldn't verify right now. Try again.");
+      }
     } finally {
       setBusy(false);
     }
@@ -5454,7 +5488,11 @@ function KioskExitDialog({ onExit, onCancel }) {
     <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !busy && onCancel()}>
       <form className="pc-dialog kiosk-exit-dialog" onClick={e => e.stopPropagation()} onSubmit={submit}>
         <div className="pc-dialog-title">Staff exit</div>
-        <div className="pc-dialog-sub">Enter your employee PIN to leave kiosk mode.</div>
+        <div className="pc-dialog-sub">
+          {offline
+            ? "Offline — enter the admin password to leave kiosk mode."
+            : "Enter your employee PIN to leave kiosk mode."}
+        </div>
         <input
           className="pc-input"
           type="password"
@@ -5463,7 +5501,7 @@ function KioskExitDialog({ onExit, onCancel }) {
           autoFocus
           value={pin}
           onChange={e => setPin(e.target.value)}
-          placeholder="PIN"
+          placeholder={offline ? "Admin password" : "PIN"}
           style={{ marginTop: 12, textAlign: "center", letterSpacing: "0.3em", fontSize: 20 }}
         />
         {err && <div className="callout callout-warn" style={{ marginTop: 10 }}><span className="callout-icon">⚠</span>{err}</div>}

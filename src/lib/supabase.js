@@ -236,9 +236,40 @@ const validatePin = (pin) => {
   }
 };
 
+// ── Store-scope resolution ─────────────────────────────────
+// employees is going tenant-scoped, so every employee call needs a
+// store_id. storeProfile starts as the OFFLINE FALLBACK CONSTANT, which
+// has no id, so callers cannot rely on it being present — we resolve from
+// the stores table by slug and cache it. Read directly from import.meta.env
+// rather than importing storeConfig.js, which would be a circular import
+// (storeConfig imports this module).
+let _storeScopeCache = null;
+
+// Distinguishable so callers can tell "store unknown" (infrastructure) from
+// "wrong PIN" (authentication). The kiosk exit path depends on this
+// distinction to avoid locking staff out of the tablet.
+export class StoreUnavailableError extends Error {
+  constructor(msg = "Couldn't identify this store.") { super(msg); this.name = "StoreUnavailableError"; }
+}
+
+export const resolveStoreScope = async (hint = null) => {
+  if (hint?.storeId) return hint;
+  if (_storeScopeCache) return _storeScopeCache;
+  if (!supabase) throw new StoreUnavailableError("Supabase is not configured.");
+  const slug = (import.meta.env.VITE_STORE_SLUG || "store4979").trim();
+  const { data, error } = await supabase
+    .from("stores").select("id, org_id").eq("slug", slug).maybeSingle();
+  if (error || !data?.id) throw new StoreUnavailableError();
+  _storeScopeCache = { storeId: data.id, orgId: data.org_id || null };
+  return _storeScopeCache;
+};
+
 export const listEmployees = async ({ includeInactive = false } = {}) => {
   if (!supabase) throw new Error("Supabase is not configured.");
-  let q = supabase.from("employees").select("*").order("name", { ascending: true });
+  const { storeId } = await resolveStoreScope();
+  let q = supabase.from("employees").select("*")
+    .eq("store_id", storeId)
+    .order("name", { ascending: true });
   if (!includeInactive) q = q.eq("active", true);
   const { data, error } = await q;
   if (error) throw error;
@@ -249,9 +280,12 @@ export const createEmployee = async ({ name, pin }) => {
   if (!supabase) throw new Error("Supabase is not configured.");
   if (!name || !name.trim()) throw new Error("Name is required.");
   validatePin(pin);
+  // Must stamp the tenant keys: once 03b lands, the INSERT policy is
+  // has_store_role(store_id, …) and an unstamped row is rejected outright.
+  const { storeId, orgId } = await resolveStoreScope();
   const { data, error } = await supabase
     .from("employees")
-    .insert({ name: name.trim(), pin: String(pin) })
+    .insert({ name: name.trim(), pin: String(pin), store_id: storeId, org_id: orgId })
     .select("*")
     .single();
   if (error) {
@@ -281,17 +315,23 @@ export const updateEmployee = async (id, patch) => {
 export const setEmployeeActive = async (id, active) =>
   updateEmployee(id, { active: !!active });
 
-export const findEmployeeByPin = async (pin) => {
-  if (!supabase) throw new Error("Supabase is not configured.");
+// Goes through the store-scoped SECURITY DEFINER RPC instead of reading the
+// employees table, so the table can be closed to anon entirely (migration
+// 03b). The RPC returns id/name/active only — the pin never leaves Postgres.
+//
+// Throws StoreUnavailableError when the store can't be resolved, so callers
+// can distinguish infrastructure failure from a bad PIN.
+export const findEmployeeByPin = async (pin, hint = null) => {
+  if (!supabase) throw new StoreUnavailableError("Supabase is not configured.");
   validatePin(pin);
-  const { data, error } = await supabase
-    .from("employees")
-    .select("*")
-    .eq("pin", String(pin))
-    .eq("active", true)
-    .maybeSingle();
+  const { storeId } = await resolveStoreScope(hint);
+  const { data, error } = await supabase.rpc("verify_employee_pin", {
+    p_store_id: storeId,
+    p_pin: String(pin),
+  });
   if (error) throw error;
-  return data || null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row || null;
 };
 
 // ── Commission settings ────────────────────────────────────
