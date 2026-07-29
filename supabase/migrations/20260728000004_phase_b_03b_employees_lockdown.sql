@@ -1,11 +1,38 @@
--- Phase B, migration 3b — POLICY TIGHTENING. DO NOT APPLY until the 03a
--- client is deployed AND staff PIN login + kiosk exit are confirmed working
--- on production. The previously-deployed client reads public.employees
--- directly; applying this first breaks staff sign-in instantly, mid-shift.
+-- Phase B, migration 3b — POLICY TIGHTENING.
 --
--- Closes the live exposure: policy `anon_rw_employees` is ALL / USING(true)
--- / WITH CHECK(true) for anon, so the client-side anon key can currently
--- SELECT every employee PIN in production, and INSERT/UPDATE/DELETE freely.
+-- STATUS: APPLIED 2026-07-29 to project gmxyisjjaxtpycsmmzef.
+-- (The pre-apply header said DO NOT APPLY; that gate has been satisfied and
+-- is recorded below so the sequencing rationale is not lost.)
+--
+-- The gate that had to be satisfied first: the previously-deployed client
+-- read public.employees directly, so applying this before the 03a client
+-- shipped would have broken staff sign-in instantly, mid-shift. Released in
+-- order — 03a RPC applied, client merged as efc9437 and deployed, then staff
+-- PIN login + kiosk exit + admin sign-in confirmed on production — and only
+-- then was this applied.
+--
+-- Closed the live exposure: policy `anon_rw_employees` was ALL / USING(true)
+-- / WITH CHECK(true) for anon, so the client-side anon key could SELECT
+-- every employee PIN in production, and INSERT/UPDATE/DELETE freely.
+--
+-- VERIFICATION, before -> after (anon role, request.jwt.claims role=anon):
+--   anon SELECT employees ................ 2 rows  ->  0 rows   (exposure closed)
+--   anon verify_employee_pin, correct PIN .   n/a   ->  1 row    (sign-in intact)
+--   anon verify_employee_pin, wrong PIN ...   n/a   ->  0 rows
+--   admin SELECT employees ............... 2 rows  ->  2 rows   (unaffected)
+--   admin UPDATE reachable ...............   n/a   ->  2 rows   (edit/deactivate OK)
+--
+-- TEST ARTIFACT — do not re-derive this as a real failure. The first
+-- post-apply verification appeared to show verify_employee_pin returning 0
+-- rows for a correct PIN, i.e. staff sign-in broken. It was a flaw in the
+-- test, not the system: the helper subquery that fetched a PIN to test with
+--   (select pin from public.employees limit 1)
+-- was evaluated AFTER `set local role anon`, and anon can no longer read the
+-- table, so it passed a NULL pin and the RPC correctly matched nothing.
+-- Capturing the PIN BEFORE dropping privileges returns 1 row. That mirrors
+-- production, where the PIN comes from the staffer's keypad and never from a
+-- table read. Any future test of this RPC must capture its inputs while
+-- still privileged.
 --
 -- After this, anon has NO access to employees at all. The only anon path to
 -- a PIN check is verify_employee_pin() from 03a, which returns id/name/
