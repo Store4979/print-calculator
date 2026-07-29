@@ -236,9 +236,59 @@ const validatePin = (pin) => {
   }
 };
 
+// ── Store-scope resolution ─────────────────────────────────
+// employees is going tenant-scoped, so every employee call needs a
+// store_id. storeProfile starts as the OFFLINE FALLBACK CONSTANT, which
+// has no id, so callers cannot rely on it being present — we resolve from
+// the stores table by slug and cache it. Read directly from import.meta.env
+// rather than importing storeConfig.js, which would be a circular import
+// (storeConfig imports this module).
+let _storeScopeCache = null;
+
+// Distinguishable so callers can tell "store unknown" (infrastructure) from
+// "wrong PIN" (authentication). The kiosk exit path depends on this
+// distinction to avoid locking staff out of the tablet.
+export class StoreUnavailableError extends Error {
+  // Copy matters operationally: staff PIN login now depends on store config
+  // loading, which is a NEW open-of-day failure mode. If this reads like a
+  // rejected PIN, staff will retype a correct PIN over and over. It must
+  // name the real cause and point at the connection.
+  constructor(msg = "Store configuration not loaded — check the connection and try again.") {
+    super(msg);
+    this.name = "StoreUnavailableError";
+  }
+}
+
+export const resolveStoreScope = async (hint = null) => {
+  if (hint?.storeId) return hint;
+  if (_storeScopeCache) return _storeScopeCache;
+  if (!supabase) throw new StoreUnavailableError("Supabase is not configured.");
+  const slug = (import.meta.env.VITE_STORE_SLUG || "store4979").trim();
+  const { data, error } = await supabase
+    .from("stores").select("id, org_id").eq("slug", slug).maybeSingle();
+  if (error || !data?.id) throw new StoreUnavailableError();
+  _storeScopeCache = { storeId: data.id, orgId: data.org_id || null };
+  return _storeScopeCache;
+};
+
+// After 03b, employee writes are RLS-scoped to an authenticated owner/manager.
+// RLS does NOT raise on an UPDATE/DELETE that matches no rows — it filters
+// them to zero (proven: anon UPDATE/DELETE => rows_affected=0, no error,
+// while anon INSERT => 42501). So "no error" must never be read as "it saved".
+//
+// Every write below asks PostgREST to return the affected row and treats an
+// empty result as failure. PGRST116 is what .single() yields when RLS filtered
+// the row out; surfacing the raw code ("JSON object requested, multiple (or no)
+// rows returned") tells staff nothing, so it is mapped to the likely cause.
+const RLS_WRITE_FAILED =
+  "Change didn't save — your admin session may have expired. Sign in again and retry.";
+
 export const listEmployees = async ({ includeInactive = false } = {}) => {
   if (!supabase) throw new Error("Supabase is not configured.");
-  let q = supabase.from("employees").select("*").order("name", { ascending: true });
+  const { storeId } = await resolveStoreScope();
+  let q = supabase.from("employees").select("*")
+    .eq("store_id", storeId)
+    .order("name", { ascending: true });
   if (!includeInactive) q = q.eq("active", true);
   const { data, error } = await q;
   if (error) throw error;
@@ -249,15 +299,23 @@ export const createEmployee = async ({ name, pin }) => {
   if (!supabase) throw new Error("Supabase is not configured.");
   if (!name || !name.trim()) throw new Error("Name is required.");
   validatePin(pin);
+  // Must stamp the tenant keys: once 03b lands, the INSERT policy is
+  // has_store_role(store_id, …) and an unstamped row is rejected outright.
+  const { storeId, orgId } = await resolveStoreScope();
   const { data, error } = await supabase
     .from("employees")
-    .insert({ name: name.trim(), pin: String(pin) })
+    .insert({ name: name.trim(), pin: String(pin), store_id: storeId, org_id: orgId })
     .select("*")
     .single();
   if (error) {
-    if (error.code === "23505") throw new Error("That PIN is already taken.");
+    if (error.code === "23505")   throw new Error("That PIN is already taken.");
+    if (error.code === "PGRST116") throw new Error(RLS_WRITE_FAILED);
+    if (error.code === "42501")    throw new Error(RLS_WRITE_FAILED);
     throw error;
   }
+  // Belt-and-braces: no row back means nothing was written, regardless of
+  // whether PostgREST chose to signal it as an error.
+  if (!data) throw new Error(RLS_WRITE_FAILED);
   return data;
 };
 
@@ -272,26 +330,41 @@ export const updateEmployee = async (id, patch) => {
     .select("*")
     .single();
   if (error) {
-    if (error.code === "23505") throw new Error("That PIN is already taken.");
+    if (error.code === "23505")   throw new Error("That PIN is already taken.");
+    // RLS filtered the row out — the update matched nothing. Without this the
+    // staffer sees a raw PostgREST code and cannot tell that the real problem
+    // is an expired admin session.
+    if (error.code === "PGRST116") throw new Error(RLS_WRITE_FAILED);
+    if (error.code === "42501")    throw new Error(RLS_WRITE_FAILED);
     throw error;
   }
+  if (!data) throw new Error(RLS_WRITE_FAILED);
   return data;
 };
 
+// Deactivate/reactivate routes through updateEmployee, so it inherits the
+// affected-row verification above — a no-op deactivate can never present as
+// success.
 export const setEmployeeActive = async (id, active) =>
   updateEmployee(id, { active: !!active });
 
-export const findEmployeeByPin = async (pin) => {
-  if (!supabase) throw new Error("Supabase is not configured.");
+// Goes through the store-scoped SECURITY DEFINER RPC instead of reading the
+// employees table, so the table can be closed to anon entirely (migration
+// 03b). The RPC returns id/name/active only — the pin never leaves Postgres.
+//
+// Throws StoreUnavailableError when the store can't be resolved, so callers
+// can distinguish infrastructure failure from a bad PIN.
+export const findEmployeeByPin = async (pin, hint = null) => {
+  if (!supabase) throw new StoreUnavailableError("Supabase is not configured.");
   validatePin(pin);
-  const { data, error } = await supabase
-    .from("employees")
-    .select("*")
-    .eq("pin", String(pin))
-    .eq("active", true)
-    .maybeSingle();
+  const { storeId } = await resolveStoreScope(hint);
+  const { data, error } = await supabase.rpc("verify_employee_pin", {
+    p_store_id: storeId,
+    p_pin: String(pin),
+  });
   if (error) throw error;
-  return data || null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row || null;
 };
 
 // ── Commission settings ────────────────────────────────────
