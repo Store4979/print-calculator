@@ -271,6 +271,18 @@ export const resolveStoreScope = async (hint = null) => {
   return _storeScopeCache;
 };
 
+// After 03b, employee writes are RLS-scoped to an authenticated owner/manager.
+// RLS does NOT raise on an UPDATE/DELETE that matches no rows — it filters
+// them to zero (proven: anon UPDATE/DELETE => rows_affected=0, no error,
+// while anon INSERT => 42501). So "no error" must never be read as "it saved".
+//
+// Every write below asks PostgREST to return the affected row and treats an
+// empty result as failure. PGRST116 is what .single() yields when RLS filtered
+// the row out; surfacing the raw code ("JSON object requested, multiple (or no)
+// rows returned") tells staff nothing, so it is mapped to the likely cause.
+const RLS_WRITE_FAILED =
+  "Change didn't save — your admin session may have expired. Sign in again and retry.";
+
 export const listEmployees = async ({ includeInactive = false } = {}) => {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { storeId } = await resolveStoreScope();
@@ -296,9 +308,14 @@ export const createEmployee = async ({ name, pin }) => {
     .select("*")
     .single();
   if (error) {
-    if (error.code === "23505") throw new Error("That PIN is already taken.");
+    if (error.code === "23505")   throw new Error("That PIN is already taken.");
+    if (error.code === "PGRST116") throw new Error(RLS_WRITE_FAILED);
+    if (error.code === "42501")    throw new Error(RLS_WRITE_FAILED);
     throw error;
   }
+  // Belt-and-braces: no row back means nothing was written, regardless of
+  // whether PostgREST chose to signal it as an error.
+  if (!data) throw new Error(RLS_WRITE_FAILED);
   return data;
 };
 
@@ -313,12 +330,21 @@ export const updateEmployee = async (id, patch) => {
     .select("*")
     .single();
   if (error) {
-    if (error.code === "23505") throw new Error("That PIN is already taken.");
+    if (error.code === "23505")   throw new Error("That PIN is already taken.");
+    // RLS filtered the row out — the update matched nothing. Without this the
+    // staffer sees a raw PostgREST code and cannot tell that the real problem
+    // is an expired admin session.
+    if (error.code === "PGRST116") throw new Error(RLS_WRITE_FAILED);
+    if (error.code === "42501")    throw new Error(RLS_WRITE_FAILED);
     throw error;
   }
+  if (!data) throw new Error(RLS_WRITE_FAILED);
   return data;
 };
 
+// Deactivate/reactivate routes through updateEmployee, so it inherits the
+// affected-row verification above — a no-op deactivate can never present as
+// success.
 export const setEmployeeActive = async (id, active) =>
   updateEmployee(id, { active: !!active });
 
