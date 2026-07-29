@@ -116,6 +116,13 @@ let UPS_LOGO_PDF_DATA_URL = null;
 // OFFLINE fallback only — when Supabase is configured the admin gate is
 // Supabase Auth via AdminLogin. Also the kiosk exit escape hatch when the
 // store can't be resolved, so a tablet is never bricked behind Guided Access.
+//
+// BETA ITEM (not blocking single-tenant, MUST fix before the first external
+// tenant): this is a client-bundle constant — identical for every tenant and
+// readable by anyone who opens the JS bundle. Once a second store exists,
+// tenant B's staff can read tenant A's fallback password. It needs to become
+// per-store config (e.g. a hash on stores, checked the way
+// bootstrap_secret_hash is) rather than a shared compile-time literal.
 const ADMIN_FALLBACK_PASSWORD = "store4979";
 
 // ─── KIOSK MODE ─────────────────────────────────────────────

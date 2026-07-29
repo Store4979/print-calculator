@@ -20,6 +20,20 @@
 --   * Nothing joins employees for display names: CommissionDashboard reads
 --     tx.employee_id / tx.employee_name, both denormalized onto
 --     transactions. No blank-name failure mode.
+--   * has_store_role actually returns TRUE for the production admin — not
+--     merely "admin requires a JWT". Asserted under the real auth.uid() in a
+--     rolled-back transaction:
+--         auth.uid() resolves                                => true
+--         has_store_role(store4979,{owner,manager})          => TRUE
+--         employees visible under this policy's predicate    => 2
+--     so employee management keeps working rather than silently emptying.
+--
+-- OUTSTANDING PRE-FLIGHT (must be confirmed on production before applying):
+--   auth.users.last_sign_in_at for bigtex989@gmail.com is NULL — that
+--   account has never completed a Supabase Auth sign-in. The membership is
+--   correct, so has_store_role is not the risk; obtaining a session is. If
+--   admin sign-in does not actually work in production, employee management
+--   becomes unreachable after this migration. VERIFY ADMIN SIGN-IN FIRST.
 --
 -- ROLLBACK: see 20260728000004_phase_b_03b_employees_lockdown.rollback.sql
 -- (restores anon_rw_employees exactly as it exists today).
