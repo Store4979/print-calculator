@@ -9,7 +9,7 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - React 18 + Vite 5 + Tailwind CSS 3.4 (but components use custom CSS classes /
   inline styles, NOT Tailwind utilities — all styling lives in src/index.css
   with CSS custom properties / design tokens like --sp-*, --fs-*, --touch-target)
-- Supabase: Postgres + Storage + Realtime (commission tracking, job history,
+- Supabase: Postgres + Storage + Realtime (order history, job history,
   customer upload queue). Project ref: gmxyisjjaxtpycsmmzef
 - Netlify: hosting + serverless functions (netlify/functions/) + a scheduled
   function (cleanup-stale-jobs)
@@ -25,7 +25,7 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 ## Key files
 - src/App.jsx — the monolith (~5,200 lines): all tabs (paper/large/blueprint/
   booklet/data-merge/queue), admin panel, pricing math, PDF generation, email
-  ordering, employee login/commission plumbing, shared PriceBar + Collapsible +
+  ordering, employee login/order-saving plumbing, shared PriceBar + Collapsible +
   product tiles
 - src/components/SpecialtyTab.jsx — Signs365 outsourced products (tiered markup:
   2.5x <$50, 2x $50–200, 1.75x >$200). Live pricing data: src/data/
@@ -41,10 +41,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   (separate Vite entry via src/upload-main.jsx)
 - src/components/PrintQueue.jsx — staff queue tab for customer uploads (QR modal
   is portaled to document.body — see gotchas)
-- src/components/EmployeeLogin.jsx, CommissionDashboard.jsx, MyNumbersPanel.jsx —
-  employee PIN login + commission views
+- src/components/EmployeeLogin.jsx — employee PIN login (RPC-backed; also the
+  kiosk-exit credential)
+- src/components/OrdersDashboard.jsx — admin panel: order history (volume/revenue
+  rollups, line-item detail) + employee management
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
-- src/lib/commissions.js — commission math
+- src/lib/orderQueue.js — offline order queue. localStorage key is still
+  "pendingTransactions" on purpose (renaming it orphans queued orders); rows
+  are whitelisted to ORDER_COLUMNS before insert
+- supabase/migrations/ — applied migrations, each with a paired .rollback.sql
 - src/barcode128.js — Code 128B generator drawn on order PDFs via jsPDF rects
 - src/utils/tradeOrderPDF.js — Signs365 trade-order PDF
 - netlify/functions/ — send-print-job.js (email) + six customer-upload-queue
@@ -54,11 +59,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - public/pricing.json — deployed pricing config (admin panel exports/imports this)
 
 ## Integration anchors in App.jsx (verify before relying on; update this file if they drift)
-- PriceBar component ~line 672
-- buildSaleSnapshot() ~line 2863
-- requestCompleteSale() ~line 3113
-- applyScenario() useCallback ~line 3232
-- CompleteSaleDialog ~line 4993
+- PriceBar component ~line 714
+- buildSaleSnapshot() ~line 3035
+- kioskFullReset() ~line 3169
+- requestSaveOrder() ~line 3398
+- applyScenario() useCallback ~line 3551
+- SaveOrderDialog ~line 5576
 
 ## Hardware the app models
 - Ricoh Pro C5400s: sheets up to 13×19.2", auto-duplex, saddle-stitch, ~4mm margins
@@ -95,6 +101,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   merge — rebase onto origin/main (or reset a fresh branch) before new work.
 - BookletMaker/DataMerge/SpecialtyTab receive shared components (PriceBar,
   CardHeader, PriceDelta) as props from App.jsx — don't re-import or fork them.
+- Order history lives in public.orders (renamed from `transactions` in Phase D1).
+  Between migrations D1-a and D1-b a compat VIEW named `transactions` exists so
+  the previous client keeps working; D1-b drops it. Never point new code at it.
+- The PriceBar tour ids are still `*-complete-sale` (TrainingDrawer targets
+  "complete-sale"); the user-visible label is "Save Order". Renaming the ids
+  breaks the training step.
 
 ## Workflow rules for Claude Code sessions
 1. **Plan first.** For any non-trivial task, present a short plan and wait for

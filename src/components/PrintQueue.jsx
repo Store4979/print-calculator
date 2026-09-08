@@ -248,7 +248,7 @@ export default function PrintQueue({ onSendToCalculator, storeName = "The UPS St
                   <button className="pc-btn pc-btn-secondary pc-btn-sm" disabled={busy} onClick={() => sendToCalculator(job)}>
                     ➡ Send to Calculator
                   </button>
-                  <button className="pc-btn pc-btn-complete-sale pc-btn-sm" disabled={busy} onClick={() => pickedUp(job)}>
+                  <button className="pc-btn pc-btn-save-order pc-btn-sm" disabled={busy} onClick={() => pickedUp(job)}>
                     ✓ Picked Up — Delete
                   </button>
                 </div>

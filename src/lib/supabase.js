@@ -17,7 +17,7 @@ export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON);
 // persist across reloads. This is safe for the counter tool — when no one
 // is signed in, requests use the anon key exactly as before, and every
 // existing table policy grants both `anon` and `authenticated`, so a
-// logged-in admin session does not change job/commission/employee access.
+// logged-in admin session does not change job/order/employee access.
 export const supabase = isSupabaseConfigured
   ? createClient(SUPABASE_URL, SUPABASE_ANON, {
       auth: {
@@ -367,58 +367,36 @@ export const findEmployeeByPin = async (pin, hint = null) => {
   return row || null;
 };
 
-// ── Commission settings ────────────────────────────────────
-// Singleton row. The migration seeds id=1 on first apply, but we
-// tolerate a missing row defensively in case someone wipes it.
-
-export const fetchCommissionSettings = async () => {
+// ── Orders ─────────────────────────────────────────────────
+// One row per saved order, in public.orders — formerly `transactions`,
+// renamed in Phase D1 when the incentive layer was removed. Order history
+// was never incentive data; only those columns went.
+// Throws on failure so the caller can route the row through the offline
+// queue (src/lib/orderQueue.js).
+export const insertOrder = async (row) => {
   if (!supabase) throw new Error("Supabase is not configured.");
+  // Stamp the tenant keys — the Phase B columns that were never populated
+  // on this table. Best-effort on purpose: an order must never fail to save
+  // because the store lookup did, so fall back to an unstamped row.
+  let scope = null;
+  try { scope = await resolveStoreScope(); } catch { scope = null; }
+  const payload = { ...row };
+  if (scope?.storeId && payload.store_id == null) payload.store_id = scope.storeId;
+  if (scope?.orgId   && payload.org_id   == null) payload.org_id   = scope.orgId;
   const { data, error } = await supabase
-    .from("commission_settings")
-    .select("*")
-    .eq("id", 1)
-    .maybeSingle();
-  if (error) throw error;
-  return data || {
-    id: 1,
-    base_rate: 0.02,
-    upsell_rate: 0.08,
-    monthly_bonus_threshold: 5000,
-    monthly_bonus_amount: 50,
-  };
-};
-
-export const saveCommissionSettings = async (patch) => {
-  if (!supabase) throw new Error("Supabase is not configured.");
-  const { data, error } = await supabase
-    .from("commission_settings")
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq("id", 1)
-    .select("*")
-    .single();
-  if (error) throw error;
-  return data;
-};
-
-// ── Transactions ───────────────────────────────────────────
-// One row per completed sale. Throws on failure so the caller
-// can route the row through the offline queue.
-export const insertTransaction = async (row) => {
-  if (!supabase) throw new Error("Supabase is not configured.");
-  const { data, error } = await supabase
-    .from("transactions")
-    .insert(row)
+    .from("orders")
+    .insert(payload)
     .select("id, created_at")
     .single();
   if (error) throw error;
   return data;
 };
 
-export const fetchTransactions = async ({
+export const fetchOrders = async ({
   from = null, to = null, employeeId = null, limit = 1000,
 } = {}) => {
   if (!supabase) throw new Error("Supabase is not configured.");
-  let q = supabase.from("transactions").select("*").order("created_at", { ascending: false }).limit(limit);
+  let q = supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(limit);
   if (from)        q = q.gte("created_at", from);
   if (to)          q = q.lte("created_at", to);
   if (employeeId)  q = q.eq("employee_id", employeeId);

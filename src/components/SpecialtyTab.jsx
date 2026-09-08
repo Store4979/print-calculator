@@ -675,7 +675,7 @@ export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnaps
 
   // Report a sale snapshot up to App so the shared Complete Sale pipeline
   // can log this order. Markup applies to the print cost only; shipping is a
-  // separate non-upsell line that passes through at cost.
+  // separate line that passes through at cost.
   useEffect(() => {
     if (typeof onSnapshotChange !== "function") return;
     if (!result || !(result.customerTotal > 0)) { onSnapshotChange(null); return; }
@@ -686,16 +686,14 @@ export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnaps
       dimensions: (result.dim?.width && result.dim?.height) ? `${result.dim.width}×${result.dim.height} in` : null,
       quantity,
       lineTotal: round2(result.customerPrintPrice),
-      upsell: false,
     }];
     if (result.shippingCost > 0) {
-      lineItems.push({ kind: "specialty_shipping", lineTotal: round2(result.shippingCost), upsell: false });
+      lineItems.push({ kind: "specialty_shipping", lineTotal: round2(result.shippingCost) });
     }
     onSnapshotChange({
       serviceType: "specialty",
       total: round2(result.customerTotal),
       baseSubtotal: round2(result.customerTotal),
-      upsellSubtotal: 0,
       lineItems,
     });
   }, [result, product, selectedProduct, selectedCategory, quantity, onSnapshotChange]);
@@ -1049,7 +1047,7 @@ export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnaps
         downloadDisabled={!canGenerate}
         onCompleteSale={onCompleteSale}
         completeSaleEnabled={completeSaleEnabled}
-        completeSaleHint={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+        completeSaleHint={completeSaleEnabled ? "Save this order to your job history" : "Sign in with your PIN first"}
       />
     </>
   );

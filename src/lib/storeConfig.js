@@ -287,7 +287,6 @@ export async function publishStoreConfig(cfg, profile, slug = STORE_SLUG) {
   putSetting("preview_margin", cfg.previewMargin);
   putSetting("preview_spacing", cfg.previewSpacing);
   putSetting("blueprint_pricing", cfg.blueprintPricing);
-  putSetting("upsell_defaults", cfg.upsellFlags);
   if (setRows.length) {
     const { error } = await supabase.from("settings").upsert(setRows, { onConflict: "store_id,key" });
     if (error) throw new Error(`Publishing settings failed: ${error.message}`);

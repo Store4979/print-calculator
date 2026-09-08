@@ -266,7 +266,7 @@ const CATEGORIES = [
           "14PT Gloss is even thicker — offer it if they say 'something nicer'.",
           "If their file isn't 5:7 ratio, you'll get cropping. Open it before charging.",
         ],
-        pitfalls: ["Photos on plain 20 LB look terrible. Always upsell to a gloss stock."],
+        pitfalls: ["Photos on plain 20 LB look terrible. Always recommend a gloss stock."],
       },
     ],
   },
@@ -312,7 +312,7 @@ const CATEGORIES = [
             detail: "Page count must be a multiple of 4. The tool auto-pads if not." },
         ],
         tips: [
-          "For wedding programs, upsell to 80 LB Cover — it feels premium.",
+          "For wedding programs, recommend 80 LB Cover — it feels premium.",
           "Booklets are always duplex — back-side cost is built in.",
         ],
         pitfalls: ["Don't pick the finished size as the stock size — 5.5×8.5 finished = 8.5×11 stock."],
@@ -618,7 +618,7 @@ const CATEGORIES = [
             condition: (s, expected) => expected != null
               && Math.abs((s.liveTotal || 0) - expected) / Math.max(1, expected) < 0.06 },
         ],
-        tips: ["Cut in-house after printing — easy upsell to '4×6 photo card style'."],
+        tips: ["Cut in-house after printing — easy add-on: '4×6 photo card style'."],
         pitfalls: ["Don't quote 200 sheets — gang-up makes it 100. The calc handles it automatically."],
       },
       {
@@ -676,7 +676,7 @@ const CATEGORIES = [
             instruction: "Set quantity 100 for the flyers.",
             condition: s => Number(s.quantity) === 100 },
           { id: "complete", target: "complete-sale",
-            instruction: "Complete Sale to log the flyer job (if signed in).",
+            instruction: "Save Order to log the flyer job (if signed in).",
             detail: "If you're not signed in, this button is disabled — sign in via the header." },
           { id: "tab2", target: "tab-large",
             instruction: "Switch to Large Format for the poster.",
@@ -685,7 +685,7 @@ const CATEGORIES = [
           { id: "history", target: "header-job-history",
             instruction: "After both are sold, open Job History to see both line items." },
         ],
-        tips: ["Each job is logged separately so you can track per-job commission."],
+        tips: ["Each job is saved separately so the order history shows every line."],
         pitfalls: ["Don't combine into one Calc field — keep them as discrete jobs."],
       },
     ],
@@ -763,7 +763,7 @@ const CATEGORIES = [
         learningGoals: [
           "Pick Aluminum .040 — weather-permanent vs Coroplast",
           "Set quantity 2",
-          "Recognize when to upsell to .080",
+          "Recognize when to recommend .080",
         ],
         spec: null,
         steps: [

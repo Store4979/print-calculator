@@ -91,8 +91,6 @@ export function assembleConfig({ store, paperTypes = [], sheetPrices = [], disco
   if (isNum(settingsMap.preview_spacing))  pricing.previewSpacing = settingsMap.preview_spacing;
   if (settingsMap.blueprint_pricing && typeof settingsMap.blueprint_pricing === "object")
     pricing.blueprintPricing = settingsMap.blueprint_pricing;
-  if (settingsMap.upsell_defaults && typeof settingsMap.upsell_defaults === "object")
-    pricing.upsellFlags = settingsMap.upsell_defaults;
 
   const storeProfile = store && {
     id:       store.id,

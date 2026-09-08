@@ -462,7 +462,6 @@ export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapsh
       serviceType: "data_merge",
       total: round2(totalPrice),
       baseSubtotal: round2(totalPrice),
-      upsellSubtotal: 0,
       lineItems: [{
         kind: "data_merge",
         records: totalRecords,
@@ -470,7 +469,6 @@ export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapsh
         sheetKey: selectedSheetKey,
         colorMode,
         lineTotal: round2(totalPrice),
-        upsell: false,
       }],
     });
   }, [totalPrice, totalRecords, dmPaperLabel, selectedSheetKey, colorMode, hasPricing, onSnapshotChange]);
@@ -1260,7 +1258,7 @@ export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapsh
           downloadDisabled={generating}
           onCompleteSale={onCompleteSale}
           completeSaleEnabled={completeSaleEnabled}
-          completeSaleHint={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+          completeSaleHint={completeSaleEnabled ? "Save this order to your job history" : "Sign in with your PIN first"}
         />
       ))}
     </>

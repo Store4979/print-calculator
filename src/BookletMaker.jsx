@@ -565,7 +565,6 @@ export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSna
       serviceType: "booklet",
       total: round2(totalPrice),
       baseSubtotal: round2(totalPrice),
-      upsellSubtotal: 0,
       lineItems: [{
         kind: "booklet",
         pages: totalPages,
@@ -575,7 +574,6 @@ export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSna
         colorMode,
         duplex: true,
         lineTotal: round2(totalPrice),
-        upsell: false,
       }],
     });
   }, [totalPrice, totalPages, numSheets, paperLabel, colorMode, hasPricing, onSnapshotChange]);
@@ -1326,7 +1324,7 @@ export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSna
           downloadDisabled={generating || !withinPaperSize}
           onCompleteSale={onCompleteSale}
           completeSaleEnabled={completeSaleEnabled}
-          completeSaleHint={completeSaleEnabled ? "Log this as a completed sale" : "Sign in with your PIN first"}
+          completeSaleHint={completeSaleEnabled ? "Save this order to your job history" : "Sign in with your PIN first"}
         />
       )}
     </>
