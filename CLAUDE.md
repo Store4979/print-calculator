@@ -116,6 +116,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
   nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
   revoking anything, and never apply a DB change without a file in the repo.
+- Phase S1 — server-side PIN verification: move the PIN check into a
+  rate-limited Netlify function (service_role), deploy the client onto it, then
+  revoke anon/authenticated EXECUTE on verify_employee_pin again (its rollback
+  file already exists). BETA BLOCKER before the first external tenant; NOT a
+  launch blocker for store4979 (single tenant, physical counter). "Phase E" is
+  taken by the margin engine in the master plan — do not reuse it for this.
 - A magic-link sign-in lands by redirect with no dialog open. If that account
   has no owner/manager membership the app must SAY so (adminAccessDenied) —
   isAdmin=false alone renders nothing.
