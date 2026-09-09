@@ -1,4 +1,4 @@
--- ROLLBACK for phase_e_01_employee_roles (version assigned at apply time).
+-- ROLLBACK for 20260909224658_phase_e_01_employee_roles.sql
 -- Restores the pre-Phase-E state: no role column, RPC returns id/name/active,
 -- same ACL and comment as 20260909160307 left them. The client deployed on
 -- Phase E reads `role` from the RPC and treats a missing value as 'staff', so

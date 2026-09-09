@@ -42,7 +42,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - src/components/PrintQueue.jsx — staff queue tab for customer uploads (QR modal
   is portaled to document.body — see gotchas)
 - src/components/EmployeeLogin.jsx — employee PIN login (RPC-backed; also the
-  kiosk-exit credential)
+  kiosk-exit credential). The RPC returns id/name/active/role; role is
+  'staff' | 'manager' and only a store OWNER can change it (DB trigger
+  employees_role_owner_only + client gate). A manager PIN sees margin.
 - src/components/OrdersDashboard.jsx — admin panel: order history (volume/revenue
   rollups, line-item detail) + employee management
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
@@ -143,6 +145,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
    from supabase_migrations.schema_migrations right after applying. No exceptions,
    including hotfixes: the 2026-09-09 audit found eight applied migrations with no
    file, and one of them had taken staff sign-in down.
+   FUNCTION ACLs: this project's default privileges grant EXECUTE on every new
+   function in `public` to anon, authenticated AND service_role the moment it is
+   created — a new SECURITY DEFINER function is anon-callable by default. Every
+   CREATE FUNCTION must therefore be followed, in the same migration, by
+   `revoke execute ... from public, anon, authenticated, service_role;` and then
+   explicit grants for exactly the roles that need it. CREATE OR REPLACE cannot
+   change a return type; DROP + CREATE resets the ACL to that default AND
+   discards the function comment — re-issue both. Prove it: diff `proacl`
+   before/after in the rehearsal (see supabase/rehearsals/phase_e_01_rehearsal.sql).
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

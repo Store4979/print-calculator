@@ -16,6 +16,10 @@ create table if not exists public.employees (
   name        text not null,
   pin         text not null,
   active      boolean not null default true,
+  -- Phase E (20260909224658): a manager PIN sees margin at the counter.
+  -- Only a store owner may change it — trigger employees_role_owner_only.
+  role        text not null default 'staff'
+              constraint employees_role_check check (role in ('staff','manager')),
   created_at  timestamptz not null default now(),
   -- Stored as plaintext on purpose — these are 4-digit station PINs
   -- for internal use, not security credentials. The check enforces
@@ -25,6 +29,15 @@ create table if not exists public.employees (
 );
 
 create index if not exists employees_active_idx on public.employees (active);
+
+-- verify_employee_pin(p_store_id uuid, p_pin text)
+--   returns table(id uuid, name text, active boolean, role text)
+--   SECURITY DEFINER, search_path=public. EXECUTE: postgres, service_role,
+--   anon, authenticated (explicitly revoked + re-granted; see CLAUDE.md rule 4).
+--   Called by src/lib/supabase.js findEmployeeByPin. Phase S1 moves it server-side.
+-- employees_role_owner_only(): BEFORE INSERT OR UPDATE OF role trigger. Rejects
+--   a role assignment (42501) unless has_store_role(store_id, {owner}); postgres
+--   and service_role pass. Not security definer on purpose.
 
 -- ── orders ─────────────────────────────────────────────────
 -- One row per saved order. employee_id/employee_name record WHO RANG IT —
