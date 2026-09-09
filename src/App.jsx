@@ -11,8 +11,7 @@ import DataMerge, { DataMergeIcon } from "./DataMerge.jsx";
 import { drawBarcode128 } from "./barcode128.js";
 import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
-import CommissionDashboard from "./components/CommissionDashboard.jsx";
-import MyNumbersPanel from "./components/MyNumbersPanel.jsx";
+import OrdersDashboard from "./components/OrdersDashboard.jsx";
 import SpecialtyTab from "./components/SpecialtyTab.jsx";
 import Signs365PricingEditor from "./components/Signs365PricingEditor.jsx";
 import PrintQueue from "./components/PrintQueue.jsx";
@@ -23,13 +22,12 @@ import {
   supabase,
   getStoredEmployee, setStoredEmployee,
   listEmployees, createEmployee, setEmployeeActive,
-  fetchCommissionSettings, insertTransaction,
+  insertOrder,
   findEmployeeByPin,
 } from "./lib/supabase.js";
 import {
-  computeCommission, saveTransactionWithFallback, drainPendingTransactions,
-  loadPendingTransactions,
-} from "./lib/commissions.js";
+  saveOrderWithFallback, drainPendingOrders, loadPendingOrders,
+} from "./lib/orderQueue.js";
 import {
   fetchStoreConfig, publishStoreConfig,
   getSession, onAuthChange, getRoleForSession, isAdminRole, signOut,
@@ -105,7 +103,6 @@ const LS = {
   LF_PAPER_TYPES:   "printcalc_lf_paper_types_v1",
   PREVIEW_MARGIN:   "printcalc_preview_margin_v1",
   PREVIEW_SPACING:  "printcalc_preview_spacing_v1",
-  UPSELL_FLAGS:     "printcalc_upsell_flags_v1",
   SIGNS365:         "signs365Pricing",
 };
 
@@ -692,24 +689,6 @@ function AddonCard({ emoji, name, price, selected, onToggle, dataTour, delta }) 
   );
 }
 
-// Small inline pill toggle the employee taps to claim an upsell on a
-// flagged item. Tooltip explains the rule. Defaults to off; the
-// employee opts in only if they actively suggested the upsell.
-function UpsellToggle({ checked, onChange, label = "Upsell", tooltip = "Mark this if you suggested this add-on to the customer." }) {
-  return (
-    <button
-      type="button"
-      className={`upsell-toggle ${checked ? "is-on" : ""}`}
-      onClick={(e) => { e.stopPropagation?.(); onChange(!checked); }}
-      title={tooltip}
-      aria-pressed={checked}
-    >
-      <span className="upsell-toggle-icon" aria-hidden="true">⬆</span>
-      <span className="upsell-toggle-label">{label}</span>
-    </button>
-  );
-}
-
 function UploadZone({ hasFile, label, subLabel, types, onFiles, inputRef }) {
   return (
     <div
@@ -733,7 +712,7 @@ function UploadZone({ hasFile, label, subLabel, types, onFiles, inputRef }) {
 }
 
 function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEnabled = false, completeSaleHint = "", accentClass="price-bar-teal", totalClass="is-total", dataTour, downloadTour, orderTour, completeSaleTour, compactOnMobile = true, downloadLabel = "Generate Quote", orderLabel = "Email", downloadDisabled = false, orderDisabled = false, kioskAction = null }) {
-  // Mobile-only: the bar renders compact (total + Complete Sale + ⋯) and
+  // Mobile-only: the bar renders compact (total + Save Order + ⋯) and
   // the ⋯ button expands it to full height. Desktop layout is unaffected —
   // the pb-compact styles are scoped inside the 640px media query.
   const [expanded, setExpanded] = useState(false);
@@ -756,7 +735,7 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
           <div className="price-bar-actions">
             <button
               type="button"
-              className="pc-btn pc-btn-complete-sale is-primary-action kiosk-send-btn"
+              className="pc-btn pc-btn-save-order is-primary-action kiosk-send-btn"
               onClick={kioskAction.onClick}
               disabled={!!kioskAction.disabled}
               title={kioskAction.disabled ? "Set up your product first" : "Send this quote to the counter"}
@@ -798,12 +777,12 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
             <button
               type="button"
               data-tour={completeSaleTour}
-              className="pc-btn pc-btn-complete-sale is-primary-action"
+              className="pc-btn pc-btn-save-order is-primary-action"
               onClick={onCompleteSale}
               disabled={!completeSaleEnabled}
-              title={completeSaleHint || "Log this as a completed sale"}
+              title={completeSaleHint || "Save this order to your job history"}
             >
-              ✓ Complete Sale
+              Save Order
             </button>
           )}
           {compactOnMobile && (
@@ -819,7 +798,7 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
           )}
         </div>
         {onCompleteSale && (
-          <div className="price-bar-caption">Complete Sale logs the order &amp; your commission</div>
+          <div className="price-bar-caption">Saves this order to your job history.</div>
         )}
       </div>
     </div>
@@ -1151,8 +1130,6 @@ const createEmptyJob = (overrides = {}) => ({
   showCutLines: true,
   showGuides: true,
   perSheetCap: null, // null = max fit; number = capped prints/sheet
-  // upsell claim (employee sets this if they suggested the paper)
-  upsellPaper: false,
   // computed snapshot (kept in sync by auto-save)
   printsPerSheet: 1,
   totalPrintQty: 0,
@@ -1197,10 +1174,10 @@ function PriceCalculatorApp() {
   });
   const [viewMode, setViewMode]     = useState("tool"); // "tool" | "quote"
   const [showAdmin, setShowAdmin]   = useState(false);
-  const [adminView, setAdminView]   = useState("pricing"); // "pricing" | "commissions"
+  const [adminView, setAdminView]   = useState("pricing"); // "pricing" | "orders"
   const [showJobHistory, setShowJobHistory] = useState(false);
 
-  // ── Logged-in employee (commission tracking) ──
+  // ── Logged-in employee (records orders; kiosk-exit credential) ──
   // Restored from localStorage so a brief tab refresh doesn't kick the
   // user back to the keypad. Cleared via the badge's "Switch User" link.
   const [currentEmployee, setCurrentEmployee] = useState(() => getStoredEmployee());
@@ -1214,7 +1191,6 @@ function PriceCalculatorApp() {
     setCurrentEmployee(null);
     setShowEmployeeLogin(true);
   };
-  const [showMyNumbers, setShowMyNumbers] = useState(false);
 
   // ── Kiosk mode (customer-facing skin) ──
   // showKioskExit: the hidden staff PIN dialog (5 logo taps in 3s).
@@ -1250,16 +1226,16 @@ function PriceCalculatorApp() {
     `Couldn't read ${names.map(n => `“${n}”`).join(", ")} — the file may be damaged or in a format we can't open. ` +
     (KIOSK_MODE ? "Try a different file, or ask at the counter and we'll help." : "Try re-exporting the file.");
 
-  // Manual retry of the offline transactions queue. Surfaced via the
-  // pending-sync badge in the header. Silent if there's nothing pending.
-  const retryPendingTransactions = async () => {
+  // Manual retry of the offline order queue. Surfaced via the
+  // unsynced badge in the header. Silent if there's nothing pending.
+  const retryPendingOrders = async () => {
     if (!isSupabaseConfigured) return;
     try {
-      const result = await drainPendingTransactions(insertTransaction);
-      const remaining = loadPendingTransactions().length;
-      setPendingSalesCount(remaining);
+      const result = await drainPendingOrders(insertOrder);
+      const remaining = loadPendingOrders().length;
+      setPendingOrdersCount(remaining);
       if (result.flushed > 0) {
-        setSavedJobToast(`Synced ${result.flushed} pending sale${result.flushed === 1 ? "" : "s"}.`);
+        setSavedJobToast(`Synced ${result.flushed} unsynced order${result.flushed === 1 ? "" : "s"}.`);
         setTimeout(() => setSavedJobToast(""), 3500);
       } else if (remaining > 0) {
         alert("Still can't reach the database — check connection and try again.");
@@ -1293,7 +1269,7 @@ function PriceCalculatorApp() {
   const [publishMsg, setPublishMsg]   = useState("");
 
   // Snapshot reported up by the Specialty / Booklet / Data-Merge child tabs
-  // so the shared Complete Sale pipeline can log their sales. Shape matches
+  // so the shared Save Order pipeline can record their orders. Shape matches
   // what buildSaleSnapshot() returns for the built-in tabs.
   const [childSnapshot, setChildSnapshot] = useState(null);
 
@@ -1455,41 +1431,6 @@ function PriceCalculatorApp() {
   const bpInputRef = useRef(null);
   const [bpFile, setBpFile]       = useState(null);
 
-  // ── Commission tracking — upsell flags + per-order claims ──
-  // upsellFlags drives which items get an "Upsell" toggle in the UI.
-  // The toggle itself defaults OFF and the employee opts in if they
-  // actually suggested the upsell to the customer.
-  const [upsellFlags, setUpsellFlags] = useState(() => {
-    try {
-      const s = localStorage.getItem(LS.UPSELL_FLAGS);
-      if (s) return JSON.parse(s);
-    } catch {}
-    return { paperTypes: {}, lfPaperTypes: {}, lfAddons: { grommets: false, foamCore: false } };
-  });
-  useEffect(() => {
-    try { localStorage.setItem(LS.UPSELL_FLAGS, JSON.stringify(upsellFlags)); } catch {}
-  }, [upsellFlags]);
-  // Per-order upsell claims for the LF tab. The Sheets tab's claim
-  // lives on each ticket item (item.upsellPaper). Blueprints have no
-  // upsell-eligible items today.
-  const [lfUpsellPaper, setLfUpsellPaper]       = useState(false);
-  const [lfUpsellGrommets, setLfUpsellGrommets] = useState(false);
-  const [lfUpsellFoamCore, setLfUpsellFoamCore] = useState(false);
-  // Reset LF upsell claims when the underlying choice changes — a new
-  // paper / re-toggled add-on shouldn't carry an old "I upsold this".
-  useEffect(() => { setLfUpsellPaper(false); }, [lfPaperKey]);
-  useEffect(() => { if (!lfGrommets) setLfUpsellGrommets(false); }, [lfGrommets]);
-  useEffect(() => { if (!lfFoamCore) setLfUpsellFoamCore(false); }, [lfFoamCore]);
-  // Same idea for the Sheets ticket: if a line item's paper isn't
-  // upsell-eligible (anymore), drop its upsell claim so the totals
-  // stay honest even if the toggle UI isn't visible.
-  useEffect(() => {
-    setTicket(prev => prev.map(it => (
-      it.upsellPaper && !upsellFlags.paperTypes?.[it.paperKey]
-        ? { ...it, upsellPaper: false } : it
-    )));
-  }, [upsellFlags]);
-
   // Signs365 pricing overrides — partial tree on top of
   // src/data/signs365Pricing.json. Stored under LS.SIGNS365 (which
   // is the "signs365Pricing" key SpecialtyTab also reads). The
@@ -1510,29 +1451,14 @@ function PriceCalculatorApp() {
     } catch {}
   }, [signs365Overrides]);
 
-  // Commission settings (rates + monthly bonus thresholds). Lazy-loaded
-  // from Supabase on mount so the Complete Sale dialog has live numbers.
-  const [commissionSettings, setCommissionSettings] = useState({
-    base_rate: 0.02, upsell_rate: 0.08,
-    monthly_bonus_threshold: 5000, monthly_bonus_amount: 50,
-  });
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    let cancelled = false;
-    fetchCommissionSettings()
-      .then((s) => { if (!cancelled && s) setCommissionSettings(s); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  // Drain any sales that were queued offline. Tries on mount and again
+  // Drain any orders that were queued offline. Tries on mount and again
   // whenever the browser regains network connectivity.
-  const [pendingSalesCount, setPendingSalesCount] = useState(() => loadPendingTransactions().length);
+  const [pendingOrdersCount, setPendingOrdersCount] = useState(() => loadPendingOrders().length);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     const drain = () => {
-      drainPendingTransactions(insertTransaction)
-        .then(() => setPendingSalesCount(loadPendingTransactions().length))
+      drainPendingOrders(insertOrder)
+        .then(() => setPendingOrdersCount(loadPendingOrders().length))
         .catch(() => {});
     };
     drain();
@@ -1540,9 +1466,9 @@ function PriceCalculatorApp() {
     return () => window.removeEventListener("online", drain);
   }, []);
 
-  // Complete-sale flow state.
-  const [pendingSale, setPendingSale] = useState(null);    // { snapshot, base, upsell, settings }
-  const [completingSale, setCompletingSale] = useState(false);
+  // Save-order flow state.
+  const [pendingOrder, setPendingOrder] = useState(null);    // { snapshot, employee }
+  const [savingOrder, setSavingOrder] = useState(false);
 
   // ── Quick Quote ──
   const [quoteQty, setQuoteQty]             = useState(100);
@@ -1653,7 +1579,6 @@ function PriceCalculatorApp() {
         if (typeof json.previewMargin==="number")  setPreviewMargin(json.previewMargin);
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
         if (json.skuMap && typeof json.skuMap === "object") setSkuMap(json.skuMap);
-        if (json.upsellFlags && typeof json.upsellFlags === "object") setUpsellFlags(json.upsellFlags);
         if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
     };
 
@@ -3104,9 +3029,8 @@ const handleFrontFiles = async (files) => {
   };
 
   // ─── COMPLETE SALE FLOW ─────────────────────────────────
-  // Build a transaction-ready snapshot for the active tab. base / upsell
-  // are split per the employee's claim toggles. Returns null for tabs
-  // that don't participate (Impose).
+  // Build an order-ready snapshot for the active tab (total, subtotal, line items).
+  // Returns null for tabs that don't participate (Impose).
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const buildSaleSnapshot = () => {
     if (activeTab === "paper") {
@@ -3118,12 +3042,12 @@ const handleFrontFiles = async (files) => {
         groups[k].totalSheets += Number(it.sheetsNeeded) || 0;
       });
       Object.values(groups).forEach(g => { g.factor = getSheetDiscountFactor(g.totalSheets); });
-      let base = 0, upsell = 0;
+      let base = 0;
       const lineItems = liveTicket.map((it, idx) => {
         const factor = groups[`${it.paperKey}:${it.sheetKey}`].factor;
         const sub = (it.perSheetTotal || 0) * (it.sheetsNeeded || 0);
         const lineTotal = sub * factor;
-        if (it.upsellPaper) upsell += lineTotal; else base += lineTotal;
+        base += lineTotal;
         const paperLabel = paperTypes.find(p => p.key === it.paperKey)?.label || it.paperKey;
         return {
           kind: "sheet_line",
@@ -3140,15 +3064,13 @@ const handleFrontFiles = async (files) => {
           perSheet: round2(it.perSheetTotal),
           appliedDiscountPercent: Number(((1 - factor) * 100).toFixed(3)),
           lineTotal: round2(lineTotal),
-          upsell: !!it.upsellPaper,
           files: (it.frontFiles || []).map(f => ({ name: f.name, qty: f.qty })),
         };
       });
       return {
         serviceType: "sheets",
-        total: round2(base + upsell),
+        total: round2(base),
         baseSubtotal: round2(base),
-        upsellSubtotal: round2(upsell),
         lineItems,
       };
     }
@@ -3157,7 +3079,7 @@ const handleFrontFiles = async (files) => {
       const paperCost     = lfBase * factor;
       const grommetsCost  = (lfGrommets ? (lfAddonPricing.grommetEach || 0) * (lfGrommetCount || 0) * lfTotalQty : 0) * factor;
       const foamCoreCost  = (lfFoamCore ? (lfAddonPricing.foamCore || 0) * lfTotalQty : 0) * factor;
-      let base = 0, upsell = 0;
+      let base = 0;
       const lineItems = [];
       lineItems.push({
         kind: "lf_media",
@@ -3168,29 +3090,26 @@ const handleFrontFiles = async (files) => {
         areaSqFt: Number(lfTotalSqFt.toFixed(3)),
         colorMode: lfColorMode,
         lineTotal: round2(paperCost),
-        upsell: !!lfUpsellPaper,
       });
-      if (lfUpsellPaper) upsell += paperCost; else base += paperCost;
+      base += paperCost;
       if (lfGrommets) {
         lineItems.push({
           kind: "lf_addon", name: "Grommets",
           count: lfGrommetCount, lineTotal: round2(grommetsCost),
-          upsell: !!lfUpsellGrommets,
         });
-        if (lfUpsellGrommets) upsell += grommetsCost; else base += grommetsCost;
+        base += grommetsCost;
       }
       if (lfFoamCore) {
         lineItems.push({
           kind: "lf_addon", name: "Foam Core",
-          lineTotal: round2(foamCoreCost), upsell: !!lfUpsellFoamCore,
+          lineTotal: round2(foamCoreCost),
         });
-        if (lfUpsellFoamCore) upsell += foamCoreCost; else base += foamCoreCost;
+        base += foamCoreCost;
       }
       return {
         serviceType: "large_format",
-        total: round2(base + upsell),
+        total: round2(base),
         baseSubtotal: round2(base),
-        upsellSubtotal: round2(upsell),
         lineItems,
       };
     }
@@ -3199,7 +3118,6 @@ const handleFrontFiles = async (files) => {
         serviceType: "blueprints",
         total: round2(bpTotal),
         baseSubtotal: round2(bpTotal),
-        upsellSubtotal: 0,
         lineItems: [{
           kind: "blueprint",
           sizeKey: bpSizeKey,
@@ -3208,7 +3126,6 @@ const handleFrontFiles = async (files) => {
           quantity: bpQty,
           perSheet: Number(bpPerSheet.toFixed(4)),
           lineTotal: round2(bpTotal),
-          upsell: false,
         }],
       };
     }
@@ -3235,9 +3152,6 @@ const handleFrontFiles = async (files) => {
       setSelectedLfId(null);
       setLfGrommets(false);
       setLfFoamCore(false);
-      setLfUpsellPaper(false);
-      setLfUpsellGrommets(false);
-      setLfUpsellFoamCore(false);
     } else if (activeTab === "blueprint") {
       setBpFile(null);
     }
@@ -3273,7 +3187,6 @@ const handleFrontFiles = async (files) => {
     setLfColorMode("color");
     setLfGrommets(false); setLfGrommetCount(4);
     setLfFoamCore(false);
-    setLfUpsellPaper(false); setLfUpsellGrommets(false); setLfUpsellFoamCore(false);
     setLfCopiesPerFile(1);
     // Blueprints
     setBpFile(null);
@@ -3482,53 +3395,50 @@ const handleFrontFiles = async (files) => {
     return `${cfg.lfWidth}×${cfg.lfHeight} · ${mediaLabel}${grom}`;
   };
 
-  const requestCompleteSale = () => {
-    if (!isSupabaseConfigured) { alert("Sales database isn't configured."); return; }
+  const requestSaveOrder = () => {
+    if (!isSupabaseConfigured) { alert("Order database isn't configured."); return; }
     if (!currentEmployee) {
-      alert("Sign in with your PIN before completing a sale.");
+      alert("Sign in with your PIN to record an order.");
       setShowEmployeeLogin(true);
       return;
     }
     const snapshot = buildSaleSnapshot();
-    if (!snapshot) { alert("This tab can't log sales yet."); return; }
-    if (!snapshot.total || snapshot.total <= 0) { alert("Nothing to sell yet — add some prints first."); return; }
-    setPendingSale({ snapshot, employee: currentEmployee, settings: commissionSettings });
+    if (!snapshot) { alert("This tab can't save orders yet."); return; }
+    if (!snapshot.total || snapshot.total <= 0) { alert("Nothing to save yet — add some prints first."); return; }
+    setPendingOrder({ snapshot, employee: currentEmployee });
   };
 
-  const confirmCompleteSale = async (notes = "") => {
-    if (!pendingSale || completingSale) return;
-    setCompletingSale(true);
+  const confirmSaveOrder = async (notes = "") => {
+    if (!pendingOrder || savingOrder) return;
+    setSavingOrder(true);
     try {
-      const { snapshot, employee, settings } = pendingSale;
-      const c = computeCommission(snapshot.baseSubtotal, snapshot.upsellSubtotal, settings);
+      const { snapshot, employee } = pendingOrder;
+      // employee_id/employee_name = who RECORDED the order — core history,
+      // not an incentive attribution. org_id/store_id are stamped by
+      // insertOrder (Phase B tenant keys, never populated before D1).
       const row = {
         employee_id: employee.id,
         employee_name: employee.name,
-        total: c.total,
-        base_subtotal: c.base_subtotal,
-        upsell_subtotal: c.upsell_subtotal,
-        base_commission: c.base_commission,
-        upsell_commission: c.upsell_commission,
-        total_commission: c.total_commission,
+        total: round2(snapshot.total),
+        base_subtotal: round2(snapshot.baseSubtotal),
         line_items: snapshot.lineItems,
         service_type: snapshot.serviceType,
         notes: (notes || "").trim() || null,
       };
-      const result = await saveTransactionWithFallback(row, insertTransaction);
-      setPendingSale(null);
+      const result = await saveOrderWithFallback(row, insertOrder);
+      setPendingOrder(null);
       if (result.ok) {
-        fireConfetti();
-        setSavedJobToast(`Sale logged. You earned $${c.total_commission.toFixed(2)} commission.`);
+        setSavedJobToast(`Order saved — $${row.total.toFixed(2)}, recorded by ${employee.name}.`);
       } else {
-        setSavedJobToast("Sale logged locally — will sync when connection returns.");
+        setSavedJobToast("Order saved locally — will sync when connection returns.");
       }
       setTimeout(() => setSavedJobToast(""), 4000);
-      setPendingSalesCount(loadPendingTransactions().length);
+      setPendingOrdersCount(loadPendingOrders().length);
       if (activeTab === "paper") pushRecentConfig();
       else if (activeTab === "large") pushLfRecentConfig();
       resetActiveTabForNextSale();
     } finally {
-      setCompletingSale(false);
+      setSavingOrder(false);
     }
   };
 
@@ -3560,7 +3470,7 @@ const handleFrontFiles = async (files) => {
     sheetQtyDiscounts: quantityDiscounts, lfQtyDiscounts: lfQuantityDiscounts,
     sheetMarkupPerPaper: markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor,
     lfAddonPricing, blueprintPricing: bpPricing, previewMargin, previewSpacing,
-    upsellFlags, signs365Pricing: signs365Overrides,
+    signs365Pricing: signs365Overrides,
   });
 
   // Push the current in-memory price book + store profile to Supabase.
@@ -3619,7 +3529,6 @@ try {
         if (json.blueprintPricing){ setBpPricing(json.blueprintPricing); localStorage.setItem(LS.BP_PRICING,JSON.stringify(json.blueprintPricing)); }
         if (typeof json.previewMargin==="number")  setPreviewMargin(json.previewMargin);
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
-        if (json.upsellFlags && typeof json.upsellFlags === "object") setUpsellFlags(json.upsellFlags);
         if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
         alert("Pricing imported successfully.");
       } catch { alert("Invalid pricing.json file."); }
@@ -3741,14 +3650,14 @@ try {
           </div>
           {!KIOSK_MODE && (
           <div className="header-actions">
-            {isSupabaseConfigured && pendingSalesCount > 0 && (
+            {isSupabaseConfigured && pendingOrdersCount > 0 && (
               <button
                 type="button"
                 className="emp-pending-badge"
-                onClick={retryPendingTransactions}
-                title="Click to retry syncing"
+                onClick={retryPendingOrders}
+                title="Orders saved offline — click to retry syncing"
               >
-                ⏳ {pendingSalesCount} pending
+                ⏳ {pendingOrdersCount} unsynced
               </button>
             )}
             {isSupabaseConfigured && (
@@ -3761,15 +3670,6 @@ try {
                       Switch
                     </button>
                   </span>
-                  <button
-                    type="button"
-                    className="pc-btn pc-btn-secondary pc-btn-sm"
-                    onClick={() => setShowMyNumbers(true)}
-                    style={{ gap: 6 }}
-                    title="See your sales and commission"
-                  >
-                    📊 My Numbers
-                  </button>
                 </>
               ) : (
                 <button
@@ -4005,14 +3905,14 @@ try {
                 {isSupabaseConfigured && (
                   <button
                     type="button"
-                    className={`admin-view-tab ${adminView==="commissions" ? "is-active" : ""}`}
-                    onClick={() => setAdminView("commissions")}
-                  >Commissions</button>
+                    className={`admin-view-tab ${adminView==="orders" ? "is-active" : ""}`}
+                    onClick={() => setAdminView("orders")}
+                  >Orders</button>
                 )}
               </div>
 
-              {adminView === "commissions" && isSupabaseConfigured && (
-                <CommissionDashboard />
+              {adminView === "orders" && isSupabaseConfigured && (
+                <OrdersDashboard />
               )}
 
               {adminView === "pricing" && (<>
@@ -4055,77 +3955,6 @@ try {
                   {publishMsg}
                 </div>
               )}
-              <hr className="pc-divider" />
-
-              {/* Upsell items */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Upsell-eligible items</div>
-                <p style={{ fontSize:12, color:"var(--text-muted)", marginBottom:10 }}>
-                  Items toggled on here will show an "⬆ Upsell" claim button to the employee at sale time. The claim itself defaults OFF — staff opts in only when they actively suggested the upgrade.
-                </p>
-
-                <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Sheet papers</div>
-                <div className="upsell-flag-list">
-                  {paperTypes.map(pt => (
-                    <label key={pt.key} className="upsell-flag-row">
-                      <input
-                        type="checkbox"
-                        checked={!!upsellFlags.paperTypes?.[pt.key]}
-                        onChange={(e) => setUpsellFlags(prev => ({
-                          ...prev,
-                          paperTypes: { ...(prev.paperTypes||{}), [pt.key]: e.target.checked },
-                        }))}
-                      />
-                      <span>{pt.label}</span>
-                      <span style={{ color:"var(--text-muted)", fontSize:11 }}>({pt.key})</span>
-                    </label>
-                  ))}
-                </div>
-
-                <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:"0.06em", margin:"12px 0 6px" }}>Large format media</div>
-                <div className="upsell-flag-list">
-                  {lfPaperTypes.map(pt => (
-                    <label key={pt.key} className="upsell-flag-row">
-                      <input
-                        type="checkbox"
-                        checked={!!upsellFlags.lfPaperTypes?.[pt.key]}
-                        onChange={(e) => setUpsellFlags(prev => ({
-                          ...prev,
-                          lfPaperTypes: { ...(prev.lfPaperTypes||{}), [pt.key]: e.target.checked },
-                        }))}
-                      />
-                      <span>{pt.label}</span>
-                      <span style={{ color:"var(--text-muted)", fontSize:11 }}>({pt.key})</span>
-                    </label>
-                  ))}
-                </div>
-
-                <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:"0.06em", margin:"12px 0 6px" }}>Large format add-ons</div>
-                <div className="upsell-flag-list">
-                  <label className="upsell-flag-row">
-                    <input
-                      type="checkbox"
-                      checked={!!upsellFlags.lfAddons?.grommets}
-                      onChange={(e) => setUpsellFlags(prev => ({
-                        ...prev,
-                        lfAddons: { ...(prev.lfAddons||{}), grommets: e.target.checked },
-                      }))}
-                    />
-                    <span>Grommets</span>
-                  </label>
-                  <label className="upsell-flag-row">
-                    <input
-                      type="checkbox"
-                      checked={!!upsellFlags.lfAddons?.foamCore}
-                      onChange={(e) => setUpsellFlags(prev => ({
-                        ...prev,
-                        lfAddons: { ...(prev.lfAddons||{}), foamCore: e.target.checked },
-                      }))}
-                    />
-                    <span>Foam Core</span>
-                  </label>
-                </div>
-              </div>
               <hr className="pc-divider" />
 
               {/* Preview Layout Settings */}
@@ -4547,16 +4376,6 @@ try {
                         {paperTypes.map(pt => <option key={pt.key} value={pt.key}>{pt.label}</option>)}
                       </select>
                     </div>
-                    {upsellFlags.paperTypes?.[paperKey] && (
-                      <UpsellToggle
-                        checked={!!ticket[activeTicketIdx]?.upsellPaper}
-                        onChange={(v) => setTicket(prev => prev.map((it, i) =>
-                          i === activeTicketIdx ? { ...it, upsellPaper: v } : it
-                        ))}
-                        label="Upsell"
-                        tooltip="Mark this if you suggested this paper to the customer."
-                      />
-                    )}
                   </div>
                   <div>
                     <label className="field-label">Orientation</label>
@@ -4951,9 +4770,9 @@ try {
               ]}
               onDownload={downloadSheetPDF}
               onOrder={orderSheetJob}
-              onCompleteSale={requestCompleteSale}
+              onCompleteSale={requestSaveOrder}
               completeSaleEnabled={!!currentEmployee && (ticketTotal > 0 || totalPrice > 0)}
-              completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
+              completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Save this order to your job history"}
               kioskAction={KIOSK_MODE ? {
                 label: "Send to counter",
                 onClick: openKioskSheet,
@@ -5012,13 +4831,6 @@ try {
                         {lfPaperTypes.map(pt => <option key={pt.key} value={pt.key}>{pt.label}</option>)}
                       </select>
                     </div>
-                    {upsellFlags.lfPaperTypes?.[lfPaperKey] && (
-                      <UpsellToggle
-                        checked={lfUpsellPaper}
-                        onChange={setLfUpsellPaper}
-                        tooltip="Mark this if you suggested this media to the customer."
-                      />
-                    )}
                   </div>
                   <div data-tour="lf-color-mode">
                     <label className="field-label">Color mode</label>
@@ -5047,16 +4859,10 @@ try {
                   <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                     <AddonCard dataTour="lf-grommet-toggle" emoji="🔩" name="Grommets" price={`$${(lfAddonPricing.grommetEach||0).toFixed(2)}/ea`} selected={lfGrommets} onToggle={()=>setLfGrommets(v=>!v)}
                       delta={!lfGrommets && lfTotalQty > 0 ? <PriceDelta value={(lfAddonPricing.grommetEach||0) * (lfGrommetCount||0) * lfTotalQty * lfDiscountFactor} /> : null} />
-                    {lfGrommets && upsellFlags.lfAddons?.grommets && (
-                      <UpsellToggle checked={lfUpsellGrommets} onChange={setLfUpsellGrommets} />
-                    )}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                     <AddonCard dataTour="lf-foamcore-toggle" emoji="🧊" name="Foam Core" price={`+$${lfAddonPricing.foamCore}`} selected={lfFoamCore} onToggle={()=>setLfFoamCore(v=>!v)}
                       delta={!lfFoamCore && lfTotalQty > 0 ? <PriceDelta value={(lfAddonPricing.foamCore||0) * lfTotalQty * lfDiscountFactor} /> : null} />
-                    {lfFoamCore && upsellFlags.lfAddons?.foamCore && (
-                      <UpsellToggle checked={lfUpsellFoamCore} onChange={setLfUpsellFoamCore} />
-                    )}
                   </div>
                 </div>
                 {lfGrommets && (
@@ -5179,9 +4985,9 @@ try {
               ]}
               onDownload={downloadLfPDF}
               onOrder={orderLargeFormatJob}
-              onCompleteSale={requestCompleteSale}
+              onCompleteSale={requestSaveOrder}
               completeSaleEnabled={!!currentEmployee && lfTotalWithDiscount > 0 && lfFiles.length>0}
-              completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
+              completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Save this order to your job history"}
               kioskAction={KIOSK_MODE ? {
                 label: "Send to counter",
                 onClick: openKioskSheet,
@@ -5272,9 +5078,9 @@ try {
               ]}
               onDownload={downloadBlueprintPDF}
               onOrder={orderBlueprintJob}
-              onCompleteSale={requestCompleteSale}
+              onCompleteSale={requestSaveOrder}
               completeSaleEnabled={!!currentEmployee && bpTotal > 0}
-              completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Log this as a completed sale"}
+              completeSaleHint={!currentEmployee ? "Sign in with your PIN first" : "Save this order to your job history"}
               kioskAction={KIOSK_MODE ? {
                 label: "Send to counter",
                 onClick: openKioskSheet,
@@ -5295,7 +5101,7 @@ try {
             PriceDelta={PriceDelta}
             onSnapshotChange={setChildSnapshot}
             currentEmployee={currentEmployee}
-            onCompleteSale={requestCompleteSale}
+            onCompleteSale={requestSaveOrder}
           />
         )}
 
@@ -5308,7 +5114,7 @@ try {
     PriceBar={PriceBar}
     onSnapshotChange={setChildSnapshot}
     currentEmployee={currentEmployee}
-    onCompleteSale={requestCompleteSale}
+    onCompleteSale={requestSaveOrder}
     pricingProps={{
       paperTypes, sheetKeysForPaper, pricing, quantityDiscounts,
       backSideFactor, getSheetDiscountFactor,
@@ -5420,20 +5226,13 @@ try {
         />
       )}
 
-      {pendingSale && (
-        <CompleteSaleDialog
-          pending={pendingSale}
-          busy={completingSale}
+      {pendingOrder && (
+        <SaveOrderDialog
+          pending={pendingOrder}
+          busy={savingOrder}
           defaultNotes={orderCustomer.name || ""}
-          onConfirm={confirmCompleteSale}
-          onCancel={() => !completingSale && setPendingSale(null)}
-        />
-      )}
-
-      {showMyNumbers && currentEmployee && (
-        <MyNumbersPanel
-          employee={currentEmployee}
-          onClose={() => setShowMyNumbers(false)}
+          onConfirm={confirmSaveOrder}
+          onCancel={() => !savingOrder && setPendingOrder(null)}
         />
       )}
 
@@ -5770,49 +5569,25 @@ function SaveJobDialog({ label, row, fileCount = 0, uploadProgress, saving, onCa
   );
 }
 
-// ─── COMPLETE SALE DIALOG ──────────────────────────────────
-// Confirmation modal shown when the employee clicks "Complete Sale".
-// Re-runs the commission math locally so the displayed numbers always
-// match what gets written to the transactions row.
-function CompleteSaleDialog({ pending, busy, defaultNotes = "", onConfirm, onCancel }) {
+// ─── SAVE ORDER DIALOG ─────────────────────────────────────
+// Confirmation modal shown when the employee clicks "Save Order".
+// Reviews the line items and takes optional notes; the total shown is
+// exactly what gets written to the orders row.
+function SaveOrderDialog({ pending, busy, defaultNotes = "", onConfirm, onCancel }) {
   const [notes, setNotes] = useState(defaultNotes);
-  const { snapshot, employee, settings } = pending;
-  const c = computeCommission(snapshot.baseSubtotal, snapshot.upsellSubtotal, settings);
+  const { snapshot, employee } = pending;
+  const total = Number(snapshot.total || 0);
   const submit = (e) => { e?.preventDefault?.(); onConfirm(notes); };
   return (
     <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !busy && onCancel()}>
-      <form className="pc-dialog complete-sale-dialog" onClick={e => e.stopPropagation()} onSubmit={submit}>
-        <div className="pc-dialog-title">Complete sale for ${c.total.toFixed(2)}?</div>
+      <form className="pc-dialog save-order-dialog" onClick={e => e.stopPropagation()} onSubmit={submit}>
+        <div className="pc-dialog-title">Save order for ${total.toFixed(2)}?</div>
         <div className="pc-dialog-sub">
-          Logging under <strong>{employee.name}</strong>. This can't be undone from the calculator.
+          Recorded by <strong>{employee.name}</strong>. This can't be undone from the calculator.
         </div>
 
-        <div className="complete-sale-breakdown">
-          <div className="complete-sale-row">
-            <span>Base subtotal</span>
-            <span>${c.base_subtotal.toFixed(2)}</span>
-          </div>
-          <div className="complete-sale-row">
-            <span>Upsell subtotal</span>
-            <span>${c.upsell_subtotal.toFixed(2)}</span>
-          </div>
-          <hr className="pc-divider" style={{ margin:"6px 0" }} />
-          <div className="complete-sale-row">
-            <span>Base commission ({(settings.base_rate * 100).toFixed(2)}%)</span>
-            <span>${c.base_commission.toFixed(2)}</span>
-          </div>
-          <div className="complete-sale-row">
-            <span>Upsell commission ({(settings.upsell_rate * 100).toFixed(2)}%)</span>
-            <span>${c.upsell_commission.toFixed(2)}</span>
-          </div>
-          <div className="complete-sale-row complete-sale-total">
-            <span>You earn</span>
-            <span>${c.total_commission.toFixed(2)}</span>
-          </div>
-        </div>
-
-        <div className="complete-sale-lines">
-          <div className="complete-sale-lines-title">Line items ({snapshot.lineItems.length})</div>
+        <div className="save-order-lines">
+          <div className="save-order-lines-title">Line items ({snapshot.lineItems.length})</div>
           <ul>
             {snapshot.lineItems.map((li, i) => (
               <li key={i}>
@@ -5822,17 +5597,18 @@ function CompleteSaleDialog({ pending, busy, defaultNotes = "", onConfirm, onCan
                   {li.kind === "lf_addon"   && `${li.name}${li.count ? ` ×${li.count}` : ""}`}
                   {li.kind === "blueprint"  && `${li.label} blueprints ×${li.quantity}`}
                   {li.kind === "specialty"  && `${li.productLabel || "Specialty"}${li.dimensions ? ` (${li.dimensions})` : ""}${li.quantity ? ` ×${li.quantity}` : ""}`}
-                  {li.kind === "specialty_shipping" && "Shipping (passthrough)"}
+                  {li.kind === "specialty_shipping" && "Shipping"}
                   {li.kind === "booklet"    && `Booklet: ${li.pages ?? "?"}pg × ${li.copies ?? 1} on ${li.stock || "stock"}${li.duplex ? " (duplex)" : ""}`}
                   {li.kind === "data_merge" && `Data Merge: ${li.records ?? 0} records on ${li.paperLabel || li.paper || "stock"} ${li.sheetKey || ""}`.trim()}
                 </span>
-                <span>
-                  {li.upsell && <span className="complete-sale-upsell-pill">⬆ upsell</span>}
-                  ${Number(li.lineTotal || 0).toFixed(2)}
-                </span>
+                <span>${Number(li.lineTotal || 0).toFixed(2)}</span>
               </li>
             ))}
           </ul>
+          <div className="save-order-row save-order-total">
+            <span>Total</span>
+            <span>${total.toFixed(2)}</span>
+          </div>
         </div>
 
         <div style={{ marginTop: 10 }}>
@@ -5850,7 +5626,7 @@ function CompleteSaleDialog({ pending, busy, defaultNotes = "", onConfirm, onCan
         <div className="pc-dialog-actions" style={{ marginTop: 14 }}>
           <button type="button" className="pc-btn pc-btn-secondary" onClick={onCancel} disabled={busy}>Cancel</button>
           <button type="submit" className="pc-btn pc-btn-success" disabled={busy}>
-            {busy ? "Logging…" : "✓ Confirm Sale"}
+            {busy ? "Saving…" : "✓ Save Order"}
           </button>
         </div>
       </form>
@@ -5939,7 +5715,6 @@ function TicketBar({
                 ${line.lineTotal.toFixed(2)}
                 {disc > 0.0001 && <span className="ticket-card-disc">−{disc.toFixed(0)}%</span>}
               </div>
-              {it.upsellPaper && <span className="ticket-card-upsell" title="Marked as upsell">⬆ upsell</span>}
             </div>
           );
         })}
