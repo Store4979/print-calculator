@@ -106,9 +106,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   merge — rebase onto origin/main (or reset a fresh branch) before new work.
 - BookletMaker/DataMerge/SpecialtyTab receive shared components (PriceBar,
   CardHeader, PriceDelta) as props from App.jsx — don't re-import or fork them.
-- Order history lives in public.orders (renamed from `transactions` in Phase D1).
-  Between migrations D1-a and D1-b a compat VIEW named `transactions` exists so
-  the previous client keeps working; D1-b drops it. Never point new code at it.
+- Order history lives in public.orders (renamed from `transactions` in Phase D1,
+  complete 2026-09-09). The compat view `transactions` and the four incentive
+  columns are GONE; the old values sit in public._archive_commission_columns
+  (RLS on, no policies, service-role/SQL only). That archive is the only source
+  for the D1-b rollback's values — do NOT drop it until Ryan says so. A tab that
+  predates the D1 client fails its save and queues the row; the whitelist in
+  orderQueue.js makes that row drain cleanly after a hard refresh.
 - The PriceBar tour ids are still `*-complete-sale` (TrainingDrawer targets
   "complete-sale"); the user-visible label is "Save Order". Renaming the ids
   breaks the training step.

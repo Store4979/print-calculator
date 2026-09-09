@@ -11,6 +11,9 @@ directory:
 - `pending/` — written but NOT applied. Kept out of the top level so the
   Supabase CLI can never apply it by accident. Moves up (and gets its real
   version) when applied.
+- `../rehearsals/` — rolled-back dry runs of destructive migrations (the
+  migration body verbatim + proofs + the rollback file, ending in ROLLBACK).
+  Not in the ledger. Re-runnable only while the migration is still pending.
 
 **Check for drift** before any DB work: run `supabase/drift-check.sql` against
 the project and `scripts/migration-md5.sh` in the repo, and diff. Every ledger
@@ -47,4 +50,4 @@ of truth is what makes that class of failure visible at review time.
 | 20260908180945 | phase_d1a_orders_compat | zero-downtime rename via compat view; verified both old-client (11-col insert via view, RETURNING) and new-client shapes as anon |
 | 20260909160307 | restore_pin_rpc_execute_for_app_roles | hotfix; verified anon→1, authenticated→1. Reopens the brute-force surface on purpose; Phase S1 (server-side PIN verification) is what closes it again — beta blocker, not a store launch blocker |
 | 20260909160312 | store_mailbox_manager_membership | verified has_store_role manager=true, owner=false |
-| *pending* | phase_d1b_decommission | apply only after a production Save Order is confirmed in `orders`; point of no return for incentive values (archive table makes the rollback honest) |
+| 20260909164923 | phase_d1b_decommission | applied 2026-09-09 after PR #39 merged and a production Save Order ("test one") was confirmed in `orders`. Rehearsed first in a rolled-back transaction (`supabase/rehearsals/phase_d1b_rehearsal.sql`, 8/8), then re-verified live: anon 9-column insert, offline-queue drain of a pre-D1 row after the whitelist, view gone, archive 2 rows with the 0.01 value preserved. The header still says "NOT YET APPLIED" because the file must stay byte-identical to the ledger. **`_archive_commission_columns` stays until the owner says otherwise** — it is the only source for the rollback's commission values |

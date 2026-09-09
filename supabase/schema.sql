@@ -1,7 +1,8 @@
 -- ============================================================
 --  Employees + order history — reference schema
 --  Tables: employees, orders (formerly transactions; incentive columns
---  removed in Phase D1, see supabase/migrations/20260908*)
+--  removed in Phase D1: 20260908180945 renamed + compat view,
+--  20260909164923 dropped the view, the columns and commission_settings)
 --
 --  This is an in-store tool on trusted devices. RLS is ON, but the
 --  policies allow read/write for the anon key so the existing
@@ -47,6 +48,22 @@ create table if not exists public.orders (
 create index if not exists orders_employee_idx   on public.orders (employee_id);
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
 create index if not exists idx_orders_store      on public.orders (store_id);
+
+-- ── _archive_commission_columns (transitional, keep) ───────
+-- Written by D1-b (20260909164923) immediately before the four incentive
+-- columns were dropped: one row per order that existed at that moment.
+-- It is the ONLY source for the values the D1-b rollback restores.
+-- RLS on, no policies: invisible to anon/authenticated, readable via
+-- service role / SQL editor. Do not drop until the owner says so.
+create table if not exists public._archive_commission_columns (
+  order_id           uuid,
+  upsell_subtotal    numeric(10,2),
+  base_commission    numeric(10,2),
+  upsell_commission  numeric(10,2),
+  total_commission   numeric(10,2),
+  archived_at        timestamptz
+);
+alter table public._archive_commission_columns enable row level security;
 
 -- ── RLS ────────────────────────────────────────────────────
 alter table public.employees           enable row level security;
