@@ -1264,6 +1264,11 @@ function PriceCalculatorApp() {
   // (owner/manager/staff/null). isAdmin is derived: owner/manager only.
   const [authSession, setAuthSession] = useState(null);
   const [authRole, setAuthRole]       = useState(null);
+  // Signed in via Supabase Auth but NOT an owner/manager of this store.
+  // The password sign-in path already handles this inline, but a magic
+  // link lands by redirect with no dialog open — without this state the
+  // result is a session, isAdmin=false, and a page that shows nothing.
+  const [adminAccessDenied, setAdminAccessDenied] = useState(null); // { email, role }
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [publishing, setPublishing]   = useState(false);
   const [publishMsg, setPublishMsg]   = useState("");
@@ -1634,12 +1639,13 @@ function PriceCalculatorApp() {
     const syncRole = async (session) => {
       if (!alive) return;
       setAuthSession(session);
-      if (!session) { if (alive) { setAuthRole(null); setIsAdmin(false); } return; }
+      if (!session) { if (alive) { setAuthRole(null); setIsAdmin(false); setAdminAccessDenied(null); } return; }
       try {
         const role = await getRoleForSession(session);
         if (!alive) return;
         setAuthRole(role);
         setIsAdmin(isAdminRole(role));
+        setAdminAccessDenied(isAdminRole(role) ? null : { email: session.user?.email || "", role: role || null });
       } catch { /* transient — keep whatever admin state we had */ }
     };
 
@@ -3461,6 +3467,7 @@ const handleFrontFiles = async (files) => {
     setShowAdmin(false);
     setAuthRole(null);
     setAuthSession(null);
+    setAdminAccessDenied(null);
   };
 
   // The single source of truth for the current price book, shaped like
@@ -3878,6 +3885,21 @@ try {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Signed in, but no owner/manager membership at this store. Always
+            visible while it applies: a blank page here is the failure mode
+            this replaces. */}
+        {!KIOSK_MODE && adminAccessDenied && (
+          <div className="callout callout-warn" style={{ marginBottom:16, alignItems:"center" }} role="alert">
+            <span className="callout-icon"><Icon.Warn /></span>
+            <span style={{ flex:1 }}>
+              Signed in as <strong>{adminAccessDenied.email}</strong>, but this account isn't an owner or manager
+              of {storeProfile.name}{adminAccessDenied.role ? ` (role: ${adminAccessDenied.role})` : " (no membership)"}.
+              The Admin panel stays hidden until the store owner grants this account access.
+            </span>
+            <button type="button" className="pc-btn pc-btn-secondary pc-btn-sm" onClick={handleAdminSignOut}>Sign out</button>
           </div>
         )}
 

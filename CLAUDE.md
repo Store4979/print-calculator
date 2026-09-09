@@ -49,7 +49,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - src/lib/orderQueue.js — offline order queue. localStorage key is still
   "pendingTransactions" on purpose (renaming it orphans queued orders); rows
   are whitelisted to ORDER_COLUMNS before insert
-- supabase/migrations/ — applied migrations, each with a paired .rollback.sql
+- supabase/migrations/ — THE source of truth for schema. One file per applied
+  migration, named <ledger version>_<name>.sql and byte-identical to
+  supabase_migrations.schema_migrations.statements[1]; .rollback.sql companions
+  sit alongside; NOT-yet-applied work lives in supabase/migrations/pending/.
+  Check drift with supabase/drift-check.sql (ledger) vs scripts/migration-md5.sh
+  (repo) — see supabase/migrations/README.md
 - src/barcode128.js — Code 128B generator drawn on order PDFs via jsPDF rects
 - src/utils/tradeOrderPDF.js — Signs365 trade-order PDF
 - netlify/functions/ — send-print-job.js (email) + six customer-upload-queue
@@ -107,6 +112,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - The PriceBar tour ids are still `*-complete-sale` (TrainingDrawer targets
   "complete-sale"); the user-visible label is "Save Order". Renaming the ids
   breaks the training step.
+- verify_employee_pin IS called by the app (findEmployeeByPin -> EmployeeLogin +
+  kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
+  nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
+  revoking anything, and never apply a DB change without a file in the repo.
+- A magic-link sign-in lands by redirect with no dialog open. If that account
+  has no owner/manager membership the app must SAY so (adminAccessDenied) —
+  isAdmin=false alone renders nothing.
 
 ## Workflow rules for Claude Code sessions
 1. **Plan first.** For any non-trivial task, present a short plan and wait for
@@ -116,6 +128,11 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 3. After changes, verify with `yarn build` (and `yarn dev` for anything visual).
 4. Never touch pricing math or the Supabase schema unless the task explicitly
    calls for it.
+   Every apply_migration MUST be paired, in the same change, with a file under
+   supabase/migrations/ named by the version the ledger assigned — read it back
+   from supabase_migrations.schema_migrations right after applying. No exceptions,
+   including hotfixes: the 2026-09-09 audit found eight applied migrations with no
+   file, and one of them had taken staff sign-in down.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

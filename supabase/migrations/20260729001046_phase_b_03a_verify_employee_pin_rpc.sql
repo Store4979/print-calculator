@@ -8,10 +8,6 @@
 -- NOTE: public.employees has no `role` column (role lives on memberships,
 -- which is the owner/manager surface, not the counter-staff surface), so
 -- the projection is id/name/active.
---
--- Applied to project gmxyisjjaxtpycsmmzef as `phase_b_03a_verify_employee_pin_rpc`.
--- Verified as the anon role: correct store+pin => 1 row; wrong store +
--- correct pin => 0 rows; correct store + bad pin => 0 rows.
 
 create or replace function public.verify_employee_pin(p_store_id uuid, p_pin text)
 returns table (id uuid, name text, active boolean)

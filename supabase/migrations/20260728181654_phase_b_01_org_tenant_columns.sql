@@ -2,8 +2,6 @@
 -- Creates the organizations tenant root and adds nullable tenant-key
 -- columns everywhere. No NOT NULL, no RLS changes to existing tables,
 -- nothing dropped: the running store4979 app cannot observe this.
---
--- Applied to project gmxyisjjaxtpycsmmzef as `phase_b_01_org_tenant_columns`.
 
 create table if not exists public.organizations (
   id                     uuid primary key default gen_random_uuid(),
