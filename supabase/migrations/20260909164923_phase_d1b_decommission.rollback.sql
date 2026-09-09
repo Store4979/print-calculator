@@ -1,4 +1,4 @@
--- ROLLBACK for 20260908000002_phase_d1b_decommission.sql
+-- ROLLBACK for 20260909164923_phase_d1b_decommission.sql
 -- Restores the POST-D1-a state (orders table + compat view + nullable
 -- incentive columns + commission_settings), i.e. the state in which both
 -- the old and new clients work. To go all the way back to pre-D1, run
