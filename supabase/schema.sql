@@ -143,3 +143,23 @@ alter publication supabase_realtime add table public.pending_jobs;
 insert into storage.buckets (id, name, public)
 values ('customer-uploads', 'customer-uploads', false)
 on conflict (id) do nothing;
+
+-- ── Phase A store-config tables (20260722003606) — the runtime price book ──
+-- The app loads these first (src/lib/storeConfig.js fetchStoreConfig) and
+-- falls back to public/pricing.json only if the cloud read fails. Admin
+-- "Publish to Cloud" writes them. Full DDL is in the migration; Phase E
+-- additions are listed here.
+--   paper_types(id, store_id, kind sheet|large_format, key, label, sheet_keys,
+--               markup_percent numeric(8,2), upsell_flag, sort_order, active,
+--               pricing_mode text not null default 'cost_up'      -- Phase E-02
+--                 check (pricing_mode in ('cost_up','market_down')))
+--   sheet_prices(id, store_id, paper_type_id, sheet_key, base_cost_color,
+--                base_cost_bw, price_color, price_bw numeric(10,4), sku,
+--                paper_cost, click_color, click_bw numeric(10,4))  -- Phase E-02
+--     Invariant kept by the client on publish:
+--       base_cost_color = paper_cost + click_color
+--       base_cost_bw    = paper_cost + click_bw
+--     LF rows: paper_cost = base_cost_color, clicks 0.
+--   discounts(kind, min_qty, discount_percent), addons(...), settings(store_id,
+--     key, value jsonb) — Phase E adds settings keys `labor` and
+--     `margin_thresholds` through the existing publish path (no migration).
