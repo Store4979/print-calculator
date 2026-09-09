@@ -12,6 +12,12 @@ import { drawBarcode128 } from "./barcode128.js";
 import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import OrdersDashboard from "./components/OrdersDashboard.jsx";
+import CostModelEditor from "./components/CostModelEditor.jsx";
+import {
+  canSeeMarginFor, marginLabelFor, visibleMetrics, marginMetric, sheetCostPerSheet, lfCostPerSqFt,
+  finalizeSnapshotMargin, quoteCost, computeMargin, marginHealth, HEALTH_LABELS, r4 as round4,
+  DEFAULT_LABOR, DEFAULT_THRESHOLDS,
+} from "./lib/margin.js";
 import SpecialtyTab from "./components/SpecialtyTab.jsx";
 import Signs365PricingEditor from "./components/Signs365PricingEditor.jsx";
 import PrintQueue from "./components/PrintQueue.jsx";
@@ -104,6 +110,8 @@ const LS = {
   PREVIEW_MARGIN:   "printcalc_preview_margin_v1",
   PREVIEW_SPACING:  "printcalc_preview_spacing_v1",
   SIGNS365:         "signs365Pricing",
+  LABOR:            "printcalc_labor_v1",
+  MARGIN_THRESHOLDS:"printcalc_margin_thresholds_v1",
 };
 
 let UPS_LOGO_DATA_URL = "/ups-logo.png";
@@ -175,6 +183,11 @@ const normalizeEntry = (e = {}) => ({
   baseCostBW:    Number(e.baseCostBW    || 0),
   priceColor:    Number(e.priceColor    || e.baseCostColor || 0),
   priceBW:       Number(e.priceBW       || e.baseCostBW    || 0),
+  // Phase E cost split, carried through when present so margin math and
+  // Publish see it. Absent -> src/lib/margin.js uses the lossless default.
+  ...(e.paperCost != null && Number.isFinite(Number(e.paperCost))
+    ? { paperCost: Number(e.paperCost), clickColor: Number(e.clickColor || 0), clickBW: Number(e.clickBW || 0) }
+    : {}),
 });
 
 const loadPaperTypes = () => {
@@ -720,11 +733,14 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
   // kioskAction: { label, onClick, disabled } — replaces every staff action
   // with a single customer-facing button. Callers in kiosk mode omit the
   // staff handlers entirely, so no alert()/prompt() path is reachable here.
+  // GATE 2 (Phase E): the kiosk surface never renders a staffOnly metric,
+  // whatever its label says. Gate 1 is at the call sites (canSeeMargin is
+  // false in kiosk mode, so margin metrics are never even built there).
   if (kioskAction) {
     return (
       <div data-tour={dataTour} className={`price-bar ${accentClass}`}>
         <div className="price-metrics">
-          {metrics.map(({ label, value, big }) => (
+          {visibleMetrics(metrics, { kiosk: true }).map(({ label, value, big }) => (
             <div key={label} className="price-metric" data-metric={big ? "total" : undefined}>
               <div className="price-metric-label">{label}</div>
               <div className={`price-metric-val ${big ? totalClass : ""}`}>{value}</div>
@@ -751,10 +767,13 @@ function PriceBar({ metrics, onDownload, onOrder, onCompleteSale, completeSaleEn
   return (
     <div data-tour={dataTour} className={`price-bar ${accentClass} ${compactClass}`}>
       <div className="price-metrics">
-        {metrics.map(({ label, value, big }) => (
-          <div key={label} className="price-metric" data-metric={big ? "total" : undefined}>
+        {metrics.map(({ label, value, big, health, staffOnly }) => (
+          <div key={label} className="price-metric" data-metric={big ? "total" : undefined} data-staff-only={staffOnly ? "true" : undefined}>
             <div className="price-metric-label">{label}</div>
-            <div className={`price-metric-val ${big ? totalClass : ""}`}>{value}</div>
+            <div className={`price-metric-val ${big ? totalClass : ""}`}>
+              {health && <span className={`margin-dot is-${health}`} title={HEALTH_LABELS[health]} aria-label={HEALTH_LABELS[health]} />}
+              {value}
+            </div>
           </div>
         ))}
       </div>
@@ -1407,6 +1426,25 @@ function PriceCalculatorApp() {
   const [backSideFactor, setBackSideFactor] = useState(0.5);
   const [lfAddonPricing, setLfAddonPricing] = useState({ grommetEach:1.50, foamCore:12 });
   const [bpPricing, setBpPricing]     = useState(buildInitialBlueprintPricing);
+  // ── Phase E store knobs (labor, margin thresholds) ──
+  const [labor, setLabor] = useState(() => {
+    try { const s = localStorage.getItem(LS.LABOR); if (s) { const v = JSON.parse(s); if (v && typeof v === "object") return { ...DEFAULT_LABOR, ...v }; } } catch {}
+    return { ...DEFAULT_LABOR };
+  });
+  const [marginThresholds, setMarginThresholds] = useState(() => {
+    try { const s = localStorage.getItem(LS.MARGIN_THRESHOLDS); if (s) { const v = JSON.parse(s); if (v && typeof v === "object") return { ...DEFAULT_THRESHOLDS, ...v }; } } catch {}
+    return { ...DEFAULT_THRESHOLDS };
+  });
+  useEffect(() => { try { localStorage.setItem(LS.LABOR, JSON.stringify(labor)); } catch {} }, [labor]);
+  useEffect(() => { try { localStorage.setItem(LS.MARGIN_THRESHOLDS, JSON.stringify(marginThresholds)); } catch {} }, [marginThresholds]);
+
+  // ── Margin visibility: ONE source of truth (Phase E) ──
+  // Manager PIN at the counter, or an owner/manager admin session — and
+  // never, under any role, in kiosk mode. Every margin surface reads this;
+  // nothing re-derives it. (GATE 1; gate 2 is the staffOnly flag in PriceBar.)
+  const canSeeMargin = canSeeMarginFor({ kioskMode: KIOSK_MODE, employeeRole: currentEmployee?.role, authRole });
+  const marginLabel  = marginLabelFor(labor.enabled);
+  const marginCtx    = { canSeeMargin, marginLabel, thresholds: marginThresholds, labor };
 
   useEffect(() => { try { localStorage.setItem(LS.PRICING, JSON.stringify(pricing)); } catch {} }, [pricing]);
   useEffect(() => { try { localStorage.setItem(LS.LF_PRICING, JSON.stringify(lfPricing)); } catch {} }, [lfPricing]);
@@ -1585,6 +1623,8 @@ function PriceCalculatorApp() {
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
         if (json.skuMap && typeof json.skuMap === "object") setSkuMap(json.skuMap);
         if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
+        if (json.labor && typeof json.labor === "object") setLabor({ ...DEFAULT_LABOR, ...json.labor });
+        if (json.marginThresholds && typeof json.marginThresholds === "object") setMarginThresholds({ ...DEFAULT_THRESHOLDS, ...json.marginThresholds });
     };
 
     // Apply the store profile: React state (drives the header) + the
@@ -1695,6 +1735,9 @@ function PriceCalculatorApp() {
   };
   const discountFactor = getSheetDiscountFactor(sheetsNeeded);
   const totalPrice = perSheetTotal * sheetsNeeded * discountFactor;
+  // Phase E: material cost is never discounted; margin uses the discounted price.
+  const perSheetCost = sheetCostPerSheet(selectedPricing, { frontColorMode, showBack, backColorMode });
+  const sheetMaterialCost = perSheetCost * sheetsNeeded;
 
   // ── Pricing calculations: Large Format ──
   const lfTotalQty = lfFiles.reduce((s,f) => s + (Number(f.qty)||0), 0);
@@ -1708,6 +1751,8 @@ function PriceCalculatorApp() {
   const getLfDiscountFactor = (sqft) => { let b=0; lfQuantityDiscounts.forEach(t => { if (sqft>=(t.minSqFt||0)) b=Math.max(b,Number(t.discountPercent)||0); }); return 1-b/100; };
   const lfDiscountFactor = getLfDiscountFactor(lfTotalSqFt);
   const lfTotalWithDiscount = (lfBase + lfAddonsTotal) * lfDiscountFactor;
+  // Phase E: media cost only. Add-on costs are not modeled (count as $0).
+  const lfMaterialCost = lfCostPerSqFt(lfSelectedPricing) * lfTotalSqFt;
 
   // ── Pricing calculations: Blueprints ──
   const bpSizeObj = BLUEPRINT_SIZES.find(s => s.key===bpSizeKey) || BLUEPRINT_SIZES[5];
@@ -1724,6 +1769,10 @@ function PriceCalculatorApp() {
   const bpPerSheet  = bpPsf * bpAreaPerSheetSqFt;
   const bpTotal     = bpPerSheet * bpQty;
   const bpTotalSqFt = bpAreaPerSheetSqFt * bpQty;
+  // Phase E: blueprints print on the plain_20lb roll (the email path already
+  // says so). No plain_20lb media -> cost unknown -> margin shows "—", never 100%.
+  const bpCostPerSqFt = lfPricing["plain_20lb"] ? lfCostPerSqFt(normalizeEntry(lfPricing["plain_20lb"])) : null;
+  const bpMaterialCost = bpCostPerSqFt === null ? null : bpCostPerSqFt * bpTotalSqFt;
 
   // ── Quick Quote rows ──
   const quoteRows = (() => {
@@ -2092,6 +2141,9 @@ const handleFrontFiles = async (files) => {
       const pst = Number(it.perSheetTotal) || 0;
       const sn  = Number(it.sheetsNeeded)  || 0;
       const subtotal = pst * sn;
+      // Phase E: per-line material cost from the price book entry.
+      const entry = normalizeEntry((pricing[it.paperKey] || {})[it.sheetKey] || {});
+      const lineCost = sheetCostPerSheet(entry, { frontColorMode: it.frontColorMode, showBack: !!it.showBack, backColorMode: it.backColorMode }) * sn;
       return {
         item: it,
         groupKey: key,
@@ -2100,14 +2152,17 @@ const handleFrontFiles = async (files) => {
         subtotal,
         lineTotal: subtotal * factor,
         discountAmount: subtotal * (1 - factor),
+        lineCost,
       };
     });
-  }, [ticketView, ticketGroups]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketView, ticketGroups, pricing]);
 
   const ticketTotal       = ticketLines.reduce((s, l) => s + l.lineTotal, 0);
   const ticketSubtotal    = ticketLines.reduce((s, l) => s + l.subtotal,  0);
   const ticketDiscountAmt = ticketLines.reduce((s, l) => s + l.discountAmount, 0);
   const ticketTotalSheets = ticketLines.reduce((s, l) => s + (Number(l.item.sheetsNeeded)||0), 0);
+  const ticketCost        = ticketLines.reduce((s, l) => s + (Number(l.lineCost)||0), 0);
   const activeLine        = ticketLines[activeTicketIdx];
   const activeGroup       = activeLine ? ticketGroups[activeLine.groupKey] : null;
 
@@ -3038,7 +3093,10 @@ const handleFrontFiles = async (files) => {
   // Build an order-ready snapshot for the active tab (total, subtotal, line items).
   // Returns null for tabs that don't participate (Impose).
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-  const buildSaleSnapshot = () => {
+  // Raw snapshot: what the customer pays. Margin fields are added ONLY by
+  // buildSaleSnapshot() below; the kiosk path uses the raw one and never
+  // carries a cost or margin figure anywhere.
+  const buildSaleSnapshotRaw = () => {
     if (activeTab === "paper") {
       const liveTicket = ticket.map((it, i) => i === activeTicketIdx ? packEditorAsItem() : it);
       const groups = {};
@@ -3071,6 +3129,10 @@ const handleFrontFiles = async (files) => {
           appliedDiscountPercent: Number(((1 - factor) * 100).toFixed(3)),
           lineTotal: round2(lineTotal),
           files: (it.frontFiles || []).map(f => ({ name: f.name, qty: f.qty })),
+          // Phase E (stripped on the kiosk path, see buildSaleSnapshotRaw)
+          lineCost: round4(sheetCostPerSheet(normalizeEntry((pricing[it.paperKey] || {})[it.sheetKey] || {}),
+            { frontColorMode: it.frontColorMode, showBack: !!it.showBack, backColorMode: it.backColorMode }) * (it.sheetsNeeded || 0)),
+          laborUnits: it.sheetsNeeded || 0,
         };
       });
       return {
@@ -3096,12 +3158,15 @@ const handleFrontFiles = async (files) => {
         areaSqFt: Number(lfTotalSqFt.toFixed(3)),
         colorMode: lfColorMode,
         lineTotal: round2(paperCost),
+        lineCost: round4(lfMaterialCost),
+        laborUnits: lfTotalQty,
       });
       base += paperCost;
       if (lfGrommets) {
         lineItems.push({
           kind: "lf_addon", name: "Grommets",
           count: lfGrommetCount, lineTotal: round2(grommetsCost),
+          lineCost: 0, laborUnits: 0,
         });
         base += grommetsCost;
       }
@@ -3109,6 +3174,7 @@ const handleFrontFiles = async (files) => {
         lineItems.push({
           kind: "lf_addon", name: "Foam Core",
           lineTotal: round2(foamCoreCost),
+          lineCost: 0, laborUnits: 0,
         });
         base += foamCoreCost;
       }
@@ -3132,6 +3198,7 @@ const handleFrontFiles = async (files) => {
           quantity: bpQty,
           perSheet: Number(bpPerSheet.toFixed(4)),
           lineTotal: round2(bpTotal),
+          ...(bpMaterialCost === null ? {} : { lineCost: round4(bpMaterialCost), laborUnits: bpQty }),
         }],
       };
     }
@@ -3142,6 +3209,9 @@ const handleFrontFiles = async (files) => {
     }
     return null;
   };
+  // Staff snapshot: cost_subtotal / margin_pct stamped from the SAME line
+  // values the PriceBar displayed (labor added once per order when enabled).
+  const buildSaleSnapshot = () => finalizeSnapshotMargin(buildSaleSnapshotRaw(), { labor });
 
   const resetActiveTabForNextSale = () => {
     if (activeTab === "paper") {
@@ -3266,21 +3336,21 @@ const handleFrontFiles = async (files) => {
   };
 
   const openKioskSheet = () => {
-    const snapshot = buildSaleSnapshot();
+    const snapshot = buildSaleSnapshotRaw();   // never carries cost/margin
     if (!snapshot || !(snapshot.total > 0)) return;
     setKioskSheet({ snapshot, seedFiles: collectActiveTabFiles() });
   };
 
   // Shared-PriceBar shim handed to SpecialtyTab in kiosk mode: keeps the
   // customer-facing math, swaps every staff action for "Send to counter",
-  // and strips staff-only metrics (margin / markup / passthrough wording).
+  // and strips staff-only metrics BY FLAG (visibleMetrics), never by label
+  // text. The two remaps below only reword customer-safe labels.
   const KioskPriceBar = (props) => (
     <PriceBar
       accentClass={props.accentClass}
       totalClass={props.totalClass}
       compactOnMobile={false}
-      metrics={(props.metrics || [])
-        .filter(m => !/margin|markup/i.test(m.label))
+      metrics={visibleMetrics(props.metrics || [], { kiosk: true })
         .map(m => m.label === "Shipping (passthrough)" ? { ...m, label: "Shipping" }
                 : m.label === "Customer total" ? { ...m, label: "Estimated total" } : m)}
       kioskAction={{
@@ -3430,6 +3500,9 @@ const handleFrontFiles = async (files) => {
         line_items: snapshot.lineItems,
         service_type: snapshot.serviceType,
         notes: (notes || "").trim() || null,
+        // Phase E: the cost/margin this order was quoted at (NULL when unknown).
+        cost_subtotal: snapshot.costSubtotal ?? null,
+        margin_pct: snapshot.marginPct ?? null,
       };
       const result = await saveOrderWithFallback(row, insertOrder);
       setPendingOrder(null);
@@ -3478,6 +3551,7 @@ const handleFrontFiles = async (files) => {
     sheetMarkupPerPaper: markupPerPaper, lfMarkupPerPaper, skuMap, backSideFactor,
     lfAddonPricing, blueprintPricing: bpPricing, previewMargin, previewSpacing,
     signs365Pricing: signs365Overrides,
+    labor, marginThresholds,
   });
 
   // Push the current in-memory price book + store profile to Supabase.
@@ -3537,6 +3611,8 @@ try {
         if (typeof json.previewMargin==="number")  setPreviewMargin(json.previewMargin);
         if (typeof json.previewSpacing==="number") setPreviewSpacing(json.previewSpacing);
         if (json.signs365Pricing && typeof json.signs365Pricing === "object") setSigns365Overrides(json.signs365Pricing);
+        if (json.labor && typeof json.labor === "object") setLabor({ ...DEFAULT_LABOR, ...json.labor });
+        if (json.marginThresholds && typeof json.marginThresholds === "object") setMarginThresholds({ ...DEFAULT_THRESHOLDS, ...json.marginThresholds });
         alert("Pricing imported successfully.");
       } catch { alert("Invalid pricing.json file."); }
     };
@@ -3934,7 +4010,7 @@ try {
               </div>
 
               {adminView === "orders" && isSupabaseConfigured && (
-                <OrdersDashboard />
+                <OrdersDashboard marginCtx={marginCtx} isOwner={authRole === "owner"} />
               )}
 
               {adminView === "pricing" && (<>
@@ -4004,58 +4080,16 @@ try {
               </div>
               <hr className="pc-divider" />
 
-              {/* Sheet Pricing */}
+              {/* Cost & margin editor (Phase E) — replaces the flat sheet / LF price tables */}
               <div style={{ marginBottom:20 }}>
-                <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Sheet Pricing (per sheet)</div>
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                    <thead>
-                      <tr style={{ background:"var(--surface-3)" }}>
-<th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Paper</th>
-                        <th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Sheet</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Cost Color</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Cost B&W</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Sell Color</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Sell B&W</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Markup %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-{paperTypes.map(pt => (sheetKeysForPaper[pt.key]||[]).map(sk => {
-                        const entry = normalizeEntry((pricing[pt.key]||{})[sk]||{});
-                        return (
-                          <tr key={`${pt.key}-${sk}`} style={{ borderTop:"1px solid var(--border)" }}>
-                            <td style={{ padding:"5px 10px", color:"var(--text-muted)", fontSize:11 }}>{pt.label}</td>
-                            <td style={{ padding:"5px 10px", fontWeight:500 }}>{sk}</td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.baseCostColor}
-                                onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),baseCostColor:v}; return n; }); }} />
-                            </td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.baseCostBW}
-                                onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),baseCostBW:v}; return n; }); }} />
-                            </td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.priceColor}
-                                onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),priceColor:v}; return n; }); }} />
-                            </td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="0.0001" style={{ width:70 }} value={entry.priceBW}
-                                onChange={e=>{ const v=+e.target.value||0; setPricing(prev=>{ const n={...prev}; if(!n[pt.key])n[pt.key]={}; n[pt.key][sk]={...normalizeEntry(n[pt.key][sk]||{}),priceBW:v}; return n; }); }} />
-                            </td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="1" style={{ width:55 }} value={markupPerPaper[pt.key]||0}
-                                onChange={e=>setMarkupPerPaper(prev=>({...prev,[pt.key]:+e.target.value||0}))} />
-                            </td>
-                          </tr>
-                        );
-                      }))}
-                    </tbody>
-                  </table>
-                </div>
+                <CostModelEditor
+                  paperTypes={paperTypes} setPaperTypes={setPaperTypes} sheetKeysForPaper={sheetKeysForPaper}
+                  pricing={pricing} setPricing={setPricing} markupPerPaper={markupPerPaper} setMarkupPerPaper={setMarkupPerPaper}
+                  lfPaperTypes={lfPaperTypes} setLfPaperTypes={setLfPaperTypes} lfPricing={lfPricing} setLfPricing={setLfPricing}
+                  lfMarkupPerPaper={lfMarkupPerPaper} setLfMarkupPerPaper={setLfMarkupPerPaper}
+                  labor={labor} setLabor={setLabor} marginThresholds={marginThresholds} setMarginThresholds={setMarginThresholds}
+                />
               </div>
-              <hr className="pc-divider" />
-
               <hr className="pc-divider" />
 
               {/* Manage Sheet Paper Types */}
@@ -4180,35 +4214,9 @@ try {
 
               {/* LF Pricing */}
               <div style={{ marginBottom:20 }}>
-                <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>Large Format Pricing (per sq ft)</div>
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                    <thead>
-                      <tr style={{ background:"var(--surface-3)" }}>
-                        <th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Media</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>Color $/sqft</th>
-                        <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, color:"var(--text-muted)", fontSize:11 }}>B&W $/sqft</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lfPaperTypes.map(pt => {
-                        const entry = normalizeEntry(lfPricing[pt.key]||{});
-                        return (
-                          <tr key={pt.key} style={{ borderTop:"1px solid var(--border)" }}>
-                            <td style={{ padding:"5px 10px", fontWeight:500 }}>{pt.label}</td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="0.0001" style={{ width:80 }} value={entry.priceColor}
-                                onChange={e=>{ const v=+e.target.value||0; setLfPricing(prev=>{ const n={...prev}; n[pt.key]={...normalizeEntry(n[pt.key]||{}),priceColor:v}; return n; }); }} />
-                            </td>
-                            <td style={{ padding:"5px 10px", textAlign:"right" }}>
-                              <input className="admin-input" type="number" step="0.0001" style={{ width:80 }} value={entry.priceBW}
-                                onChange={e=>{ const v=+e.target.value||0; setLfPricing(prev=>{ const n={...prev}; n[pt.key]={...normalizeEntry(n[pt.key]||{}),priceBW:v}; return n; }); }} />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:6 }}>Large Format add-ons</div>
+                <p style={{ fontSize:12, color:"var(--text-muted)", marginBottom:4 }}>Media cost, markup and $/sq ft are edited in the Cost &amp; margin editor above.</p>
+                <div>
                 </div>
                 <div style={{ display:"flex", gap:10, marginTop:12, flexWrap:"wrap" }}>
                   <div>
@@ -4782,12 +4790,16 @@ try {
                 { label:"Total sheets",    value: ticketTotalSheets },
                 { label:"Combined discount", value: ticketDiscountAmt > 0.005
                     ? `−$${ticketDiscountAmt.toFixed(2)}` : "—" },
+                ...(canSeeMargin ? [marginMetric({ label: marginLabel, price: ticketTotal,
+                    cost: quoteCost({ material: ticketCost, labor, units: ticketTotalSheets }), thresholds: marginThresholds })] : []),
                 { label:"Ticket total",    value: `$${ticketTotal.toFixed(2)}`, big:true },
               ] : [
                 { label:"Sheets needed", value: sheetsNeeded },
                 { label:"Per sheet",     value: `$${perSheetTotal.toFixed(2)}` },
                 { label:"Discount",      value: (activeLine?.appliedDiscountFactor ?? 1) < 1
                     ? `${((1 - (activeLine?.appliedDiscountFactor ?? 1)) * 100).toFixed(1)}% off` : "—" },
+                ...(canSeeMargin ? [marginMetric({ label: marginLabel, price: activeLine?.lineTotal ?? totalPrice,
+                    cost: quoteCost({ material: activeLine?.lineCost ?? sheetMaterialCost, labor, units: sheetsNeeded }), thresholds: marginThresholds })] : []),
                 { label:"Estimated total", value: `$${(activeLine?.lineTotal ?? totalPrice).toFixed(2)}`, big:true },
               ]}
               onDownload={downloadSheetPDF}
@@ -5003,6 +5015,8 @@ try {
                 { label:"Total qty",       value:lfTotalQty },
                 { label:"Area",            value:`${lfTotalSqFt.toFixed(2)} sq ft` },
                 { label:"Add-ons",         value:[lfGrommets&&`Grom. ×${lfGrommetCount}`, lfFoamCore&&"Foam Core"].filter(Boolean).join(", ")||"None" },
+                ...(canSeeMargin ? [marginMetric({ label: marginLabel, price: lfTotalWithDiscount,
+                    cost: quoteCost({ material: lfMaterialCost, labor, units: lfTotalQty }), thresholds: marginThresholds })] : []),
                 { label:"Estimated total", value:`$${lfTotalWithDiscount.toFixed(2)}`, big:true },
               ]}
               onDownload={downloadLfPDF}
@@ -5096,6 +5110,9 @@ try {
                 { label:"Size",            value:`${bpWidth} × ${bpHeight} in` },
                 { label:"Sheets",          value:bpQty },
                 { label:"Per sheet",       value:`$${bpPerSheet.toFixed(2)}` },
+                ...(canSeeMargin ? [bpMaterialCost === null
+                    ? { label: marginLabel, value: "— (no plain_20lb media cost)", staffOnly: true }
+                    : marginMetric({ label: marginLabel, price: bpTotal, cost: quoteCost({ material: bpMaterialCost, labor, units: bpQty }), thresholds: marginThresholds })] : []),
                 { label:"Estimated total", value:`$${bpTotal.toFixed(2)}`, big:true },
               ]}
               onDownload={downloadBlueprintPDF}
@@ -5124,6 +5141,7 @@ try {
             onSnapshotChange={setChildSnapshot}
             currentEmployee={currentEmployee}
             onCompleteSale={requestSaveOrder}
+            marginCtx={marginCtx}
           />
         )}
 
@@ -5137,6 +5155,7 @@ try {
     onSnapshotChange={setChildSnapshot}
     currentEmployee={currentEmployee}
     onCompleteSale={requestSaveOrder}
+    marginCtx={marginCtx}
     pricingProps={{
       paperTypes, sheetKeysForPaper, pricing, quantityDiscounts,
       backSideFactor, getSheetDiscountFactor,
@@ -5255,6 +5274,7 @@ try {
           defaultNotes={orderCustomer.name || ""}
           onConfirm={confirmSaveOrder}
           onCancel={() => !savingOrder && setPendingOrder(null)}
+          marginCtx={marginCtx}
         />
       )}
 
@@ -5595,10 +5615,18 @@ function SaveJobDialog({ label, row, fileCount = 0, uploadProgress, saving, onCa
 // Confirmation modal shown when the employee clicks "Save Order".
 // Reviews the line items and takes optional notes; the total shown is
 // exactly what gets written to the orders row.
-function SaveOrderDialog({ pending, busy, defaultNotes = "", onConfirm, onCancel }) {
+function SaveOrderDialog({ pending, busy, defaultNotes = "", onConfirm, onCancel, marginCtx = null }) {
   const [notes, setNotes] = useState(defaultNotes);
   const { snapshot, employee } = pending;
   const total = Number(snapshot.total || 0);
+  // Phase E: per-line and order margin, gated on the single canSeeMargin.
+  const showMargin = !!marginCtx?.canSeeMargin;
+  const mLabel = marginCtx?.marginLabel || "Material margin";
+  const pctCell = (pct) => {
+    if (pct === null || pct === undefined) return <span className="sol-margin">—</span>;
+    const h = marginHealth(pct, marginCtx?.thresholds);
+    return <span className="sol-margin">{h && <span className={`margin-dot is-${h}`} title={HEALTH_LABELS[h]} />}{Number(pct).toFixed(1)}%</span>;
+  };
   const submit = (e) => { e?.preventDefault?.(); onConfirm(notes); };
   return (
     <div className="pc-dialog-backdrop" role="dialog" aria-modal="true" onClick={() => !busy && onCancel()}>
@@ -5623,13 +5651,22 @@ function SaveOrderDialog({ pending, busy, defaultNotes = "", onConfirm, onCancel
                   {li.kind === "booklet"    && `Booklet: ${li.pages ?? "?"}pg × ${li.copies ?? 1} on ${li.stock || "stock"}${li.duplex ? " (duplex)" : ""}`}
                   {li.kind === "data_merge" && `Data Merge: ${li.records ?? 0} records on ${li.paperLabel || li.paper || "stock"} ${li.sheetKey || ""}`.trim()}
                 </span>
-                <span>${Number(li.lineTotal || 0).toFixed(2)}</span>
+                <span>
+                  {showMargin && li.lineCost != null && <span className="sol-cost" title="material cost">cost ${Number(li.lineCost).toFixed(2)}</span>}
+                  {showMargin && pctCell(li.lineMarginPct)}
+                  ${Number(li.lineTotal || 0).toFixed(2)}
+                </span>
               </li>
             ))}
           </ul>
           <div className="save-order-row save-order-total">
             <span>Total</span>
-            <span>${total.toFixed(2)}</span>
+            <span>
+              {showMargin && snapshot.costSubtotal != null && <span className="sol-cost" title="cost incl. labor when enabled">cost ${Number(snapshot.costSubtotal).toFixed(2)}</span>}
+              {showMargin && <span className="sol-cost">{mLabel}</span>}
+              {showMargin && pctCell(snapshot.marginPct)}
+              ${total.toFixed(2)}
+            </span>
           </div>
         </div>
 
@@ -5758,7 +5795,7 @@ function TicketBar({
 }
 
 // ─── IMPOSE PANEL (sub-tool selector) ──────────────────────
-function ImposePanel({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
+function ImposePanel({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale, marginCtx }) {
   const [imposeTool, setImposeTool] = useState("booklet");
   return (
     <>
@@ -5779,8 +5816,8 @@ function ImposePanel({ CardHeader, PriceBar, pricingProps, onSnapshotChange, cur
           </div>
         </div>
       </div>
-      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} PriceBar={PriceBar} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
-      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} PriceBar={PriceBar} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} />}
+      {imposeTool === "booklet" && <BookletMaker CardHeader={CardHeader} PriceBar={PriceBar} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} marginCtx={marginCtx} />}
+      {imposeTool === "datamerge" && <DataMerge CardHeader={CardHeader} PriceBar={PriceBar} pricingProps={pricingProps} onSnapshotChange={onSnapshotChange} currentEmployee={currentEmployee} onCompleteSale={onCompleteSale} marginCtx={marginCtx} />}
     </>
   );
 }

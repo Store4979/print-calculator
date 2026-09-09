@@ -3,6 +3,7 @@
 // Template-based: upload a PDF/image, click to place variable fields
 // ─────────────────────────────────────────────────────────────
 
+import { marginMetric, sheetCostPerSheet, quoteCost } from "./lib/margin.js";
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -362,7 +363,7 @@ function FieldEditor({ field, index, csvHeaders, onUpdate, onRemove, onSelect, i
 
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
-export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
+export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale, marginCtx = null }) {
   // Pricing props from parent
   const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
   
@@ -449,6 +450,8 @@ export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapsh
   const sheetsNeeded = totalRecords;
   const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(sheetsNeeded) : 1;
   const totalPrice = perSheetPrice * sheetsNeeded * discountFactor;
+  // Phase E: material cost (single-sided), never discounted.
+  const materialCost = sheetCostPerSheet((pricing[selectedPaperKey] || {})[selectedSheetKey] || {}, { frontColorMode: colorMode }) * sheetsNeeded;
   const hasPricing = paperTypes.length > 0 && perSheetPrice > 0;
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const dmPaperLabel = paperTypes.find(p => p.key === selectedPaperKey)?.label || selectedPaperKey;
@@ -469,9 +472,11 @@ export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapsh
         sheetKey: selectedSheetKey,
         colorMode,
         lineTotal: round2(totalPrice),
+        lineCost: Math.round(materialCost * 10000) / 10000,
+        laborUnits: sheetsNeeded,
       }],
     });
-  }, [totalPrice, totalRecords, dmPaperLabel, selectedSheetKey, colorMode, hasPricing, onSnapshotChange]);
+  }, [totalPrice, totalRecords, dmPaperLabel, selectedSheetKey, colorMode, hasPricing, onSnapshotChange, materialCost, sheetsNeeded]);
 
   useEffect(() => () => {
     if (typeof onSnapshotChange === "function") onSnapshotChange(null);
@@ -1251,6 +1256,8 @@ export default function DataMerge({ CardHeader, PriceBar, pricingProps, onSnapsh
             { label:"Records",   value: totalRecords },
             { label:"Paper",     value: `${paperTypes.find(p => p.key === selectedPaperKey)?.label || "—"} · ${selectedSheetKey}` },
             { label:"Per sheet", value: `$${perSheetPrice.toFixed(2)}` },
+            ...(hasPricing && marginCtx?.canSeeMargin ? [marginMetric({ label: marginCtx.marginLabel, price: totalPrice,
+                cost: quoteCost({ material: materialCost, labor: marginCtx.labor, units: sheetsNeeded }), thresholds: marginCtx.thresholds })] : []),
             ...(hasPricing ? [{ label:"Estimated total", value: `$${totalPrice.toFixed(2)}`, big:true }] : []),
           ]}
           onDownload={handleGenerate}

@@ -14,13 +14,17 @@
 // counter queued offline before this deploy.
 const PENDING_KEY = "pendingTransactions";
 
-// The columns public.orders accepts after migration D1-b. Rows queued by
-// the pre-D1 client still carry the four dropped incentive columns;
+// The columns public.orders accepts (D1-b removed four, Phase E added two).
+// Rows queued by the pre-D1 client still carry the four dropped incentive columns;
 // inserting them verbatim would fail on an unknown column and the row
 // would be stuck in localStorage forever. Everything else is stripped.
 export const ORDER_COLUMNS = Object.freeze([
   "employee_id", "employee_name", "total", "base_subtotal",
   "line_items", "service_type", "notes", "org_id", "store_id",
+  // Phase E (migration 20260909232836): the cost/margin the order was
+  // quoted at. Nullable server-side; a row queued by a pre-Phase-E client
+  // simply lacks them and lands with NULLs.
+  "cost_subtotal", "margin_pct",
 ]);
 
 export const toOrderRow = (row) => {

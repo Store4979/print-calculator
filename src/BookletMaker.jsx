@@ -3,6 +3,7 @@
 // Supports Ricoh Pro C5400s (auto-duplex, saddle-stitch finisher)
 // ─────────────────────────────────────────────────────────────
 
+import { marginMetric, sheetCostPerSheet, quoteCost } from "./lib/margin.js";
 import { useState, useRef, useCallback, useEffect } from "react";
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -457,7 +458,7 @@ const PrintIcon = () => (
 
 // ── COMPONENT ──────────────────────────────────────────────
 
-export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale }) {
+export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSnapshotChange, currentEmployee, onCompleteSale, marginCtx = null }) {
   // Pricing props from parent
   const { paperTypes=[], sheetKeysForPaper={}, pricing={}, quantityDiscounts=[], backSideFactor=0.5, getSheetDiscountFactor } = pricingProps || {};
   
@@ -552,6 +553,8 @@ export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSna
   
   const discountFactor = getSheetDiscountFactor ? getSheetDiscountFactor(numSheets) : 1;
   const totalPrice = perSheetTotal * numSheets * discountFactor;
+  // Phase E: material cost (duplex -> both sides carry a click), never discounted.
+  const materialCost = sheetCostPerSheet((pricing[selectedPaperKey] || {})[stockSheetKey] || {}, { frontColorMode: colorMode, showBack: true, backColorMode: colorMode }) * numSheets;
   const hasPricing = availablePapers.length > 0 && perSheetTotal > 0;
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const paperLabel = availablePapers.find(p => p.key === selectedPaperKey)?.label || selectedPaperKey;
@@ -574,9 +577,11 @@ export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSna
         colorMode,
         duplex: true,
         lineTotal: round2(totalPrice),
+        lineCost: Math.round(materialCost * 10000) / 10000,
+        laborUnits: numSheets,
       }],
     });
-  }, [totalPrice, totalPages, numSheets, paperLabel, colorMode, hasPricing, onSnapshotChange]);
+  }, [totalPrice, totalPages, numSheets, paperLabel, colorMode, hasPricing, onSnapshotChange, materialCost]);
 
   useEffect(() => () => {
     if (typeof onSnapshotChange === "function") onSnapshotChange(null);
@@ -1314,6 +1319,8 @@ export default function BookletMaker({ CardHeader, PriceBar, pricingProps, onSna
             { label:"Sheets",   value: numSheets },
             { label:"Finished", value: `${preset.finishedW}×${preset.finishedH}"` },
             { label:"Paper",    value: availablePapers.find(p=>p.key===selectedPaperKey)?.label || "—" },
+            ...(hasPricing && marginCtx?.canSeeMargin ? [marginMetric({ label: marginCtx.marginLabel, price: totalPrice,
+                cost: quoteCost({ material: materialCost, labor: marginCtx.labor, units: numSheets }), thresholds: marginCtx.thresholds })] : []),
             ...(hasPricing ? [{ label:"Estimated total", value: `$${totalPrice.toFixed(2)}`, big:true }] : []),
           ]}
           onOrder={handlePrint}

@@ -27,6 +27,7 @@
 //  jsPDF is loaded via CDN — don't import it as a module.
 // ============================================================
 
+import { marginMetric } from "../lib/margin.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import signs365PricingDefaults from "../data/signs365Pricing.json";
 import { generateTradeOrderPDF } from "../utils/tradeOrderPDF.js";
@@ -540,7 +541,7 @@ function computePrice({ pricing, product, width, height, selectedSizeKey, quanti
 }
 
 // ── Component ────────────────────────────────────────
-export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnapshotChange, currentEmployee, onCompleteSale }) {
+export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnapshotChange, currentEmployee, onCompleteSale, marginCtx = null }) {
   const [pricing, setPricing] = useState(loadPricing);
 
   useEffect(() => {
@@ -686,9 +687,11 @@ export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnaps
       dimensions: (result.dim?.width && result.dim?.height) ? `${result.dim.width}×${result.dim.height} in` : null,
       quantity,
       lineTotal: round2(result.customerPrintPrice),
+      lineCost: round2(result.printCost),          // Phase E: vendor print cost
+      laborUnits: 0,                                // outsourced — no in-store labor
     }];
     if (result.shippingCost > 0) {
-      lineItems.push({ kind: "specialty_shipping", lineTotal: round2(result.shippingCost) });
+      lineItems.push({ kind: "specialty_shipping", lineTotal: round2(result.shippingCost), lineCost: round2(result.shippingCost), laborUnits: 0 });
     }
     onSnapshotChange({
       serviceType: "specialty",
@@ -1040,7 +1043,11 @@ export default function SpecialtyTab({ CardHeader, PriceBar, PriceDelta, onSnaps
           { label:"Customer total",         value: result ? fmtMoney(result.customerTotal) : "—", big:true },
           { label:"Print (after markup)",   value: result ? fmtMoney(result.customerPrintPrice) : "—" },
           { label:"Shipping (passthrough)", value: result ? fmtMoney(result.shippingCost) : "—" },
-          { label:"Margin",                 value: result ? `${fmtMoney(result.margin)} (${result.marginPct.toFixed(1)}%)` : "—" },
+          // Phase E: margin on the print (shipping passes through at cost).
+          // Gate 1: only built when canSeeMargin. Gate 2: staffOnly flag.
+          ...(marginCtx?.canSeeMargin
+            ? [marginMetric({ label: marginCtx.marginLabel, price: result?.customerPrintPrice || 0, cost: result?.printCost || 0, thresholds: marginCtx.thresholds })]
+            : []),
         ]}
         onDownload={handleGeneratePdf}
         downloadLabel={generating ? "Generating…" : "⬇ Trade Order PDF"}

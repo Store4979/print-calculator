@@ -9,9 +9,10 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  listEmployees, createEmployee, setEmployeeActive,
+  listEmployees, createEmployee, setEmployeeActive, updateEmployee,
   fetchOrders, isSupabaseConfigured,
 } from "../lib/supabase.js";
+import { marginHealth, HEALTH_LABELS } from "../lib/margin.js";
 
 // ── Date helpers ────────────────────────────────────────────
 const pad = (n) => String(n).padStart(2, "0");
@@ -19,6 +20,10 @@ const toDateInputValue = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad
 const startOfMonth = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), 1);
 const endOfMonth   = (d = new Date()) => new Date(d.getFullYear(), d.getMonth()+1, 0, 23, 59, 59, 999);
 const fmtMoney = (n) => `$${(Number(n)||0).toFixed(2)}`;
+// Phase E: history rows have no cost data -> "—", never "$0.00" or "0%".
+const fmtMoneyOrDash = (n) => (n === null || n === undefined ? "—" : fmtMoney(n));
+const fmtPctOrDash = (p) => (p === null || p === undefined ? "—" : `${Number(p).toFixed(1)}%`);
+const hasCost = (o) => o.cost_subtotal !== null && o.cost_subtotal !== undefined;
 const fmtTs = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
 
 // Plain-language names for the service_type values the tabs write.
@@ -91,8 +96,8 @@ const csvCell = (v) => {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-const buildCsv = (orders, fromIso, toIso) => {
-  const header = ["Date", "Service", "Recorded by", "Subtotal", "Total", "Notes"];
+const buildCsv = (orders, fromIso, toIso, { withMargin = false, marginLabel = "Material margin" } = {}) => {
+  const header = ["Date", "Service", "Recorded by", "Subtotal", "Total", ...(withMargin ? ["Cost", `${marginLabel} %`] : []), "Notes"];
   const lines = [header.map(csvCell).join(",")];
   for (const o of orders) {
     lines.push([
@@ -101,6 +106,7 @@ const buildCsv = (orders, fromIso, toIso) => {
       o.employee_name,
       (Number(o.base_subtotal) || 0).toFixed(2),
       (Number(o.total) || 0).toFixed(2),
+      ...(withMargin ? [hasCost(o) ? Number(o.cost_subtotal).toFixed(2) : "", o.margin_pct == null ? "" : Number(o.margin_pct).toFixed(2)] : []),
       o.notes || "",
     ].map(csvCell).join(","));
   }
@@ -118,7 +124,7 @@ const downloadCsv = (filename, csv) => {
 };
 
 // ── Component ──────────────────────────────────────────────
-export default function OrdersDashboard() {
+export default function OrdersDashboard({ marginCtx = null, isOwner = false }) {
   const [tab, setTab] = useState("orders");
 
   if (!isSupabaseConfigured) {
@@ -145,14 +151,17 @@ export default function OrdersDashboard() {
         ))}
       </div>
 
-      {tab === "orders"    && <OrdersView />}
-      {tab === "employees" && <EmployeesView />}
+      {tab === "orders"    && <OrdersView marginCtx={marginCtx} />}
+      {tab === "employees" && <EmployeesView isOwner={isOwner} />}
     </div>
   );
 }
 
 // ── Orders ─────────────────────────────────────────────────
-function OrdersView() {
+function OrdersView({ marginCtx = null }) {
+  const showMargin = !!marginCtx?.canSeeMargin;
+  const mLabel = marginCtx?.marginLabel || "Material margin";
+  const dot = (pct) => { const h = marginHealth(pct, marginCtx?.thresholds); return h ? <span className={`margin-dot is-${h}`} title={HEALTH_LABELS[h]} /> : null; };
   const today = new Date();
   const [from, setFrom] = useState(toDateInputValue(startOfMonth(today)));
   const [to,   setTo]   = useState(toDateInputValue(endOfMonth(today)));
@@ -182,14 +191,21 @@ function OrdersView() {
     const count = orders.length;
     const revenue = orders.reduce((s, o) => s + (Number(o.total) || 0), 0);
     const services = topServices(orders);
-    return { count, revenue, avg: count ? revenue / count : 0, top: services[0] || null, services };
+    // Phase E: margin summary over the rows that carry cost data only.
+    const costed = orders.filter(hasCost);
+    const costedRevenue = costed.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const cost = costed.reduce((s, o) => s + (Number(o.cost_subtotal) || 0), 0);
+    const marginAmt = costedRevenue - cost;
+    const marginPct = costedRevenue > 0 ? (marginAmt / costedRevenue) * 100 : null;
+    return { count, revenue, avg: count ? revenue / count : 0, top: services[0] || null, services,
+             costedCount: costed.length, costedRevenue, cost, marginAmt, marginPct };
   }, [orders]);
 
   const periods = useMemo(() => rollup(orders, groupBy), [orders, groupBy]);
 
   const handleExportCsv = () => {
     if (!orders.length) return;
-    downloadCsv(`orders_${from}_to_${to}.csv`, buildCsv(orders, from, to));
+    downloadCsv(`orders_${from}_to_${to}.csv`, buildCsv(orders, from, to, { withMargin: showMargin, marginLabel: mLabel }));
   };
 
   const presetThisMonth = () => {
@@ -251,6 +267,18 @@ function OrdersView() {
             <span>Average order <strong>{fmtMoney(summary.avg)}</strong></span>
             {summary.top && <span>Top service <strong>{serviceLabel(summary.top.service)}</strong> ({summary.top.count})</span>}
           </div>
+          {showMargin && (
+            <div className="cd-totals cd-totals-margin">
+              {summary.costedCount === 0
+                ? <span>No orders in this range carry cost data (saved before Phase E) — {mLabel.toLowerCase()} shows “—”.</span>
+                : <>
+                    <span>{mLabel} over <strong>{summary.costedCount}</strong> of {summary.count} orders with cost data</span>
+                    <span>Revenue <strong>{fmtMoney(summary.costedRevenue)}</strong></span>
+                    <span>Cost <strong>{fmtMoney(summary.cost)}</strong></span>
+                    <span>{mLabel} <strong>{fmtMoney(summary.marginAmt)}</strong> {dot(summary.marginPct)}<strong>{fmtPctOrDash(summary.marginPct)}</strong></span>
+                  </>}
+            </div>
+          )}
 
           {/* Volume + revenue by period */}
           <div className="cd-table-wrap" style={{ marginBottom: 14 }}>
@@ -317,6 +345,7 @@ function OrdersView() {
                   <th>Service</th>
                   <th>Recorded by</th>
                   <th style={{ textAlign: "right" }}>Total</th>
+                  {showMargin && <th style={{ textAlign: "right" }}>{mLabel}</th>}
                   <th>Notes</th>
                   <th></th>
                 </tr>
@@ -335,17 +364,20 @@ function OrdersView() {
                         <td>{serviceLabel(o.service_type)}</td>
                         <td>{o.employee_name}</td>
                         <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtMoney(o.total)}</td>
+                        {showMargin && <td style={{ textAlign: "right" }}>{dot(o.margin_pct)}{fmtPctOrDash(o.margin_pct)}</td>}
                         <td style={{ color: "var(--text-muted)", fontSize: 11 }}>{o.notes || ""}</td>
                         <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{open ? "▾" : "▸"}</td>
                       </tr>
                       {open && (
                         <tr className="cd-detail-row">
-                          <td colSpan={6}>
+                          <td colSpan={showMargin ? 7 : 6}>
                             <div className="cd-emp-detail">
                               <table className="cd-detail-table">
                                 <thead>
                                   <tr>
                                     <th>Line item</th>
+                                    {showMargin && <th style={{ textAlign: "right" }}>Cost</th>}
+                                    {showMargin && <th style={{ textAlign: "right" }}>{mLabel}</th>}
                                     <th style={{ textAlign: "right" }}>Amount</th>
                                   </tr>
                                 </thead>
@@ -353,14 +385,18 @@ function OrdersView() {
                                   {items.map((li, i) => (
                                     <tr key={i}>
                                       <td>{describeLineItem(li)}</td>
+                                      {showMargin && <td style={{ textAlign: "right" }}>{fmtMoneyOrDash(li.lineCost ?? null)}</td>}
+                                      {showMargin && <td style={{ textAlign: "right" }}>{dot(li.lineMarginPct)}{fmtPctOrDash(li.lineMarginPct ?? null)}</td>}
                                       <td style={{ textAlign: "right" }}>{fmtMoney(li.lineTotal)}</td>
                                     </tr>
                                   ))}
                                   {items.length === 0 && (
-                                    <tr><td colSpan={2} style={{ color: "var(--text-muted)" }}>No line-item detail on this order.</td></tr>
+                                    <tr><td colSpan={showMargin ? 4 : 2} style={{ color: "var(--text-muted)" }}>No line-item detail on this order.</td></tr>
                                   )}
                                   <tr>
                                     <td style={{ fontWeight: 600 }}>Subtotal</td>
+                                    {showMargin && <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoneyOrDash(hasCost(o) ? o.cost_subtotal : null)}</td>}
+                                    {showMargin && <td style={{ textAlign: "right", fontWeight: 600 }}>{dot(o.margin_pct)}{fmtPctOrDash(o.margin_pct)}</td>}
                                     <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(o.base_subtotal)}</td>
                                   </tr>
                                 </tbody>
@@ -385,7 +421,7 @@ function OrdersView() {
 // Unchanged in substance from before D1: employee records stay because
 // "who recorded this order" is core history, and the PIN is the sign-in
 // (and kiosk-exit) credential.
-function EmployeesView() {
+function EmployeesView({ isOwner = false }) {
   const [list, setList]       = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
@@ -424,6 +460,19 @@ function EmployeesView() {
     }
   };
 
+  // Phase E: role drives margin visibility at the counter. Only an OWNER may
+  // change it — the DB trigger employees_role_owner_only enforces it too, so
+  // a manager who reaches this control anyway gets a clear 42501 message.
+  const setRole = async (emp, role) => {
+    setError("");
+    try {
+      await updateEmployee(emp.id, { role });
+      await refresh();
+    } catch (err) {
+      setError(err?.message || String(err));
+    }
+  };
+
   const toggleActive = async (emp) => {
     setError("");
     try {
@@ -438,6 +487,7 @@ function EmployeesView() {
     <div>
       <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
         Each employee gets a 4-digit PIN to sign in and record orders. Deactivating preserves their order history.
+        A <strong>manager</strong> PIN sees margin at the counter; staff PINs do not. {isOwner ? "You can change roles here." : "Only the store owner can change roles."}
       </p>
 
       {error && <div className="callout callout-warn" style={{ marginBottom: 10, fontSize: 12 }}>⚠ {error}</div>}
@@ -458,6 +508,16 @@ function EmployeesView() {
             <div key={emp.id} className={`admin-emp-row ${emp.active ? "" : "is-inactive"}`}>
               <div className="admin-emp-name">{emp.name}</div>
               <div className="admin-emp-pin">PIN {emp.pin}</div>
+              <select
+                className="admin-input admin-emp-role"
+                value={emp.role || "staff"}
+                disabled={!isOwner}
+                title={isOwner ? "Manager PINs see margin at the counter" : "Only the store owner can change roles"}
+                onChange={(e) => setRole(emp, e.target.value)}
+              >
+                <option value="staff">Staff</option>
+                <option value="manager">Manager</option>
+              </select>
               <div className="admin-emp-status">{emp.active ? "Active" : "Inactive"}</div>
               <button className="pc-btn pc-btn-secondary pc-btn-xs" onClick={() => toggleActive(emp)} type="button">
                 {emp.active ? "Deactivate" : "Reactivate"}
