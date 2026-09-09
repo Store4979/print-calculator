@@ -1,22 +1,17 @@
 -- Phase B, migration 2 of N — BACKFILL ONLY. No schema changes, no RLS,
 -- no NOT NULL. Idempotent: safe to re-run. Every existing row belongs to
 -- the single existing store (store4979), so attribution is unambiguous.
---
--- Applied to project gmxyisjjaxtpycsmmzef as `phase_b_02_backfill_ups_org`.
--- Verified afterwards: 0 rows left with a null org_id/store_id in any table.
 
 -- 1. The org for the live store.
 --    plan='pro' deliberately (NOT 'trial'): this is the owner's own
 --    production store and must never be gated by a trial expiry in Phase C.
---    Phase C's PLAN_FEATURES must therefore define a 'pro' plan.
 insert into public.organizations (name, slug, plan, status)
 select 'The UPS Store #4979', 'ups-4979', 'pro', 'active'
 where not exists (select 1 from public.organizations where slug = 'ups-4979');
 
 -- 2. Point store4979 at it + install the bootstrap secret hash.
 --    Only the SHA-256 hash is stored; the plaintext lives solely in the
---    store's Netlify deploy env (STORE_BOOTSTRAP_SECRET). Rotating the
---    secret = a new migration replacing this hash.
+--    store's Netlify deploy env (STORE_BOOTSTRAP_SECRET).
 update public.stores s
    set org_id = o.id,
        bootstrap_secret_hash = 'bea7d25367fe31459ef518148b76d2cc1dd6d54a8dec07b5d7c029c1f0943217'
