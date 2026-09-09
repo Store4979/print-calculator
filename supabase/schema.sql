@@ -55,7 +55,11 @@ create table if not exists public.orders (
   notes               text,
   created_at          timestamptz not null default now(),
   org_id              uuid references public.organizations(id) on delete cascade,
-  store_id            uuid references public.stores(id) on delete cascade
+  store_id            uuid references public.stores(id) on delete cascade,
+  -- Phase E (20260909232836): the cost and margin the order was quoted at.
+  -- NULL on rows saved before Phase E — the dashboard shows a dash, never 0.
+  cost_subtotal       numeric(10,2),
+  margin_pct          numeric(6,2)
 );
 
 create index if not exists orders_employee_idx   on public.orders (employee_id);
