@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { marginMetric, sheetCostPerSheet, quoteCost } from "./lib/margin.js";
+import { openPdf } from "./lib/pdfSafe.js";
 import { useState, useRef, useCallback, useEffect } from "react";
 
 // ── CONSTANTS ──────────────────────────────────────────────
@@ -58,7 +59,7 @@ async function loadPdfFromFile(file) {
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("PDF.js not loaded");
   const ab = await file.arrayBuffer();
-  return lib.getDocument({ data: ab }).promise;
+  return openPdf(lib, ab);
 }
 
 /**

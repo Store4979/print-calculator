@@ -13,6 +13,7 @@ import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import OrdersDashboard from "./components/OrdersDashboard.jsx";
 import CostModelEditor from "./components/CostModelEditor.jsx";
+import { openPdf } from "./lib/pdfSafe.js";
 import {
   canSeeMarginFor, marginLabelFor, visibleMetrics, marginMetric, sheetCostPerSheet, lfCostPerSqFt,
   finalizeSnapshotMargin, quoteCost, computeMargin, marginHealth, HEALTH_LABELS, r4 as round4,
@@ -277,7 +278,7 @@ const pdfFileToPngFile = async (file, pageNum=1, { targetDpi=PRINT_DPI_SHEET, ma
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("pdf.js not loaded");
   const ab = await file.arrayBuffer();
-  const pdf = await lib.getDocument({ data: ab }).promise;
+  const pdf = await openPdf(lib, ab);
   const safePage = Math.min(Math.max(1, pageNum), pdf.numPages || 1);
   const page = await pdf.getPage(safePage);
   const scale = pdfRasterScale(page, targetDpi, maxPx);
@@ -294,7 +295,7 @@ const pdfFileToAllPages = async (file, { targetDpi=PRINT_DPI_SHEET, maxPx=MAX_OU
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("pdf.js not loaded");
   const ab = await file.arrayBuffer();
-  const pdf = await lib.getDocument({ data: ab }).promise;
+  const pdf = await openPdf(lib, ab);
   const pages = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
