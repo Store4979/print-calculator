@@ -14,6 +14,7 @@ import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import OrdersDashboard from "./components/OrdersDashboard.jsx";
 import CostModelEditor from "./components/CostModelEditor.jsx";
 import { openPdf } from "./lib/pdfSafe.js";
+import { clearAppCaches } from "./lib/swCache.js";
 import {
   canSeeMarginFor, marginLabelFor, visibleMetrics, marginMetric, sheetCostPerSheet, lfCostPerSqFt,
   finalizeSnapshotMargin, quoteCost, computeMargin, marginHealth, HEALTH_LABELS, r4 as round4,
@@ -1210,6 +1211,8 @@ function PriceCalculatorApp() {
     setStoredEmployee(null);
     setCurrentEmployee(null);
     setShowEmployeeLogin(true);
+    // Same reasoning as admin sign-out: this IS the counter handover.
+    clearAppCaches();
   };
 
   // ── Kiosk mode (customer-facing skin) ──
@@ -2946,7 +2949,9 @@ const handleFrontFiles = async (files) => {
       const order = buildOrder();
       const payload = {
         subject: `Print Order – ${order.customerName} – ${orderId}`,
-        to: UPS_STORE.email,
+        // No `to`: the recipient is resolved server-side from the store
+        // record. send-print-job ignores a caller-supplied recipient and
+        // logs the attempt (Release 1, 2026-09-10).
         deepLinkUrl: `${window.location.origin}${window.location.pathname}?job=${encodeURIComponent(orderId)}`,
         order,
         jobType,
@@ -3542,6 +3547,10 @@ const handleFrontFiles = async (files) => {
     setAuthRole(null);
     setAuthSession(null);
     setAdminAccessDenied(null);
+    // Drop every service-worker cache on the way out. sw.js is allowlist-only
+    // so this should be a no-op, but the counter iPad is a shared device and
+    // a handover must not be able to serve the previous session anything.
+    clearAppCaches();
   };
 
   // The single source of truth for the current price book, shaped like
