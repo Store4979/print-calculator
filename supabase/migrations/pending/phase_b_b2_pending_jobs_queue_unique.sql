@@ -1,0 +1,42 @@
+-- Phase B / step B2 — per-store queue numbering. NOT YET APPLIED.
+--
+-- APPLY ORDER MATTERS — apply this AFTER the new register-job is deployed,
+-- never before. Same lesson as 03a/03b: the constraint is the enforcement,
+-- the function's retry is what keeps a collision from becoming a 500. If the
+-- constraint lands while the OLD un-retrying function is still live, a race
+-- turns into "customer's files uploaded but no job registered".
+--
+-- Gate before applying (bundle-dedup guard — this repo has been bitten):
+--     curl -s https://printcalculator2.netlify.app/.netlify/functions/register-job
+-- must answer {"queueAlgo":"max(queue_number)+1 per (store_id, job_date)",
+-- "retryBudget":5,...}. A GET does no work and touches no database.
+--
+-- Why per-store: register-job computed queue_number as
+--   count(*) where job_date = today
+-- across ALL tenants, so tenant B's uploads would renumber tenant A's queue.
+--
+-- Note this constrains LIVE rows only. Rows are deleted by BOTH complete-job
+-- (staff marking a pickup) and cleanup-stale-jobs (scheduled, unattended), so
+-- numbers are released when a job leaves the queue.
+--
+-- WHY max(queue_number)+1 AND NOT count(*)+1 — this is the load-bearing part
+-- of the change, and count(*) does not merely produce duplicates: it makes the
+-- retry loop unable to converge. After any deletion the computed number is one
+-- that is already taken; a retry recomputes count(*), gets THE SAME taken
+-- number, and collides identically on every attempt until the budget is
+-- exhausted. Proven 2026-07-29 in a rolled-back transaction (seeded 1,2,3,
+-- deleted 1): count(*)+1 exhausted all 5 attempts on number 3; max+1 succeeded
+-- on attempt 1 with 4; a concurrent stale-max writer recovered on attempt 2
+-- with 6; final live queue 2,3,4,5,6, zero duplicates. Re-rehearse before
+-- applying (supabase/rehearsals/ convention).
+--
+-- NULLS NOT DISTINCT: store_id is nullable on pending_jobs (Phase B-01 made
+-- the tenant columns additive). The deployed function stamps it, but a row
+-- that somehow arrives unstamped must still be constrained rather than
+-- silently exempt.
+--
+-- Superseded parts of the original Phase B step B (commission_settings B1/B3)
+-- were dropped in Phase D1: that table no longer exists.
+alter table public.pending_jobs
+  add constraint pending_jobs_store_day_queue_key
+  unique nulls not distinct (store_id, job_date, queue_number);
