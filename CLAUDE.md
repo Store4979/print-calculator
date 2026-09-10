@@ -134,12 +134,30 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
   nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
   revoking anything, and never apply a DB change without a file in the repo.
-- Phase S1 — server-side PIN verification: move the PIN check into a
-  rate-limited Netlify function (service_role), deploy the client onto it, then
-  revoke anon/authenticated EXECUTE on verify_employee_pin again (its rollback
-  file already exists). BETA BLOCKER before the first external tenant; NOT a
-  launch blocker for store4979 (single tenant, physical counter). "Phase E" is
-  taken by the margin engine in the master plan — do not reuse it for this.
+- PHASE S — SaaS AUTH HARDENING. Three items, all BLOCK tenant #2, none
+  block store4979 (single tenant, physical counter). "Phase E" is the margin
+  engine — do not reuse the letter.
+  - S1 server-side PIN verification: move the PIN check into a rate-limited
+    Netlify function (service_role), deploy the client onto it, then revoke
+    anon/authenticated EXECUTE on verify_employee_pin again (its rollback file
+    already exists). Closes the 10k-guess brute-force surface.
+  - S2 custom SMTP for Supabase Auth mail (magic links, recovery). The
+    default sender is rate-limited and lands in spam; a tenant owner who
+    can't receive the link can't get in.
+  - S3 PASSWORD RECOVERY HANDLER. The app has no route that consumes a
+    recovery token. Needed: detect the recovery fragment on load
+    (`#access_token=…&type=recovery` / the PASSWORD_RECOVERY auth event), show
+    a "set a new password" screen, call supabase.auth.updateUser({ password }),
+    then land the user signed in. Plus a "Forgot password?" link in
+    AdminLogin (resetPasswordForEmail with redirectTo = window.location.origin).
+    Without it a locked-out tenant owner has no self-serve way back in —
+    that is a support ticket per tenant.
+- 2026-09-09 admin lockout root cause: the Supabase Auth Site URL was
+  http://localhost:3000, so recovery links redirected to a dead dev server
+  (white screen). The 13:35 "sign-in" on the owner account was the recovery
+  token being verified, not a password login — which is why the password
+  never worked. Site URL must be https://printcalculator2.netlify.app (and the
+  deploy-preview pattern in Additional Redirect URLs). Keep it that way.
 - A magic-link sign-in lands by redirect with no dialog open. If that account
   has no owner/manager membership the app must SAY so (adminAccessDenied) —
   isAdmin=false alone renders nothing.
