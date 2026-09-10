@@ -45,12 +45,38 @@ const assets = existsSync(assetsDir)
   : [];
 
 const src = readFileSync(SW, "utf8");
-if (!src.includes(MARKER)) {
-  console.error("inject-sw-manifest: marker not found in dist/sw.js — refusing to guess.");
+const hasMarker = src.includes(MARKER);
+const alreadyInjected = /const BUILD_ASSETS = \[\s*"\//.test(src);
+
+// IDEMPOTENT ON PURPOSE. A previous revision exited 1 when the marker was
+// absent, which turns any second run — a retried deploy, a restored build
+// cache, a local re-run — into a hard deploy failure. "Already done" is
+// success, not an error.
+if (!hasMarker && alreadyInjected) {
+  console.log("inject-sw-manifest: dist/sw.js already carries an enumerated manifest — nothing to do.");
+  process.exit(0);
+}
+if (!hasMarker) {
+  console.error("inject-sw-manifest: dist/sw.js has neither the marker nor a manifest.");
+  console.error("  This build's sw.js did not come from public/sw.js. Refusing to guess.");
   process.exit(1);
 }
 
 const list = assets.map((u) => `\n  ${JSON.stringify(u)},`).join("") + (assets.length ? "\n" : "");
-writeFileSync(SW, src.replace(MARKER, list), "utf8");
+const out = src.replace(MARKER, list);
+writeFileSync(SW, out, "utf8");
+
+// Verify our own output. This assertion used to live in `yarn test`, where it
+// was wrong: yarn test runs BEFORE yarn build, so it was asserting on whatever
+// dist/ happened to be lying around. It belongs here, after the build, where
+// the thing it describes actually exists.
+if (out.includes(MARKER)) {
+  console.error("inject-sw-manifest: marker survived the replacement — aborting.");
+  process.exit(1);
+}
+if (assets.length && !/const BUILD_ASSETS = \[\s*"\/assets\//.test(out)) {
+  console.error("inject-sw-manifest: manifest did not take. Aborting rather than shipping an empty allowlist.");
+  process.exit(1);
+}
 console.log(`inject-sw-manifest: enumerated ${assets.length} build asset(s) into dist/sw.js`);
 for (const a of assets) console.log("  " + a);

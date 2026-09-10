@@ -3,7 +3,7 @@
 // in the cache — not on helper predicates the listener might never consult.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadSW, mkReq, mkRes, ORIGIN, SB, SW_SOURCE } from "./sw-harness.mjs";
 
@@ -184,12 +184,16 @@ test("the rev 1 false invariant is gone from the CODE (comments may cite it)", (
 
 // ── Build integration: the marker is actually filled in at deploy time ──────
 
-test("the deploy step enumerates real hashed assets into dist/sw.js", () => {
-  const dist = fileURLToPath(new URL("../../dist/sw.js", import.meta.url));
-  if (!existsSync(dist)) return; // build not run in this environment
-  const built = readFileSync(dist, "utf8");
-  assert.equal(built.includes("/*__BUILD_ASSETS__*/"), false, "marker must be replaced");
-  assert.match(built, /const BUILD_ASSETS = \[[\s\S]*?"\/assets\/[^"]+\.js"/, "real hashed assets present");
+test("the SOURCE worker carries the injection marker the deploy step fills in", () => {
+  // Deliberately asserts on public/sw.js, never on dist/. `yarn test` runs
+  // BEFORE `yarn build` in the Netlify command, so a dist/ assertion here
+  // reads whatever stale artefact happens to be present — which fails the
+  // deploy for a reason that has nothing to do with the code under test.
+  // The post-build verification lives in scripts/inject-sw-manifest.mjs.
+  assert.match(SW_SOURCE, /const BUILD_ASSETS = \[\/\*__BUILD_ASSETS__\*\/\]/,
+    "public/sw.js must keep the marker for the deploy step to replace");
+  assert.match(SW_SOURCE, /BUILD_ASSETS\.includes\(url\.pathname\)/,
+    "and the allowlist must actually consult it");
 });
 
 test("yarn test gates the Netlify deploy", () => {
