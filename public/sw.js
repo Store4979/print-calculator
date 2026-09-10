@@ -1,32 +1,38 @@
-/* sw.js — app-shell cache, allowlist-only (security-hardened 2026-09-10)
+/* sw.js — app-shell cache, allowlist-only (rev 2, 2026-09-10)
  *
- * WHY THIS IS AN ALLOWLIST AND NOT A DENYLIST
- * The previous version cached *any* response with res.ok, from any origin,
- * and served it back from caches.match(req) before revalidating. On a
- * shared counter iPad that is a data-leak primitive:
- *   - a Supabase signed URL for customer A's uploaded file returns 200 and
- *     was cached; the signed URL expires in 15 minutes but the CACHED COPY
- *     does not expire at all,
- *   - Supabase REST GETs (orders, pending_jobs, settings) returned 200 and
- *     were cached, so signing out and handing the iPad to the next staffer
- *     left the previous session's data served from cache,
- *   - the cache is keyed on the request URL only, so nothing about it is
- *     scoped to a store, an employee, or a session.
+ * WHY AN ALLOWLIST
+ * The pre-audit worker cached any response with res.ok, from any origin, and
+ * served it back before revalidating. On a shared counter iPad that is a leak
+ * primitive: Supabase signed-URL file responses and REST reads were written to
+ * the cache, and a cached copy does not expire when the signature does.
  *
- * The rule now: cache ONLY immutable, non-user-specific, same-origin build
- * output plus two exactly-pinned CDN libraries. Everything else — every API
- * call, every file response, every cross-origin request that is not on the
- * pin list — goes straight to the network and is never written to a cache.
+ * WHAT REV 1 GOT WRONG (found in review, fixed here)
+ *  1. The navigation branch ran BEFORE the sensitivity check, so a navigation
+ *     to ANY same-origin path — /pricing.json, a function URL — had its body
+ *     stored under /index.html. That is cache poisoning of the app shell, and
+ *     the "only the shell is ever stored" comment asserted an invariant the
+ *     code did not hold. Sensitivity is now the FIRST gate, applied to every
+ *     request regardless of mode, and shell routes are an exact map.
+ *  2. The CLEAR_CACHES reply went to event.source (the Window), while the
+ *     caller listened on a transferred MessagePort. The reply never arrived,
+ *     so clearAppCaches() always timed out. It now replies on event.ports[0].
+ *  3. The asset allowlist was a path prefix plus an extension regex. It is now
+ *     an enumerated list: CORE plus the exact build outputs injected at deploy
+ *     time by scripts/inject-sw-manifest.mjs, plus exact pinned CDN URLs
+ *     including their query string.
+ *  4. Cache deletion walked every cache on the origin. It is now scoped to
+ *     this app's own CACHE_PREFIX family.
  *
- * Bump CACHE on any change to this file. activate() deletes every cache
- * whose key !== CACHE, so a bump is also the migration: old caches (including
- * print-app-v14, which may hold customer file responses) are purged on the
- * next activation. That purge is the reason this bump is not optional.
+ * Bump CACHE on any change here. activate() deletes every cache in our family
+ * whose key !== CACHE, so the bump is also the migration that purges the
+ * pre-audit print-app-v14 and anything it holds.
  */
-const CACHE = "print-app-v15";
+const CACHE_PREFIX = "print-app-";
+const CACHE = CACHE_PREFIX + "v15";
+const isOurCache = (key) => key.startsWith(CACHE_PREFIX);
 
+// Static, hand-maintained shell files. Everything else cacheable is injected.
 const CORE = [
-  "/",
   "/index.html",
   "/upload.html",
   "/manifest.webmanifest",
@@ -34,46 +40,68 @@ const CORE = [
   "/icon-512.png",
 ];
 
-// Exactly-pinned, versioned, immutable third-party libraries. Version-locked
-// URLs, so a cached copy can never drift from what index.html asks for.
-// Anything not on this list is never cached cross-origin.
+// Replaced at deploy time with the exact hashed Vite outputs, e.g.
+// ["/assets/index-C1s9xa2f.js", "/assets/index-8bd0e1.css"].
+// If the injection step does not run, this stays empty: the shell still works
+// and nothing extra is cached. Degraded, never unsafe.
+const BUILD_ASSETS = [/*__BUILD_ASSETS__*/];
+
+// Exact URLs, query string included. A version bump or an added query makes it
+// a different, non-allowlisted URL — which is the point.
 const CDN_ALLOW = new Set([
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
 ]);
 
-// Same-origin paths that are safe to cache: Vite build output and static
-// icons. NOT pricing.json (store config, fetched with cache:"no-store"),
-// NOT /.netlify/functions/* (API), NOT anything else.
-const STATIC_EXT = /\.(?:js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico)$/i;
+// Exact navigation routes and the shell each one is allowed to store under.
+// startsWith("/upload") would also match /uploads-anything; this does not.
+const SHELL_ROUTES = new Map([
+  ["/", "/index.html"],
+  ["/index.html", "/index.html"],
+  ["/upload", "/upload.html"],
+  ["/upload.html", "/upload.html"],
+]);
 
-const isCacheableRequest = (req, url) => {
-  if (req.method !== "GET") return false;
-  // Respect an explicit no-store/reload from the app (pricing.json uses it).
-  if (req.cache === "no-store" || req.cache === "reload") return false;
-  // Never cache a request that carries credentials of any kind.
-  if (req.headers.has("authorization")) return false;
+const fullUrl = (url) => url.origin + url.pathname + url.search;
+
+/* GATE 1 — sensitivity. Applied to EVERY request before anything else,
+ * navigations included. True means: do not touch this at all. */
+const isSensitiveRequest = (req, url) => {
+  if (req.method !== "GET") return true;
+  if (req.cache === "no-store" || req.cache === "reload") return true;
+  if (req.headers && req.headers.has && req.headers.has("authorization")) return true;
 
   if (url.origin === self.location.origin) {
-    if (url.pathname.startsWith("/.netlify/")) return false;   // API
-    if (url.pathname === "/pricing.json") return false;         // store config
-    if (url.search) return false;                               // no tokenised URLs
-    if (CORE.includes(url.pathname)) return true;
-    if (url.pathname.startsWith("/assets/")) return true;       // Vite output
-    return STATIC_EXT.test(url.pathname);
+    if (url.pathname.startsWith("/.netlify/")) return true;  // functions
+    if (url.pathname === "/pricing.json") return true;       // store config
+    if (url.search) return true;                             // tokenised URLs
+    return false;
   }
-
-  // Cross-origin: the pin list only. Supabase (REST, Storage, Realtime,
-  // signed URLs) is deliberately absent and must stay absent.
-  return CDN_ALLOW.has(url.origin + url.pathname);
+  // Cross-origin is sensitive unless it is an exactly pinned library URL.
+  // Supabase (REST, Storage, Realtime, signed URLs) can never match.
+  return !CDN_ALLOW.has(fullUrl(url));
 };
+
+/* GATE 2 — is this an enumerated cacheable asset? */
+const isCacheableAsset = (url) => {
+  if (url.origin === self.location.origin) {
+    return CORE.includes(url.pathname) || BUILD_ASSETS.includes(url.pathname);
+  }
+  return CDN_ALLOW.has(fullUrl(url));
+};
+
+/* Only a same-origin, non-redirected, 200 HTML document may be stored as a
+ * shell. Without this, an edge rewrite or an error page becomes the shell. */
+const isStorableShell = (res) =>
+  !!res && res.ok && res.status === 200 && res.type === "basic" && !res.redirected &&
+  /text\/html/i.test(res.headers.get("content-type") || "");
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // Individually, so one 404 can't abort the whole install.
-    await Promise.all(CORE.map((u) => cache.add(u).catch(() => {})));
+    // Individually: one 404 must not abort the whole install.
+    await Promise.all([...CORE, ...BUILD_ASSETS].map((u) => cache.add(u).catch(() => {})));
     self.skipWaiting();
   })());
 });
@@ -81,25 +109,28 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.map((k) => (k === CACHE ? null : caches.delete(k))));
+    await Promise.all(keys.filter((k) => isOurCache(k) && k !== CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
 
-// Sign-out hook: the app posts { type: "CLEAR_CACHES" } when an admin signs
-// out or staff switch users, so nothing survives a handover. Caches only
-// hold build output now, but this stays as a belt-and-braces guarantee and
-// as the thing the logout test asserts.
+/* Sign-out / counter handover. The caller (src/lib/swCache.js) transfers a
+ * MessagePort and listens on its twin, so the acknowledgement MUST go to
+ * event.ports[0]. Replying to event.source posts to the page's global
+ * serviceWorker.onmessage instead, which nobody is listening on — that was
+ * the rev 1 bug, and it made clearAppCaches() a silent no-op. */
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "CLEAR_CACHES") {
-    event.waitUntil((async () => {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-      const cache = await caches.open(CACHE);
-      await Promise.all(CORE.map((u) => cache.add(u).catch(() => {})));
-      event.source && event.source.postMessage({ type: "CACHES_CLEARED" });
-    })());
-  }
+  if (!event.data || event.data.type !== "CLEAR_CACHES") return;
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(isOurCache).map((k) => caches.delete(k)));
+    const cache = await caches.open(CACHE);
+    await Promise.all([...CORE, ...BUILD_ASSETS].map((u) => cache.add(u).catch(() => {})));
+    const reply = { type: "CACHES_CLEARED" };
+    const port = event.ports && event.ports[0];
+    if (port) port.postMessage(reply);
+    else if (event.source) event.source.postMessage(reply);
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -107,35 +138,33 @@ self.addEventListener("fetch", (event) => {
   let url;
   try { url = new URL(req.url); } catch { return; }
 
-  // The service worker itself is always network.
+  // The worker script itself is always network.
   if (url.origin === self.location.origin && url.pathname === "/sw.js") return;
 
-  // Navigations: network-first so a deploy is picked up immediately, with the
-  // cached shell as the offline fallback. Only the shell is ever stored.
+  // GATE 1 first, for every mode. A sensitive request is never read from
+  // cache, never written to cache, and never intercepted.
+  if (isSensitiveRequest(req, url)) return;
+
   if (req.mode === "navigate") {
+    const shell = SHELL_ROUTES.get(url.pathname);
+    if (!shell) return;                       // unknown route: hands off
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req);
-        if (fresh && fresh.ok) {
-          const shell = url.pathname.startsWith("/upload") ? "/upload.html" : "/index.html";
+        if (isStorableShell(fresh)) {
           const clone = fresh.clone();
           caches.open(CACHE).then((c) => c.put(shell, clone)).catch(() => {});
         }
         return fresh;
       } catch {
-        const shell = url.pathname.startsWith("/upload") ? "/upload.html" : "/index.html";
-        return (await caches.match(shell)) || Response.error();
+        return (await caches.match(shell, { cacheName: CACHE })) || Response.error();
       }
     })());
     return;
   }
 
-  // Anything not on the allowlist: do not intercept at all. No cache read,
-  // no cache write. This is the branch every API call and every customer
-  // file response takes.
-  if (!isCacheableRequest(req, url)) return;
+  if (!isCacheableAsset(url)) return;
 
-  // Allowlisted static asset: cache-first, revalidate in the background.
   event.respondWith((async () => {
     const cached = await caches.match(req, { cacheName: CACHE });
     const network = fetch(req)

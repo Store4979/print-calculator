@@ -14,24 +14,33 @@
 //  So the exposure is reachable by anyone who can hand the store a
 //  file — which is the entire point of a print shop.
 //
-//  `isEvalSupported: false` removes that path. It costs a small
-//  amount of font-rendering fidelity on some PDFs and nothing else;
-//  page counts, rasterisation and imposition are unaffected.
-//  `isXfaEnabled: false` drops the XFA parser, which this app never
-//  uses and which is a second, larger attack surface.
+//  `isEvalSupported: false` removes that path: pdf.js stops compiling glyph
+//  outlines through `Function`/eval and uses its interpreted fallback.
 //
-//  This is MITIGATION, not the fix. The fix is upgrading past
-//  4.2.67 — tracked separately, because 4.x changes the worker
-//  bootstrap and the render() signature and needs its own visual
-//  regression pass on all five call sites.
+//  What that costs is NOT characterised here. It is a different rendering
+//  path, and the only honest way to know whether any given PDF looks the
+//  same is to look at it — which is why the PR asks for a human render check
+//  across all five call sites rather than asserting the change is free.
 //
-//  Pure module: no imports, no DOM, no side effects, so `yarn test`
-//  can assert the options object without a browser.
+//  `enableXfa: false` keeps XFA forms from being rendered. Note the spelling:
+//  the pdf.js option is `enableXfa`. An earlier revision of this file passed
+//  `isXfaEnabled`, which is not a pdf.js parameter at all — it was silently
+//  ignored, and the test asserting it only proved the object we built
+//  contained a key we had invented. `enableXfa` already defaults to false in
+//  3.11.174, so this is defence against a future default flipping, not a
+//  change in current behaviour.
+//
+//  This is MITIGATION, not the fix. The fix is upgrading past 4.2.67 —
+//  tracked separately, because 4.x changes the worker bootstrap and the
+//  render() signature and needs its own visual regression pass.
+//
+//  Pure module: no imports, no DOM, no side effects, so `yarn test` can
+//  assert the options object without a browser.
 // ============================================================
 
 export const PDFJS_HARDENED = Object.freeze({
   isEvalSupported: false,
-  isXfaEnabled: false,
+  enableXfa: false,
 });
 
 // The ONLY sanctioned way to open a PDF in this codebase.

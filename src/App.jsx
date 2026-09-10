@@ -1207,12 +1207,15 @@ function PriceCalculatorApp() {
     setCurrentEmployee(emp);
     setShowEmployeeLogin(false);
   };
-  const switchEmployee = () => {
+  const switchEmployee = async () => {
+    // Identity is dropped first so the UI flips immediately, but the returned
+    // promise does NOT resolve until the caches are purged — the handover
+    // barrier is only a barrier if callers can await it. Worst case 1.5s
+    // (clearAppCaches times out rather than hanging); typically instant.
     setStoredEmployee(null);
     setCurrentEmployee(null);
     setShowEmployeeLogin(true);
-    // Same reasoning as admin sign-out: this IS the counter handover.
-    clearAppCaches();
+    await clearAppCaches();
   };
 
   // ── Kiosk mode (customer-facing skin) ──
@@ -3547,10 +3550,11 @@ const handleFrontFiles = async (files) => {
     setAuthRole(null);
     setAuthSession(null);
     setAdminAccessDenied(null);
-    // Drop every service-worker cache on the way out. sw.js is allowlist-only
-    // so this should be a no-op, but the counter iPad is a shared device and
-    // a handover must not be able to serve the previous session anything.
-    clearAppCaches();
+    // Drop every service-worker cache in our family on the way out. sw.js is
+    // allowlist-only so this should be a no-op, but the counter iPad is a
+    // shared device and a handover must not serve the next person anything.
+    // Awaited: an unawaited purge is not a barrier.
+    await clearAppCaches();
   };
 
   // The single source of truth for the current price book, shaped like
