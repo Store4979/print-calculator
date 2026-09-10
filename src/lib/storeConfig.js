@@ -191,13 +191,16 @@ export async function publishStoreConfig(cfg, profile, slug = STORE_SLUG) {
   const sheetMk   = cfg.sheetMarkupPerPaper || {};
   const lfMk      = cfg.lfMarkupPerPaper || {};
   const ptRows = [];
+  const modeOf = (p) => (p.pricingMode === "market_down" ? "market_down" : "cost_up");
   (cfg.paperTypes || []).forEach((p, i) => ptRows.push({
     store_id: sid, kind: "sheet", key: p.key, label: p.label,
     sheet_keys: sheetKeys[p.key] || [], markup_percent: asNum(sheetMk[p.key] ?? 0), sort_order: i,
+    pricing_mode: modeOf(p),
   }));
   (cfg.lfPaperTypes || []).forEach((p, i) => ptRows.push({
     store_id: sid, kind: "large_format", key: p.key, label: p.label,
     sheet_keys: [], markup_percent: asNum(lfMk[p.key] ?? 0), sort_order: i,
+    pricing_mode: modeOf(p),
   }));
   if (ptRows.length) {
     const { error } = await supabase.from("paper_types")
@@ -216,6 +219,16 @@ export async function publishStoreConfig(cfg, profile, slug = STORE_SLUG) {
   (papers || []).forEach((p) => { paperId[`${p.kind}:${p.key}`] = p.id; });
 
   // 3) sheet_prices (sheet sizes + LF per-sqft)
+  // Phase E: always publish the cost split so the DB invariant
+  // base_cost_* = paper_cost + click_* holds. An entry without an explicit
+  // split gets the lossless default (paper = base B&W, B&W click 0).
+  const sheetSplitCols = (e) => {
+    const bcC = asNum(e.baseCostColor || 0) || 0, bcB = asNum(e.baseCostBW || 0) || 0;
+    if (e.paperCost != null && Number.isFinite(Number(e.paperCost))) {
+      return { paper_cost: asNum(e.paperCost), click_color: asNum(e.clickColor ?? 0) || 0, click_bw: asNum(e.clickBW ?? 0) || 0 };
+    }
+    return { paper_cost: bcB, click_color: Math.round((bcC - bcB) * 10000) / 10000, click_bw: 0 };
+  };
   const skuMap = cfg.skuMap || {};
   const spRows = [];
   const sheetPricing = cfg.sheetPricing || {};
@@ -227,6 +240,7 @@ export async function publishStoreConfig(cfg, profile, slug = STORE_SLUG) {
       base_cost_color: asNum(e.baseCostColor || 0), base_cost_bw: asNum(e.baseCostBW || 0),
       price_color: asNum(e.priceColor || 0), price_bw: asNum(e.priceBW || 0),
       sku: skuMap[`${pk}:${sk}`] || null,
+      ...sheetSplitCols(e),
     }));
   });
   const lfPricing = cfg.lfPricing || {};
@@ -237,6 +251,8 @@ export async function publishStoreConfig(cfg, profile, slug = STORE_SLUG) {
       store_id: sid, paper_type_id: pid, sheet_key: null,
       base_cost_color: asNum(e.baseCostColor || 0), base_cost_bw: asNum(e.baseCostBW || 0),
       price_color: asNum(e.priceColor || 0), price_bw: asNum(e.priceBW || 0), sku: null,
+      // LF: media cost only, no click charge (E-02 backfill shape).
+      paper_cost: asNum(e.paperCost ?? e.baseCostColor ?? 0) || 0, click_color: 0, click_bw: 0,
     });
   });
   if (spRows.length) {
@@ -287,6 +303,9 @@ export async function publishStoreConfig(cfg, profile, slug = STORE_SLUG) {
   putSetting("preview_margin", cfg.previewMargin);
   putSetting("preview_spacing", cfg.previewSpacing);
   putSetting("blueprint_pricing", cfg.blueprintPricing);
+  // Phase E store knobs (jsonb).
+  putSetting("labor", cfg.labor);
+  putSetting("margin_thresholds", cfg.marginThresholds);
   if (setRows.length) {
     const { error } = await supabase.from("settings").upsert(setRows, { onConflict: "store_id,key" });
     if (error) throw new Error(`Publishing settings failed: ${error.message}`);

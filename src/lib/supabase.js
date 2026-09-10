@@ -350,7 +350,8 @@ export const setEmployeeActive = async (id, active) =>
 
 // Goes through the store-scoped SECURITY DEFINER RPC instead of reading the
 // employees table, so the table can be closed to anon entirely (migration
-// 03b). The RPC returns id/name/active only — the pin never leaves Postgres.
+// 03b). The RPC returns id/name/active/role only — the pin never leaves
+// Postgres. role ('staff' | 'manager', Phase E) drives margin visibility.
 //
 // Throws StoreUnavailableError when the store can't be resolved, so callers
 // can distinguish infrastructure failure from a bad PIN.

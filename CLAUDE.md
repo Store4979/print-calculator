@@ -23,7 +23,7 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - PWA bits: public/sw.js + manifest.webmanifest (no-cache headers in netlify.toml)
 
 ## Key files
-- src/App.jsx — the monolith (~5,200 lines): all tabs (paper/large/blueprint/
+- src/App.jsx — the monolith (~5,400 lines): all tabs (paper/large/blueprint/
   booklet/data-merge/queue), admin panel, pricing math, PDF generation, email
   ordering, employee login/order-saving plumbing, shared PriceBar + Collapsible +
   product tiles
@@ -42,13 +42,24 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - src/components/PrintQueue.jsx — staff queue tab for customer uploads (QR modal
   is portaled to document.body — see gotchas)
 - src/components/EmployeeLogin.jsx — employee PIN login (RPC-backed; also the
-  kiosk-exit credential)
+  kiosk-exit credential). The RPC returns id/name/active/role; role is
+  'staff' | 'manager' and only a store OWNER can change it (DB trigger
+  employees_role_owner_only + client gate). A manager PIN sees margin.
 - src/components/OrdersDashboard.jsx — admin panel: order history (volume/revenue
-  rollups, line-item detail) + employee management
+  rollups, line-item detail, margin column + strip gated on canSeeMargin) +
+  employee management (role selector; owner-only)
+- src/components/CostModelEditor.jsx — admin: the cost & margin editor (Phase E).
+  Paper cost / click split, per-paper pricing mode (cost-up | market-down),
+  labor toggle, health thresholds, the B&W-click callout, and the paper-cost-
+  increase model. Writes the same App.jsx state the old price tables did.
+- src/lib/margin.js — PURE cost & margin engine (no React/Supabase). Every
+  margin number on every surface comes from here. Unit-tested by `yarn test`.
+- scripts/tests/*.test.js — `yarn test` (node --test, zero deps). The kiosk
+  leak guard lives here; keep it green before any PR.
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
 - src/lib/orderQueue.js — offline order queue. localStorage key is still
   "pendingTransactions" on purpose (renaming it orphans queued orders); rows
-  are whitelisted to ORDER_COLUMNS before insert
+  are whitelisted to ORDER_COLUMNS (11 since Phase E) before insert
 - supabase/migrations/ — THE source of truth for schema. One file per applied
   migration, named <ledger version>_<name>.sql and byte-identical to
   supabase_migrations.schema_migrations.statements[1]; .rollback.sql companions
@@ -64,12 +75,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - public/pricing.json — deployed pricing config (admin panel exports/imports this)
 
 ## Integration anchors in App.jsx (verify before relying on; update this file if they drift)
-- PriceBar component ~line 714
-- buildSaleSnapshot() ~line 3035
-- kioskFullReset() ~line 3169
-- requestSaveOrder() ~line 3398
-- applyScenario() useCallback ~line 3551
-- SaveOrderDialog ~line 5576
+- PriceBar component ~line 727 (kiosk branch = gate 2 of the margin guard)
+- canSeeMargin / marginCtx (the ONE margin gate) ~line 1445
+- buildSaleSnapshotRaw() ~line 3099 (kiosk uses this; no cost fields)
+- buildSaleSnapshot() ~line 3214 (adds costSubtotal/marginPct)
+- kioskFullReset() ~line 3245
+- KioskPriceBar shim ~line 3348
+- requestSaveOrder() ~line 3474
+- applyScenario() useCallback ~line 3634
+- SaveOrderDialog ~line 5618
 
 ## Hardware the app models
 - Ricoh Pro C5400s: sheets up to 13×19.2", auto-duplex, saddle-stitch, ~4mm margins
@@ -120,22 +134,61 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
   nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
   revoking anything, and never apply a DB change without a file in the repo.
-- Phase S1 — server-side PIN verification: move the PIN check into a
-  rate-limited Netlify function (service_role), deploy the client onto it, then
-  revoke anon/authenticated EXECUTE on verify_employee_pin again (its rollback
-  file already exists). BETA BLOCKER before the first external tenant; NOT a
-  launch blocker for store4979 (single tenant, physical counter). "Phase E" is
-  taken by the margin engine in the master plan — do not reuse it for this.
+- PHASE S — SaaS AUTH HARDENING. Three items, all BLOCK tenant #2, none
+  block store4979 (single tenant, physical counter). "Phase E" is the margin
+  engine — do not reuse the letter.
+  - S1 server-side PIN verification: move the PIN check into a rate-limited
+    Netlify function (service_role), deploy the client onto it, then revoke
+    anon/authenticated EXECUTE on verify_employee_pin again (its rollback file
+    already exists). Closes the 10k-guess brute-force surface.
+  - S2 custom SMTP for Supabase Auth mail (magic links, recovery). The
+    default sender is rate-limited and lands in spam; a tenant owner who
+    can't receive the link can't get in.
+  - S3 PASSWORD RECOVERY HANDLER. The app has no route that consumes a
+    recovery token. Needed: detect the recovery fragment on load
+    (`#access_token=…&type=recovery` / the PASSWORD_RECOVERY auth event), show
+    a "set a new password" screen, call supabase.auth.updateUser({ password }),
+    then land the user signed in. Plus a "Forgot password?" link in
+    AdminLogin (resetPasswordForEmail with redirectTo = window.location.origin).
+    Without it a locked-out tenant owner has no self-serve way back in —
+    that is a support ticket per tenant.
+- 2026-09-09 admin lockout root cause: the Supabase Auth Site URL was
+  http://localhost:3000, so recovery links redirected to a dead dev server
+  (white screen). The 13:35 "sign-in" on the owner account was the recovery
+  token being verified, not a password login — which is why the password
+  never worked. Site URL must be https://printcalculator2.netlify.app (and the
+  deploy-preview pattern in Additional Redirect URLs). Keep it that way.
 - A magic-link sign-in lands by redirect with no dialog open. If that account
   has no owner/manager membership the app must SAY so (adminAccessDenied) —
   isAdmin=false alone renders nothing.
+- MARGIN IS STAFF-ONLY (Phase E). Two independent gates, neither reads label
+  text: (1) `canSeeMargin` in App.jsx is the single source of truth and is
+  false whenever KIOSK_MODE is on, so margin metrics are never built for the
+  kiosk; (2) every margin metric carries `staffOnly: true` and PriceBar's kiosk
+  branch + the KioskPriceBar shim drop those via visibleMetrics(). The kiosk
+  submit path uses buildSaleSnapshotRaw(), which has no cost fields. Email
+  payload, order PDFs and upload.html carry nothing. scripts/tests/
+  kiosk-guard.test.js is the contract — never gate on a label regex again.
+- "Material margin" vs "Margin": the label follows the labor toggle
+  (marginLabelFor) everywhere — PriceBar, Save Order dialog, OrdersDashboard,
+  the editor. 87.5% on paper is not profit; do not hard-code "Margin".
+- B&W click charge is 0 in the DB (E-02 backfill; never entered). Every B&W
+  side is costed as paper only, so duplex B&W cost is understated. The editor
+  shows a red callout until the owner enters it; click edits are calibration
+  (paper cost re-derives, no price moves), paper-cost edits move cost/price.
+- Blueprint cost uses the plain_20lb LF media (the email path already says
+  blueprints print on it). If that media is missing the margin shows "—",
+  never 100%. LF add-on costs (grommets, foam core) are not modeled = $0.
+- A `currentEmployee` stored in localStorage before Phase E has no `role`
+  and is treated as staff; sign in again to pick up manager.
 
 ## Workflow rules for Claude Code sessions
 1. **Plan first.** For any non-trivial task, present a short plan and wait for
    approval before writing code.
 2. **Don't commit or push** unless explicitly asked. Leave the working tree dirty;
    Ryan reviews, then commits/pushes (push to main = Netlify auto-deploy).
-3. After changes, verify with `yarn build` (and `yarn dev` for anything visual).
+3. After changes, verify with `yarn build` AND `yarn test` (and `yarn dev` for
+   anything visual). The test suite is the margin-leak contract.
 4. Never touch pricing math or the Supabase schema unless the task explicitly
    calls for it.
    Every apply_migration MUST be paired, in the same change, with a file under
@@ -143,6 +196,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
    from supabase_migrations.schema_migrations right after applying. No exceptions,
    including hotfixes: the 2026-09-09 audit found eight applied migrations with no
    file, and one of them had taken staff sign-in down.
+   FUNCTION ACLs: this project's default privileges grant EXECUTE on every new
+   function in `public` to anon, authenticated AND service_role the moment it is
+   created — a new SECURITY DEFINER function is anon-callable by default. Every
+   CREATE FUNCTION must therefore be followed, in the same migration, by
+   `revoke execute ... from public, anon, authenticated, service_role;` and then
+   explicit grants for exactly the roles that need it. CREATE OR REPLACE cannot
+   change a return type; DROP + CREATE resets the ACL to that default AND
+   discards the function comment — re-issue both. Prove it: diff `proacl`
+   before/after in the rehearsal (see supabase/rehearsals/phase_e_01_rehearsal.sql).
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

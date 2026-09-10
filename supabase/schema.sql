@@ -16,6 +16,10 @@ create table if not exists public.employees (
   name        text not null,
   pin         text not null,
   active      boolean not null default true,
+  -- Phase E (20260909224658): a manager PIN sees margin at the counter.
+  -- Only a store owner may change it — trigger employees_role_owner_only.
+  role        text not null default 'staff'
+              constraint employees_role_check check (role in ('staff','manager')),
   created_at  timestamptz not null default now(),
   -- Stored as plaintext on purpose — these are 4-digit station PINs
   -- for internal use, not security credentials. The check enforces
@@ -25,6 +29,15 @@ create table if not exists public.employees (
 );
 
 create index if not exists employees_active_idx on public.employees (active);
+
+-- verify_employee_pin(p_store_id uuid, p_pin text)
+--   returns table(id uuid, name text, active boolean, role text)
+--   SECURITY DEFINER, search_path=public. EXECUTE: postgres, service_role,
+--   anon, authenticated (explicitly revoked + re-granted; see CLAUDE.md rule 4).
+--   Called by src/lib/supabase.js findEmployeeByPin. Phase S1 moves it server-side.
+-- employees_role_owner_only(): BEFORE INSERT OR UPDATE OF role trigger. Rejects
+--   a role assignment (42501) unless has_store_role(store_id, {owner}); postgres
+--   and service_role pass. Not security definer on purpose.
 
 -- ── orders ─────────────────────────────────────────────────
 -- One row per saved order. employee_id/employee_name record WHO RANG IT —
@@ -42,7 +55,11 @@ create table if not exists public.orders (
   notes               text,
   created_at          timestamptz not null default now(),
   org_id              uuid references public.organizations(id) on delete cascade,
-  store_id            uuid references public.stores(id) on delete cascade
+  store_id            uuid references public.stores(id) on delete cascade,
+  -- Phase E (20260909232836): the cost and margin the order was quoted at.
+  -- NULL on rows saved before Phase E — the dashboard shows a dash, never 0.
+  cost_subtotal       numeric(10,2),
+  margin_pct          numeric(6,2)
 );
 
 create index if not exists orders_employee_idx   on public.orders (employee_id);
@@ -130,3 +147,23 @@ alter publication supabase_realtime add table public.pending_jobs;
 insert into storage.buckets (id, name, public)
 values ('customer-uploads', 'customer-uploads', false)
 on conflict (id) do nothing;
+
+-- ── Phase A store-config tables (20260722003606) — the runtime price book ──
+-- The app loads these first (src/lib/storeConfig.js fetchStoreConfig) and
+-- falls back to public/pricing.json only if the cloud read fails. Admin
+-- "Publish to Cloud" writes them. Full DDL is in the migration; Phase E
+-- additions are listed here.
+--   paper_types(id, store_id, kind sheet|large_format, key, label, sheet_keys,
+--               markup_percent numeric(8,2), upsell_flag, sort_order, active,
+--               pricing_mode text not null default 'cost_up'      -- Phase E-02
+--                 check (pricing_mode in ('cost_up','market_down')))
+--   sheet_prices(id, store_id, paper_type_id, sheet_key, base_cost_color,
+--                base_cost_bw, price_color, price_bw numeric(10,4), sku,
+--                paper_cost, click_color, click_bw numeric(10,4))  -- Phase E-02
+--     Invariant kept by the client on publish:
+--       base_cost_color = paper_cost + click_color
+--       base_cost_bw    = paper_cost + click_bw
+--     LF rows: paper_cost = base_cost_color, clicks 0.
+--   discounts(kind, min_qty, discount_percent), addons(...), settings(store_id,
+--     key, value jsonb) — Phase E adds settings keys `labor` and
+--     `margin_thresholds` through the existing publish path (no migration).

@@ -49,6 +49,10 @@
   --blue-mid: #bfdbfe;
   --green: #059669;
   --green-light: #ecfdf5;
+  --green-mid: #a7f3d0;
+  --red: #dc2626;
+  --red-light: #fee2e2;
+  --red-mid: #fecaca;
   --purple: #7c3aed;
   --purple-light: #f3e8ff;
   --purple-mid: #ddd6fe;
@@ -995,6 +999,12 @@ body {
   background: var(--amber-light);
   border: 1px solid var(--amber-mid);
   color: #92400e;
+}
+
+.callout-danger {
+  background: var(--red-light);
+  border: 1px solid var(--red-mid);
+  color: #7f1d1d;
 }
 
 .callout-icon { flex-shrink: 0; margin-top: 1px; }
@@ -3336,3 +3346,48 @@ body {
   color: var(--purple, #7c3aed);
   background: #f3e8ff;
 }
+
+/* ============================================
+   PHASE E — COST & MARGIN
+   ============================================ */
+/* Health dot: informational, never alarming. */
+.margin-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle; flex-shrink: 0;
+  background: var(--slate-mid);
+}
+.margin-dot.is-healthy    { background: var(--green); }
+.margin-dot.is-thin       { background: var(--amber); }
+.margin-dot.is-underwater { background: var(--red); }
+.price-metric-val { display: inline-flex; align-items: center; }
+/* Staff-only metrics never get the total treatment; keep them compact. */
+.price-metric[data-staff-only] .price-metric-val { font-size: 15px; }
+
+/* Save Order dialog per-line cost / margin */
+.sol-cost { font-weight: 500; color: var(--text-muted); font-size: 11px; }
+.sol-margin { display: inline-flex; align-items: center; font-weight: 600; font-size: 11px; color: var(--text-muted); }
+
+/* Orders dashboard margin strip */
+.cd-totals-margin { margin-top: -4px; }
+
+/* Employees: role selector column */
+.admin-emp-row { grid-template-columns: 1fr 90px 110px 70px auto auto; }
+.admin-emp-role { width: 100px; padding: 4px 6px; font-size: 12px; }
+@media (max-width: 640px) {
+  .admin-emp-row { grid-template-columns: 1fr 80px; }
+}
+
+/* Cost & margin editor */
+.cme-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 8px; line-height: 1.5; }
+.cme-table td, .cme-table th { border-bottom: 1px solid var(--border); }
+.cme-paper-row td { background: var(--surface-2); padding-top: 8px; padding-bottom: 8px; }
+.cme-mode { display: inline-flex; gap: 8px; align-items: center; margin-left: 14px; font-size: 11px; color: var(--text-muted); }
+.cme-mode label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
+.cme-ro { display: inline-block; min-width: 60px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.admin-input.is-flagged { border-color: var(--red); background: var(--red-light); }
+.cme-callout { margin-bottom: 14px; font-size: 13px; }
+.cme-callout-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.cme-callout-action { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.cme-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 12px; }
+.cme-checks { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; margin: 4px 0; }
+.cme-check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }

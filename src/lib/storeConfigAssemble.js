@@ -15,8 +15,10 @@ export function assembleConfig({ store, paperTypes = [], sheetPrices = [], disco
   const sheetPapers = paperTypes.filter((r) => r.kind === "sheet");
   const lfPapers    = paperTypes.filter((r) => r.kind === "large_format");
 
-  const paperTypesOut = sheetPapers.map((r) => ({ key: r.key, label: r.label }));
-  const lfPaperTypes  = lfPapers.map((r) => ({ key: r.key, label: r.label }));
+  // Phase E: pricingMode ("cost_up" | "market_down") rides on the paper type.
+  const modeOf = (r) => (r.pricing_mode === "market_down" ? "market_down" : "cost_up");
+  const paperTypesOut = sheetPapers.map((r) => ({ key: r.key, label: r.label, pricingMode: modeOf(r) }));
+  const lfPaperTypes  = lfPapers.map((r) => ({ key: r.key, label: r.label, pricingMode: modeOf(r) }));
 
   const sheetKeysForPaper = {};
   const sheetMarkupPerPaper = {};
@@ -45,6 +47,13 @@ export function assembleConfig({ store, paperTypes = [], sheetPrices = [], disco
       priceColor:    asNum(row.price_color),
       priceBW:       asNum(row.price_bw),
     };
+    // Phase E cost split (E-02). Absent on a pre-E-02 row: the client then
+    // falls back to the lossless default in src/lib/margin.js.
+    if (row.paper_cost != null) {
+      entry.paperCost  = asNum(row.paper_cost);
+      entry.clickColor = asNum(row.click_color ?? 0);
+      entry.clickBW    = asNum(row.click_bw ?? 0);
+    }
     if (paper.kind === "sheet") {
       if (!sheetPricing[paper.key]) sheetPricing[paper.key] = {};
       sheetPricing[paper.key][row.sheet_key] = entry;
@@ -91,6 +100,18 @@ export function assembleConfig({ store, paperTypes = [], sheetPrices = [], disco
   if (isNum(settingsMap.preview_spacing))  pricing.previewSpacing = settingsMap.preview_spacing;
   if (settingsMap.blueprint_pricing && typeof settingsMap.blueprint_pricing === "object")
     pricing.blueprintPricing = settingsMap.blueprint_pricing;
+  // Phase E store knobs. Both optional; the client has defaults.
+  if (settingsMap.labor && typeof settingsMap.labor === "object")
+    pricing.labor = {
+      enabled: !!settingsMap.labor.enabled,
+      setupPerJob: asNum(settingsMap.labor.setupPerJob ?? 0) || 0,
+      perUnit: asNum(settingsMap.labor.perUnit ?? 0) || 0,
+    };
+  if (settingsMap.margin_thresholds && typeof settingsMap.margin_thresholds === "object")
+    pricing.marginThresholds = {
+      healthy: asNum(settingsMap.margin_thresholds.healthy ?? 75) || 0,
+      thin: asNum(settingsMap.margin_thresholds.thin ?? 50) || 0,
+    };
 
   const storeProfile = store && {
     id:       store.id,
