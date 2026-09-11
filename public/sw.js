@@ -14,8 +14,9 @@
  *     code did not hold. Sensitivity is now the FIRST gate, applied to every
  *     request regardless of mode, and shell routes are an exact map.
  *  2. The CLEAR_CACHES reply went to event.source (the Window), while the
- *     caller listened on a transferred MessagePort. The reply never arrived,
- *     so clearAppCaches() always timed out. It now replies on event.ports[0].
+ *     caller listened on a transferred MessagePort. The purge itself DID run;
+ *     only the acknowledgement went nowhere, so clearAppCaches() always timed
+ *     out and reported false. It now replies on event.ports[0].
  *  3. The asset allowlist was a path prefix plus an extension regex. It is now
  *     an enumerated list: CORE plus the exact build outputs injected at deploy
  *     time by scripts/inject-sw-manifest.mjs, plus exact pinned CDN URLs
@@ -28,7 +29,13 @@
  * pre-audit print-app-v14 and anything it holds.
  */
 const CACHE_PREFIX = "print-app-";
-const CACHE = CACHE_PREFIX + "v15";
+// v16, not v15. The FIRST corrected revision also called itself v15 — the same
+// name the flawed revision used — so activate() preserved the very cache that
+// could hold a poisoned shell (a navigation to /pricing.json stored under
+// /index.html). A corrected worker must never inherit a flawed generation's
+// cache, so any fix to caching behaviour bumps this. Production never ran v15;
+// only browsers that opened the rev-1 preview did.
+const CACHE = CACHE_PREFIX + "v16";
 const isOurCache = (key) => key.startsWith(CACHE_PREFIX);
 
 // Static, hand-maintained shell files. Everything else cacheable is injected.
@@ -118,7 +125,8 @@ self.addEventListener("activate", (event) => {
  * MessagePort and listens on its twin, so the acknowledgement MUST go to
  * event.ports[0]. Replying to event.source posts to the page's global
  * serviceWorker.onmessage instead, which nobody is listening on — that was
- * the rev 1 bug, and it made clearAppCaches() a silent no-op. */
+ * the rev 1 bug. The caches were still deleted; the caller just never heard
+ * back and always reported failure. */
 self.addEventListener("message", (event) => {
   if (!event.data || event.data.type !== "CLEAR_CACHES") return;
   event.waitUntil((async () => {

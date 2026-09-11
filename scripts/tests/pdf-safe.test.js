@@ -7,6 +7,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PDFJS_HARDENED, openPdf } from "../../src/lib/pdfSafe.js";
+import { stripComments } from "./source-util.mjs";
 
 // fileURLToPath, not URL.pathname: on Windows the latter yields "/C:/..."
 // which is not a usable filesystem path.
@@ -36,11 +37,38 @@ test("openPdf refuses to run when the CDN global is missing", () => {
   assert.throws(() => openPdf(null, "x"), /pdf\.js not loaded/);
 });
 
-test("no raw getDocument( call survives anywhere in src/", () => {
+test("NO reference to getDocument survives anywhere in src/ — call, bracket, alias or destructure", () => {
+  // The previous guard only matched `getDocument(`, so every one of these
+  // walked straight past it:
+  //     lib["getDocument"]({ data })      bracket access
+  //     const g = lib.getDocument; g(...)  alias
+  //     const { getDocument } = lib        destructure
+  // The token itself is now the tripwire. Comments are stripped first (CRLF
+  // normalised) so prose about pdf.js cannot trip it.
   const offenders = walk(SRC)
     .filter((f) => /\.jsx?$/.test(f) && !f.endsWith("pdfSafe.js"))
-    .filter((f) => /getDocument\s*\(/.test(readFileSync(f, "utf8")));
+    .filter((f) => /\bgetDocument\b/.test(stripComments(readFileSync(f, "utf8"))));
   assert.deepEqual(offenders, [], `route these through openPdf(): ${offenders.join(", ")}`);
+});
+
+test("the guard actually catches every evasion it claims to", () => {
+  // A guard nobody has seen fail is a guard nobody has tested.
+  const evasions = {
+    "plain call":   'const d = await lib.getDocument({ data });',
+    "bracket":      'const d = await lib["getDocument"]({ data });',
+    "bracket sq":   "const d = await lib['getDocument']({ data });",
+    "alias":        'const g = lib.getDocument; const d = await g({ data });',
+    "destructure":  'const { getDocument } = lib; const d = await getDocument({ data });',
+    "computed":     'const k = "getDocument"; const d = await lib[k]({ data });',
+  };
+  const trips = (src) => /\bgetDocument\b/.test(stripComments(src));
+  for (const [label, src] of Object.entries(evasions)) {
+    assert.equal(trips(src), true, `${label} must be caught`);
+  }
+  // And prose must NOT trip it, on either line ending.
+  const prose = '// we deliberately never call getDocument directly\nconst x = 1;';
+  assert.equal(trips(prose), false, "LF comment must not trip");
+  assert.equal(trips(prose.replace(/\n/g, "\r\n")), false, "CRLF comment must not trip");
 });
 
 test("every entry point that loads pdf.js pins the same version", () => {

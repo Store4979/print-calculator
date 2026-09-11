@@ -1208,14 +1208,22 @@ function PriceCalculatorApp() {
     setShowEmployeeLogin(false);
   };
   const switchEmployee = async () => {
-    // Identity is dropped first so the UI flips immediately, but the returned
-    // promise does NOT resolve until the caches are purged — the handover
-    // barrier is only a barrier if callers can await it. Worst case 1.5s
-    // (clearAppCaches times out rather than hanging); typically instant.
+    // Drops identity, then asks the service worker to purge its caches.
+    //
+    // This is BEST-EFFORT CLEANUP, not a barrier: the login keypad opens
+    // immediately and nothing waits for the purge. Calling it a barrier would
+    // be false — the next user can start typing a PIN while it is still in
+    // flight. It is deliberately not blocking, because sw.js is allowlist-only
+    // and its caches hold build output alone, so making staff wait behind a
+    // spinner would cost counter time for no security gain. If the cache ever
+    // holds user data again, that decision has to be revisited, not the
+    // comment.
     setStoredEmployee(null);
     setCurrentEmployee(null);
     setShowEmployeeLogin(true);
-    await clearAppCaches();
+    if (!(await clearAppCaches())) {
+      console.warn("switchEmployee: service-worker cache purge did not acknowledge");
+    }
   };
 
   // ── Kiosk mode (customer-facing skin) ──
@@ -3550,11 +3558,13 @@ const handleFrontFiles = async (files) => {
     setAuthRole(null);
     setAuthSession(null);
     setAdminAccessDenied(null);
-    // Drop every service-worker cache in our family on the way out. sw.js is
-    // allowlist-only so this should be a no-op, but the counter iPad is a
-    // shared device and a handover must not serve the next person anything.
-    // Awaited: an unawaited purge is not a barrier.
-    await clearAppCaches();
+    // Best-effort cleanup, same as switchEmployee: asks the worker to drop its
+    // caches and logs if the acknowledgement does not come back. Nothing is
+    // gated on it. sw.js is allowlist-only, so its caches hold build output
+    // alone and this is defence in depth.
+    if (!(await clearAppCaches())) {
+      console.warn("handleAdminSignOut: service-worker cache purge did not acknowledge");
+    }
   };
 
   // The single source of truth for the current price book, shaped like

@@ -78,5 +78,36 @@ if (assets.length && !/const BUILD_ASSETS = \[\s*"\/assets\//.test(out)) {
   console.error("inject-sw-manifest: manifest did not take. Aborting rather than shipping an empty allowlist.");
   process.exit(1);
 }
+// INVARIANT: every /assets/ URL the BUILT APP ACTUALLY REQUESTS must be in the
+// manifest. Enumerating what is on disk is not the same claim — a file can sit
+// in dist/assets/ unreferenced, and (the case that matters) an entry point can
+// reference an asset the enumeration missed, which would silently fall out of
+// the cache allowlist. Read the requests out of the built HTML and compare.
+const entryHtml = ["index.html", "upload.html"]
+  .map((f) => join(DIST, f))
+  .filter((f) => existsSync(f));
+
+const requested = new Set();
+for (const f of entryHtml) {
+  const html = readFileSync(f, "utf8");
+  for (const m of html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/g)) {
+    if (m[1].startsWith("/assets/")) requested.add(m[1].split("?")[0]);
+  }
+}
+
+const missing = [...requested].filter((u) => !assets.includes(u));
+if (missing.length) {
+  console.error("inject-sw-manifest: the built app requests assets the manifest does not list:");
+  for (const m of missing) console.error("  MISSING  " + m);
+  console.error("  Caching these would be impossible and the allowlist would be wrong. Aborting.");
+  process.exit(1);
+}
+
+const unreferenced = assets.filter((u) => !requested.has(u));
+
 console.log(`inject-sw-manifest: enumerated ${assets.length} build asset(s) into dist/sw.js`);
-for (const a of assets) console.log("  " + a);
+for (const a of assets) console.log(`  ${requested.has(a) ? "referenced  " : "unreferenced"} ${a}`);
+console.log(`  invariant: ${requested.size} asset(s) requested by ${entryHtml.length} entry point(s), all present in the manifest`);
+if (unreferenced.length) {
+  console.log(`  note: ${unreferenced.length} enumerated asset(s) are not referenced by an entry point (lazy chunks) — cached, which is intended`);
+}

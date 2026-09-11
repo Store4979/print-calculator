@@ -6,8 +6,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadSW, mkReq, mkRes, ORIGIN, SB, SW_SOURCE } from "./sw-harness.mjs";
+import { stripComments } from "./source-util.mjs";
 
-const CACHE = "print-app-v15";
+const CACHE = "print-app-v16";
 const ASSETS = ["/assets/index-ftBg9V1i.js", "/assets/index-BYRfnAj8.css"];
 const nav = (url, o = {}) => mkReq(url, { ...o, mode: "navigate" });
 
@@ -165,17 +166,39 @@ test("P5: activate() purges only OUR old caches, never a neighbour's", async () 
   assert.equal(remaining.includes(CACHE), true);
 });
 
-test("the cache name is bumped past the pre-audit cache", () => {
-  assert.match(SW_SOURCE, /const CACHE = CACHE_PREFIX \+ "v15"/);
-  assert.equal(SW_SOURCE.includes('"print-app-v14"'), false);
+test("activate() also purges the FLAWED v15, which could hold a poisoned shell", async () => {
+  // rev 1's corrected worker reused the name v15, so it inherited the cache
+  // the flawed worker had written — including a /pricing.json body stored as
+  // /index.html. Only a generation bump evicts that.
+  const sw = await loadSW({ assets: ASSETS });
+  sw.caches.seed("print-app-v15", "/index.html", { body: "{\"sheetPricing\":{}} POISONED SHELL" });
+  sw.caches.seed(CACHE, "/index.html", { body: "clean" });
+  await sw.dispatchActivate();
+  const remaining = await sw.caches.keys();
+  assert.equal(remaining.includes("print-app-v15"), false, "the flawed generation must be evicted");
+  assert.equal(remaining.includes(CACHE), true);
+  assert.equal((await sw.caches.match("/index.html", { cacheName: CACHE })).body, "clean");
+});
+
+test("the cache generation is past BOTH the pre-audit v14 and the flawed v15", () => {
+  const m = SW_SOURCE.match(/const CACHE = CACHE_PREFIX \+ "v(\d+)"/);
+  assert.ok(m, "generation must be declared");
+  assert.ok(Number(m[1]) > 15, `generation ${m[1]} must exceed the flawed v15`);
+  assert.equal(CACHE, "print-app-v" + m[1], "tests and source must agree");
+});
+
+test("the comment stripper survives CRLF line endings", () => {
+  const line = '  // startsWith("/upload") would also match /uploads-anything;';
+  for (const [label, src] of [["LF", line], ["CRLF", line + "\r"], ["CRLF file", line.replace(/\n/g, "\r\n") + "\r\n"]]) {
+    assert.equal(/startsWith/.test(stripComments(src)), false, `${label}: comment must be stripped`);
+  }
+  // And the real file, forced to CRLF, must still pass the assertion below.
+  const crlf = stripComments(SW_SOURCE.replace(/\n/g, "\r\n"));
+  assert.equal(/startsWith\(\s*["']\/upload/.test(crlf), false, "CRLF checkout must not false-positive");
 });
 
 test("the rev 1 false invariant is gone from the CODE (comments may cite it)", () => {
-  // Strip comments first: the header deliberately quotes the old bug when
-  // explaining it, and that prose must not satisfy or fail this check.
-  const code = SW_SOURCE
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+  const code = stripComments(SW_SOURCE);
   assert.equal(/Only the shell is ever stored/.test(code), false);
   assert.equal(/startsWith\(\s*["']\/upload/.test(code), false, "exact route map, not a prefix");
   assert.match(code, /SHELL_ROUTES\s*=\s*new Map/, "routes are an exact map");

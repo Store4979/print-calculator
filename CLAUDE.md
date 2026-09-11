@@ -182,6 +182,21 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - A `currentEmployee` stored in localStorage before Phase E has no `role`
   and is treated as staff; sign in again to pick up manager.
 
+## Comment discipline (standing rule, 2026-09-10)
+**A comment may describe what the code does. It may never assert a guarantee
+the code does not enforce.** Two false-invariant comments shipped in one file
+during the security work and both were caught in review, not by a test:
+- `sw.js`: "Only the shell is ever stored" — while the navigation branch
+  stored any navigated body under `/index.html`.
+- `App.jsx`: a "handover barrier" that was not a barrier — the login keypad
+  opened before the purge and nothing inspected the result.
+
+A reader trusts a comment the way they trust a test. If a guarantee is worth
+stating, enforce it and point at the test that proves it; otherwise describe
+the actual behaviour, including that it is best-effort. When a behaviour is
+deliberately weaker than it sounds ("best-effort cleanup", "raises the cost of
+abuse, does not guarantee a cap"), say so in the comment itself.
+
 ## Workflow rules for Claude Code sessions
 1. **Plan first.** For any non-trivial task, present a short plan and wait for
    approval before writing code.
