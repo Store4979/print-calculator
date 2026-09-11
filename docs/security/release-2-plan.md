@@ -12,7 +12,7 @@ here. This plan works out the schema, contract, order and tests for it.
 > identity types, the success-flow tests and the both-writers B2 gate are
 > unchanged. What changed:
 >
-> 1. **A whole category was missing (new Part 0.7 and Part 7 step 4a).**
+> 1. **A whole category was missing (new Part 0.7 and Part 7 steps 4a/4e).**
 >    Revision 1 treated "move the client off an endpoint" as equivalent to
 >    closing it. It is not. Netlify deploys **every file in
 >    `netlify/functions/`** as a live URL, so `get-download-url` and
@@ -30,6 +30,20 @@ here. This plan works out the schema, contract, order and tests for it.
 > 6. Four factual corrections: "column-scoped RLS" is not a mechanism;
 >    Realtime does not bypass SELECT RLS; the Windows claim was stale; the
 >    rollback is break-glass, not a secure fallback.
+>
+> **Revision 3 — same day.** Two changes, both from the owner's review of
+> revision 2:
+>
+> 7. **The two deletions ship alone, last** (step 4e), split out from the
+>    authentication of the five retained functions (step 4a). Rationale:
+>    deleting `get-download-url` and `complete-job` is the **only** operation
+>    in Release 2 whose rollback reopens an unauthenticated privileged
+>    endpoint. Everything else rolls back to no-worse-than-today. Isolating it
+>    means no unrelated defect can force that rollback.
+> 8. **C4 is a tenant-#1 fix, not a tenant-#2 one.** `signs365Pricing.json` is
+>    a *third party's* wholesale price list being redistributed to every
+>    anonymous visitor — a vendor exposure on top of the confidentiality one,
+>    already live today, and not the store's alone to accept.
 
 ---
 
@@ -215,7 +229,7 @@ rather than assume: `netlify.toml` declares no `[functions]` per-function
 `path`, no function-level redirect, and no `/api/*` rewrite; no handler
 exports a `config.path`. The only `export const config` in the tree is
 `cleanup-stale-jobs`'s `{ schedule: "@hourly" }`. So the attack surface is
-exactly one URL per file — but the **re-inventory in step 4a re-checks this**,
+exactly one URL per file — but the **re-inventory in step 4e re-checks this**,
 because adding an alias is a one-line change someone could make later.
 
 ### The residual attack, stated accurately
@@ -240,7 +254,8 @@ worth being precise so the fix is not mis-scoped. **`BUCKET` is hard-coded to
 - **Harvested identifiers outlive the policy drop.** Anyone who read
   `pending_jobs` before step 5 keeps a working list of paths and ids, and both
   functions honour them indefinitely. That is precisely why retirement
-  (step 4a) cannot be replaced by the policy drop, and why it comes first.
+  (steps 4a and 4e) cannot be replaced by the policy drop, and why it comes
+  first.
 
 So the accurate statement is: *these are post-harvest amplifiers, not
 independent read primitives — and they remain fully effective against every
@@ -250,7 +265,8 @@ identifier harvested before the policies close.*
 creates a *new* authenticated endpoint beside an *old* anonymous one. Until
 the old one is removed from deployment or made to enforce the same checks, the
 client migration has changed which door the staff use and **not** whether the
-other door is locked. Part 7 step 4a exists for this, and it blocks grant
+other door is locked. Part 7 steps 4a and 4e exist for this, and they block
+grant
 closure exactly the way the client migration does.
 
 ---
@@ -861,11 +877,14 @@ is a live URL (Part 0.7), so each of the seven needs an explicit decision, and
 - *Block it with a redirect rule* — `netlify.toml` redirects do not reliably
   shadow the reserved `/.netlify/functions/` namespace. Not a control to bet on.
 
-**Sequencing matters and is easy to get backwards.** The delete lands in
-Part 7 **step 4a**, after the replacement endpoints are deployed and the client
-is confirmed on them, and **before** grant closure. Deleting earlier breaks the
+**Sequencing matters and is easy to get backwards.** Authentication for the
+five retained functions lands in **step 4a**; the two deletions land **alone**
+in **step 4e**, after the replacements are deployed and confirmed at the
+counter, and immediately **before** grant closure. Deleting earlier breaks the
 counter; deleting later means grants close while an anonymous door is still
-open — which would make the whole release a false negative.
+open — which would make the whole release a false negative. Deleting *together
+with* other changes means a rollback for an unrelated defect reopens the
+anonymous endpoints, which is why 4e carries nothing else.
 
 ---
 
@@ -1000,16 +1019,49 @@ three, and it is not the most exposed.**
 | C4 | **`src/data/signs365Pricing.json` — in the JS bundle** | 66 KB of Signs365 **wholesale trade costs** for every outsourced product, plus `shippingRules` | `import`ed by `SpecialtyTab.jsx`; also cached as `localStorage["signs365Pricing"]` |
 | C5 | **`orders.cost_subtotal` / `orders.margin_pct`** | accepted **from the browser** on every insert | `ORDER_COLUMNS` in `orderQueue.js:21-27` |
 
-**C4 was named by neither review and is the hardest of the five.** The
-outsourced-product cost list is `import`ed, so it is **compiled into the
-JavaScript bundle** — it ships to every kiosk and every walk-in who loads
-`/upload`, with no fetch to intercept and no policy to close. The markup tiers
-(2.5× under $50, 2× $50–200, 1.75× over $200) are in the component source, so
-anyone with the bundle can derive the trade cost from the quoted price even
-without the file. Fixing C4 means moving outsourced pricing behind an endpoint
-that returns **selling prices only**, which is a real refactor of
-`SpecialtyTab` — not a config change. It is scoped in step 4c below and it is
-the reason the cost transition is its own substep rather than a line item.
+**C4 was named by neither review, is the hardest of the five, and is the only
+one that is not solely this store's problem to weigh.** The outsourced-product
+cost list is `import`ed, so it is **compiled into the JavaScript bundle** — it
+ships to every kiosk and every walk-in who loads `/upload`, with no fetch to
+intercept and no policy to close. The markup tiers (2.5× under $50, 2×
+$50–200, 1.75× over $200) are in the component source, so anyone with the
+bundle can derive the trade cost from the quoted price even without the file.
+
+### C4 is a vendor problem as well as a confidentiality problem
+
+`signs365Pricing.json` is **not the store's own cost data**. It is a third
+party's wholesale price list, and shipping it in a public bundle is
+**redistributing Signs365's confidential pricing to every anonymous visitor**
+— including, by construction, to their other resellers and their competitors.
+That changes the nature of the finding in three ways:
+
+1. **The injured party is not only the store.** The other four cost paths risk
+   the store's own margin information, which is the owner's to accept or not.
+   This one exposes a supplier's pricing under whatever terms that pricing was
+   supplied — a commercial and possibly contractual exposure the store cannot
+   unilaterally accept, because it is not theirs to accept.
+2. **Fixing it later does not undo it.** A public JS bundle is fetched,
+   cached, mirrored and archived. Every deploy since the file was added has
+   published the then-current list. Removing it stops future exposure and
+   recovers nothing already served — so the cost of delay accrues rather than
+   waits.
+3. **Its priority changes.** Everything else in Release 2 is framed as
+   blocking tenant #2 while store4979 runs single-tenant behind a physical
+   counter. **C4 does not fit that frame.** The exposure is already live, to
+   anyone on the internet, at tenant #1, today — a second tenant adds nothing
+   to it. **So C4 is a tenant-#1 fix, not a tenant-#2 one**, and it is the one
+   item here whose timing is not the owner's call alone.
+
+Practically, that makes step 4c the piece to schedule first if any part of the
+cost substep has to be staged, even though it is the largest. It can also ship
+**independently of the identity work** — moving outsourced pricing behind an
+endpoint that returns selling prices only needs no sessions, no enrollment and
+no grant changes. If Release 2 slips, C4 should not slip with it.
+
+Fixing C4 means a real refactor of `SpecialtyTab` — selling prices and
+tier-resolved prices from an endpoint, the wholesale file and the markup tiers
+out of the client bundle. Not a config change, and the reason the cost
+transition is its own substep rather than a line item.
 
 **C5 is an integrity problem, not a confidentiality one.** The cost and margin
 on a saved order are supplied by the client and stored verbatim. Anyone who
@@ -1046,7 +1098,7 @@ about what the store pays.*
 | C1 | serve the price book through a **projection without cost columns** for the public path; cost columns reach only the server and authenticated managers/owners. Table-wide `SELECT` must be **revoked** first — see step 5.5 | step 5 |
 | C2 | **split the file.** `/pricing.json` keeps selling prices and presets; cost and markup fields move behind an authenticated endpoint. The offline fallback keeps working and simply computes no margin — exactly as it already does when the blueprint LF media is missing | step 4b |
 | C3 | cost caches **cleared on sign-out, kiosk entry and session expiry**, alongside the sw purge. Price caches stay — they are what makes the tool work offline. **Previously-populated storage must be cleared on upgrade**, not merely stopped: a kiosk that has run this app for months already holds the cost model, and a client that stops *writing* it leaves it there forever | step 4b |
-| C4 | outsourced **selling** prices from an endpoint; the wholesale file leaves the bundle. Largest piece of work in the substep | step 4c |
+| C4 | outsourced **selling** prices from an endpoint; the wholesale file and the markup tiers leave the bundle. Largest piece of work in the substep, **and the one that should not wait for the rest of Release 2** — see above | step 4c |
 | C5 | cost/margin computed and stamped **server-side** in `orders-save`; client-supplied `cost_subtotal` / `margin_pct` ignored, and the snapshot **versioned** against the pricing version that produced it | step 4b |
 
 ### Offline quotes and the pricing version
@@ -1124,27 +1176,28 @@ clearing the cost caches on sign-out, kiosk entry and expiry.
   `/pricing.json` fallback path, now cost-free, must degrade to "no margin"
   rather than to "no prices"
 
-### Step 4a — Retire the legacy functions (NEW — blocks step 5)
+### Step 4a — Authenticate the five retained functions (NEW)
 
-Step 4 changes which door the staff use. **This step is what locks the other
-door**, and without it grant closure is a false negative: the policies would
-be shut while `get-download-url` still signs any path it is handed.
+Step 4 changes which door the staff use. Steps 4a and 4e are what lock the
+other doors, and without them grant closure is a false negative: the policies
+would be shut while `get-download-url` still signs any path it is handed.
 
-1. **Delete** `netlify/functions/get-download-url.js` and
-   `netlify/functions/complete-job.js`. Deploy. Confirm both URLs return 404
-   **from outside the app** — curl, no cookies, no `Origin`.
-2. Add `resolveUpload` to `start-upload`, `register-job`, `fetch-link-job`;
-   add `resolveStaff` to `send-print-job`; add the non-schedule guard to
-   `cleanup-stale-jobs`. Deploy.
-3. **Probe every deployed URL directly, independent of the UI** — the Part 8
-   row 37-41 block. Under no identity, and under a *wrong-kind* identity.
-4. Re-inventory `netlify/functions/` and diff against the Part 3.3 table. The
-   inventory, not the intention, is the deliverable: a function that exists is
-   a URL that answers.
+Add `resolveUpload` to `start-upload`, `register-job`, `fetch-link-job`; add
+`resolveStaff` to `send-print-job`; add the non-schedule guard to
+`cleanup-stale-jobs`. Deploy. **Nothing is removed in this step.**
 
-**Only when every legacy URL is 404 or authenticated does step 5 begin.**
+**Confirm in production:** a real customer upload still completes end to end;
+a quote still emails; the hourly cleanup still runs. Then probe each of the
+five directly, independent of the UI — Part 8 rows 38 and 39 — under no
+identity and under a *wrong-kind* identity.
+
+Rollback here is a redeploy of the previous handler, which returns the system
+to exactly today's posture: no worse, and nothing reopened that was closed.
 
 ### Step 4b — Cost transition, additive (NEW)
+
+*(4b–4d are independent of the identity work and ship before 4e, so that the
+deletion remains the last thing to land before step 5.)*
 
 The cost work gets its own additive → confirm → close cycle, because C1–C5
 (Part 6.2) are five different mechanisms and closing one early breaks quoting.
@@ -1171,7 +1224,10 @@ wrong.
 ### Step 4c — Outsourced costs out of the bundle (NEW)
 
 C4 on its own, because it is a `SpecialtyTab` refactor rather than a config
-change. Selling prices and tier-resolved prices come from an endpoint; the
+change — **and because it is the one substep that is already live against
+tenant #1 and involves a third party's pricing, so it is separable and should
+be scheduled first if the cost work has to be staged.** It depends on no part
+of the identity work. Selling prices and tier-resolved prices come from an endpoint; the
 wholesale file and the markup tiers leave the client bundle. **Confirm:** a
 Specialty quote is unchanged to the customer; the built bundle no longer
 contains any Signs365 wholesale figure (grep the built assets for known cost
@@ -1181,6 +1237,38 @@ values — an assertion in `yarn test`, not a manual check).
 
 Only after 4b and 4c are confirmed: delete costs from `/pricing.json` (or
 retire it for `/pricing-public.json`), and close C1 in step 5.5 below.
+
+### Step 4e — Delete the two originals. Alone, and last. (NEW)
+
+**This is the only operation in Release 2 whose rollback reopens an
+unauthenticated privileged endpoint.** Every other step rolls back to
+no-worse-than-today; restoring `get-download-url.js` restores a handler that
+signs any `customer-uploads` path a caller names, holding the service-role
+key. That asymmetry is why it ships alone, after everything else in the
+4-series is confirmed, and immediately before step 5.
+
+1. Nothing else in this deploy. No client change, no other function, no
+   migration. If anything else is pending, it waits.
+2. **Delete** `netlify/functions/get-download-url.js` and
+   `netlify/functions/complete-job.js`. Deploy.
+3. Confirm both URLs return **404 from outside the app** — curl, no cookies,
+   no `Origin` — using a **previously harvested** path and queue id, because
+   harvested identifiers are the thing that keeps working (Part 0.7). Part 8
+   row 37.
+4. Re-inventory `netlify/functions/` and diff against the Part 3.3 table
+   (row 40). The inventory, not the intention, is the deliverable: a function
+   that exists is a URL that answers.
+5. Confirm the counter still downloads and completes jobs — the replacements
+   have already been proven in step 4, so a failure here means the delete hit
+   something the inventory did not predict.
+
+Shipping it alone is what makes its rollback cheap: reverting one commit that
+contains two deletions and nothing else cannot take anything with it. Bundled
+with step 4a, a defect in the five authenticated handlers would force a
+rollback that also restored the two anonymous ones — trading a broken counter
+for a reopened hole, which is the worst square of the matrix.
+
+**Only when every legacy URL is 404 or authenticated does step 5 begin.**
 
 ### Step 5 — Tighten, one object at a time, each with its own rollback file
 1. `orders`: drop `anon_rw_orders`. No replacement policy — **function-only**.
@@ -1239,7 +1327,7 @@ policies and a signed-in owner's browser sends `authenticated`.
 Direct REST, **every Storage verb** (read, upload, overwrite, sign, delete),
 **Realtime subscribe including DELETE events**, and **every legacy function
 URL** — all denied, as both roles, on staging and then production. The legacy
-URLs are re-probed here even though step 4a already did: step 5 redeployed
+URLs are re-probed here even though step 4e already did: step 5 redeployed
 the site, and a deploy is exactly when a deleted file comes back. Then purge prior sensitive caches:
 bump the sw.js generation again as part of this release, since the client
 changes anyway.
@@ -1266,10 +1354,15 @@ keeping the counter running, and it is the right trade at 9am on a Saturday
 with customers waiting. What it is not is a place to rest. Conditions:
 
 - It is an **incident**, not a deploy. Whoever pulls it says so.
-- A rollback of step 4a — restoring a deleted function — is worse still: it
-  re-opens an unauthenticated file-signing endpoint. Prefer fixing forward.
-  If it must happen, the restored file returns 410 for everything except the
-  exact call the counter needs.
+- **A rollback of step 4e is the one rollback that reopens an exposure this
+  release closed.** Restoring those files restores unauthenticated,
+  service-role-backed file signing and job deletion. It is not in the same
+  class as the other rollback files, which only restore the pre-release
+  posture. Fix forward instead. If it truly must happen: restore the file
+  returning **410 for everything except the single call the counter needs**,
+  set an expiry when you pull it, and treat it as an open incident until the
+  file is gone again. Because 4e ships alone, no other defect can force this
+  rollback — that is the whole reason for isolating it.
 - A time limit is set when it is pulled, not discovered later.
 - Stale sessions are revoked on the way back up; the rolled-back client cannot
   be assumed to have cleaned anything.
@@ -1326,7 +1419,7 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 33b | **cost closure, every path** | as anon: `sheet_prices` cost columns; `GET /pricing.json`; the built JS bundle grepped for known wholesale values; a fresh kiosk's `localStorage` | no cost, markup or threshold value reachable by any of the four |
 | 33c | **cost snapshot integrity** | `orders-save` with `cost_subtotal: 0, margin_pct: 99` in the body | stored values are the **server's**, not the body's |
 | 33d | pricing version ageing | queue offline, publish new prices, drain | margin reflects the **quoted** version; if unavailable, saves with null margin and a reason — never rejected |
-| **37** | **legacy URL, no identity** | `POST /.netlify/functions/get-download-url` and `complete-job` with a **previously harvested** path and id, no cookies, from outside the app | **404** (file deleted). This is the row that proves step 4a, and harvested identifiers are the point |
+| **37** | **legacy URL, no identity** | `POST /.netlify/functions/get-download-url` and `complete-job` with a **previously harvested** path and id, no cookies, from outside the app | **404** (file deleted). This is the row that proves step 4e, and harvested identifiers are the point |
 | **38** | **legacy URL, wrong identity** | the retained five with an upload capability where staff is required, and vice versa | 401 — fails closed, never falls through to the old anonymous behaviour |
 | **39** | **retained aliases enforce the replacement's permissions** | every kept function, cross-store ids | identical decisions to the new endpoint; a retained alias is not a weaker door |
 | **40** | **deployed inventory matches the plan** | enumerate `netlify/functions/` and every declared path on the deployed site; diff against Part 3.3 | no function exists that the table does not list |
