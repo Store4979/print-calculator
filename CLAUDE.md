@@ -134,6 +134,32 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
   nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
   revoking anything, and never apply a DB change without a file in the repo.
+- SECURITY RELEASE 2 is planned in docs/security/release-2-plan.md (PLAN ONLY —
+  nothing applied). It replaces the anon-key client paths with server-verifiable
+  identity: owner-issued single-use pairing tickets -> revocable device
+  enrollments -> opaque server-owned staff sessions (token HASHES only, in
+  tables with RLS on and ZERO policies, reachable only by service_role). The
+  store is always derived from the enrollment/capability row, never from a
+  storeSlug in a request body. Grants do not close until ALL 17 client data
+  paths in Part 6 of that plan have moved — including all four job-files
+  helpers in src/lib/supabase.js (uploadJobFiles, downloadJobFile,
+  getJobFileSignedUrl, deleteJobFiles; the last has no caller and still moves
+  or gets deleted). Isolated staging (separate DB, storage, auth, mail) is a
+  prerequisite — Netlify previews currently hit PRODUCTION Supabase.
+- RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
+  WITH CHECK separately, plus the table's RLS state AND its table-level grants.
+  On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only
+  gate, so never infer an INSERT policy's effect from qual. Every policy in
+  this project is PERMISSIVE (policies are OR-ed), so adding a narrow policy
+  beside an open one widens nothing: the open one must be DROPPED.
+- GRANTS ARE A SEPARATE LAYER FROM RLS. anon and authenticated currently hold
+  SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER on every public table
+  and on storage.objects. **RLS does not filter TRUNCATE** — proven live:
+  `truncate employees` as anon emptied it (2 -> 0) while `update employees` was
+  blocked by RLS. Same for storage.objects (5 -> 0). Not known to be reachable
+  through PostgREST (no TRUNCATE verb), but the grant should not exist.
+  Conversely a grant alone proves nothing: storage.buckets has RLS on with zero
+  policies, so anon sees 0 buckets and cannot flip one public.
 - PHASE S — SaaS AUTH HARDENING. Three items, all BLOCK tenant #2, none
   block store4979 (single tenant, physical counter). "Phase E" is the margin
   engine — do not reuse the letter.
