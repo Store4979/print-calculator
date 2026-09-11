@@ -84,6 +84,22 @@ test("FIXTURE 3: a valid unchanged repeat still succeeds — after validating", 
   assert.match(r.swAfter, /"\/assets\/app-abc123\.js"/, "and must not be rewritten");
 });
 
+test("CASE C: a missing asset on a FRESH dist fails (control for the repeat-path case)", () => {
+  // The counterpart to CASE B. Both must fail, for the same reason, by the
+  // same check — which is the point of running one validation on both paths.
+  // Without this control, B passing would not tell you whether the check works
+  // or only whether the repeat path reaches it.
+  const r = run({
+    sw: swWith(MARKER),                                   // fresh: marker present
+    entry: { "index.html": ["/assets/referenced.js"] },
+    assets: [],                                           // nothing on disk to enumerate
+  });
+  assert.equal(r.status, 1, "a fresh build missing a referenced asset must fail");
+  assert.match(r.out, /\(injected\)/, "and must report the FRESH path, not the repeat path");
+  assert.match(r.out, /MISSING {2}\/assets\/referenced\.js/);
+  assert.match(r.swAfter, /\/\*__BUILD_ASSETS__\*\//, "a failed run must not mutate dist/sw.js");
+});
+
 test("FIXTURE 2b: a query-bearing reference is caught on the repeat path too", () => {
   const r = run({
     sw: swWith('\n  "/assets/app-abc123.js",\n'),
@@ -116,7 +132,7 @@ test("neither marker nor manifest is a hard failure", () => {
 test("the scope claim is stated precisely, not overclaimed", () => {
   const r = run({ sw: swWith(MARKER), entry: { "index.html": ["/assets/a.js"] }, assets: ["/assets/a.js"] });
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /entry-HTML attributes only/, "must not claim to cover everything the app requests");
-  assert.match(r.out, /JS imports, dynamic URLs and runtime fetches are NOT covered/);
+  assert.match(r.out, /entry-point HTML asset references only/, "must not claim to cover everything the app requests");
+  assert.match(r.out, /JS imports, dynamically constructed URLs and runtime fetches are NOT covered/);
   assert.equal(/what the built app actually requests/i.test(r.out), false, "the overclaim must be gone");
 });

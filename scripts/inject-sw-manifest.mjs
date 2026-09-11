@@ -10,9 +10,13 @@
 // TWO PATHS, ONE VALIDATION. Either the marker is present and we inject, or a
 // manifest is already there and we parse it — and then the SAME checks run.
 // An earlier revision exited 0 on the already-injected path *before* the
-// validation block, so repeat runs validated nothing. Netlify runs this as the
-// final deploy step, so a restored cache or a retried deploy takes exactly that
-// path. An unchanged repeat must succeed AFTER validating, not instead of it.
+// validation block, so those runs validated nothing.
+//
+// Exposure scope, stated narrowly: a NORMAL deploy rebuilds dist first, so the
+// marker is present and injection takes the fresh path. The unvalidated path
+// was reachable only with a REUSED already-injected artefact — a restored
+// build cache or a retried deploy. Real, and narrower than "every repeat".
+// Either way, an unchanged repeat must succeed AFTER validating, not instead.
 //
 // Failure mode if this never runs at all: BUILD_ASSETS stays [] and the worker
 // caches only the hand-listed shell. Degraded, never unsafe.
@@ -88,8 +92,9 @@ if (hasMarker) {
 
 // ── Validation. Runs on BOTH paths, against the manifest that is now on disk ──
 //
-// SCOPE, stated precisely: this scans `src=` and `href=` attributes in the two
-// built HTML entry points (index.html, upload.html). That is all it sees. It
+// COVERAGE: entry-point HTML asset references. This scans `src=` and `href=`
+// attributes in the two built HTML entry points (index.html, upload.html).
+// That is all it sees. It
 // does NOT follow JS module imports, dynamically constructed URLs, `import()`
 // specifiers, CSS url() references, or anything fetched at runtime. A lazy
 // chunk reached only through an import() is invisible here — which is why an
@@ -136,7 +141,7 @@ const unreferenced = manifest.filter((u) => !requested.has(u));
 console.log(`inject-sw-manifest: ${mode}; manifest carries ${manifest.length} build asset(s)`);
 for (const a of manifest) console.log(`  ${requested.has(a) ? "html-referenced" : "not-in-html   "} ${a}`);
 console.log(`  validated: ${requested.size} asset(s) referenced by src=/href= in ${entryHtml.length} entry point(s), all present`);
-console.log(`  scope: entry-HTML attributes only — JS imports, dynamic URLs and runtime fetches are NOT covered`);
+console.log(`  coverage: entry-point HTML asset references only — JS imports, dynamically constructed URLs and runtime fetches are NOT covered`);
 if (unreferenced.length) {
   console.log(`  note: ${unreferenced.length} manifest asset(s) are not referenced from entry HTML (lazy chunks reached via import()) — cached, which is intended`);
 }

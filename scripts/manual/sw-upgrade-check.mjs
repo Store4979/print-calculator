@@ -36,10 +36,14 @@ const gen = (src) => (src.match(/CACHE_PREFIX \+ "(v\d+)"/) || src.match(/CACHE 
 // The two old workers come straight out of git, so this always tests the real
 // historical code rather than a hand-written approximation.
 const fromGit = (rev) => execFileSync("git", ["show", `${rev}:public/sw.js`], { cwd: ROOT, encoding: "utf8" });
-// PINNED TO COMMITS, never to a branch. fromGit("main") would keep working
-// right up until Release 1 merges — at which point main carries the corrected
-// worker, scenario A would "upgrade" v16 to v16, and it would silently stop
-// testing anything while still reporting PASS.
+// PINNED TO COMMITS, never to a branch.
+//
+// Correcting an earlier claim in this file: pinning to main would NOT go
+// silently vacuous. oldGen is derived from the fetched source, so once main
+// carries v16 the eviction assertion (!after.includes("print-app-v16")) fails
+// loudly, and the startup guard below exits before any browser work. The real
+// problems are reproducibility — the fixture changes meaning when an unrelated
+// branch moves — and a failure that points at the wrong thing.
 const V14_COMMIT = "61862a690e1500716e8bb5c8366e777cf83f3362";  // main before Release 1
 const V15_COMMIT = "7a7ac41";                                    // the flawed rev-1 worker
 const OLD = {
