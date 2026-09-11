@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Enumerate the built assets into dist/sw.js.
+// Enumerate the built assets into dist/sw.js, then validate the result.
 //
 // The service worker's cache allowlist must be a LIST, not a pattern: a
 // prefix-plus-extension rule caches whatever happens to land under that
@@ -7,17 +7,26 @@
 // should not. Vite emits content-hashed filenames that cannot be known when
 // sw.js is authored, so they are injected here, after the build.
 //
-// Failure mode is deliberate: if this never runs, BUILD_ASSETS stays [] and
-// the worker caches only the hand-listed shell. Degraded, never unsafe.
+// TWO PATHS, ONE VALIDATION. Either the marker is present and we inject, or a
+// manifest is already there and we parse it — and then the SAME checks run.
+// An earlier revision exited 0 on the already-injected path *before* the
+// validation block, so repeat runs validated nothing. Netlify runs this as the
+// final deploy step, so a restored cache or a retried deploy takes exactly that
+// path. An unchanged repeat must succeed AFTER validating, not instead of it.
 //
-// Node-only, no dependencies, and path handling is POSIX-normalised so the
-// URLs it writes are identical on Windows and Linux.
+// Failure mode if this never runs at all: BUILD_ASSETS stays [] and the worker
+// caches only the hand-listed shell. Degraded, never unsafe.
+//
+// Node-only, no dependencies; path handling is POSIX-normalised so the URLs it
+// writes are identical on Windows and Linux.
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const DIST = join(ROOT, "dist");
+// Overridable so scripts/tests/inject-sw-manifest.test.js can drive real
+// fixtures through this exact file rather than a reimplementation of it.
+const DIST = process.env.SW_MANIFEST_DIST || join(ROOT, "dist");
 const SW = join(DIST, "sw.js");
 const MARKER = "/*__BUILD_ASSETS__*/";
 
@@ -25,19 +34,18 @@ const MARKER = "/*__BUILD_ASSETS__*/";
 // build emits elsewhere must be added to CORE in sw.js by hand, on purpose.
 const ELIGIBLE = /\.(?:js|css|woff2)$/i;
 
+const die = (...lines) => { for (const l of lines) console.error(l); process.exit(1); };
+
 const walk = (dir) =>
   readdirSync(dir).flatMap((entry) => {
     const p = join(dir, entry);
     return statSync(p).isDirectory() ? walk(p) : [p];
   });
 
-if (!existsSync(SW)) {
-  console.error("inject-sw-manifest: dist/sw.js not found — did the build run?");
-  process.exit(1);
-}
+if (!existsSync(SW)) die("inject-sw-manifest: dist/sw.js not found — did the build run?");
 
 const assetsDir = join(DIST, "assets");
-const assets = existsSync(assetsDir)
+const diskAssets = existsSync(assetsDir)
   ? walk(assetsDir)
       .map((p) => "/" + relative(DIST, p).split(sep).join("/"))
       .filter((u) => ELIGIBLE.test(u))
@@ -46,68 +54,89 @@ const assets = existsSync(assetsDir)
 
 const src = readFileSync(SW, "utf8");
 const hasMarker = src.includes(MARKER);
-const alreadyInjected = /const BUILD_ASSETS = \[\s*"\//.test(src);
 
-// IDEMPOTENT ON PURPOSE. A previous revision exited 1 when the marker was
-// absent, which turns any second run — a retried deploy, a restored build
-// cache, a local re-run — into a hard deploy failure. "Already done" is
-// success, not an error.
-if (!hasMarker && alreadyInjected) {
-  console.log("inject-sw-manifest: dist/sw.js already carries an enumerated manifest — nothing to do.");
-  process.exit(0);
-}
-if (!hasMarker) {
-  console.error("inject-sw-manifest: dist/sw.js has neither the marker nor a manifest.");
-  console.error("  This build's sw.js did not come from public/sw.js. Refusing to guess.");
-  process.exit(1);
+const parseManifest = (text) => {
+  const m = text.match(/const BUILD_ASSETS\s*=\s*\[([\s\S]*?)\]\s*;/);
+  if (!m) return null;
+  return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+};
+
+// ── Resolve the manifest that WILL BE in dist/sw.js after this run ──
+// Nothing is written yet. Validation happens first so a failure never leaves a
+// half-mutated dist/sw.js behind for the next run to puzzle over.
+let manifest;
+let mode;
+let pendingWrite = null;
+if (hasMarker) {
+  manifest = diskAssets;
+  const list = manifest.map((u) => `\n  ${JSON.stringify(u)},`).join("") + (manifest.length ? "\n" : "");
+  const out = src.replace(MARKER, list);
+  if (out.includes(MARKER)) die("inject-sw-manifest: marker survived the replacement — aborting.");
+  if (manifest.length && !/const BUILD_ASSETS = \[\s*"\/assets\//.test(out))
+    die("inject-sw-manifest: manifest did not take. Aborting rather than shipping an empty allowlist.");
+  pendingWrite = out;
+  mode = "injected";
+} else {
+  const existing = parseManifest(src);
+  if (!existing) {
+    die("inject-sw-manifest: dist/sw.js has neither the marker nor a manifest.",
+        "  This build's sw.js did not come from public/sw.js. Refusing to guess.");
+  }
+  manifest = existing;
+  mode = "already-injected";
 }
 
-const list = assets.map((u) => `\n  ${JSON.stringify(u)},`).join("") + (assets.length ? "\n" : "");
-const out = src.replace(MARKER, list);
-writeFileSync(SW, out, "utf8");
-
-// Verify our own output. This assertion used to live in `yarn test`, where it
-// was wrong: yarn test runs BEFORE yarn build, so it was asserting on whatever
-// dist/ happened to be lying around. It belongs here, after the build, where
-// the thing it describes actually exists.
-if (out.includes(MARKER)) {
-  console.error("inject-sw-manifest: marker survived the replacement — aborting.");
-  process.exit(1);
-}
-if (assets.length && !/const BUILD_ASSETS = \[\s*"\/assets\//.test(out)) {
-  console.error("inject-sw-manifest: manifest did not take. Aborting rather than shipping an empty allowlist.");
-  process.exit(1);
-}
-// INVARIANT: every /assets/ URL the BUILT APP ACTUALLY REQUESTS must be in the
-// manifest. Enumerating what is on disk is not the same claim — a file can sit
-// in dist/assets/ unreferenced, and (the case that matters) an entry point can
-// reference an asset the enumeration missed, which would silently fall out of
-// the cache allowlist. Read the requests out of the built HTML and compare.
-const entryHtml = ["index.html", "upload.html"]
-  .map((f) => join(DIST, f))
-  .filter((f) => existsSync(f));
+// ── Validation. Runs on BOTH paths, against the manifest that is now on disk ──
+//
+// SCOPE, stated precisely: this scans `src=` and `href=` attributes in the two
+// built HTML entry points (index.html, upload.html). That is all it sees. It
+// does NOT follow JS module imports, dynamically constructed URLs, `import()`
+// specifiers, CSS url() references, or anything fetched at runtime. A lazy
+// chunk reached only through an import() is invisible here — which is why an
+// asset being "unreferenced" below is reported, not treated as an error.
+const entryHtml = ["index.html", "upload.html"].map((f) => join(DIST, f)).filter((f) => existsSync(f));
 
 const requested = new Set();
+const queryBearing = [];
 for (const f of entryHtml) {
   const html = readFileSync(f, "utf8");
   for (const m of html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/g)) {
-    if (m[1].startsWith("/assets/")) requested.add(m[1].split("?")[0]);
+    const ref = m[1];
+    if (!ref.startsWith("/assets/")) continue;
+    // REJECT, do not normalise. Stripping the query here would let
+    // /assets/x.js?v=2 validate against /assets/x.js and pass — while sw.js
+    // isSensitiveRequest refuses ANY same-origin URL carrying a search string,
+    // so the browser would request a URL the worker can never cache. Silently
+    // normalising it away is precisely the mismatch this invariant exists to
+    // catch.
+    if (ref.includes("?")) { queryBearing.push({ file: f, ref }); continue; }
+    requested.add(ref);
   }
 }
 
-const missing = [...requested].filter((u) => !assets.includes(u));
-if (missing.length) {
-  console.error("inject-sw-manifest: the built app requests assets the manifest does not list:");
-  for (const m of missing) console.error("  MISSING  " + m);
-  console.error("  Caching these would be impossible and the allowlist would be wrong. Aborting.");
-  process.exit(1);
+if (queryBearing.length) {
+  die("inject-sw-manifest: entry HTML references assets with a query string:",
+      ...queryBearing.map(({ file, ref }) => `  ${relative(DIST, file)}  ->  ${ref}`),
+      "  sw.js treats any same-origin URL with a search as sensitive and never caches it,",
+      "  so these would be requested but never cacheable. Emit them without a query.");
 }
 
-const unreferenced = assets.filter((u) => !requested.has(u));
+const missing = [...requested].filter((u) => !manifest.includes(u));
+if (missing.length) {
+  die(`inject-sw-manifest: the entry HTML references assets the manifest does not list (${mode}):`,
+      ...missing.map((m) => "  MISSING  " + m),
+      "  The cache allowlist would not cover them. Aborting.");
+}
 
-console.log(`inject-sw-manifest: enumerated ${assets.length} build asset(s) into dist/sw.js`);
-for (const a of assets) console.log(`  ${requested.has(a) ? "referenced  " : "unreferenced"} ${a}`);
-console.log(`  invariant: ${requested.size} asset(s) requested by ${entryHtml.length} entry point(s), all present in the manifest`);
+// Validation passed. Only now is anything written.
+if (pendingWrite !== null) writeFileSync(SW, pendingWrite, "utf8");
+
+const unreferenced = manifest.filter((u) => !requested.has(u));
+
+console.log(`inject-sw-manifest: ${mode}; manifest carries ${manifest.length} build asset(s)`);
+for (const a of manifest) console.log(`  ${requested.has(a) ? "html-referenced" : "not-in-html   "} ${a}`);
+console.log(`  validated: ${requested.size} asset(s) referenced by src=/href= in ${entryHtml.length} entry point(s), all present`);
+console.log(`  scope: entry-HTML attributes only — JS imports, dynamic URLs and runtime fetches are NOT covered`);
 if (unreferenced.length) {
-  console.log(`  note: ${unreferenced.length} enumerated asset(s) are not referenced by an entry point (lazy chunks) — cached, which is intended`);
+  console.log(`  note: ${unreferenced.length} manifest asset(s) are not referenced from entry HTML (lazy chunks reached via import()) — cached, which is intended`);
 }

@@ -36,10 +36,23 @@ const gen = (src) => (src.match(/CACHE_PREFIX \+ "(v\d+)"/) || src.match(/CACHE 
 // The two old workers come straight out of git, so this always tests the real
 // historical code rather than a hand-written approximation.
 const fromGit = (rev) => execFileSync("git", ["show", `${rev}:public/sw.js`], { cwd: ROOT, encoding: "utf8" });
+// PINNED TO COMMITS, never to a branch. fromGit("main") would keep working
+// right up until Release 1 merges — at which point main carries the corrected
+// worker, scenario A would "upgrade" v16 to v16, and it would silently stop
+// testing anything while still reporting PASS.
+const V14_COMMIT = "61862a690e1500716e8bb5c8366e777cf83f3362";  // main before Release 1
+const V15_COMMIT = "7a7ac41";                                    // the flawed rev-1 worker
 const OLD = {
-  A: { label: "pre-audit v14 (production)", src: fromGit("main") },
-  B: { label: "FLAWED rev-1 v15 (preview)", src: fromGit("7a7ac41") },
+  A: { label: "pre-audit v14 (production)", src: fromGit(V14_COMMIT) },
+  B: { label: "FLAWED rev-1 v15 (preview)", src: fromGit(V15_COMMIT) },
 };
+for (const [k, o] of Object.entries(OLD)) {
+  const g = gen(o.src);
+  if (!/^v\d+$/.test(g) || g === gen(V16)) {
+    console.error(`scenario ${k}: pinned worker reports generation "${g}", same as or unlike the current ${gen(V16)} — the fixture has drifted.`);
+    process.exit(1);
+  }
+}
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 let swBody = "";
