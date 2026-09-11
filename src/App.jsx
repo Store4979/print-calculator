@@ -13,6 +13,8 @@ import JobHistory from "./JobHistory.jsx";
 import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import OrdersDashboard from "./components/OrdersDashboard.jsx";
 import CostModelEditor from "./components/CostModelEditor.jsx";
+import { openPdf } from "./lib/pdfSafe.js";
+import { clearAppCaches } from "./lib/swCache.js";
 import {
   canSeeMarginFor, marginLabelFor, visibleMetrics, marginMetric, sheetCostPerSheet, lfCostPerSqFt,
   finalizeSnapshotMargin, quoteCost, computeMargin, marginHealth, HEALTH_LABELS, r4 as round4,
@@ -277,7 +279,7 @@ const pdfFileToPngFile = async (file, pageNum=1, { targetDpi=PRINT_DPI_SHEET, ma
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("pdf.js not loaded");
   const ab = await file.arrayBuffer();
-  const pdf = await lib.getDocument({ data: ab }).promise;
+  const pdf = await openPdf(lib, ab);
   const safePage = Math.min(Math.max(1, pageNum), pdf.numPages || 1);
   const page = await pdf.getPage(safePage);
   const scale = pdfRasterScale(page, targetDpi, maxPx);
@@ -294,7 +296,7 @@ const pdfFileToAllPages = async (file, { targetDpi=PRINT_DPI_SHEET, maxPx=MAX_OU
   const lib = window.pdfjsLib;
   if (!lib) throw new Error("pdf.js not loaded");
   const ab = await file.arrayBuffer();
-  const pdf = await lib.getDocument({ data: ab }).promise;
+  const pdf = await openPdf(lib, ab);
   const pages = [];
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -1205,10 +1207,23 @@ function PriceCalculatorApp() {
     setCurrentEmployee(emp);
     setShowEmployeeLogin(false);
   };
-  const switchEmployee = () => {
+  const switchEmployee = async () => {
+    // Drops identity, then asks the service worker to purge its caches.
+    //
+    // This is BEST-EFFORT CLEANUP, not a barrier: the login keypad opens
+    // immediately and nothing waits for the purge. Calling it a barrier would
+    // be false — the next user can start typing a PIN while it is still in
+    // flight. It is deliberately not blocking, because sw.js is allowlist-only
+    // and its caches hold build output alone, so making staff wait behind a
+    // spinner would cost counter time for no security gain. If the cache ever
+    // holds user data again, that decision has to be revisited, not the
+    // comment.
     setStoredEmployee(null);
     setCurrentEmployee(null);
     setShowEmployeeLogin(true);
+    if (!(await clearAppCaches())) {
+      console.warn("switchEmployee: service-worker cache purge did not acknowledge");
+    }
   };
 
   // ── Kiosk mode (customer-facing skin) ──
@@ -2945,7 +2960,9 @@ const handleFrontFiles = async (files) => {
       const order = buildOrder();
       const payload = {
         subject: `Print Order – ${order.customerName} – ${orderId}`,
-        to: UPS_STORE.email,
+        // No `to`: the recipient is resolved server-side from the store
+        // record. send-print-job ignores a caller-supplied recipient and
+        // logs the attempt (Release 1, 2026-09-10).
         deepLinkUrl: `${window.location.origin}${window.location.pathname}?job=${encodeURIComponent(orderId)}`,
         order,
         jobType,
@@ -3541,6 +3558,13 @@ const handleFrontFiles = async (files) => {
     setAuthRole(null);
     setAuthSession(null);
     setAdminAccessDenied(null);
+    // Best-effort cleanup, same as switchEmployee: asks the worker to drop its
+    // caches and logs if the acknowledgement does not come back. Nothing is
+    // gated on it. sw.js is allowlist-only, so its caches hold build output
+    // alone and this is defence in depth.
+    if (!(await clearAppCaches())) {
+      console.warn("handleAdminSignOut: service-worker cache purge did not acknowledge");
+    }
   };
 
   // The single source of truth for the current price book, shaped like

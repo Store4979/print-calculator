@@ -1,5 +1,9 @@
 [build]
-  command = "yarn install && yarn build"
+  # `yarn test` GATES THE DEPLOY. Before 2026-09-10 the command was
+  # install+build only, so no test had ever blocked a deploy and the
+  # raw-getDocument guard in scripts/tests/ enforced nothing.
+  # inject-sw-manifest enumerates the hashed build outputs into dist/sw.js.
+  command = "yarn install && yarn test && yarn build && node scripts/inject-sw-manifest.mjs"
   publish = "dist"
   functions = "netlify/functions"
 

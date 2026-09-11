@@ -6,6 +6,7 @@
 //  signed upload tokens minted by Netlify functions; this page only
 //  ever uses the public anon key.
 // ============================================================
+import { openPdf } from "./lib/pdfSafe.js";
 import { useEffect, useState } from "react";
 import { supabase, isSupabaseConfigured } from "./lib/supabase.js";
 import { fetchStoreProfile } from "./lib/storeConfig.js";
@@ -70,7 +71,7 @@ async function countPdfPages(file) {
   try {
     if (!window.pdfjsLib) return null;
     const buf = await file.arrayBuffer();
-    const doc = await window.pdfjsLib.getDocument({ data: buf }).promise;
+    const doc = await openPdf(window.pdfjsLib, buf);
     return doc.numPages || null;
   } catch {
     return null;

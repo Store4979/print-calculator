@@ -1,5 +1,105 @@
 // netlify/functions/send-print-job.js
 import nodemailer from "nodemailer";
+import { createClient } from "@supabase/supabase-js";
+
+// ============================================================
+//  SECURITY (Release 1, 2026-09-10)
+//
+//  This endpoint sends mail FROM the store's own SMTP identity with
+//  caller-supplied PDF attachments. Before this change it honoured a
+//  caller-supplied `to`, which made it an open relay wearing the store's
+//  return address: anyone who could POST here could mail anyone, from the
+//  store, with any attachment.
+//
+//  The recipient is now resolved SERVER-SIDE and the request body can no
+//  longer influence it. `to` is not read. The store comes from server
+//  configuration, never from the body — the same rule the enrollment work
+//  in Release 2 will formalise (server derives the store from enrollment,
+//  never from a storeSlug in the request).
+//
+//  Authentication is NOT part of this release. Until staff sessions and
+//  device enrollment land, this stays a public endpoint, so it is
+//  constrained instead: fixed recipient, attachment count and byte caps,
+//  field length caps, and a per-IP rate limit. That converts "mail anyone
+//  anything" into "flood the store's own inbox, slowly" — a nuisance, not
+//  a compromise.
+// ============================================================
+
+export const LIMITS = Object.freeze({
+  MAX_ATTACHMENTS: 2,            // job PDF + order sheet, nothing else
+  MAX_ATTACHMENT_BYTES: 8 * 1024 * 1024,
+  MAX_TOTAL_ATTACHMENT_BYTES: 12 * 1024 * 1024,
+  MAX_BODY_BYTES: 20 * 1024 * 1024,
+  MAX_SUBJECT_CHARS: 200,
+  RATE_MAX: 5,                   // sends per IP per window
+  RATE_WINDOW_MS: 60 * 1000,
+});
+
+// Base64 -> decoded byte count, without allocating the buffer.
+export const b64Bytes = (s) => {
+  const raw = String(s || "").replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "");
+  if (!raw) return 0;
+  const pad = raw.endsWith("==") ? 2 : raw.endsWith("=") ? 1 : 0;
+  return Math.floor((raw.length * 3) / 4) - pad;
+};
+
+// Pure: everything about the request that can be rejected without sending.
+// Returns null when acceptable, or { code, error } to return verbatim.
+export const enforceLimits = ({ rawBodyLength = 0, pdfBase64, orderSheetPdfBase64 }) => {
+  if (rawBodyLength > LIMITS.MAX_BODY_BYTES)
+    return { code: 413, error: "Request too large." };
+
+  const parts = [pdfBase64, orderSheetPdfBase64].filter(Boolean);
+  if (parts.length > LIMITS.MAX_ATTACHMENTS)
+    return { code: 400, error: "Too many attachments." };
+
+  let total = 0;
+  for (const part of parts) {
+    const n = b64Bytes(part);
+    if (n > LIMITS.MAX_ATTACHMENT_BYTES)
+      return { code: 413, error: "Attachment too large." };
+    total += n;
+  }
+  if (total > LIMITS.MAX_TOTAL_ATTACHMENT_BYTES)
+    return { code: 413, error: "Attachments too large." };
+  return null;
+};
+
+// Per-IP sliding window. Netlify function instances are ephemeral, so this
+// is best-effort: a cold start resets it and concurrent instances each keep
+// their own counter. It raises the cost of abuse; it is not a guarantee.
+// A durable limit needs shared state and is deliberately deferred to
+// Release 2 rather than smuggled in as a migration here.
+const rateState = new Map();
+export const checkRate = (key, now = Date.now(), state = rateState) => {
+  const hits = (state.get(key) || []).filter((t) => now - t < LIMITS.RATE_WINDOW_MS);
+  if (hits.length >= LIMITS.RATE_MAX) return false;
+  hits.push(now);
+  state.set(key, hits);
+  return true;
+};
+
+// The recipient. Resolved from the store record via service_role, falling
+// back to the compiled-in store address. Both sources are server-controlled;
+// neither can be influenced by the request. Never reads the body.
+export const resolveRecipient = async ({ supabase, slug, fallback }) => {
+  if (!supabase) return { to: fallback, source: "fallback:no-db" };
+  try {
+    const { data, error } = await supabase
+      .from("stores").select("email").eq("slug", slug).maybeSingle();
+    if (error || !data?.email) return { to: fallback, source: "fallback:lookup-miss" };
+    return { to: data.email, source: "store:" + slug };
+  } catch {
+    return { to: fallback, source: "fallback:threw" };
+  }
+};
+
+// Swappable so tests can assert denial and recipient binding without a
+// network transport. Production always uses the real nodemailer transport.
+let _transportFactory = (cfg) => nodemailer.createTransport(cfg);
+export const __setTransportFactory = (fn) => { _transportFactory = fn; };
+export const __resetTransportFactory = () => { _transportFactory = (cfg) => nodemailer.createTransport(cfg); };
+
 
 const UPS_STORE = {
   name: "The UPS Store #4979",
@@ -263,7 +363,25 @@ export const handler = async (event) => {
 
   console.log("Parsed body keys:", Object.keys(body || {}));
 
-  const { to, subject, details, pdfBase64, orderSheetPdfBase64 } = body || {};
+  // `to` is deliberately NOT destructured. A caller-supplied recipient is
+  // ignored entirely; it is logged only so abuse attempts are visible.
+  const { subject, details, pdfBase64, orderSheetPdfBase64 } = body || {};
+  if (body && body.to) {
+    console.warn("send-print-job: ignoring caller-supplied recipient", { attempted: String(body.to).slice(0, 120) });
+  }
+
+  const limitFailure = enforceLimits({ rawBodyLength: rawBody.length, pdfBase64, orderSheetPdfBase64 });
+  if (limitFailure) {
+    return { statusCode: limitFailure.code, body: JSON.stringify({ ok: false, error: limitFailure.error }) };
+  }
+
+  const clientIp =
+    (event.headers?.["x-nf-client-connection-ip"] ||
+     String(event.headers?.["x-forwarded-for"] || "").split(",")[0].trim() ||
+     "unknown");
+  if (!checkRate(clientIp)) {
+    return { statusCode: 429, body: JSON.stringify({ ok: false, error: "Too many requests. Please try again in a minute." }) };
+  }
 
   const order = normalizeFromDetails(details || {});
   const jobId = order.orderId || `JOB-${Date.now()}`;
@@ -276,17 +394,32 @@ export const handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: "SMTP not configured", missing }) };
   }
 
-  const transporter = nodemailer.createTransport({
+  const transporter = _transportFactory({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
     secure: false,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
 
+  // Server-side recipient. The body cannot reach this value.
+  const SB_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let sb = null;
+  if (SB_URL && SB_KEY) {
+    try { sb = createClient(String(SB_URL).trim(), String(SB_KEY).trim(), { auth: { persistSession: false } }); }
+    catch { sb = null; }
+  }
+  const { to: recipient, source: recipientSource } = await resolveRecipient({
+    supabase: sb,
+    slug: String(process.env.STORE_SLUG || "store4979").trim(),
+    fallback: UPS_STORE.email,
+  });
+  console.log("send-print-job recipient resolved", { recipientSource });
+
   const mail = {
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: to || UPS_STORE.email,
-    subject: subject || "PRINT JOB",
+    to: recipient,
+    subject: String(subject || "PRINT JOB").slice(0, LIMITS.MAX_SUBJECT_CHARS),
     html: buildEmailHtml(order),
     text: buildEmailText(order),
     attachments: [],
