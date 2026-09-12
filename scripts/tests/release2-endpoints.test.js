@@ -51,8 +51,12 @@ test("staff-login fails closed when the limiter itself is unavailable", () => {
 });
 
 test("staff-login rotates sessions on every sign-in", () => {
-  assert.match(LOGIN, /revoked_reason: "rotated/);
-  assert.match(LOGIN, /\.eq\("enrollment_id", device\.enrollmentId\)[\s\S]{0,80}\.is\("revoked_at", null\)/);
+  // UPDATED for F-4: rotation moved OUT of the handler into the serialized
+  // function, so asserting on the handler's own revoke would now pin the
+  // vulnerable shape. The property is unchanged — every sign-in rotates — but
+  // the thing that guarantees it is the row lock, not two statements here.
+  assert.match(LOGIN, /\.rpc\("release2_create_staff_session"/);
+  assert.match(LOGIN, /p_enrollment: device\.enrollmentId/);
 });
 
 test("enroll-redeem does the burn and the insert in ONE call, not two", () => {
@@ -94,4 +98,77 @@ test("resolveStaff refuses to default the interactive flag", () => {
 test("the store is read from the enrollment, never trusted from the session row", () => {
   assert.match(AUTH, /session\/enrollment store mismatch/);
   assert.match(AUTH, /storeId: e\.store_id/, "must return the ENROLLMENT's store");
+});
+
+// ── REVIEW ROUND: seven executed findings ───────────────────────────────────
+
+test("F-2: a device refused at its own budget does NOT spend the shared store budget", () => {
+  // The DoS this fixes: one locked-out device sending 30 requests spent 30
+  // units of the shared store allowance and locked out a SECOND device's
+  // CORRECT PIN. The device decision must therefore be made, and returned on,
+  // before the store budget is touched.
+  const devIdx = LOGIN.indexOf("pinPerEnrollment");
+  const devRefuse = LOGIN.indexOf("if (!byDevice.allowed)");
+  const storeIdx = LOGIN.indexOf("pinPerStore");
+  assert.ok(devIdx > 0 && devRefuse > devIdx, "device budget must be evaluated first");
+  assert.ok(devRefuse < storeIdx,
+    "the device refusal must return BEFORE the shared store budget is charged");
+});
+
+test("F-4: staff-login does not rotate by hand; it calls the serialized function", () => {
+  assert.match(LOGIN, /\.rpc\("release2_create_staff_session"/);
+  assert.doesNotMatch(LOGIN, /from\("staff_sessions"\)[\s\S]{0,120}\.update\(/,
+    "a hand-rolled revoke cannot be serialized against a concurrent insert");
+  assert.doesNotMatch(LOGIN, /from\("staff_sessions"\)[\s\S]{0,120}\.insert\(/);
+});
+
+test("F-6: csrfOk is actually invoked, after the credential is resolved", () => {
+  const resolveIdx = LOGIN.indexOf("await resolveDevice(");
+  const csrfIdx = LOGIN.indexOf("csrfOk(event,");
+  assert.ok(csrfIdx > 0, "csrfOk existed and was never called — it protected nothing");
+  assert.ok(csrfIdx > resolveIdx,
+    "the expected secret lives on the resolved row, so resolution must come first");
+});
+
+test("F-7: enroll-redeem bounds by SOURCE, not only by ticket hash", () => {
+  assert.match(REDEEM, /ticketSource/,
+    "per-ticket accounting cannot bound a caller who changes the ticket");
+  const srcIdx = REDEEM.indexOf("LIMITS.ticketSource");
+  const tktIdx = REDEEM.indexOf('`tkt:${ticketHash');
+  assert.ok(srcIdx > 0, "source bound missing");
+  assert.ok(tktIdx > 0, "per-ticket bound missing");
+  assert.ok(srcIdx < tktIdx, "the source bound must be charged first");
+});
+
+test("F-5: a malformed limiter answer throws rather than reading as permission", async () => {
+  const { recordAttempt } = await import("../../netlify/lib/release2-auth.js");
+  const lim = { windowSecs: 900, maxAttempts: 5, lockSecs: 300 };
+  const mk = (data) => ({ rpc: async () => ({ data, error: null }) });
+
+  for (const [label, data] of [
+    ["no rows", []],
+    ["two rows", [{ allowed: true, attempts: 1 }, { allowed: true, attempts: 1 }]],
+    ["null", null],
+    ["undefined allowed", [{ attempts: 1 }]],
+    ["string allowed", [{ allowed: "true", attempts: 1 }]],
+    ["null allowed", [{ allowed: null, attempts: 1 }]],
+    ["non-integer attempts", [{ allowed: true, attempts: "1" }]],
+  ]) {
+    await assert.rejects(
+      () => recordAttempt(mk(data), "pin", "s", lim),
+      /limiter/,
+      `malformed shape "${label}" must throw, never resolve to allowed`
+    );
+  }
+
+  // The one well-formed shape resolves.
+  const ok = await recordAttempt(mk([{ allowed: false, attempts: 6, locked_until: null }]), "pin", "s", lim);
+  assert.equal(ok.allowed, false);
+  assert.equal(ok.attempts, 6);
+});
+
+test("F-5: every limiter caller turns a throw into 503, never into permission", () => {
+  for (const [name, src] of [["LOGIN", LOGIN], ["REDEEM", REDEEM]]) {
+    assert.match(src, /limiter unavailable[\s\S]{0,220}503/, `${name} must fail closed`);
+  }
 });

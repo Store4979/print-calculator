@@ -24,7 +24,7 @@
 // allowlist and a required JSON content type, which together block the
 // form-POST shape that needs no preflight.
 import { gate, json, authFailed, mintToken, hashToken, mintCsrfSecret, setHostCookie } from "../lib/release2.js";
-import { COOKIE, LIMITS, recordAttempt, serviceClient, csrfToken } from "../lib/release2-auth.js";
+import { COOKIE, LIMITS, recordAttempt, serviceClient, csrfToken, callerSource } from "../lib/release2-auth.js";
 
 let _factory = null;
 export const __setClientFactory = (fn) => { _factory = fn; };
@@ -49,15 +49,30 @@ export const handler = async (event) => {
   const label = String(body?.label ?? "").trim().slice(0, 120);
   if (!ticket || !label) return authFailed();
 
-  // Rate-limited on a PREFIX of the ticket hash, not the ticket itself: the
-  // subject is stored in a table, and storing anything derived from a live
-  // credential at full strength would defeat the point of only keeping hashes.
-  // A prefix is enough to group attempts without being a lookup key.
+  // F-7. TWO BOUNDS, and the per-ticket one alone was useless.
+  //
+  // Accounting keyed on the ticket hash cannot bound a caller who simply
+  // CHANGES THE TICKET: every guess lands in a fresh bucket that starts at
+  // zero, so the budget never fills and the limiter never fires. It bounds
+  // retries of ONE ticket, which is not the attack.
+  //
+  // The SOURCE bound is independent of the ticket value and is what actually
+  // limits pre-enrollment probing. It is charged FIRST and on every attempt,
+  // before the ticket is looked at — and, per F-2, a request refused here does
+  // not go on to spend the per-ticket allowance.
   const ticketHash = hashToken(ticket);
-  const subject = `ticket:${ticketHash.toString("hex").slice(0, 16)}`;
   try {
-    const budget = await recordAttempt(sb, "ticket", subject, LIMITS.ticket);
-    if (!budget.allowed) return json(429, { ok: false, error: "Too Many Attempts" });
+    const bySource = await recordAttempt(sb, "ticket", `src:${callerSource(event)}`, LIMITS.ticketSource);
+    if (!bySource.allowed) return json(429, { ok: false, error: "Too Many Attempts" });
+
+    // Per-ticket, on a PREFIX of the hash: the subject is stored in a table,
+    // and persisting a full derivative of a live credential would defeat the
+    // point of keeping only hashes. A prefix groups retries without being a
+    // lookup key.
+    const byTicket = await recordAttempt(
+      sb, "ticket", `tkt:${ticketHash.toString("hex").slice(0, 16)}`, LIMITS.ticket
+    );
+    if (!byTicket.allowed) return json(429, { ok: false, error: "Too Many Attempts" });
   } catch (e) {
     console.error("[enroll-redeem] limiter unavailable:", e.message);
     return json(503, { ok: false, error: "Service Unavailable" });

@@ -27,8 +27,43 @@ export const LIMITS = Object.freeze({
   pinPerEnrollment: { windowSecs: 900, maxAttempts: 5, lockSecs: 300 },
   pinPerStore: { windowSecs: 900, maxAttempts: 30, lockSecs: 300 },
   ticket: { windowSecs: 900, maxAttempts: 10, lockSecs: 900 },
+  // P2-7. Per-ticket-hash accounting cannot bound a caller who simply changes
+  // the ticket: each guess lands in a fresh bucket, so the budget never fills.
+  // This SOURCE-scoped bound is independent of the ticket value and is what
+  // actually limits pre-enrollment probing. It is charged on every redeem
+  // attempt, before the ticket is looked at.
+  ticketSource: { windowSecs: 900, maxAttempts: 40, lockSecs: 900 },
 });
 
+/**
+ * Caller identity for pre-enrollment rate limiting, where no credential exists
+ * yet. Netlify puts the client address in x-nf-client-connection-ip;
+ * x-forwarded-for is a fallback and its FIRST entry is the client, the rest
+ * being proxies that a caller can pad.
+ *
+ * STATED PLAINLY: an IP is not an identity. It is shared behind NAT and can be
+ * rotated. This is a speed bump on unauthenticated probing, not a bound on a
+ * determined attacker — which is why it is loose enough never to touch a real
+ * storefront and why enrollment still requires an owner-issued ticket.
+ */
+export function callerSource(event) {
+  const h = event?.headers || {};
+  const direct = h["x-nf-client-connection-ip"] || h["X-Nf-Client-Connection-Ip"];
+  if (direct) return String(direct).trim();
+  const fwd = String(h["x-forwarded-for"] || h["X-Forwarded-For"] || "").split(",")[0].trim();
+  return fwd || "unknown";
+}
+
+/**
+ * EXACTLY ONE well-formed boolean decision, or throw.
+ *
+ * The previous version ended `allowed: row?.allowed !== false`, which treated a
+ * missing row, an empty array, a null and an undefined ALL AS ALLOWED. That is
+ * fail-open in the one function whose entire job is to refuse — a limiter that
+ * answers "yes" when it did not answer at all is worse than no limiter, because
+ * callers believe it. Every malformed shape now throws, and callers turn that
+ * into 503 rather than into permission.
+ */
 export async function recordAttempt(sb, scope, subject, limit) {
   const { data, error } = await sb.rpc("release2_record_attempt", {
     p_scope: scope,
@@ -38,8 +73,19 @@ export async function recordAttempt(sb, scope, subject, limit) {
     p_lock_secs: limit.lockSecs,
   });
   if (error) throw new Error(`limiter failed: ${error.message}`);
-  const row = Array.isArray(data) ? data[0] : data;
-  return { allowed: row?.allowed !== false, attempts: row?.attempts ?? 0, lockedUntil: row?.locked_until ?? null };
+
+  const rows = Array.isArray(data) ? data : data == null ? [] : [data];
+  if (rows.length !== 1) {
+    throw new Error(`limiter returned ${rows.length} rows, expected exactly 1`);
+  }
+  const row = rows[0];
+  if (typeof row?.allowed !== "boolean") {
+    throw new Error(`limiter returned a non-boolean decision: ${JSON.stringify(row?.allowed)}`);
+  }
+  if (!Number.isInteger(row?.attempts)) {
+    throw new Error("limiter returned a non-integer attempt count");
+  }
+  return { allowed: row.allowed, attempts: row.attempts, lockedUntil: row.locked_until ?? null };
 }
 
 // ── PIN lookup ──────────────────────────────────────────────────────────────
