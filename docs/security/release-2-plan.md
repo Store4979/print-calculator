@@ -111,6 +111,27 @@ here. This plan works out the schema, contract, order and tests for it.
 > POST can **install** the attacker's credential in a victim's browser. Both
 > now carry explicit trusted-origin and content-type contracts.
 >
+> **Revision 7 — 2026-09-12.** Two **executed** bypasses of
+> `check-build-env.mjs`, reproduced independently. Both are now fixed in code,
+> with an emitted-bundle regression rather than only reporter tests. See
+> **Part R round 6** and `docs/security/staging.md` §4.
+>
+> 23. **P1 — mode files.** The guard hand-rolled `.env.local` then `.env`;
+>     Vite also loads `.env.[mode]` and `.env.[mode].local`, which **outrank**
+>     both, and `vite build` defaults to `mode=production` even for a staging
+>     deploy. Reproduced: **guard exit 0 reporting staging while the bundle
+>     carried production.** Now resolved through the installed Vite `loadEnv`.
+> 24. **P2 — omitting everything.** `expectedRaw || PRODUCTION_REF` made
+>     absence mean production, so a hosted site setting nothing exited 0.
+>     **The claim that a missing `EXPECTED_SUPABASE_REF` refused the build is
+>     WITHDRAWN — it passed.** A hosted build now requires an explicit ref
+>     unless `SITE_NAME` positively identifies production.
+> 25. **`queue-unseal` propagated.** `key-fetch`, the browser-memory key
+>     lifetime and row 63 still prescribed the abandoned design; they are now
+>     the contract or explicitly labelled history. Row 63 tests unauthorized
+>     and cross-store unseal and asserts **no key material in any response,
+>     including an authorized one**.
+>
 > Further corrections: **`netlify.app` is on the Public Suffix List**, so my
 > `evil.netlify.app` example was cross-site and `SameSite=Strict` does block
 > it — the mechanism still matters for custom domains, and the corrected
@@ -204,6 +225,24 @@ review round appends here.
 | ✎ | Six HTTP handlers + one scheduled; verify classification and a run | 0.7 "The count is six" | **41**, **62** |
 | ✎ | PDF.js: the *deployed setting* is the mitigation | 10 | — |
 | ✎ | 0.6 overgeneralised SELECT closure (DELETE events) | 0.6 "One narrower point" | **31** |
+
+## Round 6 (review of `6c3c147`) — two executed bypasses of the guard
+
+| # | Review item | Section / file | Test |
+|---|---|---|---|
+| 1 | **P1 mode-file bypass** — `.env.[mode]` / `.env.[mode].local` outrank `.env.local`, and `vite build` defaults to `mode=production` | `check-build-env.mjs` now delegates to the installed Vite `loadEnv` | `build-env-bundle.test.js` ×5, `check-build-env.test.js` P1 tests |
+| 1 | Resolve via installed Vite machinery, not a reimplementation | `loadResolvedEnv` / `resolveMode` | "mode files outrank .env.local" |
+| 1 | Explicitly-empty shell values honoured, not skipped | same | "empty shell value is honoured as empty" |
+| 1 | **Emitted-bundle regression** — parser tests cannot prove equivalence | `build-env-bundle.test.js` | builds real Vite output and greps it |
+| 2 | **P2 omitted-config bypass** — absence meant production | `isHostedBuild` + `isIdentifiedProductionSite` | "hosted with EVERY setting omitted is REFUSED" |
+| 2 | Require an explicit ref on hosted builds, or positively identify production | same | "only the POSITIVELY identified production site may omit it" |
+| 2 | **Withdraw the claim** that a missing ref refused the build | staging §4 (marked WITHDRAWN), PR body | — |
+| 3 | Reseed destroyed `memberships`; fresh UUIDs orphaned them | `staging-seed.sql` — stable UUIDs + rebuild from `auth.users` | two consecutive resets verified identical ids |
+| 3 | Counts omitted `memberships`, reporting false symmetry | same — `memberships` now counted, `SEED INCOMPLETE` warning | verified `memberships = 0` surfaces |
+| 3 | Verify authorized access after TWO resets before any denial test | staging §6 item 4b | — |
+| 3 | Describe the guard narrowly; `current_database()` unused | `staging-seed.sql` header, staging §5 rule 3 | — |
+| 4 | Propagate `queue-unseal`; `key-fetch` still prescribed | 8 — authority table, cached-copy table, history note | **63**, **63b**, **63c** |
+| 4 | Row 63 should test unauthorized **and** cross-store, and assert no key material | 8 | **63**, **63b**, **63c** |
 
 ## Round 5 (review of `2cae8bd`…`68ea008`) — two blocking patches
 
@@ -2114,7 +2153,9 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | **22b** | **kiosk cannot read queued orders** | queue two orders offline, enter kiosk, read `localStorage` from devtools as a customer would | no plaintext customer name, contact or job detail — drained, or sealed |
 | **22c** | **sealed rows recover without the original session** | seal rows; revoke the session; **clear credentials only** (not site data); re-enrol; sign in as a **different** employee of the same store | rows unseal and drain — recovery does not depend on the quoting employee or session |
 | **22c-i** | **a full browser-data wipe destroys the ciphertext, and that is accepted** | seal rows, then clear **all** site data | rows are gone. Revision 4's "wipe and re-enrol" conflated the two: credential clearing preserves the ciphertext, wiping site data deletes it. Nothing can recover locally-sealed data whose ciphertext no longer exists — so **drain-before-handover (path a) is the primary contract** and sealing is the fallback, not the plan |
-| **63** | **device-only cannot obtain the key** | `key-fetch` with `__Host-pc_device` and no staff session; also with an upload capability | **401** both times |
+| **63** | **unauthorized unseal is refused** | `queue-unseal` with: `__Host-pc_device` and no staff session; an upload capability; no credential at all | **401/403** in all three |
+| **63b** | **cross-store unseal is refused** | T1 staff session posts **T2's** sealed rows to `queue-unseal` | 403; T2's rows are not decrypted, and the response reveals nothing about them |
+| **63c** | **no key material in ANY response** | an **authorized** T1 unseal, plus every refusal above; inspect bodies, headers and error payloads | plaintext rows only. **No private key, no key id, no wrapped key, no PEM/JWK fragment** — an authorized response must not leak the thing that made it authorized |
 | **64** | **another tab after handover** | two tabs signed in; enter kiosk in tab A; tab B attempts to unseal, then reloads and retries | fails both times — `queue-unseal` requires a live session and every session was revoked |
 | **64b** | **missed handover signal, and no subsequent request** | tab B **does not receive** the `BroadcastChannel` message (channel torn down / tab discarded and restored) and makes **no** further request; enter kiosk in tab A; then have tab B attempt to unseal | fails. Under option B there is no key in tab B to begin with; under option A handover would not have completed. **Revision 5 would have left tab B holding a live key with the server reporting every session revoked** |
 | **65** | **recovery by a newly authenticated employee** | seal offline as A; A deactivated; B of the same store signs in on a re-enrolled device | rows unseal; order attributed to **A** per row 25c |
@@ -2268,7 +2309,7 @@ key is server-side? Answering both requires the key to be **asymmetric**.
 | key | where | who holds it | used for |
 |---|---|---|---|
 | **store public key** | cached on the device at enrollment; not secret | anything running on the device | **sealing only** |
-| **store private key** | server-side, in a table with RLS on and zero policies | released only to a **current same-store staff session** | **unsealing only** |
+| **store private key** | server-side, in a table with RLS on and zero policies. **Never leaves the server** | used by `queue-unseal` on behalf of a current same-store staff session | **unsealing only** |
 
 That split is what makes the contract work: **sealing needs no secret**, so it
 still works with the network down, the session revoked, or kiosk mode already
@@ -2280,24 +2321,40 @@ entered. Unsealing needs authority the device cannot supply on its own.
 |---|---|
 | **device token only** (enrolled, nobody signed in) | **No.** Enrollment proves *which store's counter*, not *who*. The rule from Part 3.1 applies here too: a device token alone is worth nothing |
 | **public / upload capability** | **No.** Never a staff credential, in any form |
-| **kiosk mode** | **No.** Kiosk entry clears the private key and the sessions that could fetch it |
+| **kiosk mode** | **No.** Kiosk entry revokes every session, and `queue-unseal` requires one |
 | **anonymous page script on the origin** | **No.** No session, no fetch |
 | staff session, same store, current | **Yes** — any role; `staff` and `manager` alike, since this is recovery of the store's own work, not margin |
 | staff session, **different** store | **No** — store-scoped, and the resolver reads the store from the enrollment |
 | owner/manager via Auth | **Yes**, for administrative recovery |
 
-So `key-fetch` is a `resolveStaff` endpoint that returns **only** the private
-key for the session's own store, rate-limited and logged. A request presenting
-only `__Host-pc_device` gets 401 — which is test row 63.
+So the enforcement point is **`queue-unseal`**: a `resolveStaff` endpoint that
+takes sealed rows, decrypts them server-side with the store's private key, and
+returns **plaintext rows only — never key material**. A request presenting only
+`__Host-pc_device`, or an upload capability, or another store's session, gets
+401/403. Test row 63.
+
+> **History — the `key-fetch` design is abandoned.** Revisions 4 and 5
+> specified a `key-fetch` endpoint that **returned the private key** to the
+> browser, held it in memory, and erased it on a `BroadcastChannel` handover
+> signal. That is superseded: a delivered key cannot be un-delivered by
+> server-side revocation, and neither the broadcast nor "cleared on the next
+> failed request" is a guarantee. Wherever `key-fetch` still appears in this
+> document it is describing the rejected design, not the contract.
 
 ### Every cached copy, and how a customer-accessible tab loses it
+
+Short, because moving decryption server-side removed most of this table —
+which is the point of choosing option B below rather than policing option A.
 
 | copy | lifetime | cleared by |
 |---|---|---|
 | store **public** key, with the enrollment | long-lived, **not secret** | device revocation |
-| store **private** key, in memory after `key-fetch` | the session | logout, kiosk entry, revocation, expiry, tab close |
-| private key in `localStorage` / `sessionStorage` / IndexedDB | **never written** | n/a — it is memory-only by design |
+| store **private** key **in the browser** | **never exists** | n/a — it is never sent |
 | decrypted row contents in memory during a drain | the drain | completion or failure |
+
+The private key appears in no browser-side row of that table, so there is no
+teardown to get right, no acknowledgement to miss, and no tab that can be
+holding it after handover.
 
 **Handover — and the hole revision 5 left in it.** Kiosk entry calls
 `staff-session-revoke-all`, so every tab's *session* dies server-side. But

@@ -11,11 +11,15 @@ import { join } from "node:path";
 
 import {
   checkBuildEnv,
-  parseDotenv,
   refFromUrl,
-  resolveEnv,
+  resolveMode,
+  loadResolvedEnv,
+  attributeSource,
+  isHostedBuild,
+  isIdentifiedProductionSite,
   PRODUCTION_REF,
   PRODUCTION_SLUG,
+  PRODUCTION_SITE_NAMES,
 } from "../check-build-env.mjs";
 
 const STAGING_REF = "lboajqihpsfrokqvjgnl";
@@ -44,39 +48,51 @@ test("refFromUrl extracts the project ref, and rejects a non-Supabase URL", () =
   assert.equal(refFromUrl(""), "");
 });
 
-test("parseDotenv handles comments, export, quotes; ignores junk", () => {
-  const p = parseDotenv(
-    ["# comment", "", "A=1", 'export B="two"', "C='three'", "not a line", "=nokey", "D = 4"].join("\n")
-  );
-  assert.deepEqual(p, { A: "1", B: "two", C: "three", D: "4" });
+test("resolveMode: defaults to production, honours --mode and MODE", () => {
+  assert.equal(resolveMode({}), "production");
+  assert.equal(resolveMode({ __ARGV: ["--mode", "staging"] }), "staging");
+  assert.equal(resolveMode({ __ARGV: ["--mode=staging"] }), "staging");
+  assert.equal(resolveMode({ MODE: "qa" }), "qa");
 });
 
-test("resolveEnv precedence: environment > .env.local > .env (Vite's order)", () => {
+test("P1: mode files outrank .env.local — resolved through Vite, not reimplemented", () => {
+  const dir = fixture({
+    ".env": `VITE_SUPABASE_URL=${PROD_URL}`,
+    ".env.local": `VITE_SUPABASE_URL=${STAGING_URL}`,
+    ".env.production.local": `VITE_SUPABASE_URL=${PROD_URL}`,
+  });
+  try {
+    const { values } = loadResolvedEnv({ env: {}, root: dir, mode: "production" });
+    assert.equal(values.VITE_SUPABASE_URL, PROD_URL, "the mode file must win");
+    assert.equal(attributeSource("VITE_SUPABASE_URL", { env: {}, root: dir, mode: "production" }),
+      ".env.production.local");
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("attributeSource walks Vite's precedence order", () => {
   const dir = fixture({
     ".env": `VITE_SUPABASE_URL=${PROD_URL}`,
     ".env.local": `VITE_SUPABASE_URL=${STAGING_URL}`,
   });
   try {
-    assert.deepEqual(resolveEnv("VITE_SUPABASE_URL", { env: {}, root: dir }), {
-      value: STAGING_URL,
-      source: ".env.local",
-    });
-    assert.deepEqual(
-      resolveEnv("VITE_SUPABASE_URL", { env: { VITE_SUPABASE_URL: "https://x.supabase.co" }, root: dir }),
-      { value: "https://x.supabase.co", source: "environment" }
+    assert.equal(attributeSource("VITE_SUPABASE_URL", { env: {}, root: dir, mode: "production" }), ".env.local");
+    assert.equal(
+      attributeSource("VITE_SUPABASE_URL", { env: { VITE_SUPABASE_URL: "x" }, root: dir, mode: "production" }),
+      "environment"
     );
   } finally {
     cleanup(dir);
   }
 });
 
-test("resolveEnv falls back to .env when .env.local is absent", () => {
+test("falls back to .env when nothing else supplies it", () => {
   const dir = fixture({ ".env": `VITE_SUPABASE_URL=${PROD_URL}` });
   try {
-    assert.deepEqual(resolveEnv("VITE_SUPABASE_URL", { env: {}, root: dir }), {
-      value: PROD_URL,
-      source: ".env",
-    });
+    const { values } = loadResolvedEnv({ env: {}, root: dir, mode: "production" });
+    assert.equal(values.VITE_SUPABASE_URL, PROD_URL);
+    assert.equal(attributeSource("VITE_SUPABASE_URL", { env: {}, root: dir, mode: "production" }), ".env");
   } finally {
     cleanup(dir);
   }
@@ -139,7 +155,7 @@ test("production is unchanged: EXPECTED_SUPABASE_REF unset + .env production PAS
     const r = checkBuildEnv({ env: {}, root: dir });
     assert.equal(r.ok, true, r.errors.join("\n"));
     assert.equal(r.expectedRef, PRODUCTION_REF);
-    assert.match(r.notes.join("\n"), /assuming PRODUCTION/);
+    assert.match(r.notes.join("\n"), /LOCAL build — production assumed/);
   } finally {
     cleanup(dir);
   }
@@ -243,4 +259,85 @@ test("netlify.toml no longer hard-codes the Supabase project identity", async ()
     .filter((l) => /^\s*VITE_SUPABASE_(URL|ANON_KEY)\s*=/.test(l));
   assert.deepEqual(assigns, [], "netlify.toml must not assign Supabase identity — it outranks dashboard vars");
   assert.match(toml, /check-build-env\.mjs/, "the guard must run in the build command");
+});
+
+test("P2: hosted build with EVERY setting omitted is REFUSED", () => {
+  // The bypass: absence used to mean production, so a hosted staging site that
+  // set nothing was indistinguishable from production and exited 0.
+  const dir = fixture({ ".env": `VITE_SUPABASE_URL=${PROD_URL}\nVITE_SUPABASE_ANON_KEY=k` });
+  try {
+    const r = checkBuildEnv({
+      env: { NETLIFY: "true", SITE_ID: "a1b2c3-staging", SITE_NAME: "printcalculator2-staging", CONTEXT: "deploy-preview" },
+      root: dir,
+      mode: "production",
+    });
+    assert.equal(r.ok, false);
+    const joined = r.errors.join("\n");
+    assert.match(joined, /not set on a HOSTED build/);
+    assert.match(joined, /Absence is not evidence of production/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("P2: hosted build with NO site name at all is REFUSED", () => {
+  const dir = fixture({ ".env": `VITE_SUPABASE_URL=${PROD_URL}\nVITE_SUPABASE_ANON_KEY=k` });
+  try {
+    const r = checkBuildEnv({ env: { CI: "true" }, root: dir, mode: "production" });
+    assert.equal(r.ok, false);
+    assert.match(r.errors.join("\n"), /not set on a HOSTED build/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("P2: only the POSITIVELY identified production site may omit it", () => {
+  const dir = fixture({ ".env": `VITE_SUPABASE_URL=${PROD_URL}\nVITE_SUPABASE_ANON_KEY=k` });
+  try {
+    const r = checkBuildEnv({
+      env: { NETLIFY: "true", SITE_NAME: PRODUCTION_SITE_NAMES[0] },
+      root: dir,
+      mode: "production",
+    });
+    assert.equal(r.ok, true, r.errors.join("\n"));
+    assert.equal(r.identifiedProd, true);
+    assert.match(r.notes.join("\n"), /positively identified as production/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("P2: a local build may still omit it — the tracked .env is production", () => {
+  const dir = fixture({ ".env": `VITE_SUPABASE_URL=${PROD_URL}\nVITE_SUPABASE_ANON_KEY=k` });
+  try {
+    const r = checkBuildEnv({ env: {}, root: dir, mode: "production" });
+    assert.equal(r.ok, true, r.errors.join("\n"));
+    assert.equal(r.hosted, false);
+    assert.match(r.notes.join("\n"), /LOCAL build/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("isHostedBuild / isIdentifiedProductionSite", () => {
+  assert.equal(isHostedBuild({}), false);
+  for (const k of ["NETLIFY", "CI", "BUILD_ID", "DEPLOY_ID", "SITE_ID"]) {
+    assert.equal(isHostedBuild({ [k]: "1" }), true, k);
+  }
+  assert.equal(isIdentifiedProductionSite({ SITE_NAME: PRODUCTION_SITE_NAMES[0] }), true);
+  assert.equal(isIdentifiedProductionSite({ SITE_NAME: "PrintCalculator2" }), true, "case-insensitive");
+  assert.equal(isIdentifiedProductionSite({ SITE_NAME: "printcalculator2-staging" }), false);
+  assert.equal(isIdentifiedProductionSite({}), false);
+});
+
+test("the guard reports which branch applied, and never claims a false one", () => {
+  const dir = fixture({ ".env": `VITE_SUPABASE_URL=${PROD_URL}\nVITE_SUPABASE_ANON_KEY=k` });
+  try {
+    const r = checkBuildEnv({ env: { NETLIFY: "true", SITE_NAME: "some-other-site" }, root: dir, mode: "production" });
+    // It must NOT say the site was identified as production.
+    assert.doesNotMatch(r.notes.join("\n"), /positively identified as production/);
+    assert.match(r.notes.join("\n"), /NOT identified as production/);
+  } finally {
+    cleanup(dir);
+  }
 });

@@ -16,15 +16,21 @@
 -- It deletes ONLY rows belonging to the two synthetic staging stores, matched
 -- by slug. It never touches rows it did not create.
 
+-- ── GUARD ───────────────────────────────────────────────────────────────────
+-- WHAT THIS GUARD IS, NARROWLY: a DATA-MARKER check. It looks for rows that
+-- only production has (a store4979 store, or an ups-4979 org with stores
+-- attached). It is NOT a project-ref comparison — a SQL session cannot see the
+-- Supabase project ref, and an earlier draft of this file called
+-- current_database() and then never used the result, which implied a
+-- ref check it did not perform. That call is gone.
+--
+-- CONSEQUENCE, stated rather than glossed: a fresh EMPTY database passes this
+-- guard, because it carries no production marker. That is acceptable for its
+-- purpose (stopping a paste into the production SQL editor) and is not a
+-- project identity check. Confirm the project ref out of band — the Supabase
+-- dashboard or the MCP project id — before running this.
 do $guard$
-declare v_ref text;
 begin
-  -- Supabase exposes the project ref as the database name and in the JWT
-  -- issuer; the database name is the reliable one from a SQL session.
-  select current_database() into v_ref;
-  if current_setting('server_version_num')::int < 0 then null; end if;
-
-  -- Production identity, spelled out so this file is self-contained.
   if exists (select 1 from public.stores where slug = 'store4979') then
     raise exception
       'REFUSED: this database contains store4979 — it is PRODUCTION (or a copy of it). '
@@ -32,8 +38,8 @@ begin
       using errcode = '42501';
   end if;
 
-  if exists (select 1 from public.organizations where slug = 'ups-4979'
-             and exists (select 1 from public.stores s where s.org_id = organizations.id)) then
+  if exists (select 1 from public.organizations o where o.slug = 'ups-4979'
+             and exists (select 1 from public.stores s where s.org_id = o.id)) then
     raise exception 'REFUSED: ups-4979 org has stores attached — this looks like production.'
       using errcode = '42501';
   end if;
@@ -62,18 +68,60 @@ delete from public.organizations where slug in ('staging-t1','staging-t2');
 -- ── SEED ────────────────────────────────────────────────────────────────────
 -- Two tenants, seeded symmetrically on purpose: any asymmetry in a
 -- cross-tenant test result is then a real finding, not a seeding artifact.
-insert into public.organizations (name, slug, plan, status) values
-  ('Staging Tenant One', 'staging-t1', 'pro',   'active'),
-  ('Staging Tenant Two', 'staging-t2', 'trial', 'active');
+-- STABLE IDs. Not cosmetic: the reset deletes and recreates these rows, and an
+-- earlier version let Postgres mint fresh UUIDs each time. Anything keyed to a
+-- tenant by id — memberships above all — was then orphaned by every reseed.
+-- Fixed UUIDs mean a reseed is idempotent in identity as well as in content.
+insert into public.organizations (id, name, slug, plan, status) values
+  ('5ee41000-0000-4000-8000-000000000001'::uuid, 'Staging Tenant One', 'staging-t1', 'pro',   'active'),
+  ('5ee41000-0000-4000-8000-000000000002'::uuid, 'Staging Tenant Two', 'staging-t2', 'trial', 'active');
 
-insert into public.stores (slug, name, address, phone, email, timezone, org_id, bootstrap_secret_hash)
-select v.slug, v.name, v.addr, v.phone, v.email, 'America/Detroit', o.id,
-       encode(sha256(('staging-'||v.slug||'-secret-not-production')::bytea),'hex')
+insert into public.stores (id, slug, name, address, phone, email, timezone, org_id, bootstrap_secret_hash)
+values
+  ('5ee41000-0000-4000-8000-0000000000a1'::uuid,'staging-t1-store','Staging T1 Print Shop','1 Test Way','555-0101','t1@example.invalid','America/Detroit','5ee41000-0000-4000-8000-000000000001'::uuid, encode(sha256('staging-t1-secret-not-production'::bytea),'hex')),
+  ('5ee41000-0000-4000-8000-0000000000a2'::uuid,'staging-t2-store','Staging T2 Copy Centre','2 Test Way','555-0202','t2@example.invalid','America/Detroit','5ee41000-0000-4000-8000-000000000002'::uuid, encode(sha256('staging-t2-secret-not-production'::bytea),'hex'));
+
+-- ── REBUILD THE AUTH MAPPINGS ───────────────────────────────────────────────
+-- THE HOLE THIS CLOSES: the reset deletes memberships, and an earlier version
+-- never recreated them. So a reseed silently removed the owner/manager
+-- authorization that staging.md §6 item 3 exists to establish — and because
+-- the verification query below did not count memberships, it reported perfect
+-- symmetry while BOTH tenants were unauthorized. Every has_store_role path,
+-- every admin flow, and every "authorized access" precondition would have
+-- failed for a reason the seed said nothing about.
+--
+-- Rebuilt from auth.users by email convention, so it is correct after any
+-- number of consecutive resets. Emails are .invalid and must be created in
+-- the staging Auth dashboard (staging.md §6 item 3).
+insert into public.memberships (user_id, store_id, org_id, role)
+select u.id, s.id, s.org_id, v.role
 from (values
-  ('staging-t1-store','Staging T1 Print Shop','1 Test Way','555-0101','t1@example.invalid','staging-t1'),
-  ('staging-t2-store','Staging T2 Copy Centre','2 Test Way','555-0202','t2@example.invalid','staging-t2')
-) as v(slug,name,addr,phone,email,org)
-join public.organizations o on o.slug = v.org;
+  ('owner-t1@example.invalid',  'staging-t1-store','owner'),
+  ('manager-t1@example.invalid','staging-t1-store','manager'),
+  ('owner-t2@example.invalid',  'staging-t2-store','owner'),
+  ('manager-t2@example.invalid','staging-t2-store','manager')
+) as v(email,slug,role)
+join auth.users u on lower(u.email) = v.email
+join public.stores s on s.slug = v.slug
+on conflict (store_id, user_id) do update set role = excluded.role;
+
+-- Loud, not silent: if the Auth accounts do not exist yet, say so here rather
+-- than letting a later authorization test fail for an unexplained reason.
+do $m$
+declare n int;
+begin
+  select count(*) into n from public.memberships m
+   join public.stores s on s.id = m.store_id
+  where s.slug in ('staging-t1-store','staging-t2-store');
+  if n < 4 then
+    raise warning 'SEED INCOMPLETE: % of 4 memberships created. The Auth users '
+      '(owner-t1@, manager-t1@, owner-t2@, manager-t2@example.invalid) do not all '
+      'exist yet — see docs/security/staging.md section 6 item 3. Every '
+      'has_store_role path and every authorized-access precondition WILL fail '
+      'until they do.', n;
+  end if;
+end
+$m$;
 
 -- Manager + staff PIN per store. PINs are globally unique
 -- (employees_pin_unique), so the two tenants cannot share values.
@@ -134,7 +182,10 @@ from public.stores s where s.slug in ('staging-t1-store','staging-t2-store');
 -- ── VERIFY ──────────────────────────────────────────────────────────────────
 -- Both rows must be identical apart from the slug. Asymmetry means the seed
 -- did not fully apply, and a cross-tenant test run on it would be unsound.
+-- memberships IS counted here. Its omission is what let an earlier version
+-- report symmetry while both tenants were unauthorized.
 select s.slug,
+  (select count(*) from public.memberships  x where x.store_id = s.id) as memberships,
   (select count(*) from public.employees    x where x.store_id = s.id) as employees,
   (select count(*) from public.paper_types  x where x.store_id = s.id) as papers,
   (select count(*) from public.sheet_prices x where x.store_id = s.id) as prices,
@@ -144,3 +195,8 @@ select s.slug,
 from public.stores s
 where s.slug in ('staging-t1-store','staging-t2-store')
 order by s.slug;
+
+-- EXPECTED, once §6 item 3 is done: memberships = 2 for each tenant (one owner,
+-- one manager). memberships = 0 means the tenants exist but NOBODY is
+-- authorized — run this after the Auth users are created, and confirm
+-- authorized access after TWO consecutive resets before any denial test.

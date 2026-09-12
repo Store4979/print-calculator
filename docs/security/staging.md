@@ -172,14 +172,38 @@ would pass while the browser read and wrote production rows.
    dashboard, which is site-specific by construction. Build-time `VITE_*` and
    function-runtime vars are **separate mechanisms** and must both be set.
 2. **`scripts/check-build-env.mjs` runs in the build command**, before
-   `yarn build`. It resolves the **effective** value the way Vite does
-   (shell env > `.env.local` > `.env`) and refuses the build on a mismatch.
-   - `EXPECTED_SUPABASE_REF` **unset** → production assumed and verified.
-     Production therefore keeps building with **no dashboard change**, still
-     guarded.
-   - `EXPECTED_SUPABASE_REF` **set** → the effective ref must equal it. Any
-     leak of production through `netlify.toml`, `.env`, or a stale dashboard
-     value **fails the build**.
+   `yarn build`. It resolves the **effective** value through the **installed
+   Vite `loadEnv`**, with the build's real mode, root and envDir — it does not
+   reimplement Vite's precedence.
+
+   > **Two executed bypasses of the first version of this guard were found in
+   > review and are fixed. Both are recorded because one of them invalidates a
+   > claim made earlier in this file.**
+   >
+   > **P1 — mode files.** The first version hand-rolled the search order as
+   > `.env.local` then `.env`. Vite also loads `.env.[mode]` and
+   > `.env.[mode].local`, **which outrank both**, and `vite build` defaults to
+   > `mode=production` even on a staging deploy. Reproduced: staging values in
+   > `.env.local` plus production values in `.env.production.local` gave
+   > **guard exit 0 reporting staging while the emitted bundle contained the
+   > production ref and zero staging refs.** Fixed by delegating to Vite. The
+   > same change fixes explicitly-empty shell values, which the old resolver
+   > skipped and Vite honours as empty.
+   >
+   > **P2 — omitting everything passed as production.** `expectedRaw ||
+   > PRODUCTION_REF` made absence mean production, so a hosted site that set
+   > **nothing at all** exited 0. **WITHDRAWN: an earlier version of this file
+   > and of the PR description implied a missing `EXPECTED_SUPABASE_REF` would
+   > refuse the build. It did not — it passed as production.**
+
+   Current contract:
+
+   | case | result |
+   |---|---|
+   | `EXPECTED_SUPABASE_REF` **set** | effective ref must equal it, or the build **fails** |
+   | unset, **hosted**, `SITE_NAME` positively identified as production | production assumed and verified — this is how production keeps building with no dashboard change |
+   | unset, **hosted**, any other site (or no `SITE_NAME`) | **build FAILS.** Absence is not evidence of production |
+   | unset, **local** build | production assumed, matching the tracked `.env` |
 3. **The tracked `.env` fallback is covered.** It holds production values for
    local dev, and Vite falls back to it, so a staging site that set nothing
    would have inherited production *through `.env`* even after `netlify.toml`
@@ -189,8 +213,13 @@ would pass while the browser read and wrote production rows.
    `store4979`, which does not exist here. The guard **requires** both on any
    non-production build and rejects `store4979`.
 
-Covered by 15 tests in `scripts/tests/check-build-env.test.js`, including both
-halves of the original bug.
+Covered by `scripts/tests/check-build-env.test.js` (unit) **and
+`scripts/tests/build-env-bundle.test.js`, which builds a real Vite project and
+greps the EMITTED bundle.** That second file exists because P1 proved a
+reporter test is not enough: the guard's unit tests asserted what the guard
+*said*, and what it said disagreed with what Vite compiled. The bundle tests
+assert the guard's verdict against the **compiler**, including the exact
+mode-file layout that bypassed it. Suite: 97 tests.
 
 **What the guard does NOT check, stated so a green build is not over-read:**
 the functions' runtime `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Those
@@ -210,12 +239,34 @@ either from a passing build.
    description. It **RESETS then seeds**: `ON CONFLICT DO NOTHING` cannot
    restore a fixture an adversarial test has altered (a revoked session, a
    demoted employee, a drained queue) — it leaves the mutated row and reports
-   success. Its **first statement refuses to run** if the database contains
-   `store4979` or an `ups-4979` org with stores attached, so a paste into the
-   wrong SQL editor tab destroys nothing. Both behaviours are verified: the
-   guard raised `42501` against a simulated production marker, and a reset
-   restored an employee deliberately mutated to `staff/inactive` plus a
-   deleted queue row.
+   success.
+
+   **Its guard is narrowly a DATA-MARKER check, not a project-ref
+   comparison.** It aborts if the database holds a `store4979` store or an
+   `ups-4979` org with stores attached. A SQL session cannot see the Supabase
+   project ref; an earlier draft called `current_database()` and never used the
+   result, which implied a ref check it did not perform — that call is gone.
+   **Consequence: a fresh empty database passes the guard.** Good enough to
+   stop a paste into the production SQL editor; not an identity check.
+   **Confirm the project ref out of band before running it.**
+
+   **Fixed after review — reseeding used to destroy authorization.** The reset
+   deletes `memberships`, and an earlier version never recreated them, while
+   recreating stores and orgs with **fresh UUIDs**. So every reseed silently
+   removed the owner/manager mappings from §6 item 3 — and because the
+   verification query omitted `memberships`, it reported perfect symmetry
+   while **both tenants were unauthorized**. Now: **stable fixed UUIDs** for
+   orgs and stores, the `memberships` rows **rebuilt from `auth.users` by
+   email**, a `SEED INCOMPLETE` warning when the Auth users are missing, and
+   `memberships` **counted in the verification output**.
+
+   Verified against staging: the guard raised `42501` against a simulated
+   production marker; a reset restored an employee deliberately mutated to
+   `staff/inactive` plus a deleted queue row; and **two consecutive resets
+   produced identical store ids** (`…0000a1` / `…0000a2`). **Not yet
+   verified — the membership rebuild's join against real `auth.users`**, which
+   cannot be exercised until §6 item 3 creates the accounts; today it
+   correctly returns `memberships = 0` and warns.
 4. **Re-verify after any production migration.** Staging only proves something
    while it still matches. Re-run both verifications above.
 5. **No service-role key in the repo.**
@@ -229,10 +280,11 @@ item 5 as a footnote; it is not.
 
 | # | item | why it blocks |
 |---|---|---|
-| 1 | **Second Netlify site** on this repo, with `EXPECTED_SUPABASE_REF`, `VITE_SUPABASE_*`, `VITE_STORE_SLUG`, `STORE_SLUG`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` set **in its dashboard**, previews attached to it | functions deploy per site, so the legacy-URL probes (rows 37–41) need staging's own copies. The guard in §4 fails the build until this is right |
+| 1 | **Second Netlify site** on this repo, with `EXPECTED_SUPABASE_REF`, `VITE_SUPABASE_*`, `VITE_STORE_SLUG`, `STORE_SLUG`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` set **in its dashboard**, previews attached to it | functions deploy per site, so the legacy-URL probes (rows 37–41) need staging's own copies. **The guard now fails any hosted build that omits `EXPECTED_SUPABASE_REF` unless the site is named `printcalculator2`** — so the staging site cannot build until this is set, by design |
 | 2 | **Auth config**: Site URL = the staging site, deploy-preview pattern in redirect URLs | the 2026-09-09 lockout came from a wrong Site URL; do not repeat it here |
-| 3 | **Owner + manager Auth accounts** per tenant, with `memberships` rows | `has_store_role` paths and every admin flow are untestable without them |
+| 3 | **Owner + manager Auth accounts** per tenant — exactly `owner-t1@`, `manager-t1@`, `owner-t2@`, `manager-t2@example.invalid` | `has_store_role` paths and every admin flow are untestable without them. **`scripts/staging-seed.sql` rebuilds the `memberships` rows from these exact addresses**, so the emails are a contract, not examples. Until they exist the seed prints `SEED INCOMPLETE: 0 of 4 memberships` and the verification shows `memberships = 0` |
 | 4 | **SMTP sink** (Mailpit or Ethereal) in the staging site's `SMTP_*` | a real relay in staging will eventually mail a real customer |
+| 4b | **Verify authorized access after TWO consecutive reseeds**, before any denial test | a reseed used to destroy the authorization it was supposed to preserve. Two runs is the cheapest test that catches an identity that is not stable across resets |
 | 5 | **Real Storage objects at the seeded paths** — `customer-uploads/staging-t{1,2}-store/synthetic.pdf` and `job-files/jobs/staging-t{1,2}-store/synthetic-job.pdf` | **a missing object is not a negative fixture.** A denial test against a path with no object cannot tell "denied" from "absent" — it passes for the wrong reason. Authorized access to a known synthetic object must be proven **first**, so that the later denial means something |
 
 Items 1–4 need dashboard and Netlify access. Item 5 needs a service-role
