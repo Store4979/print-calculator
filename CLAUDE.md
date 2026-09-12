@@ -134,6 +134,32 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
   nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
   revoking anything, and never apply a DB change without a file in the repo.
+- SECURITY RELEASE 2 is planned in docs/security/release-2-plan.md (PLAN ONLY —
+  nothing applied). It replaces the anon-key client paths with server-verifiable
+  identity: owner-issued single-use pairing tickets -> revocable device
+  enrollments -> opaque server-owned staff sessions (token HASHES only, in
+  tables with RLS on and ZERO policies, reachable only by service_role). The
+  store is always derived from the enrollment/capability row, never from a
+  storeSlug in a request body. Grants do not close until ALL 17 client data
+  paths in Part 6 of that plan have moved — including all four job-files
+  helpers in src/lib/supabase.js (uploadJobFiles, downloadJobFile,
+  getJobFileSignedUrl, deleteJobFiles; the last has no caller and still moves
+  or gets deleted). Isolated staging (separate DB, storage, auth, mail) is a
+  prerequisite — Netlify previews currently hit PRODUCTION Supabase.
+- RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
+  WITH CHECK separately, plus the table's RLS state AND its table-level grants.
+  On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only
+  gate, so never infer an INSERT policy's effect from qual. Every policy in
+  this project is PERMISSIVE (policies are OR-ed), so adding a narrow policy
+  beside an open one widens nothing: the open one must be DROPPED.
+- GRANTS ARE A SEPARATE LAYER FROM RLS. anon and authenticated currently hold
+  SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER on every public table
+  and on storage.objects. **RLS does not filter TRUNCATE** — proven live:
+  `truncate employees` as anon emptied it (2 -> 0) while `update employees` was
+  blocked by RLS. Same for storage.objects (5 -> 0). Not known to be reachable
+  through PostgREST (no TRUNCATE verb), but the grant should not exist.
+  Conversely a grant alone proves nothing: storage.buckets has RLS on with zero
+  policies, so anon sees 0 buckets and cannot flip one public.
 - PHASE S — SaaS AUTH HARDENING. Three items, all BLOCK tenant #2, none
   block store4979 (single tenant, physical counter). "Phase E" is the margin
   engine — do not reuse the letter.
@@ -212,11 +238,19 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    including hotfixes: the 2026-09-09 audit found eight applied migrations with no
    file, and one of them had taken staff sign-in down.
    FUNCTION ACLs: this project's default privileges grant EXECUTE on every new
-   function in `public` to anon, authenticated AND service_role the moment it is
-   created — a new SECURITY DEFINER function is anon-callable by default. Every
-   CREATE FUNCTION must therefore be followed, in the same migration, by
-   `revoke execute ... from public, anon, authenticated, service_role;` and then
-   explicit grants for exactly the roles that need it. CREATE OR REPLACE cannot
+   function in `public` to **PUBLIC**, anon, authenticated AND service_role the
+   moment it is created. PUBLIC is the widest of the four and is easy to miss:
+   measured on a brand-new function 2026-09-12, the CREATE-time ACL was
+   `{=X/postgres, postgres=X/postgres, anon=X/postgres, authenticated=X/postgres,
+   service_role=X/postgres}` — that leading `=X/postgres` with no grantee IS
+   PUBLIC, i.e. every role in the cluster, present and future. A revoke list
+   naming only anon/authenticated/service_role looks complete and leaves the
+   widest grant in place. So a new SECURITY DEFINER function is callable by
+   anyone by default. Every CREATE FUNCTION must therefore be followed, IN THE
+   SAME MIGRATION (between CREATE and a later revoke the function is open), by
+   `revoke execute ... from public, anon, authenticated, service_role;` — with
+   `public` listed FIRST and never dropped from the list — and then explicit
+   grants for exactly the roles that need it. CREATE OR REPLACE cannot
    change a return type; DROP + CREATE resets the ACL to that default AND
    discards the function comment — re-issue both. Prove it: diff `proacl`
    before/after in the rehearsal (see supabase/rehearsals/phase_e_01_rehearsal.sql).
