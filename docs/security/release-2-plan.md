@@ -44,6 +44,100 @@ here. This plan works out the schema, contract, order and tests for it.
 >    a *third party's* wholesale price list being redistributed to every
 >    anonymous visitor — a vendor exposure on top of the confidentiality one,
 >    already live today, and not the store's alone to accept.
+>
+> **Revision 4 — 2026-09-12.** Six bounded corrections from the review of
+> `2cae8bd`, plus four recorded factual fixes. Architecture unchanged. See
+> **Part R** for the item → section → test mapping, which now lives in this
+> file rather than only in a commit message.
+>
+> 9.  CSRF specified **per credential class** including the two pre-session
+>     flows, with a non-cacheable bootstrap for reload; credential resolved
+>     **before** the CSRF comparison; the `SameSite` claim corrected.
+> 10. Queued orders get a **real handover contract** — drain, else seal under
+>     a store-scoped key, else require staff resolution. Revision 2 rejected
+>     one encryption design and wrongly treated that as settling it.
+> 11. `pricing-costs` is **manager/owner only** — revision 2 said
+>     "staff-authenticated" in one place and manager/owner in another.
+>     Closure enumerated across markup, labor, thresholds and outsourced
+>     costs; the security-invoker view option **removed** as unworkable.
+> 12. The PIN limiter **cannot** key on `(enrollment, employee)` — a failed
+>     guess identifies no employee. Durable aggregate accounting instead.
+>     Demotion-vs-promotion reconciled as **narrow revokes, widen does not**.
+> 13. Upload quota bounded **at upload time**, not only at registration;
+>     `createSignedUploadUrl` permissions last **two hours** regardless of the
+>     row; issued-but-unregistered objects get a sweep that does not exist
+>     today.
+> 14. **Every** rollback needs compensating restrictions, a named owner and an
+>     expiry — revision 3 wrongly framed 4e as the only reopening one.
+>     "410 except the exact call the counter needs" is **dropped**: a body,
+>     path, Origin or job id is not identity.
+>
+> Recorded factual corrections: my `/upload` claim was **wrong** (the kiosk
+> bundle carries the catalog, `upload-*.js` does not — proven by building);
+> the inventory is **six HTTP handlers plus one scheduled function**; the
+> deployed PDF.js *setting* is the mitigation, the upgrade is the fix; and
+> Part 0.6 overgeneralised SELECT closure, since DELETE events are the
+> documented narrower case.
+
+---
+
+# Part R — Review ledger: item → section → test
+
+**This table lives here, in the plan, on purpose.** Earlier rounds put the
+review-item mapping in the commit message and the PR body, where the next
+reviewer could not find it — and a mapping that exists only in a chat message
+is exactly the documentation drift these reviews keep catching. Every future
+review round appends here.
+
+## Round 3 (review of `2cae8bd`) — six bounded corrections
+
+| # | Review item | Section | Test |
+|---|---|---|---|
+| 1 | CSRF per credential class, incl. pre-session | 3.1 "CSRF protection per credential class" | 21, 23 |
+| 1 | Bootstrap/recovery for reload and new tabs | 3.1 "Bootstrap and recovery" | **53**, **54** |
+| 1 | Resolve credential *before* comparing CSRF | 3.1 "Order of operations" | **55** |
+| 1 | `SameSite` claim corrected — same-site siblings send cookies | 3.1 opening | **56** |
+| 2 | Plaintext queued orders is not privacy closure | 8 "rows 22 and 25" → drain/seal/resolve | **22b** |
+| 2 | A real recovery or handover contract | same | **22c**, **22d** |
+| 2 | Kiosk read / cross-store drain / attribution | 8 | **22b**, **25b**, **25c** |
+| 3 | `pricing-costs` staff vs manager contradiction | 7 step 4b item 2 | **33b-i** |
+| 3 | Both pricing endpoints in the matrices | 3.2 endpoint table; 4 matrix | **33b-i**…**33b-v** |
+| 3 | Test staff / device / upload / unrelated authed | 4 matrix, costs column | **33b-i**, **33b-ii**, **33b-iii** |
+| 3 | Enumerate closure incl. `markup_percent`, labor, thresholds, outsourced | 7 step 5.5 closure table | **33b** |
+| 3 | Remove the security-invoker view option | 7 step 5.5 | — (design) |
+| 4 | PIN budget cannot key on `(enrollment, employee)` | 2.6 "cannot be the budget key" | **42**, **57** |
+| 4 | Durable aggregate accounting for every failed guess | 2.6 subject table | **57** |
+| 4 | Reconcile 2.3 with Part 5 / row 12 | 2.3(b) narrow-vs-widen table | **12**, **47** |
+| 5 | Ten one-byte reservations authorize ten large uploads | 2.4 items 1–3 | **26**, **58** |
+| 5 | Upload-time bounds; reserve bytes permitted | 2.4; step 5.8 | **58** |
+| 5 | `createSignedUploadUrl` lasts 2 h, row expiry does not bind it | 2.4 "outlives the capability row" | **59** |
+| 5 | Sweep issued-but-unregistered objects | 2.4 "must be swept" | **60** |
+| 6 | Deletion is not the only reopening rollback | 7 Rollback, generalised | — (process) |
+| 6 | Every rollback: compensating restrictions, owner, expiry | 7 Rollback requirement table | — (process) |
+| 6 | Drop "410 except the exact call" | 7 Rollback, options 1–3 | **61** |
+| 6 | Authorized alias or known-good build as recovery | 7 Rollback option 1–2 | **61** |
+| 6 | Step 4 vs 4b `/pricing.json` timing | 7 step 4 timing table | **33b** |
+| ✎ | `/upload` claim was wrong — kiosk carries the catalog, not `/upload` | 6.2 "Correction" | **33b** |
+| ✎ | Six HTTP handlers + one scheduled; verify classification and a run | 0.7 "The count is six" | **41**, **62** |
+| ✎ | PDF.js: the *deployed setting* is the mitigation | 10 | — |
+| ✎ | 0.6 overgeneralised SELECT closure (DELETE events) | 0.6 "One narrower point" | **31** |
+
+## Rounds 1–2
+
+| Round | Item | Section |
+|---|---|---|
+| 2 | Legacy endpoints not retired by moving the client | 0.7, 3.3, 7 step 4a/4e |
+| 2 | Cost delivered by five paths | 6.2 |
+| 2 | Host-only cookie + CSRF | 3.1 |
+| 2 | Demotion revokes; polling does not refresh idle | 2.3, 5 |
+| 2 | Ticket redemption atomic; durable limits | 2.2, 2.6 |
+| 2 | Rows 22/25 contradiction | 8 |
+| 2 | "Column-scoped RLS" is not a mechanism | 7 step 5.5 |
+| 2 | Realtime does not bypass SELECT RLS | 0.6 |
+| 2 | `service_role` bypass ≠ owner bypass | 0.3 |
+| 2 | Windows claim stale | 10 |
+| 3ᵃ | Deletion isolated, alone and last | 7 step 4e |
+| 3ᵃ | C4 is a tenant-#1 fix | 6.2 |
 
 ---
 
@@ -187,6 +281,14 @@ What is true today, and is the reason it still matters: while
 receives every queue row — including `files[].path` — **at write time** rather
 than having to poll. Same authorisation, worse latency for the victim.
 
+**One narrower point, so this is not overgeneralised either.** "Dropping the
+SELECT policy closes the subscription" holds for INSERT and UPDATE events,
+where the changed row is checked against the policy. **DELETE events are the
+documented exception**: only the primary key is delivered, so there is no full
+row to evaluate and the filtering guarantee is weaker. That is why test row 31
+asserts DELETE events explicitly rather than folding them into "no rows
+delivered", and why removing the table from the publication — defence in
+depth for the other verbs — is the actual control for this one.
 ---
 
 ## 0.7 Deployed functions — the surface that is not the client
@@ -216,6 +318,15 @@ is a comment saying authentication is not part of Release 1.
 | `/.netlify/functions/fetch-link-job` | **none** | fetches a URL server-side and stores it |
 | `/.netlify/functions/send-print-job` | **none** (rate limit + server-resolved recipient only) | mails the store |
 | `/.netlify/functions/cleanup-stale-jobs` | **none in code**; `config = { schedule: "@hourly" }` | deletes files older than 24h |
+
+**The count is six HTTP handlers plus one scheduled function**, not seven
+interchangeable URLs — `cleanup-stale-jobs` is a different kind of object and
+counting it with the rest obscures that. Two things must be **verified on the
+deployed site**, not read from the source: that Netlify actually classifies it
+as scheduled (the `config` export is a request, and a build that failed to
+honour it would silently leave a public URL), and that a scheduled run has
+**succeeded** recently. A scheduled function that is not running is its own
+problem: stale customer files stop being swept.
 
 `cleanup-stale-jobs` is the one genuine unknown. Netlify documents scheduled
 functions as not invocable over HTTP in production, but that is **platform
@@ -513,11 +624,22 @@ demotion as the same case. They are not:
   owner demotes someone precisely to stop them seeing margin, and under
   revision 1 that person keeps seeing it for up to 12 more hours.
 
-So: **any change to `employees.role`, and any deactivation, revokes that
-employee's live sessions** (Part 5). The session's copied `employee_role` then
-only ever describes a session that is still valid, and re-authenticating
-issues a session at the current role. Promotion still requires a fresh sign-in,
-which is the harmless direction.
+So, precisely — and this is the wording revision 2 got loose, saying "any role
+change revokes" in one place while Part 5 and row 12 said promotion is
+preserved:
+
+| change | live sessions | why |
+|---|---|---|
+| **demotion** manager → staff | **revoked** | the owner is removing access now; a 12-hour lag defeats the action |
+| **promotion** staff → manager | **preserved**, applies at next sign-in | the session is *narrower* than the new role; nothing leaks, and revoking would sign someone out as a reward |
+| **deactivation** | **revoked** | access removal |
+| reactivation | n/a — no live sessions to keep | |
+
+The rule is **"a change that narrows authority revokes; a change that widens
+it does not"** — not "any change revokes". The session's copied
+`employee_role` therefore only ever describes authority the employee still
+holds, which is the invariant that matters. Part 5 and test rows 12 and 47
+assert both directions.
 
 `role_checked_at` records when the copy was last reconciled against
 `employees.role`, so a missed revocation shows up in an audit query rather than
@@ -572,16 +694,68 @@ update public.upload_capabilities
 returning id;
 ```
 
-Zero rows = over quota, expired or already consumed. The declared size is a
-**reservation**, reconciled against the object's real size at registration —
-a caller that declares 1 byte and uploads 40 MB is caught then.
+Zero rows = over quota, expired or already consumed.
+
+**Reconciling at registration is not enough — revision 2's quota was bypassable
+and this is the fix.** Revision 2 treated the declared size as a reservation
+and checked the real size at registration. But **registration is optional to
+the attacker**: mint ten one-byte reservations, upload ten 500 MB files, never
+call `register-job`. Every check revision 2 specified lives in a code path the
+attacker simply does not enter. The bucket fills, the storage bill grows, and
+nothing was violated on paper.
+
+Three changes, so the bound is enforced where the bytes actually arrive:
+
+1. **Reserve the bytes actually permitted, not the bytes declared.** A
+   reservation costs `min(declared, per_file_cap)` — and if the client declines
+   to declare, it costs the **full per-file cap**. A one-byte declaration buys
+   one byte of headroom, not a free pass.
+2. **Bound the upload at upload time, not at registration.** The bucket
+   carries a **file size limit and a MIME allowlist** (step 5.8 already does
+   this for `customer-uploads`, which today has neither — Part 0.5). The
+   Storage service then rejects the oversized object itself, in the path the
+   attacker *must* enter. This is the control that does not depend on the
+   attacker being cooperative.
+3. **Reconcile at registration as well**, since a within-cap lie still needs
+   catching: `register-job` reads the object's **actual** size and MIME and
+   settles the reservation against them.
 
 **Registration verifies the object exists.** A recorded path is a claim that a
-URL was minted, not that anything was uploaded. `register-job` calls the
-Storage API to confirm each object is present and reads its **actual** size
-and MIME before creating the queue row; a path with no object is rejected.
-Otherwise the queue fills with rows pointing at nothing and staff chase files
-that were never sent.
+URL was minted, not that anything was uploaded. `register-job` confirms each
+object is present before creating the queue row; a path with no object is
+rejected. Otherwise the queue fills with rows pointing at nothing and staff
+chase files that were never sent.
+
+**An issued upload URL outlives the capability row.** Supabase's
+`createSignedUploadUrl` mints a token whose **permission lasts two hours**,
+independent of our bookkeeping. So a 30-minute `expires_at` on
+`upload_capabilities` does **not** expire an already-issued URL: revoking or
+expiring the row stops *new* URLs, and the outstanding ones keep working until
+the token's own expiry. Revision 2 implied the row was the control; it is not.
+Consequences carried explicitly:
+
+- The real exposure window for an issued URL is **the token's two hours**, and
+  the plan says so rather than claiming a 30-minute bound it does not enforce.
+- Because of that, the **bucket-level size and MIME limits are the only
+  binding control** on an already-issued URL. Another reason item 2 above is
+  not optional.
+- Capability expiry is enforced at **registration** too, so an upload written
+  through a stale URL cannot be turned into a queue row.
+
+**Issued-but-unregistered objects must be swept, and today nothing sweeps
+them.** `cleanup-stale-jobs` iterates `pending_jobs` rows and removes the paths
+those rows list (`cleanup-stale-jobs.js:25-32`). An object uploaded but never
+registered **has no `pending_jobs` row**, so it is never walked — it is
+orphaned in the bucket permanently. That is both the storage-exhaustion tail of
+the quota bypass and a pile of customer files nobody is tracking or deleting.
+
+The sweep therefore walks **the bucket**, not the queue: any object in
+`customer-uploads` with no referencing `pending_jobs` row and older than the
+capability window is deleted, with a grace period so an in-flight upload is
+never removed mid-registration. `upload_capability_files` gives the sweep a
+server-side record of what was minted and when, which is what makes "minted,
+never registered, now stale" decidable rather than guessed. The same sweep
+reports its counts, so a spike in orphans is visible instead of silent.
 
 **Consumption and the queue insert are one transaction, and idempotent.**
 `consumed_at` is set and the `pending_jobs` row is inserted together, keyed by
@@ -656,20 +830,55 @@ limiting as an optional opportunity; it is **in scope**, because a mail
 endpoint that a staff session can drive is still a mail endpoint, and the
 store's SMTP reputation is the thing at risk.
 
-**Budgets are scoped so one attacker cannot lock out a shop.** A naive
-per-store counter turns a rate limiter into a denial-of-service tool: an
-attacker burns the store's budget and the counter cannot take orders. So:
+**`(enrollment, employee)` cannot be the budget key for a failure — revision 2
+was wrong about this.** Verified in the code: `findEmployeeByPin(pin, hint)`
+(`src/lib/supabase.js:358`) calls `verify_employee_pin(p_store_id, p_pin)`.
+**The caller supplies a PIN and nothing else.** There is no username, no
+employee selection, no identifier of any kind. So a *failed* guess matches no
+employee row and there is no employee to charge the attempt to — the proposed
+key does not exist at the moment it is needed. Worse, keying on the resolved
+employee would charge only *successful* lookups, which is precisely backwards:
+the failures are what need counting.
 
-- **PIN attempts** count per `(enrollment, employee)` — one employee's PIN
-  being attacked never locks out their colleague, and never locks the device.
-- **A locked enrollment still accepts a different employee's correct PIN**;
-  lockout suppresses guessing at a subject, not use of the device.
-- **IP budgets are secondary and never sole grounds** for refusing a request
-  that also presents a valid credential. A shared storefront IP is normal.
-- **An owner can always clear a lockout** from the admin panel, and sees that
-  it happened.
+**Durable aggregate accounting, keyed on what is actually known.** Every
+attempt — successful or not — is charged to subjects that exist before the PIN
+is resolved:
+
+| subject | scope | purpose |
+|---|---|---|
+| **enrollment** | every attempt on this device, resolved or not | the real guessing budget: 10,000 PINs are guessed *at a device* |
+| **store** | aggregate across the store's devices | catches an attacker spreading guesses across enrolled devices |
+| IP | secondary | context only, never sole grounds |
+
+The enrollment budget is the one that bounds brute force, because the device
+is what the attacker must come through and it cannot be rotated by them.
+Counters increment **inside the same transaction** that verifies the PIN, and
+increment on failure **before** any result is returned, so a burst of
+concurrent guesses cannot all read a stale count.
+
+**Lockout is graduated, not binary**, because the enrollment is also the
+counter staff need:
+
+- Escalating delay first — a few hundred milliseconds, then seconds. This
+  costs a legitimate mistyped PIN nothing and destroys a guessing rate.
+- Hard lockout only at a threshold far above human error, and **time-boxed**.
+- **A hard lockout raises an owner alert** rather than sitting silent — a
+  counter device under sustained PIN attack is something to know about.
+- **An owner can always clear it** from the admin panel, and sees it happened.
+- **IP budgets are never sole grounds** for refusing a request that also
+  presents a valid credential. A shared storefront IP is normal.
 - Mail limits are per store **and** per session, so one compromised session
   cannot consume the store's whole allowance.
+
+**The residual, stated rather than hidden:** because the PIN is the only
+input, a device-wide lockout *does* deny the counter. That is unavoidable
+while PIN-only remains the login shape — the graduated delay exists so the
+hard lockout is reached only under genuine attack, when denying the device is
+the correct outcome. A per-employee budget would require the client to name
+the employee first, which is a **login-shape change** (pick your name, then
+enter your PIN) and belongs to Phase S1, not here. Recorded as the known
+limitation of PIN-only login rather than designed around with a key that
+cannot exist.
 
 ## 2.7 Grants — explicit, and the opposite of the current default
 
@@ -755,22 +964,73 @@ Set-Cookie: __Host-pc_staff=<opaque>; HttpOnly; Secure; SameSite=Strict;
   names are what keep the three kinds distinct** at the transport layer, before
   a resolver is even chosen.
 
-**Cookies alone re-introduce CSRF**, which a bearer header did not have. That
-is the trade, and it is paid explicitly rather than by relying on `SameSite`
-alone — `SameSite` is a browser-enforced control with legacy and embedded-webview
-gaps, and one of these devices is a counter iPad:
+**`SameSite=Strict` is not an origin boundary — correcting the claim above.**
+Revision 2 implied `SameSite` makes cross-origin requests cookieless, full
+stop. It does not. `SameSite` is **same-*site***, computed on the registrable
+domain: a sibling subdomain on the same site **is** same-site, so a request
+from `evil.netlify.app` to `printcalculator2.netlify.app` still carries the
+cookie under `Strict`. On a shared apex like `netlify.app` that is not
+theoretical. It also has legacy and embedded-webview gaps, and one of these
+devices is a counter iPad. So `SameSite` is **one weak layer**, never the
+gate, and the `__Host-` prefix (which stops a sibling *setting* our cookie)
+does not stop a sibling *sending* a request that carries it.
 
-- Every state-changing request carries `X-PC-CSRF`, matched against a
-  per-session CSRF secret stored **server-side on the session row**. The token
-  is delivered in the `staff-login` response body (readable by JS, unlike the
-  session cookie) and held in memory, not `localStorage`.
-- **Double-submit alone is not accepted.** A cookie-readable CSRF value can be
-  set by a subdomain attacker; the server-side comparison cannot.
-- Requests missing or failing the CSRF check are rejected **before** the
-  session is looked up, so a CSRF probe cannot be used to time session
-  existence.
-- `Origin` is checked against an allowlist as a second, independent gate.
-  Neither gate alone is trusted.
+**Cookies therefore re-introduce CSRF**, which a bearer header did not have.
+That is the trade, and it is paid explicitly.
+
+### CSRF protection per credential class
+
+Revision 2 specified one mechanism bound to a staff session and left the other
+four classes undefined — including the flows that run **before** any session
+exists, which is exactly where "bind it to the session row" has nothing to
+bind to.
+
+| class | cookie | CSRF mechanism | pre-session? |
+|---|---|---|---|
+| **staff** | `__Host-pc_staff` | `X-PC-CSRF` vs the secret on the session row | no |
+| **device** | `__Host-pc_device` | `X-PC-CSRF` vs the secret on the **enrollment** row | no |
+| **ticket** (`enroll-redeem`) | none — ticket in the body | **no cookie, so no CSRF surface**; the ticket is the credential and is not ambient | **yes** |
+| **owner** (Supabase Auth) | supabase-js `localStorage`, **not a cookie** | bearer `Authorization` header — not ambient, so not CSRF-able | no |
+| **public upload** | `__Host-pc_upload` | `X-PC-CSRF` vs the secret on the **capability** row | after minting |
+| **`upload-capability-create`** | none yet | **no cookie, so no CSRF surface**; rate-limited and mints only a constrained capability | **yes** |
+
+The pattern: **a credential that must be presented explicitly cannot be
+CSRF'd**, because the browser will not attach it on the attacker's behalf. So
+the two pre-session flows need no CSRF token — they need rate limiting, which
+they have (Part 2.6). Every class that rides an **ambient cookie** carries a
+token bound to the row that cookie names. The owner class is the one to watch
+as Phase S evolves: **if Supabase Auth is ever moved to cookie storage, it
+acquires a CSRF surface it does not have today** and needs a row to bind to.
+
+### Order of operations — resolve, then compare
+
+The credential is resolved **first**, then its bound CSRF secret is compared.
+Revision 2 had this backwards, rejecting on CSRF "before the session is looked
+up" to avoid a timing oracle. That cannot work: **the expected value lives on
+the row**, so there is nothing to compare against until the row is loaded. The
+correct order is resolve → compare → constant-time equality → reject. Timing
+is handled by making the *failure* uniform (same status, same body, same
+shape) whether the credential is unknown, expired or the CSRF value is wrong —
+not by checking in an impossible order.
+
+### Bootstrap and recovery — the reload problem
+
+Holding the CSRF token only in memory means **it is gone on reload while the
+cookie survives**, so a refreshed counter tab has a live session and no way to
+mutate anything. Revision 2 did not address this, which would have surfaced as
+"the counter breaks whenever anyone hits refresh".
+
+`GET /.netlify/functions/csrf-bootstrap`:
+
+- Resolves the credential from the cookie; returns the token for **that** row.
+- **Safe**: read-only, no state change, so its own CSRF exposure is nil.
+- **Never cacheable**: `Cache-Control: no-store`, `Vary: Cookie`, and it is
+  already covered by `sw.js` GATE 1 (`/.netlify/` is sensitive, never cached).
+- Returns **no** session content — only the token — so a cross-origin read
+  attempt gains nothing even if a misconfiguration let one through.
+- Rotates the token on issue, so a token read by an earlier XSS does not
+  outlive the reload.
+- Called on load and on new-tab open, before the first mutation.
 
 **Never in a URL.** No token, session or CSRF, ever appears in a query string
 or path — they land in access logs, `Referer` headers and browser history.
@@ -840,6 +1100,9 @@ misattributed orders is the one that shows up in the store's own records.
 | `jobs-save` / `jobs-list` | staff | legacy `print_jobs` | session |
 | `job-file-upload-url` / `job-file-download-url` / `job-file-delete` | staff | the four `job-files` helpers, server-side | session |
 | `send-print-job` | staff | recipient already server-resolved (Release 1) | session |
+| `pricing-public` | **none** | selling prices and presets, **no cost, markup or threshold** | `STORE_SLUG` env / QR param |
+| `pricing-costs` | **manager or owner only** | cost fields, markup factors, thresholds | session, or Auth membership |
+| `csrf-bootstrap` | any cookie class | returns the CSRF token for the resolved row; read-only, `no-store` | the resolved row |
 | `upload-capability-create` | **public** | mints a constrained capability | `STORE_SLUG` env / QR param validated against `stores` |
 | `start-upload` | upload capability | mints one signed upload URL, **records the path** | capability |
 | `register-job` | upload capability | queue row from **recorded** paths only | capability |
@@ -893,15 +1156,22 @@ anonymous endpoints, which is why 4e carries nothing else.
 Rows are what a caller *has*. Columns are what they can reach. **No** means
 the server returns 401/403 and touches nothing.
 
-| capability → | queue list | download | complete | order save | order margin | job history | job files | email | enroll mgmt | pricing write |
-|---|---|---|---|---|---|---|---|---|---|---|
-| nothing (anon) | No | No | No | No | No | No | No | No | No | No |
-| upload capability | No | No | No | No | No | No | No | No | No | No |
-| device token only | No | No | No | No | No | No | No | No | No | No |
-| staff session, `staff` | **Yes** | **Yes** | **Yes** | **Yes** | **No** | **Yes** | **Yes** | **Yes** | No | No |
-| staff session, `manager` | Yes | Yes | Yes | Yes | **Yes** | Yes | Yes | Yes | **No** | **No** |
-| Auth `manager` | via staff session | " | " | " | Yes | " | " | " | **No** | **Yes** |
-| Auth `owner` | via staff session | " | " | " | Yes | " | " | " | **Yes** | Yes |
+| capability → | queue list | download | complete | order save | order margin | job history | job files | email | **prices (public)** | **costs** | enroll mgmt | pricing write |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| nothing (anon) | No | No | No | No | No | No | No | No | **Yes** | **No** | No | No |
+| upload capability | No | No | No | No | No | No | No | No | **Yes** | **No** | No | No |
+| device token only | No | No | No | No | No | No | No | No | **Yes** | **No** | No | No |
+| staff session, `staff` | **Yes** | **Yes** | **Yes** | **Yes** | **No** | **Yes** | **Yes** | **Yes** | Yes | **No** | No | No |
+| staff session, `manager` | Yes | Yes | Yes | Yes | **Yes** | Yes | Yes | Yes | Yes | **Yes** | **No** | **No** |
+| **authenticated, no membership here** | No | No | No | No | No | No | No | No | Yes | **No** | No | No |
+| Auth `manager` | via staff session | " | " | " | Yes | " | " | " | Yes | **Yes** | **No** | **Yes** |
+| Auth `owner` | via staff session | " | " | " | Yes | " | " | " | Yes | **Yes** | **Yes** | Yes |
+
+**The costs column is the one to read carefully.** Four distinct callers get
+**No**: anon, an upload capability, a device token, and — the one revision 2
+got wrong — an **ordinary staff session**. A signed-in user of *another*
+store's tenancy also gets No everywhere but public prices; holding a valid
+Supabase Auth session is not membership here.
 
 Two lines matter most:
 
@@ -1021,12 +1291,37 @@ three, and it is not the most exposed.**
 
 **C4 was named by neither review, is the hardest of the five, and is the only
 one that is not solely this store's problem to weigh.** The outsourced-product
-cost list is `import`ed, so it is **compiled into the JavaScript bundle** — it
-ships to every kiosk and every walk-in who loads `/upload`, with no fetch to
-intercept and no policy to close. The markup tiers (2.5× under $50, 2×
-$50–200, 1.75× over $200) are in the component source, so anyone with the
-bundle can derive the trade cost from the quoted price even without the file.
+cost list is `import`ed by `SpecialtyTab.jsx:32`, so it is **compiled into the
+JavaScript bundle**, with no fetch to intercept and no policy to close. The
+markup tiers (2.5× under $50, 2× $50–200, 1.75× over $200) are in the
+component source, so anyone with the bundle can derive the trade cost from the
+quoted price even without the file.
 
+**Correction — my "`/upload` visitor" claim was wrong.** Revision 2 said the
+catalog "ships to every kiosk and every walk-in who loads `/upload`". The
+second half is false. Verified by building and grepping the emitted bundles
+for a known catalog value and for a catalog product name:
+
+| bundle | serves | catalog value | `"Banner"` |
+|---|---|---|---|
+| `main-*.js` | `index.html` — the calculator **and the kiosk** | **1 hit** | 2 hits |
+| `upload-*.js` | `upload.html` — `/upload` | **0** | 0 |
+| `index-*.js` | shared vendor chunk | **0** | 0 |
+
+`src/upload-main.jsx` renders only `UploadApp`, which imports `pdfSafe`,
+`supabase` and `storeConfig` — it never reaches `App.jsx` or `SpecialtyTab`,
+so Vite's separate entry never pulls the catalog in. **The customer upload
+page does not carry it.**
+
+**The exposure is real regardless, and only the surface changes.** `main-*.js`
+is served to anyone who loads the site root — including the **kiosk**, which
+is the customer-facing device, and including any anonymous visitor who simply
+fetches the bundle. So C4 stands, at the same severity and the same
+tenant-#1 priority. What changes is the accuracy of the claim: it is exposed
+via the **calculator/kiosk bundle**, not via `/upload`. Recorded rather than
+quietly edited, because the wrong version would have sent the fix to the wrong
+entry point — and because test row 33b greps the **built bundles**, which is
+what caught it.
 ### C4 is a vendor problem as well as a confidentiality problem
 
 `signs365Pricing.json` is **not the store's own cost data**. It is a third
@@ -1160,9 +1455,25 @@ the Part 8 matrix. Production is untouched and unaware.
 
 ### Step 4 — Deploy the client, dual-path
 Client moves onto the endpoints. One release, all 17 paths, because a partial
-move means a partial grant closure, which is no closure. This release also
-carries the cost-delivery changes (Part 6.2): the `/pricing.json` split, and
-clearing the cost caches on sign-out, kiosk entry and expiry.
+move means a partial grant closure, which is no closure.
+
+**This step carries no cost changes.** Revision 2 said step 4 carried "the
+`/pricing.json` split" while step 4b described that split as additive with the
+costs still in the file and step 4d removed them — three statements that could
+not all be true. The timeline, stated once:
+
+| step | `/pricing.json` | `/pricing-public.json` | client reads |
+|---|---|---|---|
+| before | costs **in** | — | `/pricing.json` |
+| 4 | costs **in**, untouched | — | `/pricing.json` |
+| 4b | costs **still in** | published, cost-free | **`/pricing-public.json`** |
+| 4c | " | " | " (outsourced moves too) |
+| **4d** | **costs removed** / file retired | the only price file | " |
+
+So costs leave the file in **4d and only 4d**, after the client has been
+confirmed reading the cost-free one. That ordering is the point: removing them
+in step 4 would break every client still reading the old file, including any
+tab that has not reloaded.
 
 **Confirm in production before anything tightens:**
 - an owner enrolls the counter iPad and both kiosk devices
@@ -1171,10 +1482,8 @@ clearing the cost caches on sign-out, kiosk entry and expiry.
 - a real customer upload appears in the queue, is downloaded, is completed
 - Job History downloads a file; a job saves with attachments
 - a quote emails to the store
-- kiosk entry and exit
-- the app still prices correctly **with Supabase unreachable** — the
-  `/pricing.json` fallback path, now cost-free, must degrade to "no margin"
-  rather than to "no prices"
+- kiosk entry and exit, including the queued-order handover (rows 22b–22d)
+- the app still prices correctly **with Supabase unreachable**
 
 ### Step 4a — Authenticate the five retained functions (NEW)
 
@@ -1204,8 +1513,17 @@ The cost work gets its own additive → confirm → close cycle, because C1–C5
 Additive only; nothing is removed yet:
 
 1. Publish `pricing_version` with every price book.
-2. Deploy `pricing-costs` (staff-authenticated) returning cost fields, markup
-   factors and thresholds.
+2. Deploy `pricing-costs` — **manager or owner only, never ordinary staff**.
+   Revision 2 called it "staff-authenticated" here while Part 6.2 said costs
+   reach "the server and authenticated managers/owners". Those contradict, and
+   an ordinary staff session is **precisely** a caller that must not receive
+   costs: margin is manager-gated on every other surface (Part 4), so a
+   cost endpoint open to all staff would hand back the inputs the UI refuses
+   to show them. `pricing-costs` requires `role = 'manager'` on the session,
+   or an owner/manager Auth JWT. Returns cost fields, markup factors and
+   thresholds.
+   Alongside it, `pricing-public` — **no credential required** — returns
+   selling prices and presets only. Two endpoints, two audiences, no overlap.
 3. Ship a `/pricing.json` that **still carries costs**, plus the new cost-free
    `/pricing-public.json`. Both served; the client reads the public one and
    fetches costs separately when it holds a session.
@@ -1286,20 +1604,44 @@ for a reopened hole, which is the worst square of the matrix.
    columns.** A policy cannot hide a column from a role that has `SELECT` on
    the table. Two mechanisms actually exist, and one must be chosen:
 
-   - **Column privileges.** `revoke select on public.stores from anon,
-     authenticated;` then `grant select (id, slug, name, address, phone, logo_url,
-     …) on public.stores to anon, authenticated;` — the table-level grant must
-     come **off** first, or the column grants add nothing (privileges are
-     additive, so a table-level `SELECT` already covers every column). The
-     row policy `stores_read` stays and keeps doing its own job.
-   - **A projection with the base table closed.** A view (or security-invoker
-     view plus a policy) exposing only the public columns, with `SELECT`
-     revoked on `public.stores` entirely.
+   - **Column privileges with explicit selects.** `revoke select on
+     public.stores from anon, authenticated;` then `grant select (id, slug,
+     name, address, phone, logo_url, …) on public.stores to anon,
+     authenticated;` — the table-level grant must come **off** first, or the
+     column grants add nothing (privileges are additive, so a table-level
+     `SELECT` already covers every column). The row policy `stores_read`
+     stays and keeps doing its own job.
+   - **A controlled projection with direct access closed.** A view over the
+     public columns, `SELECT` revoked on the base table entirely, and the view
+     owned by a role that retains base access.
 
-   Either works; **what does not work is leaving the table grant in place.**
-   The same choice applies to the cost columns on `sheet_prices` (C1 in Part
-   6.2) — and closing C1 is only meaningful once C2, the deployed
-   `/pricing.json`, has been split in step 4.
+   **A security-invoker view is NOT one of the options** — revision 2 listed
+   it and that was wrong. An invoker view checks the **caller's** privileges
+   on the base table, so the moment `SELECT on public.stores` is revoked from
+   `anon`, the view breaks for `anon` too. It gives the appearance of a
+   projection while depending on exactly the grant being removed. Either take
+   column privileges, or take a projection whose owner still holds base
+   access — not an invoker view.
+
+   **Closure is enumerated, not exemplified.** Revision 2 named `stores` and
+   `sheet_prices` and left the rest implied. Every column carrying cost,
+   markup or margin configuration:
+
+   | table | columns | why |
+   |---|---|---|
+   | `sheet_prices` | `paper_cost`, `click_color`, `click_bw`, and **every base-cost column** | the direct cost model |
+   | `paper_types` | **`markup_percent`** | cost is derivable from price ÷ markup |
+   | `settings` | **labor rate/toggle**, **margin thresholds** | labor feeds cost; thresholds reveal the store's margin policy |
+   | `outsourced_products` | any cost or trade-price column | the DB half of C4 |
+   | `stores` | `bootstrap_secret_hash` | not cost, same mechanism |
+
+   Markup is the one that looks harmless and is not: publishing the selling
+   price **and** the markup publishes the cost by division. Closing
+   `sheet_prices` while `paper_types.markup_percent` stays readable closes
+   nothing.
+
+   Closing C1 is only meaningful once C2 (the deployed `/pricing.json`) has
+   been split — see step 4b, which is where costs actually leave the file.
 6. `verify_employee_pin`: revoke EXECUTE from `anon` and `authenticated`
    (**Phase S1 lands here** — its rollback file already exists).
 7. **Excess grants, everywhere they exist — not just `public`.**
@@ -1349,23 +1691,61 @@ the anon queue read, the `job_files_anon_*` trio. A rolled-back system is
 back to the posture the 2026-09-10 audit rated critical, with the one
 difference that it is now publicly documented.
 
-So a rollback is **break-glass**: it trades a known-critical exposure for
-keeping the counter running, and it is the right trade at 9am on a Saturday
-with customers waiting. What it is not is a place to rest. Conditions:
+**Revision 3 singled out step 4e as "the only rollback that reopens access".
+That was wrong, and the correction generalises the rule.** Reverting step 4a
+restores five handlers with no authentication. Restoring any step-5 policy
+re-opens anon access to orders, the queue, print jobs or storage. Reverting
+step 4b–4d republishes costs. **Every one of those reopens something this
+release closed.** 4e is worth isolating for a different and narrower reason —
+it is the one whose *replacement* cannot be restored by redeploying a prior
+handler, since the file is gone — but it is not a category of its own.
 
-- It is an **incident**, not a deploy. Whoever pulls it says so.
-- **A rollback of step 4e is the one rollback that reopens an exposure this
-  release closed.** Restoring those files restores unauthenticated,
-  service-role-backed file signing and job deletion. It is not in the same
-  class as the other rollback files, which only restore the pre-release
-  posture. Fix forward instead. If it truly must happen: restore the file
-  returning **410 for everything except the single call the counter needs**,
-  set an expiry when you pull it, and treat it as an open incident until the
-  file is gone again. Because 4e ships alone, no other defect can force this
-  rollback — that is the whole reason for isolating it.
-- A time limit is set when it is pulled, not discovered later.
-- Stale sessions are revoked on the way back up; the rolled-back client cannot
-  be assumed to have cleaned anything.
+So the rule applies to **every** Release 2 rollback, without exception:
+
+| requirement | meaning |
+|---|---|
+| **Named decision owner** | a person, named when it is pulled, not a role in a document. They own the re-closure. |
+| **Compensating restrictions** | the exposure is narrowed by some *other* means while the rollback stands — see below |
+| **Expiry** | a date set **when it is pulled**, not discovered later. Reaching it forces a decision, not a renewal by default. |
+| **It is an incident, not a deploy** | tracked as one, closed only when the control is back |
+| **Sessions revoked on the way back up** | a rolled-back client cannot be assumed to have cleaned anything |
+
+**Compensating restrictions, by step:**
+
+- **Step 5 policy restored** → narrow it rather than restoring `USING true`
+  verbatim where a narrower predicate will keep the counter working; keep the
+  new endpoints deployed so the client can be moved back quickly.
+- **Step 4a reverted** → the five handlers lose authentication, so restore the
+  *bucket-level* limits and rate limits that do not depend on identity, and
+  shorten the capability windows.
+- **Step 4b–4d reverted** → costs are public again; treat as disclosure with a
+  fixed re-closure date.
+- **Step 4e reverted** → see below.
+
+**Recovery for 4e is an authorized path, never a permissive one.** Revision 3
+said to restore the file "returning 410 for everything except the exact call
+the counter needs". **Drop that** — it is unimplementable as security. A body,
+a path, an `Origin` header or a job id **is not identity**; "the exact call the
+counter needs" is the same call an attacker sends. It would restore the
+original hole with extra steps and a comment claiming otherwise, which is
+precisely the false-invariant failure CLAUDE.md's comment-discipline rule
+exists to prevent.
+
+The real options, in order of preference:
+
+1. **Redeploy the last known-good authenticated build.** The replacements are
+   already proven at the counter in step 4; going back to that deployment is
+   almost always the right move and reopens nothing.
+2. **An authorized compatibility alias** — the old URL restored as a thin
+   wrapper that performs `resolveStaff` and the ownership check, then delegates
+   to the replacement. It fails closed. Same permissions as its replacement,
+   just reachable at the legacy path.
+3. **A 410 tombstone is valid closure, not a placeholder.** If the concern is
+   only that something still calls the old URL, a handler that returns 410 to
+   *everyone* is a complete and safe answer. What is not valid is 410 to
+   everyone *except* a request shape.
+
+Option 1 or 2 or 3. Never "410 except the call we want to keep working".
 
 ---
 
@@ -1401,10 +1781,15 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 19 | **kiosk across tabs** | two tabs, same browser; enter kiosk in tab A; act as staff in tab B | tab B 401 — server-side revoke, not per-tab state |
 | 20 | kiosk flag removal | remove `?mode=kiosk`, retry | still 401; PIN required |
 | 21 | **cross-origin** | call every mutating endpoint from another origin | **server-side state unchanged** — asserted by reading the row back, not by observing a CORS error |
-| 22 | **credential persistence** | sign out; inspect Cache Storage, `localStorage`, cookies | no session cookie, no CSRF value, no cost keys, **no `supabase.auth` session**; sw generation bumped. Queued orders are explicitly out of scope — see row 25 |
+| 22 | **credential persistence** | sign out; inspect Cache Storage, `localStorage`, cookies | no session cookie, no CSRF value, no cost keys, **no `supabase.auth` session**; sw generation bumped. Queued orders are governed by rows 22b–22d, not by this row |
+| **22b** | **kiosk cannot read queued orders** | queue two orders offline, enter kiosk, read `localStorage` from devtools as a customer would | no plaintext customer name, contact or job detail — drained, or sealed |
+| **22c** | **sealed rows recover without the original session** | seal rows, revoke the session, wipe and re-enrol the device, sign in as a **different** employee of the same store | rows unseal and drain — recovery does not depend on the quoting employee or session |
+| **22d** | **handover is never silent** | force both drain and seal to fail, then enter kiosk | staff decision required; UI does not claim a completed handover; rows survive |
 | 23 | token in a URL | session token as a query param | rejected by the server |
 | 24 | **duplicate order retries** | same `orders-save` idempotency key twice, concurrently | exactly one row |
 | 25 | **offline drain after revoke** | queue offline, revoke session, reconnect, sign in again | rows **survive and drain**; never silently dropped |
+| **25b** | **cross-store drain refused** | queue on a device enrolled to T1; re-enrol that device to T2; reconnect | rows do **not** drain into T2; they stay queued against T1 and surface as such |
+| **25c** | **original attribution preserved** | queue as employee A; drain while employee B is signed in | order records **A** as the quoting employee; if A is no longer valid it saves **flagged**, never silently reassigned to B |
 | 26 | upload quota, concurrent | 15 parallel `start-upload` against `max_files = 10` | at most 10 succeed — atomic reservation, not read-then-increment |
 | 26b | declared vs actual size | declare 1 byte, upload 40 MB | rejected at registration against the real object size |
 | 27 | **register-job path forgery** | register a path this capability never minted | 403 — `upload_capability_files` is the authority |
@@ -1416,7 +1801,12 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 31 | **Realtime after closure** | subscribe to `pending_jobs`, both roles | no rows delivered, **including DELETE events** — deletes are the documented narrower case, so they are asserted explicitly |
 | 32 | TRUNCATE after revoke | `TRUNCATE orders`, `storage.objects`, `storage.buckets` as anon | permission denied (staging only) |
 | 33 | bootstrap hash | `select bootstrap_secret_hash from stores` as anon **and authenticated** | column absent or denied |
-| 33b | **cost closure, every path** | as anon: `sheet_prices` cost columns; `GET /pricing.json`; the built JS bundle grepped for known wholesale values; a fresh kiosk's `localStorage` | no cost, markup or threshold value reachable by any of the four |
+| **33b** | **cost closure, every path** | as anon: `sheet_prices` cost columns, **`paper_types.markup_percent`**, **`settings` labor + thresholds**, **`outsourced_products` cost columns**; `GET /pricing.json`; the built JS bundle grepped for known wholesale values; a fresh kiosk's `localStorage` | no cost, markup or threshold value reachable by any path |
+| **33b-i** | **`pricing-costs` refuses ordinary staff** | call it with a valid `role='staff'` session | **403** — the row revision 2 would have failed |
+| **33b-ii** | `pricing-costs` refuses device-only and upload capability | each in turn | 401/403 |
+| **33b-iii** | `pricing-costs` refuses an unrelated authenticated user | a valid Supabase Auth user with no membership at this store | 403 — authentication is not membership |
+| **33b-iv** | `pricing-costs` allows manager and owner | PIN manager; Auth manager; Auth owner | 200, cost fields present |
+| **33b-v** | **`pricing-public` leaks nothing** | fetch with no credential; diff the response against the cost column list | selling prices and presets only; **no markup factor** — price ÷ markup would recover cost |
 | 33c | **cost snapshot integrity** | `orders-save` with `cost_subtotal: 0, margin_pct: 99` in the body | stored values are the **server's**, not the body's |
 | 33d | pricing version ageing | queue offline, publish new prices, drain | margin reflects the **quoted** version; if unavailable, saves with null margin and a reason — never rejected |
 | **37** | **legacy URL, no identity** | `POST /.netlify/functions/get-download-url` and `complete-job` with a **previously harvested** path and id, no cookies, from outside the app | **404** (file deleted). This is the row that proves step 4e, and harvested identifiers are the point |
@@ -1435,6 +1825,16 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 50 | idle is refreshed by work | download a file every 30 min for 3 h | session stays alive until the 12 h absolute limit |
 | 51 | **inconsistent session row** | attempt to write a session whose enrollment, employee and store disagree | rejected by the composite FKs; resolver also fails closed and logs |
 | 52 | **ticket atomicity under injected failure** | fail the enrollment insert mid-transaction | ticket **not** consumed, no orphan enrollment, no credential returned |
+| **53** | **CSRF survives reload** | sign in, reload the tab, immediately save an order | succeeds — `csrf-bootstrap` re-supplied the token; no re-login |
+| **54** | **bootstrap is not cacheable and leaks nothing** | call it twice; inspect headers, sw cache, response body | `no-store`, `Vary: Cookie`, absent from Cache Storage, token only — no session content |
+| **55** | **CSRF compared after resolution** | valid cookie + wrong CSRF; unknown cookie + any CSRF | both rejected with an **identical** status, body and shape |
+| **56** | **same-site sibling is refused** | request from a sibling origin on the same registrable domain, cookie attached by the browser | rejected by the CSRF token and the `Origin` allowlist; **server state unchanged** |
+| **57** | **PIN budget counts unresolvable guesses** | 200 wrong PINs matching no employee, spread across two enrolled devices | every attempt charged to the enrollment **and** the store; graduated delay then lockout; owner alerted |
+| **58** | **quota bypass via tiny declarations** | 10 × 1-byte reservations, then upload 10 × 500 MB, **never register** | the **bucket** rejects the oversized objects; reservations bound at the per-file cap |
+| **59** | **issued URL outlives the row** | mint a URL, revoke the capability, upload 45 min later | the upload may still land (2 h token) — **but** registration refuses, and the object is swept by row 60 |
+| **60** | **orphan sweep** | upload without registering; run the sweep | object deleted after the grace period; counts reported. Today nothing walks it |
+| **61** | **no "410 except the one call"** | review the 4e recovery path | recovery is a known-good authenticated build, an authorized alias enforcing the replacement's checks, or a 410 to **everyone** |
+| **62** | **scheduled function is scheduled** | deployed classification of `cleanup-stale-jobs`; last successful run | classified scheduled **and** running; HTTP invocation refused (row 41) |
 | 34 | **successful counter flow** | enroll → PIN → quote → save → queue → download → complete | all succeed |
 | 35 | **successful customer flow** | QR → capability → upload → register → appears in T1 queue only | succeeds; T2 never sees it |
 | 36 | successful owner flow | Auth sign-in → enroll a device → revoke it → pricing publish | succeeds |
@@ -1490,11 +1890,55 @@ customer data" — and names the queue as the known, deliberate exception.
   surfaces in the UI. No path deletes a queued order without saving it or
   telling someone.
 
-The alternative — encrypting the queue under the session key — was considered
-and rejected: it makes the data unrecoverable exactly when recovery matters
-(revoked session, wiped device, employee gone), which trades a real
-availability loss for a marginal confidentiality gain on a device the store
-already controls physically.
+**Revision 2 stopped one step short here, and the gap is real.** It rejected
+*one* encryption design — a key derived from the live session — on the correct
+grounds that it destroys the data exactly when recovery matters. It then
+treated that as settling the question. It does not. Rejecting one design does
+not rule out every recoverable protection, and "the store controls the device
+physically" is **not** privacy closure when the device in question is a
+**kiosk a customer is standing at**. Plaintext order rows — customer name,
+contact, job details — readable from devtools on a customer-facing tab is a
+disclosure, not an accepted trade.
+
+### The contract: drain-before-handover, with a recoverable fallback
+
+Two mechanisms, because neither alone covers both failure modes:
+
+**(a) Drain before handover is the primary path.** Kiosk entry and sign-out
+are *deliberate* handovers. Before either completes, the client attempts to
+drain the queue. If it drains, there is nothing at rest to protect and the
+problem is gone rather than mitigated.
+
+**(b) When it cannot drain — offline, revoked, server down — the rows are
+sealed, not dropped.** Sealed under a **store-scoped key held server-side**,
+not a session key:
+
+- The key belongs to the **store**, fetched at enrollment and cached with the
+  device enrollment. Any staff member of that store can unseal, on any
+  enrolled device.
+- So recovery survives exactly the cases that killed the rejected design: the
+  quoting employee is gone, the session was revoked, the device was wiped and
+  re-enrolled.
+- A customer at the kiosk cannot unseal, because the key is not in the page's
+  reach once kiosk mode is entered — it is cleared with the other credentials.
+- **If the key cannot be retrieved, the rows stay sealed and visible as
+  "pending recovery" — never discarded, never silently dropped.** Losing the
+  order is still the one outcome ruled out.
+
+**(c) Explicit staff resolution before handover is the escape hatch.** If
+neither drain nor seal succeeds, kiosk entry **shows the blocked rows and
+requires a staff decision** — drain now, hold, or acknowledge. The UI does not
+silently proceed into a customer-facing mode with plaintext orders behind it,
+and it does not claim a handover that did not complete (the same honesty rule
+as the offline-revocation case in Part 3.1).
+
+**What this does not claim.** Sealed-at-rest on a device an attacker fully
+controls is a real but bounded control: someone with the device *and* a valid
+store credential can unseal, by design, because that is what makes recovery
+work. It closes the casual-read case — a customer at the kiosk, a passer-by
+with devtools — which is the realistic threat at a retail counter. It does not
+resist forensic extraction with a live credential, and nothing that preserves
+recoverability could.
 
 ---
 
@@ -1529,7 +1973,12 @@ pending file for those rows; it has never been exercised against real data.
   mail sink (Part 1.3 item 6) is a different requirement and is already in
   scope there.
 - **S3 password recovery** is independent and still open.
-- **PDF.js 4.2.67+** remains a mitigation, not a fix.
+- **PDF.js 4.2.67+** — the *upgrade* is the fix and is out of scope here; what
+  is deployed today is the **mitigation** (`isEvalSupported: false`,
+  `enableXfa: false` via `src/lib/pdfSafe.js`, Release 1). Revision 2 had this
+  backwards, calling the upgrade "a mitigation, not a fix". Stated correctly:
+  the mitigation is live, the fix is pending, and the version pin remains
+  3.11.174 inside the CVE-2024-4367 window.
 - **A separate origin for `/upload`.** The residual same-origin risk is
   recorded in Part 3.1 rather than implied away.
 
