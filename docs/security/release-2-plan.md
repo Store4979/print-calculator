@@ -78,6 +78,45 @@ here. This plan works out the schema, contract, order and tests for it.
 > deployed PDF.js *setting* is the mitigation, the upgrade is the fix; and
 > Part 0.6 overgeneralised SELECT closure, since DELETE events are the
 > documented narrower case.
+>
+> **Revision 5 — 2026-09-12.** Four bounded patches on `4069336`.
+> Architecture unchanged. **None of these is a live production bug** — every
+> one is a defect in a *proposed* contract that has not been built, which is
+> what reviewing a plan before implementing it is for.
+>
+> 15. **The upload quota was still bypassable.** `min(declared, cap)` trusted
+>     the declaration while only the per-file cap was enforced: ten 1-byte
+>     declarations reserve 10 bytes but permit ten 10 MiB uploads against a
+>     50 MiB budget, every file legal, registration never called. Now the
+>     **full effective per-file cap** is charged per issued URL, issuance is
+>     refused atomically over the total, and reservation release is defined
+>     against the two-hour permission.
+> 16. **`csrf-bootstrap` must not rotate.** Rotating on a shared row meant tab
+>     B's reload broke tab A's next save — and "read-only GET that rotates" is
+>     self-contradictory. It now returns the existing token; rotation follows
+>     the credential lifecycle. The claim that exposing "only" a CSRF token is
+>     harmless is **withdrawn** — that token is the defense.
+> 17. **Recovery-key authorization is now specified**, and the key is
+>     **asymmetric**: a cached public key seals (so offline sealing works with
+>     no secret), a server-held private key unseals and is released only to a
+>     current same-store staff session. Device-only, upload-capability, kiosk
+>     and anonymous contexts cannot decrypt. Every cached copy is enumerated.
+> 18. **Steps 4a and 4e carry one current instruction.** Their superseded
+>     claims ("nothing reopened", "the only reopening rollback") are gone from
+>     the execution sections and live in Part R. Every rollback build must
+>     also pass the legacy-route inventory.
+>
+> Also: **"no cookie ⇒ no CSRF surface" was too absolute.** `enroll-redeem`
+> and `upload-capability-create` respond with `Set-Cookie`, so a cross-site
+> POST can **install** the attacker's credential in a victim's browser. Both
+> now carry explicit trusted-origin and content-type contracts.
+>
+> Further corrections: **`netlify.app` is on the Public Suffix List**, so my
+> `evil.netlify.app` example was cross-site and `SameSite=Strict` does block
+> it — the mechanism still matters for custom domains, and the corrected
+> example uses sibling hosts under `example.com`. And "permanently orphaned"
+> overstated it: unregistered objects are unreachable by the **scheduled
+> sweep**, but manual cleanup can reach them.
 
 ---
 
@@ -121,6 +160,32 @@ review round appends here.
 | ✎ | Six HTTP handlers + one scheduled; verify classification and a run | 0.7 "The count is six" | **41**, **62** |
 | ✎ | PDF.js: the *deployed setting* is the mitigation | 10 | — |
 | ✎ | 0.6 overgeneralised SELECT closure (DELETE events) | 0.6 "One narrower point" | **31** |
+
+## Round 4 (review of `4069336`) — four bounded patches
+
+| # | Review item | Section | Test |
+|---|---|---|---|
+| 1 | `min(declared, cap)` still bypassable — sum exceeds budget, all files legal | 2.4 items 1–4 + reservation SQL | **58b** |
+| 1 | Charge the full effective per-file cap per issued URL | 2.4 item 1 | **58**, **58b** |
+| 1 | Refuse issuance atomically over the total | 2.4 item 2 | **58c** |
+| 1 | Reservation release + orphan cleanup vs 2 h permissions | 2.4 "Reservation release" | **58d**, **60** |
+| 2 | Bootstrap rotated other tabs' tokens | 3.1 bootstrap bullet 2 | **53b**, **53c** |
+| 2 | A read-only GET must not mutate | same | **53c** |
+| 2 | Rotate with the credential lifecycle | 3.1 bullet 3 | **53d** |
+| 2 | Keep bootstrap passive for idle | 3.1 bullet 5 | **53e** |
+| 2 | Withdraw "only a CSRF token is harmless" | 3.1 final bullet | **54b**, **54c** |
+| 3 | Recovery-key authorization undefined | 8 → asymmetric key + authority table | **63** |
+| 3 | Device-only / public cannot decrypt | authority table | **63** |
+| 3 | Enumerate cached copies and tab teardown | "Every cached copy" table | **64** |
+| 3 | Offline sealing must still work | public/private split | **66** |
+| 3 | Recovery by a newly authenticated employee | authority table | **65** |
+| 3 | Row 22c conflated credential clearing with a data wipe | 8 rows 22c, 22c-i | **22c**, **22c-i** |
+| 4 | 4a/4e carried superseded instructions | 7 steps 4a, 4e | — |
+| 4 | Rollback build must pass the route inventory | 7 Rollback | **40** |
+| ✎ | "No cookie ⇒ no CSRF surface" too absolute for credential installers | 3.1 "these two install credentials" | **67** |
+| ✎ | `netlify.app` is on the PSL — my sibling example was wrong | 3.1 opening | **56** |
+| ✎ | CSRF issue is a proposed-contract defect, not a deployed bug | revision note | — |
+| ✎ | "Permanently orphaned" overstated — unreachable by the sweep | 2.4 | **60** |
 
 ## Rounds 1–2
 
@@ -704,21 +769,79 @@ call `register-job`. Every check revision 2 specified lives in a code path the
 attacker simply does not enter. The bucket fills, the storage bill grows, and
 nothing was violated on paper.
 
-Three changes, so the bound is enforced where the bytes actually arrive:
+**`min(declared, per_file_cap)` is still bypassable, and revision 4 was wrong
+to think it closed this.** The reservation trusted the declaration while the
+only thing actually enforced at upload time was the *per-file* cap. So with a
+10 MiB per-file cap and a 50 MiB total budget:
 
-1. **Reserve the bytes actually permitted, not the bytes declared.** A
-   reservation costs `min(declared, per_file_cap)` — and if the client declines
-   to declare, it costs the **full per-file cap**. A one-byte declaration buys
-   one byte of headroom, not a free pass.
-2. **Bound the upload at upload time, not at registration.** The bucket
-   carries a **file size limit and a MIME allowlist** (step 5.8 already does
-   this for `customer-uploads`, which today has neither — Part 0.5). The
-   Storage service then rejects the oversized object itself, in the path the
-   attacker *must* enter. This is the control that does not depend on the
-   attacker being cooperative.
-3. **Reconcile at registration as well**, since a within-cap lie still needs
-   catching: `register-job` reads the object's **actual** size and MIME and
-   settles the reservation against them.
+| step | reserved | actually uploadable |
+|---|---|---|
+| 10 × declare 1 byte | 10 bytes | — |
+| 10 × upload 10 MiB | — | **100 MiB** |
+| register | never called | — |
+
+Every upload is individually legal, the total budget is exceeded twice over,
+and no check is violated. The declaration was load-bearing and unverified.
+
+Four changes, so the bound holds against a caller who never cooperates:
+
+1. **Charge the full effective per-file limit for every issued URL** — not the
+   declared size. The effective limit is `min(capability.per_file_cap,
+   bucket.file_size_limit)`, i.e. the largest upload that URL could actually
+   complete. A declaration buys nothing, because a declaration is not a
+   constraint.
+   The **only** exception: if the upload path itself enforces the smaller
+   reserved size, the smaller number may be charged — because then the
+   declaration *is* a constraint. Supabase's bucket limit is per bucket, not
+   per signed URL, so **today that exception does not apply** and the full cap
+   is always charged. Written as a condition rather than an assumption so a
+   future per-URL limit can be adopted deliberately.
+2. **Refuse issuance atomically when the reservation would exceed the total.**
+   The check and the increment are the same statement (below), so N concurrent
+   `start-upload` calls cannot each see room for themselves. With a 50 MiB
+   budget and a 10 MiB effective cap, the 6th request is refused — the total
+   is bounded at issuance, before any byte moves.
+3. **Bound the upload at upload time.** The bucket carries a file size limit
+   and a MIME allowlist (step 5.8; `customer-uploads` has neither today —
+   Part 0.5). This is what makes the charged cap *the* cap rather than an
+   estimate.
+4. **Reconcile at registration** for the cooperative path, so a caller who
+   does register gets their unused reservation back (below).
+
+```sql
+-- Charge the full effective cap. Atomic: check and increment together.
+update public.upload_capabilities
+   set used_files = used_files + 1,
+       used_bytes = used_bytes + $2          -- $2 = effective per-file cap
+ where id = $1 and revoked_at is null and consumed_at is null
+   and expires_at > now()
+   and used_files + 1 <= max_files
+   and used_bytes + $2 <= max_bytes
+returning id;
+```
+
+### Reservation release, against a two-hour permission
+
+A reservation cannot be released just because our row expired — the issued URL
+still works for its own two hours (below). Release happens on exactly three
+events, and never before:
+
+| event | release |
+|---|---|
+| **registration** | reconcile to the object's **actual** size; return the difference |
+| **token expiry + object absent** | the URL can no longer be used and nothing was uploaded; release in full |
+| **sweep deletes an orphan** | object existed but was never registered; release on deletion |
+
+So the worst case for a hostile caller is that the budget stays fully consumed
+for the token's lifetime — which is the correct outcome, not a leak: they
+consumed issuance capacity and got nothing registered. The worst case for an
+honest customer is a reservation held until they finish or the token lapses.
+That argues for a **short capability window and a small `max_files`**, not for
+trusting declarations.
+
+`upload_capability_files` records the effective cap charged and the token's
+expiry per path, which is what makes all three release conditions decidable
+server-side rather than inferred.
 
 **Registration verifies the object exists.** A recorded path is a claim that a
 URL was minted, not that anything was uploaded. `register-job` confirms each
@@ -743,11 +866,17 @@ Consequences carried explicitly:
   through a stale URL cannot be turned into a queue row.
 
 **Issued-but-unregistered objects must be swept, and today nothing sweeps
-them.** `cleanup-stale-jobs` iterates `pending_jobs` rows and removes the paths
-those rows list (`cleanup-stale-jobs.js:25-32`). An object uploaded but never
-registered **has no `pending_jobs` row**, so it is never walked — it is
-orphaned in the bucket permanently. That is both the storage-exhaustion tail of
-the quota bypass and a pile of customer files nobody is tracking or deleting.
+them automatically.** `cleanup-stale-jobs` iterates `pending_jobs` rows and
+removes the paths those rows list (`cleanup-stale-jobs.js:25-32`). An object
+uploaded but never registered **has no `pending_jobs` row**, so the scheduled
+sweep can never reach it.
+
+*Precision, correcting revision 4:* such an object is **unreachable by the
+automated sweep**, not "permanently orphaned". An owner or service-role caller
+can list the bucket and delete it by hand. What is missing is any automatic or
+routine process that does so — nobody is watching, so in practice it
+accumulates until someone thinks to look. That is the storage-exhaustion tail
+of the quota bypass and a pile of customer files with no lifecycle.
 
 The sweep therefore walks **the bucket**, not the queue: any object in
 `customer-uploads` with no referencing `pending_jobs` row and older than the
@@ -964,16 +1093,23 @@ Set-Cookie: __Host-pc_staff=<opaque>; HttpOnly; Secure; SameSite=Strict;
   names are what keep the three kinds distinct** at the transport layer, before
   a resolver is even chosen.
 
-**`SameSite=Strict` is not an origin boundary — correcting the claim above.**
-Revision 2 implied `SameSite` makes cross-origin requests cookieless, full
-stop. It does not. `SameSite` is **same-*site***, computed on the registrable
-domain: a sibling subdomain on the same site **is** same-site, so a request
-from `evil.netlify.app` to `printcalculator2.netlify.app` still carries the
-cookie under `Strict`. On a shared apex like `netlify.app` that is not
-theoretical. It also has legacy and embedded-webview gaps, and one of these
-devices is a counter iPad. So `SameSite` is **one weak layer**, never the
-gate, and the `__Host-` prefix (which stops a sibling *setting* our cookie)
-does not stop a sibling *sending* a request that carries it.
+**`SameSite=Strict` is not an origin boundary — but my example of why was
+wrong.** Revision 2 implied `SameSite` makes cross-origin requests cookieless,
+full stop; it does not. `SameSite` is **same-*site***, computed on the
+registrable domain **plus the Public Suffix List**, so sibling *hosts under one
+registrable domain* are same-site: `a.example.com` → `b.example.com` carries
+the cookie under `Strict`.
+
+**Correction:** revision 4 used `evil.netlify.app` → `printcalculator2.netlify.app`
+as that example. **`netlify.app` is on the Public Suffix List** (verified), so
+those two are **cross-site**, and `SameSite=Strict` does block that case
+today. The mechanism still needs stating — a custom domain, or any future host
+sharing one registrable domain with this app, reintroduces it, and `SameSite`
+additionally has legacy and embedded-webview gaps on a counter iPad. So
+`SameSite` remains **one weak layer, never the gate**, and `__Host-` (which
+stops a sibling *setting* our cookie) would not stop a same-site sibling
+*sending* a request that carries it. The conclusion is unchanged; the worked
+example was wrong and is corrected rather than quietly dropped.
 
 **Cookies therefore re-introduce CSRF**, which a bearer header did not have.
 That is the trade, and it is paid explicitly.
@@ -994,13 +1130,44 @@ bind to.
 | **public upload** | `__Host-pc_upload` | `X-PC-CSRF` vs the secret on the **capability** row | after minting |
 | **`upload-capability-create`** | none yet | **no cookie, so no CSRF surface**; rate-limited and mints only a constrained capability | **yes** |
 
-The pattern: **a credential that must be presented explicitly cannot be
-CSRF'd**, because the browser will not attach it on the attacker's behalf. So
-the two pre-session flows need no CSRF token — they need rate limiting, which
-they have (Part 2.6). Every class that rides an **ambient cookie** carries a
-token bound to the row that cookie names. The owner class is the one to watch
-as Phase S evolves: **if Supabase Auth is ever moved to cookie storage, it
-acquires a CSRF surface it does not have today** and needs a row to bind to.
+The pattern: a credential the browser will not attach on the attacker's
+behalf cannot be *stolen* by CSRF. Every class riding an **ambient cookie**
+carries a token bound to the row that cookie names. The owner class is the one
+to watch as Phase S evolves: **if Supabase Auth is ever moved to cookie
+storage, it acquires a CSRF surface it does not have today.**
+
+### "No cookie means no CSRF surface" is too absolute — these two install credentials
+
+The table says the two pre-session flows have no CSRF surface. That is right
+about *theft* and wrong about *installation*, and revision 4 stated it too
+broadly. `enroll-redeem` and `upload-capability-create` both **respond with
+`Set-Cookie`**. A cross-site POST to either still reaches the handler — no
+cookie needed, since they require none — and the response installs a
+credential **in the victim's browser**:
+
+- **`upload-capability-create`**: the attacker's capability lands in a
+  customer's browser, so the customer's next upload is minted against the
+  attacker's capability. Their file goes to the attacker's queue row, at the
+  attacker's store slug. A customer-file disclosure with no server compromise.
+- **`enroll-redeem`**: the attacker's ticket is redeemed in a staff member's
+  browser, so that browser becomes enrolled to a store the attacker controls
+  — classic session fixation, one step earlier in the chain.
+
+Neither is prevented by rate limiting, which was revision 4's only answer.
+So both get an explicit trusted-origin and content contract:
+
+| control | why |
+|---|---|
+| **`Origin` / `Sec-Fetch-Site` allowlist**, same as every mutating endpoint | a cross-site POST is refused before anything is minted |
+| **`Content-Type: application/json` required**, and enforced | blocks the form-POST shape that needs no preflight; a JSON body forces a preflight the allowlist then fails |
+| **Never `Set-Cookie` on a request that failed the origin check** | the credential install is the payload, so it must not happen |
+| **Confirmed intent for `enroll-redeem`** — an owner-initiated flow in a page that already has a session, not a bare link | a link a staff member clicks is exactly the attack |
+| Rate limits (Part 2.6) | still needed, now not the only control |
+
+The general rule this replaces the old one with: **an endpoint that installs a
+credential is state-changing even when it requires none**, and takes the same
+origin discipline as any mutation. "No cookie in, no CSRF" only ever applied to
+the credential going *in*.
 
 ### Order of operations — resolve, then compare
 
@@ -1022,15 +1189,36 @@ mutate anything. Revision 2 did not address this, which would have surfaced as
 
 `GET /.netlify/functions/csrf-bootstrap`:
 
-- Resolves the credential from the cookie; returns the token for **that** row.
-- **Safe**: read-only, no state change, so its own CSRF exposure is nil.
-- **Never cacheable**: `Cache-Control: no-store`, `Vary: Cookie`, and it is
-  already covered by `sw.js` GATE 1 (`/.netlify/` is sensitive, never cached).
-- Returns **no** session content — only the token — so a cross-origin read
-  attempt gains nothing even if a misconfiguration let one through.
-- Rotates the token on issue, so a token read by an earlier XSS does not
-  outlive the reload.
+- Resolves the credential from the cookie; **returns the existing token** for
+  that row.
+- **Genuinely read-only.** Revision 4 had it rotate the token on issue, which
+  was wrong twice over. *Correctness:* the token lives on the shared
+  credential row, so tab B bootstrapping rotates the value tab A is holding,
+  and A's next save fails with a perfectly valid session — a self-inflicted
+  outage on any multi-tab counter, which is the normal case here.
+  *Coherence:* it was described as "read-only, no state change" in the same
+  breath as "rotates the token on issue". A safe GET that mutates shared state
+  is not a safe GET. It now mutates nothing.
+- **Rotation follows the credential lifecycle, not the transport.** The token
+  is minted with the row and replaced only when the row's authority changes:
+  `staff-login` (including the rotation on PIN switch), explicit logout,
+  revocation, re-enrolment. Those are the moments a stale token *should* stop
+  working, and every tab is already invalidated by them.
+- **Never cacheable**: `Cache-Control: no-store`, `Vary: Cookie`, and already
+  covered by `sw.js` GATE 1 (`/.netlify/` is sensitive, never cached).
+- **Passive for idle expiry** (Part 5): bootstrap does not touch
+  `last_active_at`. A reloaded-but-unused tab must not hold a session open —
+  otherwise an auto-refreshing display defeats the idle clock exactly as
+  polling would have.
 - Called on load and on new-tab open, before the first mutation.
+- **The token it returns is the defense, so the endpoint is protected like
+  one.** Revision 4 said returning "only a CSRF token" made a cross-origin
+  read harmless — **that claim is withdrawn.** Anything that can read this
+  response can forge every state-changing request for that credential; it is
+  the whole control, not a low-value detail. So: strict `Origin`/`Sec-Fetch-Site`
+  allowlist on the endpoint itself, no permissive CORS header, no JSONP-shaped
+  callback, and it is never embeddable. A cross-origin read must fail, not
+  merely return something dull.
 
 **Never in a URL.** No token, session or CSRF, ever appears in a query string
 or path — they land in access logs, `Referer` headers and browser history.
@@ -1493,15 +1681,18 @@ would be shut while `get-download-url` still signs any path it is handed.
 
 Add `resolveUpload` to `start-upload`, `register-job`, `fetch-link-job`; add
 `resolveStaff` to `send-print-job`; add the non-schedule guard to
-`cleanup-stale-jobs`. Deploy. **Nothing is removed in this step.**
+`cleanup-stale-jobs`. Deploy. Nothing is deleted in this step.
 
 **Confirm in production:** a real customer upload still completes end to end;
 a quote still emails; the hourly cleanup still runs. Then probe each of the
 five directly, independent of the UI — Part 8 rows 38 and 39 — under no
 identity and under a *wrong-kind* identity.
 
-Rollback here is a redeploy of the previous handler, which returns the system
-to exactly today's posture: no worse, and nothing reopened that was closed.
+**Rollback:** reverting this step **strips authentication from five
+service-role handlers**. It is a reopening rollback like every other step in
+this release, and it takes the full Rollback contract below — compensating
+restrictions, a named owner, an expiry — plus a re-run of the legacy-route
+inventory (row 40) on the rolled-back build.
 
 ### Step 4b — Cost transition, additive (NEW)
 
@@ -1558,12 +1749,13 @@ retire it for `/pricing-public.json`), and close C1 in step 5.5 below.
 
 ### Step 4e — Delete the two originals. Alone, and last. (NEW)
 
-**This is the only operation in Release 2 whose rollback reopens an
-unauthenticated privileged endpoint.** Every other step rolls back to
-no-worse-than-today; restoring `get-download-url.js` restores a handler that
-signs any `customer-uploads` path a caller names, holding the service-role
-key. That asymmetry is why it ships alone, after everything else in the
-4-series is confirmed, and immediately before step 5.
+**Why this step ships alone:** its replacement cannot be restored by
+redeploying a prior handler, because the file is gone. Every other step in
+this release can be reverted to a previous deployment; this one cannot, so it
+carries no other change and no unrelated defect can force its rollback.
+(It is **not** the only reopening rollback — see the Rollback contract below,
+which applies to every step. Revision 3 claimed otherwise; that history is in
+Part R.)
 
 1. Nothing else in this deploy. No client change, no other function, no
    migration. If anything else is pending, it waits.
@@ -1720,7 +1912,14 @@ So the rule applies to **every** Release 2 rollback, without exception:
   shorten the capability windows.
 - **Step 4b–4d reverted** → costs are public again; treat as disclosure with a
   fixed re-closure date.
-- **Step 4e reverted** → see below.
+- **Step 4e reverted** → recovery is options 1–3 below, never a request-shape
+  exception.
+
+**Every rollback build must also pass the legacy-route inventory (row 40)
+before it is considered stable.** Authenticated replacements being present
+does **not** establish that the anonymous originals are absent — a revert can
+restore a file without anyone noticing, and a rolled-back build is exactly
+when that happens. Inventory the deployed functions, do not infer them.
 
 **Recovery for 4e is an authorized path, never a permissive one.** Revision 3
 said to restore the file "returning 410 for everything except the exact call
@@ -1783,7 +1982,12 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 21 | **cross-origin** | call every mutating endpoint from another origin | **server-side state unchanged** — asserted by reading the row back, not by observing a CORS error |
 | 22 | **credential persistence** | sign out; inspect Cache Storage, `localStorage`, cookies | no session cookie, no CSRF value, no cost keys, **no `supabase.auth` session**; sw generation bumped. Queued orders are governed by rows 22b–22d, not by this row |
 | **22b** | **kiosk cannot read queued orders** | queue two orders offline, enter kiosk, read `localStorage` from devtools as a customer would | no plaintext customer name, contact or job detail — drained, or sealed |
-| **22c** | **sealed rows recover without the original session** | seal rows, revoke the session, wipe and re-enrol the device, sign in as a **different** employee of the same store | rows unseal and drain — recovery does not depend on the quoting employee or session |
+| **22c** | **sealed rows recover without the original session** | seal rows; revoke the session; **clear credentials only** (not site data); re-enrol; sign in as a **different** employee of the same store | rows unseal and drain — recovery does not depend on the quoting employee or session |
+| **22c-i** | **a full browser-data wipe destroys the ciphertext, and that is accepted** | seal rows, then clear **all** site data | rows are gone. Revision 4's "wipe and re-enrol" conflated the two: credential clearing preserves the ciphertext, wiping site data deletes it. Nothing can recover locally-sealed data whose ciphertext no longer exists — so **drain-before-handover (path a) is the primary contract** and sealing is the fallback, not the plan |
+| **63** | **device-only cannot obtain the key** | `key-fetch` with `__Host-pc_device` and no staff session; also with an upload capability | **401** both times |
+| **64** | **another tab after handover** | two tabs signed in; enter kiosk in tab A; tab B attempts to unseal, then reloads and retries | fails both times — key was memory-only and every session was revoked |
+| **65** | **recovery by a newly authenticated employee** | seal offline as A; A deactivated; B of the same store signs in on a re-enrolled device | rows unseal; order attributed to **A** per row 25c |
+| **66** | **offline sealing needs no secret** | network down, no session, kiosk already entered; queue an order | seals successfully with the cached **public** key |
 | **22d** | **handover is never silent** | force both drain and seal to fail, then enter kiosk | staff decision required; UI does not claim a completed handover; rows survive |
 | 23 | token in a URL | session token as a query param | rejected by the server |
 | 24 | **duplicate order retries** | same `orders-save` idempotency key twice, concurrently | exactly one row |
@@ -1826,11 +2030,21 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 51 | **inconsistent session row** | attempt to write a session whose enrollment, employee and store disagree | rejected by the composite FKs; resolver also fails closed and logs |
 | 52 | **ticket atomicity under injected failure** | fail the enrollment insert mid-transaction | ticket **not** consumed, no orphan enrollment, no credential returned |
 | **53** | **CSRF survives reload** | sign in, reload the tab, immediately save an order | succeeds — `csrf-bootstrap` re-supplied the token; no re-login |
-| **54** | **bootstrap is not cacheable and leaks nothing** | call it twice; inspect headers, sw cache, response body | `no-store`, `Vary: Cookie`, absent from Cache Storage, token only — no session content |
+| **53b** | **two tabs alternating saves across reloads** | tabs A and B both signed in; A saves, B reloads and saves, A saves, B saves | **all four succeed** — bootstrap did not rotate the shared token. The row revision 4 would have failed |
+| **53c** | **concurrent bootstraps** | 10 parallel `csrf-bootstrap` on one session | all return the **same** token; the row is unchanged |
+| **53d** | **rotation follows the lifecycle** | employee B signs in on A's enrollment; then A's held token is used | A's token rejected — rotation happens at `staff-login`, not at bootstrap |
+| **53e** | **bootstrap is passive** | reload a tab every 5 min for 70 min, no interaction | session **expires** on the idle clock; bootstrap did not refresh it |
+| **54** | **bootstrap is not cacheable** | call it twice; inspect headers and Cache Storage | `no-store`, `Vary: Cookie`, absent from Cache Storage |
+| **54b** | **cross-origin read of the token fails** | fetch `csrf-bootstrap` from another origin; also with a forged `Origin` | **blocked** — no permissive CORS, `Origin`/`Sec-Fetch-Site` allowlist enforced. Reading it would hand over the whole defense |
+| **54c** | **cross-origin mutation with a stolen-looking token** | attempt a mutating call from another origin | rejected; **server state unchanged** (asserted by reading back, per row 21) |
 | **55** | **CSRF compared after resolution** | valid cookie + wrong CSRF; unknown cookie + any CSRF | both rejected with an **identical** status, body and shape |
-| **56** | **same-site sibling is refused** | request from a sibling origin on the same registrable domain, cookie attached by the browser | rejected by the CSRF token and the `Origin` allowlist; **server state unchanged** |
+| **56** | **same-site sibling is refused** | sibling hosts under one registrable domain (`a.example.com` → `b.example.com` in staging, **not** `*.netlify.app`, which the PSL makes cross-site), cookie attached by the browser | rejected by the CSRF token and the `Origin` allowlist; **server state unchanged** |
+| **67** | **credential installation is refused cross-site** | cross-site POST to `upload-capability-create` and `enroll-redeem`; form-encoded and JSON | no `Set-Cookie` in either response; nothing minted; server state unchanged |
 | **57** | **PIN budget counts unresolvable guesses** | 200 wrong PINs matching no employee, spread across two enrolled devices | every attempt charged to the enrollment **and** the store; graduated delay then lockout; owner alerted |
-| **58** | **quota bypass via tiny declarations** | 10 × 1-byte reservations, then upload 10 × 500 MB, **never register** | the **bucket** rejects the oversized objects; reservations bound at the per-file cap |
+| **58** | **quota bypass via tiny declarations** | 10 × 1-byte reservations, then upload 10 × 500 MB, **never register** | the **bucket** rejects the oversized objects; reservations charged at the effective cap |
+| **58b** | **sum exceeds budget while every file is legal** | 50 MiB budget, 10 MiB effective cap; request 10 URLs declaring 1 byte each; upload 10 MiB to each; **never register** | **issuance refused at the 6th URL**; total bytes landed ≤ 50 MiB. This is the row revision 4 would have failed |
+| **58c** | **concurrent issuance cannot overshoot** | 20 parallel `start-upload` against a 5-URL budget | exactly 5 succeed — one statement checks and increments |
+| **58d** | **reservation release** | (a) register at true size; (b) let a token lapse with nothing uploaded; (c) orphan swept | budget returns in all three, and **not** before |
 | **59** | **issued URL outlives the row** | mint a URL, revoke the capability, upload 45 min later | the upload may still land (2 h token) — **but** registration refuses, and the object is swept by row 60 |
 | **60** | **orphan sweep** | upload without registering; run the sweep | object deleted after the grace period; counts reported. Today nothing walks it |
 | **61** | **no "410 except the one call"** | review the 4e recovery path | recovery is a known-good authenticated build, an authorized alias enforcing the replacement's checks, or a 410 to **everyone** |
@@ -1910,20 +2124,57 @@ drain the queue. If it drains, there is nothing at rest to protect and the
 problem is gone rather than mitigated.
 
 **(b) When it cannot drain — offline, revoked, server down — the rows are
-sealed, not dropped.** Sealed under a **store-scoped key held server-side**,
-not a session key:
+sealed, not dropped.** Revision 4 said "sealed under a store-scoped key held
+server-side" and left the authorization undefined, which is the whole
+question: *who* can unseal, and *how* does sealing still work offline if the
+key is server-side? Answering both requires the key to be **asymmetric**.
 
-- The key belongs to the **store**, fetched at enrollment and cached with the
-  device enrollment. Any staff member of that store can unseal, on any
-  enrolled device.
-- So recovery survives exactly the cases that killed the rejected design: the
-  quoting employee is gone, the session was revoked, the device was wiped and
-  re-enrolled.
-- A customer at the kiosk cannot unseal, because the key is not in the page's
-  reach once kiosk mode is entered — it is cleared with the other credentials.
-- **If the key cannot be retrieved, the rows stay sealed and visible as
-  "pending recovery" — never discarded, never silently dropped.** Losing the
-  order is still the one outcome ruled out.
+### Asymmetric, because sealing and unsealing need different authority
+
+| key | where | who holds it | used for |
+|---|---|---|---|
+| **store public key** | cached on the device at enrollment; not secret | anything running on the device | **sealing only** |
+| **store private key** | server-side, in a table with RLS on and zero policies | released only to a **current same-store staff session** | **unsealing only** |
+
+That split is what makes the contract work: **sealing needs no secret**, so it
+still works with the network down, the session revoked, or kiosk mode already
+entered. Unsealing needs authority the device cannot supply on its own.
+
+### Who can obtain decryption authority — and who explicitly cannot
+
+| context | unseal? |
+|---|---|
+| **device token only** (enrolled, nobody signed in) | **No.** Enrollment proves *which store's counter*, not *who*. The rule from Part 3.1 applies here too: a device token alone is worth nothing |
+| **public / upload capability** | **No.** Never a staff credential, in any form |
+| **kiosk mode** | **No.** Kiosk entry clears the private key and the sessions that could fetch it |
+| **anonymous page script on the origin** | **No.** No session, no fetch |
+| staff session, same store, current | **Yes** — any role; `staff` and `manager` alike, since this is recovery of the store's own work, not margin |
+| staff session, **different** store | **No** — store-scoped, and the resolver reads the store from the enrollment |
+| owner/manager via Auth | **Yes**, for administrative recovery |
+
+So `key-fetch` is a `resolveStaff` endpoint that returns **only** the private
+key for the session's own store, rate-limited and logged. A request presenting
+only `__Host-pc_device` gets 401 — which is test row 63.
+
+### Every cached copy, and how a customer-accessible tab loses it
+
+| copy | lifetime | cleared by |
+|---|---|---|
+| store **public** key, with the enrollment | long-lived, **not secret** | device revocation |
+| store **private** key, in memory after `key-fetch` | the session | logout, kiosk entry, revocation, expiry, tab close |
+| private key in `localStorage` / `sessionStorage` / IndexedDB | **never written** | n/a — it is memory-only by design |
+| decrypted row contents in memory during a drain | the drain | completion or failure |
+
+**Handover clears it in every tab, not just the active one.** Kiosk entry
+already calls `staff-session-revoke-all` for the enrollment (Part 5), so every
+tab's session dies server-side. Each tab drops the in-memory private key on
+the `BroadcastChannel` handover signal and, failing that, on its next failed
+request — and because the key was never persisted, **a reload cannot recover
+it**. A customer at the kiosk has a page that can seal and cannot unseal.
+
+**If the key cannot be retrieved, the rows stay sealed and visible as "pending
+recovery" — never discarded, never silently dropped.** Losing the order remains
+the one outcome ruled out.
 
 **(c) Explicit staff resolution before handover is the escape hatch.** If
 neither drain nor seal succeeds, kiosk entry **shows the blocked rows and
