@@ -1217,11 +1217,31 @@ the failures are what need counting.
 attempt — successful or not — is charged to subjects that exist before the PIN
 is resolved:
 
-| subject | scope | purpose |
+| subject | charged on | purpose |
 |---|---|---|
-| **enrollment** | every attempt on this device, resolved or not | the real guessing budget: 10,000 PINs are guessed *at a device* |
-| **store** | aggregate across the store's devices | catches an attacker spreading guesses across enrolled devices |
-| IP | secondary | context only, never sole grounds |
+| **enrollment** | **every** attempt on this device, resolved or not | the real guessing budget: 10,000 PINs are guessed *at a device* |
+| **store** | only attempts **ADMITTED** by the enrollment budget | catches an attacker spreading guesses across enrolled devices |
+| IP / source | pre-enrollment endpoints, where no credential exists yet | bounds probing that no per-credential subject can bound; never sole grounds elsewhere |
+
+> **CORRECTION, 2026-09-12 — "every request charges both" was wrong, and
+> implementing it literally was a denial of service.** A device already refused
+> at its own budget still spent one unit of the SHARED store allowance per
+> request, so roughly 30 requests from one locked-out device refused a SECOND
+> device's CORRECT PIN. The store budget exists to stop one attacker locking
+> out a shop, and charging it unconditionally made it the instrument.
+>
+> **The enrollment decision is made first, and a request refused there does not
+> touch the shared budget.** Rejected traffic stays observable — logged, and
+> still counted against the device's own budget — it simply cannot spend
+> someone else's allowance. Ordering is part of the design here, not an
+> implementation detail.
+>
+> Also corrected: per-**ticket** accounting cannot bound a caller who changes
+> the ticket, since every guess lands in a fresh bucket. Pre-enrollment
+> endpoints therefore carry an independent **source**-scoped bound. An IP is
+> not an identity — it is shared behind NAT and can be rotated — so it is a
+> speed bump on probing, loose enough never to touch a real storefront, and
+> never the only thing standing between a caller and an enrollment.
 
 The enrollment budget is the one that bounds brute force, because the device
 is what the attacker must come through and it cannot be rotated by them.
@@ -2309,7 +2329,8 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | **55** | **CSRF compared after resolution** | valid cookie + wrong CSRF; unknown cookie + any CSRF | both rejected with an **identical** status, body and shape |
 | **56** | **same-site sibling is refused** | sibling hosts under one registrable domain (`a.example.com` → `b.example.com` in staging, **not** `*.netlify.app`, which the PSL makes cross-site), cookie attached by the browser | rejected by the CSRF token and the `Origin` allowlist; **server state unchanged** |
 | **67** | **credential installation is refused cross-site** | cross-site POST to `upload-capability-create` and `enroll-redeem`; form-encoded and JSON | no `Set-Cookie` in either response; nothing minted; server state unchanged |
-| **57** | **PIN budget counts unresolvable guesses** | 200 wrong PINs matching no employee, spread across two enrolled devices | every attempt charged to the enrollment **and** the store; graduated delay then lockout; owner alerted |
+| **57** | **PIN budget counts unresolvable guesses** | 200 wrong PINs matching no employee, spread across two enrolled devices | every attempt charged to its **enrollment**; only ADMITTED attempts charged to the store; lockout then owner alert |
+| **57b** | **a locked device cannot lock out the shop** | device A locked out, then 50 further requests from A; device B presents a CORRECT PIN | **B succeeds.** A's refused traffic must not spend the shared store allowance — charging both unconditionally made one attacker able to deny the whole counter |
 | **58** | **quota bypass via tiny declarations** | 10 × 1-byte reservations, then upload 10 × 500 MB, **never register** | the **bucket** rejects the oversized objects; reservations charged at the effective cap |
 | **58b** | **sum exceeds budget while every file is legal** | 50 MiB budget, 10 MiB effective cap; request 10 URLs declaring 1 byte each; upload 10 MiB to each; **never register** | **issuance refused at the 6th URL**; total bytes landed ≤ 50 MiB. This is the row revision 4 would have failed |
 | **58b-i** | **cap/bucket mismatch — the `min()` bypass** | `per_file_cap` 10 MiB, **`bucket.file_size_limit` 50 MiB**, budget 50 MiB; take every URL the budget allows and upload the **bucket** maximum to each; never register | either the configuration is **refused** at creation, or reservations are charged at 50 MiB so only 1 URL is issued. **Landed bytes ≤ budget.** Revision 5 would have allowed 250 MiB against a 50 MiB budget |
