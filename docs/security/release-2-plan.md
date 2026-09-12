@@ -117,6 +117,50 @@ here. This plan works out the schema, contract, order and tests for it.
 > example uses sibling hosts under `example.com`. And "permanently orphaned"
 > overstated it: unregistered objects are unreachable by the **scheduled
 > sweep**, but manual cleanup can reach them.
+>
+> **Revision 6 — 2026-09-12.** Two blocking patches found while standing
+> staging up, plus four corrections. Architecture unchanged.
+>
+> 19. **`netlify.toml` hard-coded the production Supabase URL and anon key**,
+>     and Netlify gives TOML build variables precedence **over** dashboard
+>     variables — the file's own comment said the reverse. A staging site would
+>     have compiled its **browser** bundle against production while its
+>     **functions** talked to staging: split-brain, and worse than no isolation
+>     because every server-side check would pass. **Fixed in code, not just
+>     documented**: identity removed from `netlify.toml`, a fail-closed
+>     `scripts/check-build-env.mjs` added to the build command, the tracked
+>     `.env` production fallback covered, and the `store4979` slug default
+>     rejected on non-production builds. 15 tests; production verified
+>     unchanged.
+> 20. **The quota `min()` still contained an unenforced value.**
+>     `min(capability.per_file_cap, bucket.file_size_limit)` charges the
+>     capability cap when it is lower — but Storage enforces only the *bucket*
+>     limit, so a 10 MiB cap against a 50 MiB bucket lets five URLs upload
+>     250 MiB against a 50 MiB budget. Now: charge the **enforced** ceiling, or
+>     refuse a configuration where the bucket limit exceeds the intended
+>     per-file size.
+> 21. **`MAINTAIN` (`m`) added to the step-5.7 revoke list** — the default ACL
+>     is `arwdDxtm` and revision 5 named only TRUNCATE, REFERENCES and TRIGGER,
+>     so `m` would have survived a revoke that looked exhaustive. Defaults and
+>     existing objects are now inventoried **separately**, since a table created
+>     before a defaults change is invisible to a defaults-only audit.
+> 22. **Recovery: decryption moves server-side.** Revision 5 delivered the
+>     private key into browser memory and relied on a `BroadcastChannel`
+>     message to erase it — but delivery is unacknowledged, a discarded and
+>     restored tab may never receive it, and "cleared on the next failed
+>     request" requires a next request. Server-side revocation cannot erase a
+>     delivered copy. `queue-unseal` now decrypts server-side under a live
+>     session, so there is no copy to erase.
+>
+> Corrections: **staging §6 has FIVE outstanding items, not four** — real
+> Storage objects at the seeded paths are a blocker, because a denial test
+> against an absent object passes for the wrong reason. **`scripts/staging-seed.sql`**
+> is now a runnable reset+seed that refuses the production ref, replacing a
+> prose description whose `ON CONFLICT DO NOTHING` could not restore an altered
+> fixture. And **the raw migration hashes stand as they are** — the six
+> one-byte differences are real byte differences against a README that promises
+> byte identity, recorded and enumerated as a transport difference rather than
+> normalised away.
 
 ---
 
@@ -160,6 +204,24 @@ review round appends here.
 | ✎ | Six HTTP handlers + one scheduled; verify classification and a run | 0.7 "The count is six" | **41**, **62** |
 | ✎ | PDF.js: the *deployed setting* is the mitigation | 10 | — |
 | ✎ | 0.6 overgeneralised SELECT closure (DELETE events) | 0.6 "One narrower point" | **31** |
+
+## Round 5 (review of `2cae8bd`…`68ea008`) — two blocking patches
+
+| # | Review item | Section | Test |
+|---|---|---|---|
+| 1 | `netlify.toml` hard-codes production identity; TOML outranks dashboard | `netlify.toml`, `scripts/check-build-env.mjs`, staging §4 | `check-build-env.test.js` ×15 |
+| 1 | Browser build vars vs function runtime vars are separate | guard notes + staging §4 | "NOT CHECKED" note test |
+| 1 | Tracked `.env` production fallback | guard `resolveEnv` | ".env fallback REFUSED" test |
+| 1 | Fail staging build on production ref / absent staging ref | guard contract | "WRONG PROJECT" tests |
+| 1 | `VITE_STORE_SLUG` / `STORE_SLUG` default to `store4979` | guard slug checks | slug unset / explicit tests |
+| 1 | Confirm emitted config + real request destinations before writes | staging §4 closing | manual, stated as manual |
+| 2 | `min()` still includes an unenforced value | 2.4 item 1 | **58b-i** |
+| 3 | Staging §5 has five items, not four | staging §6 | **30** |
+| 3 | Runnable seed/reset refusing the production ref | `scripts/staging-seed.sql` | guard verified 42501; reset verified |
+| 4 | `MAINTAIN` missing from the revoke list | 7 step 5.7 | **32b** |
+| 4 | Inventory defaults and existing objects separately | 7 step 5.7 | **32c** |
+| 5 | Keep raw migration hashes; do not normalise | staging §2 Verification 1 | n/a — checker unchanged |
+| 6 | Delivered key cannot be erased by server revocation | 8 handover, option B | **64b** |
 
 ## Round 4 (review of `4069336`) — four bounded patches
 
@@ -458,11 +520,14 @@ closure exactly the way the client migration does.
 >
 > Two things learned by doing it, which change what this Part claims:
 >
-> - **The hash comparison would have reported 6 false failures.** Content
->   passed through the migration tool loses the file's trailing newline, so 6
->   of 20 hashes differ by exactly one byte on an identical schema (proven, not
->   assumed). The state comparison is what established equality — exactly the
->   correction made in §1.3 item 2.
+>  - **Six ledger entries differ from their repo files by one byte** — the
+>    final `\n`, dropped in transport by the migration tool. **These are real
+>    byte differences, not false failures**, and `supabase/migrations/README.md`
+>    promises byte identity, so the raw check is correct to flag them. Do
+>    **not** normalise whitespace or weaken `scripts/migration-md5.sh`. They
+>    are recorded as a known, narrowly-scoped **transport** difference in
+>    `docs/security/staging.md`, listed by version, and kept separate from the
+>    catalog comparison — which is what actually established schema equality.
 > - **The grant sprawl is a Supabase platform default, not this project's
 >   doing.** `pg_default_acl` on a brand-new empty project already grants
 >   `anon` full DML on new tables and EXECUTE on new functions. Step 5.7's
@@ -805,17 +870,42 @@ and no check is violated. The declaration was load-bearing and unverified.
 
 Four changes, so the bound holds against a caller who never cooperates:
 
-1. **Charge the full effective per-file limit for every issued URL** — not the
-   declared size. The effective limit is `min(capability.per_file_cap,
-   bucket.file_size_limit)`, i.e. the largest upload that URL could actually
-   complete. A declaration buys nothing, because a declaration is not a
-   constraint.
-   The **only** exception: if the upload path itself enforces the smaller
-   reserved size, the smaller number may be charged — because then the
-   declaration *is* a constraint. Supabase's bucket limit is per bucket, not
-   per signed URL, so **today that exception does not apply** and the full cap
-   is always charged. Written as a condition rather than an assumption so a
-   future per-URL limit can be adopted deliberately.
+1. **Charge the ceiling that Storage actually enforces.** Revision 5 said
+   `min(capability.per_file_cap, bucket.file_size_limit)` — and that `min()`
+   still contains a number nothing enforces. `capability.per_file_cap` is our
+   own bookkeeping; the only ceiling the Storage service applies to a signed
+   upload URL is **`bucket.file_size_limit`**. So when the capability cap is
+   the *lower* of the two, taking the minimum charges less than can be
+   uploaded:
+
+   | | value |
+   |---|---|
+   | `capability.per_file_cap` (not enforced anywhere) | 10 MiB |
+   | `bucket.file_size_limit` (enforced by Storage) | 50 MiB |
+   | budget | 50 MiB |
+   | `min()` → reserved per URL | 10 MiB → **5 URLs issued** |
+   | actually uploadable | 5 × 50 MiB = **250 MiB** |
+
+   Same bypass as revision 4's, one layer up: reserving against a limit that
+   nothing checks.
+
+   **The rule: charge `bucket.file_size_limit`** — the enforced ceiling — not
+   the minimum. Two ways to make the capability cap meaningful rather than
+   decorative, and one must be chosen:
+
+   - **Reject the configuration.** At startup and at capability creation,
+     refuse when `bucket.file_size_limit > capability.per_file_cap`. If the
+     intended per-file size is 10 MiB, the bucket limit **is** 10 MiB. This is
+     the option that keeps the two numbers honest, and it is the default.
+   - **Charge the bucket limit** and treat `per_file_cap` as documentation
+     only, never as a reservation input.
+
+   The condition under which the smaller number may be charged is therefore
+   narrow and stated: **only if the upload path itself enforces it.** Supabase
+   applies its limit per bucket, not per signed URL, so **today no per-URL
+   enforcement exists** and the bucket limit is always the number charged.
+   Written as a condition so a future per-URL limit can be adopted
+   deliberately rather than assumed.
 2. **Refuse issuance atomically when the reservation would exceed the total.**
    The check and the increment are the same statement (below), so N concurrent
    `start-upload` calls cannot each see room for themselves. With a 50 MiB
@@ -1857,20 +1947,40 @@ for a reopened hole, which is the worst square of the matrix.
 6. `verify_employee_pin`: revoke EXECUTE from `anon` and `authenticated`
    (**Phase S1 lands here** — its rollback file already exists).
 7. **Excess grants, everywhere they exist — not just `public`.**
-   - `revoke truncate, references, trigger on all tables in schema public from
-     anon, authenticated`
+   - `revoke truncate, references, trigger, maintain on all tables in schema
+     public from anon, authenticated`
+
+     **`MAINTAIN` was missing from revision 5's list and is in the default
+     ACL.** The default is `arwdDxtm` — `a`ppend/insert, `r`ead, `w`rite,
+     `d`elete, `D` truncate, `x` references, `t` trigger, **`m` maintain**.
+     Revision 5 named only TRUNCATE, REFERENCES and TRIGGER, so `m` would have
+     survived a revoke that looked exhaustive. `MAINTAIN` permits `VACUUM`,
+     `ANALYZE`, `REINDEX`, `CLUSTER` and `REFRESH MATERIALIZED VIEW` — not a
+     data-disclosure path, but a resource-exhaustion one, and no reason for
+     `anon` to hold it.
    - the same on **`storage.objects`**
    - and on **`storage.buckets`**, which revision 1 omitted. `anon` holds the
      full DML set there too. It is currently unexploitable only because that
      table has RLS on with zero policies (Part 0.5) — a single added policy
      would make the grant live, so the grant goes.
+   - **Inventory `MAINTAIN` on defaults and on existing objects separately.**
+     They are different questions and one does not answer the other: the
+     default ACL says what *new* objects will receive, while an existing table
+     holds whatever it was granted when it was created — which may predate a
+     default change, or have been altered since. So run two inventories,
+     `pg_default_acl` and `information_schema.role_table_grants` /
+     `relacl`, and reconcile them. A table created before a default changed is
+     invisible to a defaults-only audit.
    - **Review the default privileges that produced all this.** These grants
-     were not written by hand; they come from `ALTER DEFAULT PRIVILEGES` in
-     this project, which is the same mechanism that makes every new function
-     anon-executable (CLAUDE.md rule 4). Read `pg_default_acl` for **every
+     were not written by hand. **Confirmed on a brand-new empty project**
+     (`docs/security/staging.md`): `pg_default_acl` already carries
+     `postgres objtype=r → anon=arwdDxtm` and `objtype=f → anon=X`. So this is
+     a **Supabase platform default, not something this project introduced** —
+     which makes the review load-bearing rather than tidy-up: revoking today's
+     grants without changing the defaults leaves every future table and
+     function arriving with the same ACL. Read `pg_default_acl` for **every
      role that creates objects here** — `postgres`, `supabase_admin`, the
-     migration role — and fix the defaults, or the next table created arrives
-     with the same grant set and this step has to be repeated forever.
+     migration role.
 8. `customer-uploads`: set a size limit and a MIME allowlist.
 
 **Check all roles, not just anon.** Every probe runs as `anon` *and* as
@@ -2005,7 +2115,8 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | **22c** | **sealed rows recover without the original session** | seal rows; revoke the session; **clear credentials only** (not site data); re-enrol; sign in as a **different** employee of the same store | rows unseal and drain — recovery does not depend on the quoting employee or session |
 | **22c-i** | **a full browser-data wipe destroys the ciphertext, and that is accepted** | seal rows, then clear **all** site data | rows are gone. Revision 4's "wipe and re-enrol" conflated the two: credential clearing preserves the ciphertext, wiping site data deletes it. Nothing can recover locally-sealed data whose ciphertext no longer exists — so **drain-before-handover (path a) is the primary contract** and sealing is the fallback, not the plan |
 | **63** | **device-only cannot obtain the key** | `key-fetch` with `__Host-pc_device` and no staff session; also with an upload capability | **401** both times |
-| **64** | **another tab after handover** | two tabs signed in; enter kiosk in tab A; tab B attempts to unseal, then reloads and retries | fails both times — key was memory-only and every session was revoked |
+| **64** | **another tab after handover** | two tabs signed in; enter kiosk in tab A; tab B attempts to unseal, then reloads and retries | fails both times — `queue-unseal` requires a live session and every session was revoked |
+| **64b** | **missed handover signal, and no subsequent request** | tab B **does not receive** the `BroadcastChannel` message (channel torn down / tab discarded and restored) and makes **no** further request; enter kiosk in tab A; then have tab B attempt to unseal | fails. Under option B there is no key in tab B to begin with; under option A handover would not have completed. **Revision 5 would have left tab B holding a live key with the server reporting every session revoked** |
 | **65** | **recovery by a newly authenticated employee** | seal offline as A; A deactivated; B of the same store signs in on a re-enrolled device | rows unseal; order attributed to **A** per row 25c |
 | **66** | **offline sealing needs no secret** | network down, no session, kiosk already entered; queue an order | seals successfully with the cached **public** key |
 | **22d** | **handover is never silent** | force both drain and seal to fail, then enter kiosk | staff decision required; UI does not claim a completed handover; rows survive |
@@ -2024,6 +2135,8 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | 30 | **direct Storage after closure — all four verbs** | list/download, **upload**, **overwrite an existing object**, **delete**, and **create a signed URL**, both buckets, both roles | denied on every verb. A read-only probe would have missed `job_files_anon_insert` entirely |
 | 31 | **Realtime after closure** | subscribe to `pending_jobs`, both roles | no rows delivered, **including DELETE events** — deletes are the documented narrower case, so they are asserted explicitly |
 | 32 | TRUNCATE after revoke | `TRUNCATE orders`, `storage.objects`, `storage.buckets` as anon | permission denied (staging only) |
+| **32b** | **MAINTAIN after revoke** | `VACUUM`, `ANALYZE`, `REINDEX` on a public table as anon | permission denied — `m` is in the default `arwdDxtm` and revision 5's revoke list would have left it |
+| **32c** | **defaults vs existing objects** | inventory `pg_default_acl` **and** per-table `relacl`, compare | no role holds `D/x/t/m` in either; a table predating a defaults change is caught by the second inventory, not the first |
 | 33 | bootstrap hash | `select bootstrap_secret_hash from stores` as anon **and authenticated** | column absent or denied |
 | **33b** | **cost closure, every path** | as anon: `sheet_prices` cost columns, **`paper_types.markup_percent`**, **`settings` labor + thresholds**, **`outsourced_products` cost columns**; `GET /pricing.json`; the built JS bundle grepped for known wholesale values; a fresh kiosk's `localStorage` | no cost, markup or threshold value reachable by any path |
 | **33b-i** | **`pricing-costs` refuses ordinary staff** | call it with a valid `role='staff'` session | **403** — the row revision 2 would have failed |
@@ -2063,6 +2176,7 @@ cross-tenant row asserts a 403/404 **and** that nothing was read or written.
 | **57** | **PIN budget counts unresolvable guesses** | 200 wrong PINs matching no employee, spread across two enrolled devices | every attempt charged to the enrollment **and** the store; graduated delay then lockout; owner alerted |
 | **58** | **quota bypass via tiny declarations** | 10 × 1-byte reservations, then upload 10 × 500 MB, **never register** | the **bucket** rejects the oversized objects; reservations charged at the effective cap |
 | **58b** | **sum exceeds budget while every file is legal** | 50 MiB budget, 10 MiB effective cap; request 10 URLs declaring 1 byte each; upload 10 MiB to each; **never register** | **issuance refused at the 6th URL**; total bytes landed ≤ 50 MiB. This is the row revision 4 would have failed |
+| **58b-i** | **cap/bucket mismatch — the `min()` bypass** | `per_file_cap` 10 MiB, **`bucket.file_size_limit` 50 MiB**, budget 50 MiB; take every URL the budget allows and upload the **bucket** maximum to each; never register | either the configuration is **refused** at creation, or reservations are charged at 50 MiB so only 1 URL is issued. **Landed bytes ≤ budget.** Revision 5 would have allowed 250 MiB against a 50 MiB budget |
 | **58c** | **concurrent issuance cannot overshoot** | 20 parallel `start-upload` against a 5-URL budget | exactly 5 succeed — one statement checks and increments |
 | **58d** | **reservation release** | (a) register at true size; (b) let a token lapse with nothing uploaded; (c) orphan swept | budget returns in all three, and **not** before |
 | **59** | **issued URL outlives the row** | mint a URL, revoke the capability, upload 45 min later | the upload may still land (2 h token) — **but** registration refuses, and the object is swept by row 60 |
@@ -2185,12 +2299,41 @@ only `__Host-pc_device` gets 401 — which is test row 63.
 | private key in `localStorage` / `sessionStorage` / IndexedDB | **never written** | n/a — it is memory-only by design |
 | decrypted row contents in memory during a drain | the drain | completion or failure |
 
-**Handover clears it in every tab, not just the active one.** Kiosk entry
-already calls `staff-session-revoke-all` for the enrollment (Part 5), so every
-tab's session dies server-side. Each tab drops the in-memory private key on
-the `BroadcastChannel` handover signal and, failing that, on its next failed
-request — and because the key was never persisted, **a reload cannot recover
-it**. A customer at the kiosk has a page that can seal and cannot unseal.
+**Handover — and the hole revision 5 left in it.** Kiosk entry calls
+`staff-session-revoke-all`, so every tab's *session* dies server-side. But
+revision 5 then relied on each tab dropping the in-memory private key on a
+`BroadcastChannel` message, "and failing that, on its next failed request".
+**Neither is a guarantee, and the key is already delivered.**
+
+`BroadcastChannel` delivery is not acknowledged. A tab that is discarded and
+restored, backgrounded under memory pressure, or simply listening on a channel
+it re-created after the message was sent, never receives it. And "on its next
+failed request" requires a next request — **a tab that makes none keeps the
+key indefinitely**. Server-side revocation cannot erase a copy that has already
+been handed to the browser. So the customer-facing kiosk could be sitting on a
+live decryption key with every server-side control correctly reporting the
+session as revoked.
+
+Two ways out. **Both are acceptable; the second is the default because it does
+not depend on the browser cooperating:**
+
+| option | how handover becomes safe |
+|---|---|
+| **A — confirmed teardown before handover** | every tab **acknowledges** the teardown on a `MessageChannel` port; kiosk entry does not complete until every known tab has acked or been closed. Unacked tabs block handover and are named in the UI. Honest, but it makes handover depend on tabs answering |
+| **B — decryption stays server-side (DEFAULT)** | the private key **never enters the browser**. Sealed rows are POSTed to a `queue-unseal` endpoint that decrypts server-side under a live staff session and returns plaintext for immediate drain. Nothing to erase, so nothing to fail to erase |
+
+**B is chosen.** It removes the class of bug rather than detecting it: there is
+no delivered copy, so no acknowledgement is needed and no missed message
+matters. It costs a round trip on a path that is already going to the server
+(the drain itself), and it fails closed when offline — which is correct, since
+an offline device cannot drain anyway.
+
+The cached **public** key still lives in the browser, which is what keeps
+offline sealing working. It is not secret and grants nothing.
+
+This also simplifies the authority table above: with decryption server-side,
+"who can unseal" is enforced where every other authorisation decision already
+is, rather than by whether a page dropped a variable.
 
 **If the key cannot be retrieved, the rows stay sealed and visible as "pending
 recovery" — never discarded, never silently dropped.** Losing the order remains
