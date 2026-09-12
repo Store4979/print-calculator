@@ -36,18 +36,44 @@ function project(envFiles) {
   return dir;
 }
 
-async function buildAndRead(dir, mode) {
-  await build({
-    root: dir,
-    mode,
-    logLevel: "silent",
-    build: {
-      outDir: join(dir, "dist"),
-      lib: { entry: join(dir, "src", "main.js"), formats: ["es"], fileName: "out" },
-      minify: false,
-      emptyOutDir: true,
-    },
-  });
+// Vite reads process.env at build time, so the RUNNER's environment reaches
+// the bundle. On Netlify that means the production site's own
+// VITE_SUPABASE_URL — which silently overrides the .env files these tests are
+// about, and makes them pass or fail for reasons unrelated to the case under
+// test. Verified: with a production VITE_SUPABASE_URL exported, two of these
+// tests failed locally exactly as they would have in CI.
+//
+// So the VITE_SUPABASE_* variables are cleared for the duration of the build
+// unless a test explicitly wants a shell value (keepShellEnv).
+async function buildAndRead(dir, mode, { keepShellEnv = false } = {}) {
+  const managed = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VITE_STORE_SLUG", "STORE_SLUG"];
+  const saved = {};
+  if (!keepShellEnv) {
+    for (const k of managed) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  }
+  try {
+    await build({
+      root: dir,
+      mode,
+      logLevel: "silent",
+      build: {
+        outDir: join(dir, "dist"),
+        lib: { entry: join(dir, "src", "main.js"), formats: ["es"], fileName: "out" },
+        minify: false,
+        emptyOutDir: true,
+      },
+    });
+  } finally {
+    if (!keepShellEnv) {
+      for (const k of managed) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  }
   const outDir = join(dir, "dist");
   return readdirSync(outDir)
     .filter((f) => f.endsWith(".js") || f.endsWith(".mjs"))
@@ -138,7 +164,7 @@ test("shell env beats every file, in the bundle and in the guard", async () => {
   const saved = process.env.VITE_SUPABASE_URL;
   try {
     process.env.VITE_SUPABASE_URL = STAGING_URL;
-    const emitted = await buildAndRead(dir, "production");
+    const emitted = await buildAndRead(dir, "production", { keepShellEnv: true });
     assert.equal(emitted.includes(STAGING_REF), true, "shell value must win in the bundle");
     const r = checkBuildEnv({
       env: {
@@ -168,7 +194,7 @@ test("an explicitly EMPTY shell value is honoured as empty, not skipped", async 
   const saved = process.env.VITE_SUPABASE_URL;
   try {
     process.env.VITE_SUPABASE_URL = "";
-    const emitted = await buildAndRead(dir, "production");
+    const emitted = await buildAndRead(dir, "production", { keepShellEnv: true });
     assert.equal(emitted.includes(PRODUCTION_REF), false, "an empty shell value must not fall back to .env");
 
     const r = checkBuildEnv({
@@ -201,13 +227,38 @@ import { fileURLToPath } from "node:url";
 
 const GUARD = fileURLToPath(new URL("../check-build-env.mjs", import.meta.url));
 
+// Build the child's environment from a KNOWN BASE rather than inheriting the
+// runner's. On Netlify, process.env carries the production site's own
+// VITE_SUPABASE_URL / SITE_NAME / NETLIFY, which would reach the child and
+// change what it resolves — the test would then pass or fail for reasons that
+// have nothing to do with the case under test. Only PATH-ish essentials are
+// inherited; every variable the guard reads is set explicitly here.
+const GUARD_READS = [
+  "VITE_SUPABASE_URL",
+  "VITE_SUPABASE_ANON_KEY",
+  "VITE_STORE_SLUG",
+  "STORE_SLUG",
+  "EXPECTED_SUPABASE_REF",
+  "SITE_NAME",
+  "SITE_ID",
+  "NETLIFY",
+  "CI",
+  "BUILD_ID",
+  "DEPLOY_ID",
+  "NODE_ENV",
+  "MODE",
+  "VITE_MODE",
+];
+
 function runGuard(env, root) {
+  const base = {};
+  for (const k of ["PATH", "HOME", "TMPDIR", "SystemRoot", "USERPROFILE", "APPDATA"]) {
+    if (process.env[k] !== undefined) base[k] = process.env[k];
+  }
+  const childEnv = { ...base, BUILD_ENV_ROOT: root };
+  for (const k of GUARD_READS) if (env[k] !== undefined) childEnv[k] = env[k];
   try {
-    execFileSync(process.execPath, [GUARD], {
-      env: { ...process.env, ...env, BUILD_ENV_ROOT: root },
-      encoding: "utf8",
-      stdio: "pipe",
-    });
+    execFileSync(process.execPath, [GUARD], { env: childEnv, encoding: "utf8", stdio: "pipe" });
     return { code: 0 };
   } catch (e) {
     return { code: e.status ?? 1, out: String(e.stdout ?? "") + String(e.stderr ?? "") };
@@ -232,17 +283,16 @@ for (const [label, extraEnv] of [
   test(`mode selection — ${label}: guard REFUSES and the bundle is production`, async () => {
     const dir = project(trapFiles());
     try {
+      // runGuard builds the child env from a known base, so nothing from the
+      // runner (or from Netlify) leaks in. VITE_SUPABASE_* are deliberately
+      // absent, forcing resolution through the env FILES — which is the whole
+      // point of a mode-selection test.
       const env = {
         ...extraEnv,
         EXPECTED_SUPABASE_REF: STAGING_REF,
         VITE_STORE_SLUG: "staging-t1-store",
         STORE_SLUG: "staging-t1-store",
-        // Do not let the outer test runner's own values leak in.
-        VITE_SUPABASE_URL: "",
-        VITE_SUPABASE_ANON_KEY: "",
       };
-      delete env.VITE_SUPABASE_URL;
-      delete env.VITE_SUPABASE_ANON_KEY;
 
       // 1. The real build, no --mode, same env.
       const savedEnv = { ...process.env };
