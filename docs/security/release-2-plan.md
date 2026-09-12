@@ -449,6 +449,26 @@ closure exactly the way the client migration does.
 
 # Part 1 — Staging, the prerequisite
 
+> **STOOD UP 2026-09-12 — database and tenants only.** Project
+> `print-calculator-staging` (`lboajqihpsfrokqvjgnl`), $10/month, all 20
+> migrations replayed, **two synthetic tenants seeded**, and the state verified
+> object by object against Part 0. Full record, including what is still
+> outstanding (Netlify site, Auth config, SMTP sink, seeded storage objects):
+> **`docs/security/staging.md`**.
+>
+> Two things learned by doing it, which change what this Part claims:
+>
+> - **The hash comparison would have reported 6 false failures.** Content
+>   passed through the migration tool loses the file's trailing newline, so 6
+>   of 20 hashes differ by exactly one byte on an identical schema (proven, not
+>   assumed). The state comparison is what established equality — exactly the
+>   correction made in §1.3 item 2.
+> - **The grant sprawl is a Supabase platform default, not this project's
+>   doing.** `pg_default_acl` on a brand-new empty project already grants
+>   `anon` full DML on new tables and EXECUTE on new functions. Step 5.7's
+>   default-privileges review is therefore load-bearing: revoking today's
+>   grants without changing the defaults fixes nothing for tomorrow's objects.
+
 Netlify previews currently run against production Supabase. Release 2 changes
 authentication and then removes grants; rehearsing that against live data is
 not acceptable.
