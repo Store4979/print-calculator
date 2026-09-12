@@ -557,10 +557,42 @@ honour it would silently leave a public URL), and that a scheduled run has
 **succeeded** recently. A scheduled function that is not running is its own
 problem: stale customer files stop being swept.
 
-`cleanup-stale-jobs` is the one genuine unknown. Netlify documents scheduled
-functions as not invocable over HTTP in production, but that is **platform
-behaviour this repo does not control and has never tested**. It gets a probe
-of its own (Part 8, row 41) rather than an assumption. Scheduled and
+> **ROW 41 RAN, AND IT FAILED. 2026-09-12.** `cleanup-stale-jobs` returned
+> **200 over plain HTTP** on the staging site despite
+> `export const config = { schedule: "@hourly" }`. Every statement below that
+> treated it as unreachable was wrong, and so was the documented platform
+> behaviour both review rounds relied on.
+>
+> It was the **only unauthenticated DESTRUCTIVE endpoint** in the set:
+> `get-download-url` reads, `complete-job` needs a queue-row id it cannot
+> guess, and this one **needed nothing at all** — the handler was
+> `async () => {…}`, with no event parameter, so no method, caller or header
+> could be checked even in principle.
+>
+> Blast radius at the time: nothing older than 24h existed in staging or
+> production, so the probe deleted nothing. **The exposure was unloaded, not
+> absent** — it arms the moment a QR upload sits in the queue past 24h, which
+> is the ordinary fate of an abandoned job.
+>
+> Fixed out of order, ahead of step 3 slice 2, because a live unauthenticated
+> delete endpoint outranks scheduling. The handler now takes the event,
+> requires POST, and requires a constant-time `x-cleanup-key` secret. It does
+> **not** try to detect the scheduler: Netlify's scheduled invocation carries
+> no signature — its only marker is a `{"next_run"}` body any caller can
+> forge — and writing a check that pretended otherwise would repeat the exact
+> mistake that produced this finding.
+>
+> **Consequence, stated rather than buried:** the Netlify scheduler cannot
+> send the secret, so the hourly run now fails closed at 401 and cleanup does
+> not run on a timer until an authenticating caller drives it. Abandoned
+> uploads therefore persist past 24h — a real but bounded privacy cost, and
+> the safer side of the trade against an endpoint anyone could call.
+
+`cleanup-stale-jobs` was treated as the one genuine unknown on the grounds
+that Netlify documents scheduled functions as not invocable over HTTP. That
+documentation did not describe this deployment. **Never again record a
+platform behaviour as a control without a probe that exercises it** — this
+one survived two review rounds purely because it sounded authoritative. Scheduled and
 maintenance entry points are inventoried the same way as request handlers:
 being invoked by a timer does not mean it is *only* invoked by a timer.
 
