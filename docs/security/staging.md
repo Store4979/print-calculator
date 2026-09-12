@@ -319,6 +319,37 @@ either from a passing build.
 
 ---
 
+## 5a. Release 2 progress on staging
+
+| step | state | staging ledger version |
+|---|---|---|
+| 1 — staging stood up | **GREEN** 2026-09-12 | — |
+| 2 — additive identity schema | **APPLIED to staging** 2026-09-12 | `release2_01_identity_schema` |
+| 3 onward | not started | — |
+
+**Production has nothing from Release 2.** When step 2 is eventually applied
+there, read the assigned version out of `supabase_migrations.schema_migrations`
+and move `supabase/migrations/pending/release2_01_identity_schema.sql` to
+`supabase/migrations/<version>_release2_01_identity_schema.sql`, byte-identical
+to `statements[1]` (CLAUDE.md rule 4).
+
+### Rule 4, demonstrated live rather than quoted
+
+The step-2 rehearsal captured `proacl` on the new SECURITY DEFINER function at
+`CREATE`, before the revoke:
+
+```
+{=X/postgres, postgres=X/postgres, anon=X/postgres, authenticated=X/postgres, service_role=X/postgres}
+```
+
+The leading `=X/postgres` is **PUBLIC** — broader than anon/authenticated. A
+function that burns pairing tickets and creates device enrollments was
+world-callable the instant it existed. After the revoke+grant in the same
+migration: `{postgres=X/postgres, service_role=X/postgres}`.
+
+This is why rule 4 requires the revoke *in the same migration* and not as a
+follow-up: between `CREATE` and a later revoke, the function is open.
+
 ## 5b. REHEARSAL DISCIPLINE — use `begin … rollback`, never a bare `DO` block
 
 Learned by getting it wrong here, on staging, on 2026-09-12. A probe of row 32
