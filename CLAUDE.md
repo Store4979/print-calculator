@@ -238,11 +238,19 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    including hotfixes: the 2026-09-09 audit found eight applied migrations with no
    file, and one of them had taken staff sign-in down.
    FUNCTION ACLs: this project's default privileges grant EXECUTE on every new
-   function in `public` to anon, authenticated AND service_role the moment it is
-   created — a new SECURITY DEFINER function is anon-callable by default. Every
-   CREATE FUNCTION must therefore be followed, in the same migration, by
-   `revoke execute ... from public, anon, authenticated, service_role;` and then
-   explicit grants for exactly the roles that need it. CREATE OR REPLACE cannot
+   function in `public` to **PUBLIC**, anon, authenticated AND service_role the
+   moment it is created. PUBLIC is the widest of the four and is easy to miss:
+   measured on a brand-new function 2026-09-12, the CREATE-time ACL was
+   `{=X/postgres, postgres=X/postgres, anon=X/postgres, authenticated=X/postgres,
+   service_role=X/postgres}` — that leading `=X/postgres` with no grantee IS
+   PUBLIC, i.e. every role in the cluster, present and future. A revoke list
+   naming only anon/authenticated/service_role looks complete and leaves the
+   widest grant in place. So a new SECURITY DEFINER function is callable by
+   anyone by default. Every CREATE FUNCTION must therefore be followed, IN THE
+   SAME MIGRATION (between CREATE and a later revoke the function is open), by
+   `revoke execute ... from public, anon, authenticated, service_role;` — with
+   `public` listed FIRST and never dropped from the list — and then explicit
+   grants for exactly the roles that need it. CREATE OR REPLACE cannot
    change a return type; DROP + CREATE resets the ACL to that default AND
    discards the function comment — re-issue both. Prove it: diff `proacl`
    before/after in the rehearsal (see supabase/rehearsals/phase_e_01_rehearsal.sql).
