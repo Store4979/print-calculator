@@ -25,11 +25,16 @@
 // ref and zero staging refs.
 //
 // The fix is not a longer list. It is to stop reimplementing Vite's rules:
-// this file now resolves through the INSTALLED Vite `loadEnv`, with the same
-// mode, root and envDir the build will use. Equivalence by construction rather
-// than by a parallel implementation that has to be kept in step. The same
-// change fixes the related mishandling of explicitly-empty shell values, which
-// the hand-rolled resolver skipped and Vite honours as empty.
+// this file resolves through the INSTALLED Vite `loadEnv`. The same change
+// fixes the related mishandling of explicitly-empty shell values, which the
+// hand-rolled resolver skipped and Vite honours as empty.
+//
+// WITHDRAWN: "equivalence by construction". That claim was mine and it was
+// wrong. Sharing `loadEnv` fixed PRECEDENCE; it did not make this guard match
+// the build INVOCATION — and a second P1 followed immediately, because the
+// guard still chose its own mode (below). Equivalence is not a property you
+// get from sharing one function; it has to be asserted against the compiler,
+// which is what scripts/tests/build-env-bundle.test.js does.
 //
 // P2 — OMITTING EVERYTHING PASSED AS PRODUCTION. `expectedRaw || PRODUCTION_REF`
 // meant absence == production, so a hosted site that set nothing at all was
@@ -61,20 +66,31 @@ export const PRODUCTION_SLUG = "store4979";
 // EXPECTED_SUPABASE_REF; every other hosted site must declare its ref.
 export const PRODUCTION_SITE_NAMES = Object.freeze(["printcalculator2"]);
 
-// Build mode, resolved the way the build itself will. `vite build` defaults to
-// "production" — including on a staging deploy, which is exactly what made the
-// mode-file bypass work. An explicit --mode/MODE wins if one is used.
-export function resolveMode(env = process.env) {
-  const argv = Array.isArray(env.__ARGV) ? env.__ARGV : [];
-  const i = argv.indexOf("--mode");
-  if (i >= 0 && argv[i + 1]) return String(argv[i + 1]).trim();
-  const inline = argv.find((a) => String(a).startsWith("--mode="));
-  if (inline) return String(inline).slice(7).trim();
-  for (const k of ["VITE_MODE", "MODE", "NODE_ENV"]) {
-    if (env[k] && String(env[k]).trim()) return String(env[k]).trim();
-  }
-  return "production";
-}
+// ── THE MODE IS NOT INFERRED. IT IS PINNED TO THE BUILD COMMAND. ────────────
+//
+// P1, round 2 (reproduced): an earlier version treated VITE_MODE, MODE and
+// NODE_ENV as mode selectors. **Vite does not.** `vite build` with no --mode
+// always uses mode "production" regardless of those variables, so the guard
+// read a different .env.[mode] file than the compiler and passed on a bundle
+// that targeted the wrong project. All three were confirmed against the real
+// app with staging in .env.local and production in .env.production.local:
+//
+//   NODE_ENV=development  → guard exit 0 (mode development) | bundle prod=1 staging=0
+//   MODE=staging          → guard exit 0 (mode staging)     | bundle prod=1 staging=0
+//   VITE_MODE=staging     → guard exit 0 (mode staging)     | bundle prod=1 staging=0
+//
+// A guard that picks its own mode is guessing at the thing it exists to check.
+// So this is a CONSTANT matching netlify.toml's build command — presently an
+// unqualified `vite build`, i.e. mode "production". Nothing in the environment
+// can move it.
+//
+// IF A CUSTOM MODE IS EVER WANTED: route ONE explicit selection into BOTH
+// sides — e.g. `BUILD_MODE=x node scripts/check-build-env.mjs && vite build
+// --mode $BUILD_MODE` — and read it here. Never let the guard infer a mode the
+// build was not given. The test "netlify.toml build command matches
+// BUILD_MODE" fails if the command gains a --mode without this constant being
+// updated in lockstep.
+export const BUILD_MODE = "production";
 
 // Resolve the whole browser-visible env through the INSTALLED Vite machinery.
 //
@@ -89,7 +105,7 @@ export function resolveMode(env = process.env) {
 // EXPECTED_SUPABASE_REF are unprefixed. Vite itself only EXPOSES VITE_* to
 // client code; we read the rest for our own checks.
 export function loadResolvedEnv({ env = process.env, root = ROOT, mode } = {}) {
-  const m = mode || resolveMode(env);
+  const m = mode || BUILD_MODE;
   // loadEnv reads process.env for the shell layer, so swap it for the duration
   // of the call and restore it — that keeps the function testable with an
   // injected env while still using Vite's real resolution.
@@ -107,7 +123,7 @@ export function loadResolvedEnv({ env = process.env, root = ROOT, mode } = {}) {
 // this, so it is derived by re-reading the files in Vite's own precedence
 // order — presentation only; the VALUE always comes from loadEnv above.
 export function attributeSource(name, { env = process.env, root = ROOT, mode } = {}) {
-  const m = mode || resolveMode(env);
+  const m = mode || BUILD_MODE;
   if (Object.prototype.hasOwnProperty.call(env, name)) return "environment";
   for (const file of [`.env.${m}.local`, `.env.${m}`, ".env.local", ".env"]) {
     const path = join(root, file);
@@ -173,7 +189,11 @@ export function checkBuildEnv({ env = process.env, root = ROOT, mode } = {}) {
       notes.push("EXPECTED_SUPABASE_REF unset on a LOCAL build — production assumed, matching the tracked .env.");
     }
   }
-  notes.push(`build mode: ${buildMode} (env files for this mode outrank .env / .env.local)`);
+  notes.push(
+    `build mode: ${buildMode} — PINNED to netlify.toml's build command, not read from the ` +
+      `environment. VITE_MODE / MODE / NODE_ENV do NOT change it, because they do not ` +
+      `change Vite's either.`
+  );
 
   const url = { value: String(values.VITE_SUPABASE_URL ?? "").trim(), source: at("VITE_SUPABASE_URL") };
   const key = { value: String(values.VITE_SUPABASE_ANON_KEY ?? "").trim(), source: at("VITE_SUPABASE_ANON_KEY") };
@@ -253,8 +273,7 @@ export function checkBuildEnv({ env = process.env, root = ROOT, mode } = {}) {
 }
 
 function main() {
-  // Pass argv through so an explicit --mode is honoured.
-  const result = checkBuildEnv({ env: { ...process.env, __ARGV: process.argv.slice(2) } });
+  const result = checkBuildEnv();
   console.log(`[check-build-env] mode: ${result.mode}  hosted: ${result.hosted}`);
   console.log(`[check-build-env] expected ref: ${result.expectedRef}`);
   console.log(`[check-build-env] effective ref: ${result.actualRef || "(none)"} (from ${result.source})`);

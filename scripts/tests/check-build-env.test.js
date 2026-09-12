@@ -12,7 +12,7 @@ import { join } from "node:path";
 import {
   checkBuildEnv,
   refFromUrl,
-  resolveMode,
+  BUILD_MODE,
   loadResolvedEnv,
   attributeSource,
   isHostedBuild,
@@ -48,11 +48,36 @@ test("refFromUrl extracts the project ref, and rejects a non-Supabase URL", () =
   assert.equal(refFromUrl(""), "");
 });
 
-test("resolveMode: defaults to production, honours --mode and MODE", () => {
-  assert.equal(resolveMode({}), "production");
-  assert.equal(resolveMode({ __ARGV: ["--mode", "staging"] }), "staging");
-  assert.equal(resolveMode({ __ARGV: ["--mode=staging"] }), "staging");
-  assert.equal(resolveMode({ MODE: "qa" }), "qa");
+test("BUILD_MODE is a constant, and NO environment variable can move it", () => {
+  // REPLACES a test that asserted resolveMode({MODE:"qa"}) === "qa". That test
+  // pinned the defect: it encoded the guard's own invention rather than Vite's
+  // behaviour. `vite build` with no --mode is ALWAYS mode "production", and
+  // VITE_MODE / MODE / NODE_ENV do not change it — so a guard that honoured
+  // them read a different .env.[mode] file than the compiler.
+  assert.equal(BUILD_MODE, "production");
+  const dir = fixture({
+    ".env.local": `VITE_SUPABASE_URL=${STAGING_URL}`,
+    ".env.production.local": `VITE_SUPABASE_URL=${PROD_URL}`,
+  });
+  try {
+    for (const env of [
+      {},
+      { NODE_ENV: "development" },
+      { MODE: "staging" },
+      { VITE_MODE: "staging" },
+      { NODE_ENV: "development", MODE: "staging", VITE_MODE: "qa" },
+    ]) {
+      // Resolution must land on the production mode file every time.
+      assert.equal(
+        loadResolvedEnv({ env, root: dir }).values.VITE_SUPABASE_URL,
+        PROD_URL,
+        `mode must stay pinned with env ${JSON.stringify(env)}`
+      );
+      assert.equal(attributeSource("VITE_SUPABASE_URL", { env, root: dir }), ".env.production.local");
+    }
+  } finally {
+    cleanup(dir);
+  }
 });
 
 test("P1: mode files outrank .env.local — resolved through Vite, not reimplemented", () => {

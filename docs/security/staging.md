@@ -195,6 +195,30 @@ would pass while the browser read and wrote production rows.
    > **nothing at all** exited 0. **WITHDRAWN: an earlier version of this file
    > and of the PR description implied a missing `EXPECTED_SUPABASE_REF` would
    > refuse the build. It did not — it passed as production.**
+   >
+   > **P1 again — mode selection (a second, separate bypass).** Sharing Vite's
+   > `loadEnv` fixed precedence but NOT which mode was resolved. The guard
+   > treated `VITE_MODE`, `MODE` and `NODE_ENV` as mode selectors; **Vite does
+   > not** — `vite build` with no `--mode` is always mode `production`. So the
+   > guard read a different `.env.[mode]` file than the compiler. All three
+   > reproduced against the real app:
+   >
+   > | env | guard | bundle |
+   > |---|---|---|
+   > | `NODE_ENV=development` | exit 0, mode development | prod=1 staging=0 |
+   > | `MODE=staging` | exit 0, mode staging | prod=1 staging=0 |
+   > | `VITE_MODE=staging` | exit 0, mode staging | prod=1 staging=0 |
+   >
+   > Fixed by **pinning** the mode: `BUILD_MODE` is a constant matching
+   > netlify.toml's build command, and nothing in the environment can move it.
+   > A custom mode would have to be routed into **both** sides from one
+   > explicit selection.
+   >
+   > **WITHDRAWN: "equivalence by construction."** That was my claim about
+   > sharing `loadEnv` and it was wrong — it bought precedence, not agreement
+   > with the invocation, and the second bypass followed immediately.
+   > Equivalence is asserted against the compiler, not inherited from a shared
+   > function.
 
    Current contract:
 
@@ -217,9 +241,16 @@ Covered by `scripts/tests/check-build-env.test.js` (unit) **and
 `scripts/tests/build-env-bundle.test.js`, which builds a real Vite project and
 greps the EMITTED bundle.** That second file exists because P1 proved a
 reporter test is not enough: the guard's unit tests asserted what the guard
-*said*, and what it said disagreed with what Vite compiled. The bundle tests
-assert the guard's verdict against the **compiler**, including the exact
-mode-file layout that bypassed it. Suite: 97 tests.
+*said*, and what it said disagreed with what Vite compiled.
+
+It now also covers **mode selection**, which the earlier bundle tests did not:
+they injected `mode: "production"` into both sides, so they verified precedence
+*after* a mode was chosen and never exercised the choosing. Four cases run the
+**guard CLI as a subprocess** and `vite build` with **no mode argument** under
+one shared environment — `NODE_ENV=development`, `MODE=staging`,
+`VITE_MODE=staging`, and no mode vars — each asserting the guard refuses and
+the bundle is production, plus staging and production controls that must still
+pass. Suite: **104 tests**.
 
 **What the guard does NOT check, stated so a green build is not over-read:**
 the functions' runtime `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Those

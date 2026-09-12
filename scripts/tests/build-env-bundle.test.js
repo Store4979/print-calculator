@@ -184,3 +184,136 @@ test("an explicitly EMPTY shell value is honoured as empty, not skipped", async 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── MODE SELECTION: guard CLI and a real build, SAME env, NO injected mode ───
+//
+// The tests above inject mode:"production" into both sides, so they verify
+// precedence AFTER a mode is chosen and never exercise mode selection itself.
+// That is exactly the gap the second P1 slipped through: VITE_MODE / MODE /
+// NODE_ENV moved the guard's mode while Vite's stayed "production".
+//
+// These run the guard as a SUBPROCESS (its real CLI path, reading its own
+// process.env) and `vite build` with NO mode argument — the same unqualified
+// invocation netlify.toml uses — under one shared environment. Nothing is
+// injected on either side.
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const GUARD = fileURLToPath(new URL("../check-build-env.mjs", import.meta.url));
+
+function runGuard(env, root) {
+  try {
+    execFileSync(process.execPath, [GUARD], {
+      env: { ...process.env, ...env, BUILD_ENV_ROOT: root },
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    return { code: 0 };
+  } catch (e) {
+    return { code: e.status ?? 1, out: String(e.stdout ?? "") + String(e.stderr ?? "") };
+  }
+}
+
+// The env-file layout that makes a wrong mode look correct: staging in
+// .env.local (what a mis-moded guard reads) and production in
+// .env.production.local (what Vite actually reads).
+const trapFiles = () => ({
+  ".env": envPair(PROD_URL),
+  ".env.local": envPair(STAGING_URL),
+  ".env.production.local": envPair(PROD_URL),
+});
+
+for (const [label, extraEnv] of [
+  ["NODE_ENV=development", { NODE_ENV: "development" }],
+  ["MODE=staging", { MODE: "staging" }],
+  ["VITE_MODE=staging", { VITE_MODE: "staging" }],
+  ["no mode vars at all", {}],
+]) {
+  test(`mode selection — ${label}: guard REFUSES and the bundle is production`, async () => {
+    const dir = project(trapFiles());
+    try {
+      const env = {
+        ...extraEnv,
+        EXPECTED_SUPABASE_REF: STAGING_REF,
+        VITE_STORE_SLUG: "staging-t1-store",
+        STORE_SLUG: "staging-t1-store",
+        // Do not let the outer test runner's own values leak in.
+        VITE_SUPABASE_URL: "",
+        VITE_SUPABASE_ANON_KEY: "",
+      };
+      delete env.VITE_SUPABASE_URL;
+      delete env.VITE_SUPABASE_ANON_KEY;
+
+      // 1. The real build, no --mode, same env.
+      const savedEnv = { ...process.env };
+      for (const [k, v] of Object.entries(extraEnv)) process.env[k] = v;
+      let emitted;
+      try {
+        emitted = await buildAndRead(dir, undefined);
+      } finally {
+        for (const k of Object.keys(extraEnv)) {
+          if (savedEnv[k] === undefined) delete process.env[k];
+          else process.env[k] = savedEnv[k];
+        }
+      }
+      assert.equal(emitted.includes(PRODUCTION_REF), true, "Vite must have used mode=production");
+      assert.equal(emitted.includes(STAGING_REF), false);
+
+      // 2. The guard CLI, same env, must refuse.
+      const r = runGuard(env, dir);
+      assert.equal(r.code, 1, `guard must REFUSE; got exit ${r.code}\n${r.out ?? ""}`);
+      assert.match(r.out, /WRONG PROJECT/);
+      assert.match(r.out, /\.env\.production\.local/, "must name the file Vite actually read");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("mode selection — a fully configured staging tree still PASSES the CLI", async () => {
+  // The control: the fix must refuse a wrong mode without refusing a correct build.
+  const dir = project({ ".env": envPair(PROD_URL), ".env.production.local": envPair(STAGING_URL) });
+  try {
+    const emitted = await buildAndRead(dir, undefined);
+    assert.equal(emitted.includes(STAGING_REF), true);
+    const r = runGuard(
+      {
+        EXPECTED_SUPABASE_REF: STAGING_REF,
+        VITE_STORE_SLUG: "staging-t1-store",
+        STORE_SLUG: "staging-t1-store",
+        NODE_ENV: "development",
+        MODE: "staging",
+      },
+      dir
+    );
+    assert.equal(r.code, 0, `guard must PASS; got ${r.code}\n${r.out ?? ""}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("mode selection — production control still PASSES the CLI", async () => {
+  const dir = project({ ".env": envPair(PROD_URL) });
+  try {
+    const r = runGuard({ NETLIFY: "true", SITE_NAME: "printcalculator2" }, dir);
+    assert.equal(r.code, 0, `production must PASS; got ${r.code}\n${r.out ?? ""}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("BUILD_MODE stays pinned to netlify.toml's build command", async () => {
+  // If the build command ever gains --mode, BUILD_MODE must be updated in
+  // lockstep. This test is the lockstep.
+  const { readFileSync } = await import("node:fs");
+  const { BUILD_MODE } = await import("../check-build-env.mjs");
+  const toml = readFileSync(new URL("../../netlify.toml", import.meta.url), "utf8");
+  const cmd = /^\s*command\s*=\s*"([^"]+)"/m.exec(toml)?.[1] ?? "";
+  assert.match(cmd, /vite build|yarn build/, "expected a vite build in the build command");
+  const explicit = /--mode[= ]([A-Za-z0-9_-]+)/.exec(cmd)?.[1];
+  if (explicit) {
+    assert.equal(BUILD_MODE, explicit, "BUILD_MODE must match the --mode in netlify.toml");
+  } else {
+    assert.equal(BUILD_MODE, "production", "an unqualified vite build is mode=production");
+  }
+});

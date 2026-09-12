@@ -111,6 +111,28 @@ here. This plan works out the schema, contract, order and tests for it.
 > POST can **install** the attacker's credential in a victim's browser. Both
 > now carry explicit trusted-origin and content-type contracts.
 >
+> **Revision 8 — 2026-09-12.** A **second, separate P1** in the same guard,
+> reproduced before fixing. Sharing Vite's `loadEnv` fixed precedence; it did
+> not make the guard match the build **invocation**.
+>
+> 26. **`resolveMode` invented its own mode.** It honoured `VITE_MODE`, `MODE`
+>     and `NODE_ENV`; `vite build` with no `--mode` ignores all three and is
+>     always mode `production`. So the guard read a different `.env.[mode]`
+>     file than the compiler and passed. All three reproduced against the real
+>     app: guard exit 0 (modes development / staging / staging) while the
+>     bundle carried production in every case. The mode is now a **pinned
+>     constant** matching netlify.toml's build command, with a lockstep test;
+>     nothing in the environment can move it.
+> 27. **The regressions now exercise mode selection.** The earlier bundle tests
+>     injected `mode: "production"` into both sides, so they verified precedence
+>     *after* a mode was chosen and never the choosing. Four new cases run the
+>     guard **CLI** and `vite build` with **no mode argument** under one shared
+>     environment.
+> 28. **WITHDRAWN: "equivalence by construction."** Mine, and wrong. Sharing
+>     one function bought precedence, not agreement with the invocation — the
+>     second bypass followed immediately. Equivalence is asserted against the
+>     compiler, not inherited.
+>
 > **Revision 7 — 2026-09-12.** Two **executed** bypasses of
 > `check-build-env.mjs`, reproduced independently. Both are now fixed in code,
 > with an emitted-bundle regression rather than only reporter tests. See
@@ -2392,9 +2414,11 @@ This also simplifies the authority table above: with decryption server-side,
 "who can unseal" is enforced where every other authorisation decision already
 is, rather than by whether a page dropped a variable.
 
-**If the key cannot be retrieved, the rows stay sealed and visible as "pending
+**If unsealing cannot complete, the rows stay sealed and visible as "pending
 recovery" — never discarded, never silently dropped.** Losing the order remains
-the one outcome ruled out.
+the one outcome ruled out. (Wording: the key is never retrieved by the client
+under the `queue-unseal` design, so "if the key cannot be retrieved" described
+the abandoned `key-fetch` shape.)
 
 **(c) Explicit staff resolution before handover is the escape hatch.** If
 neither drain nor seal succeeds, kiosk entry **shows the blocked rows and
