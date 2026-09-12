@@ -209,10 +209,25 @@ would pass while the browser read and wrote production rows.
    > | `MODE=staging` | exit 0, mode staging | prod=1 staging=0 |
    > | `VITE_MODE=staging` | exit 0, mode staging | prod=1 staging=0 |
    >
-   > Fixed by **pinning** the mode: `BUILD_MODE` is a constant matching
-   > netlify.toml's build command, and nothing in the environment can move it.
-   > A custom mode would have to be routed into **both** sides from one
-   > explicit selection.
+   > Fixed by **pinning** the mode: `BUILD_MODE` is a constant, and nothing in
+   > the environment can move it. A custom mode would have to be routed into
+   > **both** sides from one explicit selection.
+   >
+   > **WITHDRAWN: "this failure mode cannot recur silently."** Mine, and wrong
+   > by the same error twice — falsifying one mutation point and generalising
+   > to all of them. The mode can change in **two** files: `netlify.toml` runs
+   > `yarn build`, which runs **`package.json`**'s `build` script, which is
+   > where `vite build` actually lives. The original lockstep read only
+   > `netlify.toml`, so changing just `package.json` to
+   > `vite build --mode staging` left **all 104 tests passing** while the real
+   > build mode changed. Reproduced: guard exit 0 resolving staging from
+   > `.env.local` in pinned production mode, bundle production=1 staging=0.
+   >
+   > The invariant now covers **both** files as exact expected strings — not a
+   > shell parser, so any edit trips it — and five **falsification** cases
+   > assert that each mutation point breaks the suite. Verified by mutating
+   > each file in turn against the real suite: 110 pass / **1 fail** either
+   > way, 111 pass when unmutated.
    >
    > **WITHDRAWN: "equivalence by construction."** That was my claim about
    > sharing `loadEnv` and it was wrong — it bought precedence, not agreement

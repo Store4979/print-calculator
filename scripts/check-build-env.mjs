@@ -92,6 +92,61 @@ export const PRODUCTION_SITE_NAMES = Object.freeze(["printcalculator2"]);
 // updated in lockstep.
 export const BUILD_MODE = "production";
 
+// The mode can change in TWO places, and an earlier lockstep test checked only
+// one of them. netlify.toml runs `yarn build`, which runs package.json's
+// "build" script, which is where the actual `vite build` invocation lives. So
+// changing ONLY package.json to `vite build --mode staging` moved the real
+// build mode while every test still passed — reproduced: guard exit 0
+// resolving staging from .env.local in pinned production mode, bundle
+// production=1 staging=0.
+//
+// WITHDRAWN, and it was mine: "this failure mode cannot recur silently." I
+// falsified one mutation point and generalised to all of them. It can recur
+// through package.json, which is what this invariant now covers.
+//
+// Deliberately NOT a shell parser. It asserts the two commands are the exact
+// expected strings, so ANY edit — a --mode, a wrapper, a different bundler —
+// trips it and forces a decision rather than being interpreted.
+export const EXPECTED_PACKAGE_BUILD_SCRIPT = "vite build";
+export const EXPECTED_TOML_BUILD_COMMAND =
+  "yarn install && yarn test && node scripts/check-build-env.mjs && yarn build && node scripts/inject-sw-manifest.mjs";
+
+// Pure, so the mutations can be tested rather than only the current files.
+export function modeInvariantErrors({ tomlCommand, packageBuildScript, buildMode = BUILD_MODE }) {
+  const errors = [];
+  const norm = (x) => String(x ?? "").trim().replace(/\s+/g, " ");
+  const toml = norm(tomlCommand);
+  const pkg = norm(packageBuildScript);
+
+  if (pkg !== EXPECTED_PACKAGE_BUILD_SCRIPT) {
+    const explicit = /--mode[= ]([A-Za-z0-9_-]+)/.exec(pkg)?.[1];
+    errors.push(
+      `package.json "build" is ${JSON.stringify(pkg)}, expected ` +
+        `${JSON.stringify(EXPECTED_PACKAGE_BUILD_SCRIPT)}.` +
+        (explicit
+          ? ` It sets --mode ${explicit}; BUILD_MODE is ${JSON.stringify(buildMode)}. ` +
+            `Route ONE selection into both, then update EXPECTED_PACKAGE_BUILD_SCRIPT.`
+          : " If this change is intended, update EXPECTED_PACKAGE_BUILD_SCRIPT and confirm BUILD_MODE still matches.")
+    );
+  }
+  if (toml !== norm(EXPECTED_TOML_BUILD_COMMAND)) {
+    const explicit = /--mode[= ]([A-Za-z0-9_-]+)/.exec(toml)?.[1];
+    errors.push(
+      `netlify.toml build command changed.` +
+        (explicit ? ` It sets --mode ${explicit}; BUILD_MODE is ${JSON.stringify(buildMode)}.` : "") +
+        ` If intended, update EXPECTED_TOML_BUILD_COMMAND and confirm BUILD_MODE still matches.`
+    );
+  }
+  // Belt and braces: if either carries an explicit --mode, it must equal BUILD_MODE.
+  for (const [label, cmd] of [["package.json", pkg], ["netlify.toml", toml]]) {
+    const explicit = /--mode[= ]([A-Za-z0-9_-]+)/.exec(cmd)?.[1];
+    if (explicit && explicit !== buildMode) {
+      errors.push(`${label} builds with --mode ${explicit} but BUILD_MODE is ${JSON.stringify(buildMode)}.`);
+    }
+  }
+  return errors;
+}
+
 // Resolve the whole browser-visible env through the INSTALLED Vite machinery.
 //
 // Do NOT reimplement Vite's precedence here. It loads .env, .env.local,

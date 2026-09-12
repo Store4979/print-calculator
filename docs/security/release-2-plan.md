@@ -111,6 +111,21 @@ here. This plan works out the schema, contract, order and tests for it.
 > POST can **install** the attacker's credential in a victim's browser. Both
 > now carry explicit trusted-origin and content-type contracts.
 >
+> **Revision 9 — 2026-09-12.** The mode lockstep covered **one of two**
+> mutation points. `netlify.toml` runs `yarn build`, so the real `vite build`
+> lives in `package.json` — and changing only that left all 104 tests passing
+> while the build mode changed. Reproduced: guard exit 0 resolving staging
+> from `.env.local` in pinned production mode, bundle production=1 staging=0.
+> The invariant now covers both files, with falsification cases proving each
+> mutation point breaks the suite.
+>
+> 29. **WITHDRAWN: "this failure mode cannot recur silently."** Mine, and the
+>     same error as the claim before it — falsify one mutation point, then
+>     generalise to all of them. Recorded rather than quietly corrected,
+>     because it is the second time in two rounds that I over-generalised from
+>     a single falsified case. **This does not reopen the P1**: the committed
+>     script is still an unqualified `vite build`.
+>
 > **Revision 8 — 2026-09-12.** A **second, separate P1** in the same guard,
 > reproduced before fixing. Sharing Vite's `loadEnv` fixed precedence; it did
 > not make the guard match the build **invocation**.
@@ -247,6 +262,32 @@ review round appends here.
 | ✎ | Six HTTP handlers + one scheduled; verify classification and a run | 0.7 "The count is six" | **41**, **62** |
 | ✎ | PDF.js: the *deployed setting* is the mitigation | 10 | — |
 | ✎ | 0.6 overgeneralised SELECT closure (DELETE events) | 0.6 "One narrower point" | **31** |
+
+## Round 8 (review of `02636ea`) — the lockstep covered one of two mutation points
+
+| # | Review item | Section / file | Test |
+|---|---|---|---|
+| 1 | Lockstep read only `netlify.toml`; the real `vite build` lives in `package.json` | `modeInvariantErrors` covers **both** files as exact strings | "MODE INVARIANT: the real netlify.toml AND package.json" |
+| 1 | Narrow assertion, no general shell parser | exact-string comparison, either file | same |
+| 1 | Add the package-only mutation to the falsification checks | 5 falsification cases + control | "FALSIFICATION — package.json gains --mode staging" |
+| 1 | Confirm the mutation fails the suite | mutated each file against the real suite | 110 pass / **1 fail** per mutation; 111 clean |
+| 2 | **Withdraw "cannot recur silently"** | staging §4, `check-build-env.mjs` header | — |
+
+## Round 7 (review of `9051c0e`) — a second, separate P1 in the same guard
+
+*(This entry was lost by a scripted edit that re-read the file mid-run and
+discarded it; restored here.)*
+
+| # | Review item | Section / file | Test |
+|---|---|---|---|
+| 1 | `resolveMode` treated `VITE_MODE`/`MODE`/`NODE_ENV` as mode selectors; `vite build` ignores all three | `BUILD_MODE` constant replaces `resolveMode`; no inference left | mode-selection ×4 |
+| 1 | Guard's mode must match the actual invocation | `BUILD_MODE` pinned to the build command | MODE INVARIANT |
+| 1 | One explicit selection into both sides if custom modes appear | documented at `BUILD_MODE`; invariant enforces it | falsification cases |
+| 1 | Regressions must run CLI + ordinary build, same env, no injected mode | guard spawned as a subprocess; `vite build` with no mode | 4 refusals + 2 controls |
+| 1 | Delete the `MODE=qa` assertion that pinned the defect | `check-build-env.test.js` | "no environment variable can move BUILD_MODE" |
+| 1 | **Withdraw "equivalence by construction"** | `check-build-env.mjs` header, staging §4 | — |
+| 2 | "If the key cannot be retrieved" → "If unsealing cannot complete" | 8 recovery section | — |
+| ✎ | Bundle tests inherited the runner env (latent, would bite on staging) | `runGuard` known-base env; `buildAndRead` clears `VITE_*` | 104 pass clean **and** under simulated Netlify |
 
 ## Round 6 (review of `6c3c147`) — two executed bypasses of the guard
 

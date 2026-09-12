@@ -352,18 +352,86 @@ test("mode selection — production control still PASSES the CLI", async () => {
   }
 });
 
-test("BUILD_MODE stays pinned to netlify.toml's build command", async () => {
-  // If the build command ever gains --mode, BUILD_MODE must be updated in
-  // lockstep. This test is the lockstep.
+test("MODE INVARIANT: the real netlify.toml AND package.json both match expectations", async () => {
+  // Two mutation points, not one. netlify.toml runs `yarn build`, which runs
+  // package.json's "build" script, which is where `vite build` actually lives.
   const { readFileSync } = await import("node:fs");
-  const { BUILD_MODE } = await import("../check-build-env.mjs");
+  const { modeInvariantErrors, BUILD_MODE } = await import("../check-build-env.mjs");
+
   const toml = readFileSync(new URL("../../netlify.toml", import.meta.url), "utf8");
-  const cmd = /^\s*command\s*=\s*"([^"]+)"/m.exec(toml)?.[1] ?? "";
-  assert.match(cmd, /vite build|yarn build/, "expected a vite build in the build command");
-  const explicit = /--mode[= ]([A-Za-z0-9_-]+)/.exec(cmd)?.[1];
-  if (explicit) {
-    assert.equal(BUILD_MODE, explicit, "BUILD_MODE must match the --mode in netlify.toml");
-  } else {
-    assert.equal(BUILD_MODE, "production", "an unqualified vite build is mode=production");
-  }
+  const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  const tomlCommand = /^\s*command\s*=\s*"([^"]+)"/m.exec(toml)?.[1] ?? "";
+
+  assert.equal(BUILD_MODE, "production");
+  const errors = modeInvariantErrors({
+    tomlCommand,
+    packageBuildScript: pkg.scripts?.build,
+  });
+  assert.deepEqual(errors, [], errors.join("\n"));
+});
+
+// ── FALSIFICATION: each mutation point must break the invariant ─────────────
+// The previous version of this test read only netlify.toml, so mutating
+// package.json to `vite build --mode staging` left all 104 tests passing while
+// the real build mode changed. Verified, and the consequence was a guard
+// exiting 0 in pinned production mode against a bundle built in staging mode.
+// These cases exist so that gap cannot be re-introduced silently in EITHER file.
+const REAL_TOML_COMMAND =
+  "yarn install && yarn test && node scripts/check-build-env.mjs && yarn build && node scripts/inject-sw-manifest.mjs";
+
+for (const [label, mutation, expectMatch] of [
+  [
+    "package.json gains --mode staging",
+    { tomlCommand: REAL_TOML_COMMAND, packageBuildScript: "vite build --mode staging" },
+    /package\.json "build" is/,
+  ],
+  [
+    "package.json gains --mode production (still an unexpected command)",
+    { tomlCommand: REAL_TOML_COMMAND, packageBuildScript: "vite build --mode production" },
+    /package\.json "build" is/,
+  ],
+  [
+    "package.json switches bundler",
+    { tomlCommand: REAL_TOML_COMMAND, packageBuildScript: "rollup -c" },
+    /package\.json "build" is/,
+  ],
+  [
+    "netlify.toml gains --mode staging",
+    { tomlCommand: REAL_TOML_COMMAND + " --mode staging", packageBuildScript: "vite build" },
+    /netlify\.toml build command changed/,
+  ],
+  [
+    "netlify.toml drops the guard entirely",
+    {
+      tomlCommand: "yarn install && yarn test && yarn build && node scripts/inject-sw-manifest.mjs",
+      packageBuildScript: "vite build",
+    },
+    /netlify\.toml build command changed/,
+  ],
+]) {
+  test(`FALSIFICATION — ${label}: the invariant must FAIL`, async () => {
+    const { modeInvariantErrors } = await import("../check-build-env.mjs");
+    const errors = modeInvariantErrors(mutation);
+    assert.ok(errors.length > 0, "mutation went undetected");
+    assert.match(errors.join("\n"), expectMatch);
+  });
+}
+
+test("FALSIFICATION — the unmutated pair passes (control)", async () => {
+  const { modeInvariantErrors } = await import("../check-build-env.mjs");
+  assert.deepEqual(
+    modeInvariantErrors({ tomlCommand: REAL_TOML_COMMAND, packageBuildScript: "vite build" }),
+    []
+  );
+});
+
+test("an explicit --mode in either file must equal BUILD_MODE", async () => {
+  const { modeInvariantErrors } = await import("../check-build-env.mjs");
+  // Even if someone updates the EXPECTED_* strings, a mismatched mode is caught.
+  const errs = modeInvariantErrors({
+    tomlCommand: REAL_TOML_COMMAND,
+    packageBuildScript: "vite build --mode staging",
+    buildMode: "production",
+  });
+  assert.match(errs.join("\n"), /--mode staging but BUILD_MODE is "production"/);
 });
