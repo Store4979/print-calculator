@@ -160,24 +160,47 @@ from public.employees e where e.pin in ('1101','2201');
 -- storage seed (staging.md §5 item 5). A queue row pointing at a nonexistent
 -- object is not a negative fixture — it cannot distinguish "denied" from
 -- "absent", so authorized access has to be provable first.
-insert into public.pending_jobs (customer_name, job_date, queue_number, files, source, store_id, org_id)
-select 'Synthetic Customer '||s.slug, to_char(now(),'YYYY-MM-DD'), 1,
+-- STABLE IDs here too, and for a harder reason than tidiness: the job-files
+-- paths embed the print_jobs id, so a reset that minted fresh ids would
+-- orphan the uploaded Storage objects on EVERY reseed. These two ids match
+-- the objects actually in the bucket.
+--
+-- customer-uploads paths are slug-based, which matches how register-job names
+-- them, so pending_jobs ids do not affect object matching — pinned anyway so
+-- a reseed is fully deterministic.
+insert into public.pending_jobs (id, customer_name, job_date, queue_number, files, source, store_id, org_id)
+select v.id::uuid, 'Synthetic Customer '||s.slug, to_char(now(),'YYYY-MM-DD'), 1,
        jsonb_build_array(jsonb_build_object(
          'name','synthetic.pdf',
          'path', s.slug||'/synthetic.pdf',
-         'size', 1024,
+         'size', 101904,
          'type','application/pdf')),
        'upload', s.id, s.org_id
-from public.stores s where s.slug in ('staging-t1-store','staging-t2-store');
+from (values
+  ('5ee41000-0000-4000-8000-0000000000b1','staging-t1-store'),
+  ('5ee41000-0000-4000-8000-0000000000b2','staging-t2-store')
+) as v(id,slug)
+join public.stores s on s.slug = v.slug;
 
-insert into public.print_jobs (job_type, quantity, total_price, customer_name, customer_email,
+-- file_urls[].path MUST equal the real object name. The app's convention is
+-- jobs/{print_job_id}/{filename} (src/lib/supabase.js uploadJobFiles), so the
+-- path is derived from the pinned id rather than from the store slug — an
+-- earlier version used the slug, which matched no object and would have made
+-- every job-files denial test pass for the wrong reason.
+insert into public.print_jobs (id, job_type, quantity, total_price, customer_name, customer_email,
                                customer_phone, file_urls, store_id, org_id)
-select 'sheet', 10, 12.34, 'Synthetic '||s.slug, 'synthetic@example.invalid', '555-0000',
+select v.id::uuid, 'sheet', 10, 12.34, 'Synthetic '||s.slug, 'synthetic@example.invalid', '555-0000',
        jsonb_build_array(jsonb_build_object(
          'name','synthetic-job.pdf',
-         'path','jobs/'||s.slug||'/synthetic-job.pdf')),
+         'path','jobs/'||v.id||'/synthetic-job.pdf',
+         'size', 101904,
+         'type','application/pdf')),
        s.id, s.org_id
-from public.stores s where s.slug in ('staging-t1-store','staging-t2-store');
+from (values
+  ('82dfb0d2-dd1f-4546-ad05-affc0afb613c','staging-t1-store'),
+  ('67079697-698e-4028-ac41-bde3486815ac','staging-t2-store')
+) as v(id,slug)
+join public.stores s on s.slug = v.slug;
 
 -- ── VERIFY ──────────────────────────────────────────────────────────────────
 -- Both rows must be identical apart from the slug. Asymmetry means the seed
@@ -196,7 +219,24 @@ from public.stores s
 where s.slug in ('staging-t1-store','staging-t2-store')
 order by s.slug;
 
--- EXPECTED, once §6 item 3 is done: memberships = 2 for each tenant (one owner,
--- one manager). memberships = 0 means the tenants exist but NOBODY is
--- authorized — run this after the Auth users are created, and confirm
--- authorized access after TWO consecutive resets before any denial test.
+-- EXPECTED: memberships = 2 for each tenant (one owner, one manager).
+-- memberships = 0 means the tenants exist but NOBODY is authorized.
+
+-- Every seeded storage path must have a real object behind it. A denial test
+-- against an absent object cannot tell "denied" from "absent" and passes for
+-- the wrong reason, so this is a precondition, not a nicety.
+select 'storage fixture' as check, o.bucket_id, o.path,
+       case when o.present then 'OK' else '*** MISSING — denial tests INVALID ***' end as status
+from (
+  select 'customer-uploads' as bucket_id, (f->>'path') as path,
+         exists (select 1 from storage.objects x
+                  where x.bucket_id='customer-uploads' and x.name = f->>'path') as present
+    from public.pending_jobs pj, jsonb_array_elements(pj.files) f
+   where pj.store_id in (select id from public.stores where slug like 'staging-%')
+  union all
+  select 'job-files', (f->>'path'),
+         exists (select 1 from storage.objects x
+                  where x.bucket_id='job-files' and x.name = f->>'path')
+    from public.print_jobs pjb, jsonb_array_elements(pjb.file_urls) f
+   where pjb.store_id in (select id from public.stores where slug like 'staging-%')
+) o order by o.bucket_id, o.path;

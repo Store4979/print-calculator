@@ -319,6 +319,31 @@ either from a passing build.
 
 ---
 
+## 5b. REHEARSAL DISCIPLINE — use `begin … rollback`, never a bare `DO` block
+
+Learned by getting it wrong here, on staging, on 2026-09-12. A probe of row 32
+was written as a `DO` block and described as "rolled back so the fixtures
+survive". **A `DO` block that completes successfully COMMITS.** It truncated
+staging's `orders` for real — 2 rows, gone — and the intent in the comment was
+the only thing keeping them safe, which is to say nothing was.
+
+```sql
+-- WRONG: commits on success, whatever the comment says
+do $$ begin set local role anon; truncate public.orders; end $$;
+
+-- RIGHT: the rollback is a statement, not an intention
+begin;
+  set local role anon;
+  truncate public.orders;
+  select count(*) from public.orders;   -- observe inside the transaction
+rollback;
+```
+
+Recovery worked — `scripts/staging-seed.sql` restored the rows — which was an
+unplanned validation of the reset path against real damage rather than a staged
+mutation. But the rule stands: **every destructive rehearsal is an explicit
+`begin … rollback`.** No exceptions, and never a `DO` block.
+
 ## 6. Outstanding before Release 2 testing can start — FIVE items
 
 All five block. An earlier revision of this file called it four and described
@@ -331,7 +356,33 @@ item 5 as a footnote; it is not.
 | 3 | **Owner + manager Auth accounts** per tenant — exactly `owner-t1@`, `manager-t1@`, `owner-t2@`, `manager-t2@example.invalid` | `has_store_role` paths and every admin flow are untestable without them. **`scripts/staging-seed.sql` rebuilds the `memberships` rows from these exact addresses**, so the emails are a contract, not examples. Until they exist the seed prints `SEED INCOMPLETE: 0 of 4 memberships` and the verification shows `memberships = 0` |
 | 4 | **SMTP sink** (Mailpit or Ethereal) in the staging site's `SMTP_*` | a real relay in staging will eventually mail a real customer |
 | 4b | **Verify authorized access after TWO consecutive reseeds**, before any denial test | a reseed used to destroy the authorization it was supposed to preserve. Two runs is the cheapest test that catches an identity that is not stable across resets |
-| 5 | **Real Storage objects at the seeded paths** — `customer-uploads/staging-t{1,2}-store/synthetic.pdf` and `job-files/jobs/staging-t{1,2}-store/synthetic-job.pdf` | **a missing object is not a negative fixture.** A denial test against a path with no object cannot tell "denied" from "absent" — it passes for the wrong reason. Authorized access to a known synthetic object must be proven **first**, so that the later denial means something |
+| 5 | **Real Storage objects at the seeded paths** | **a missing object is not a negative fixture.** A denial test against a path with no object cannot tell "denied" from "absent" — it passes for the wrong reason. Authorized access to a known synthetic object must be proven **first**, so that the later denial means something |
+
+### §6 status: COMPLETE, 2026-09-12 — with one correction to item 5
+
+All five done and independently verified where possible. Item 5 needed a fix
+**in the seed, not in the upload**: the objects were uploaded at the app's real
+convention `jobs/{print_job_id}/{filename}` (`src/lib/supabase.js`
+`uploadJobFiles`), while the seed wrote `jobs/{store_slug}/…` into
+`file_urls[].path`. Row and object disagreed, so a `job-files` denial test
+would have read a path with no object behind it and passed for the wrong
+reason — the same trap this item exists to prevent, arrived at from the other
+direction.
+
+Worse, the seed minted a fresh `print_jobs.id` on every reset, so each reseed
+would have re-orphaned the uploads. Both fixed: `print_jobs` now carries
+**stable ids matching the uploaded objects**, and `file_urls[].path` is derived
+from that id rather than the slug. The seed's final query now **asserts every
+seeded path has an object behind it** and says the denial tests are invalid if
+not.
+
+| # | verified | how |
+|---|---|---|
+| 1 | site builds green | owner-reported; **not independently checkable — the sandbox cannot reach `netlify.app`** |
+| 2 | Auth URLs | owner-reported |
+| 3 | 4 accounts, all confirmed | **verified in `auth.users`**, and the seed's membership join now resolves all four |
+| 4 | SMTP sink | owner-reported |
+| 5 | 4 objects, all matching a seeded path | **verified** after the seed correction above |
 
 Items 1–4 need dashboard and Netlify access. Item 5 needs a service-role
 upload of two small synthetic PDFs per bucket; the seed script already writes
