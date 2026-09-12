@@ -3,17 +3,33 @@
   # install+build only, so no test had ever blocked a deploy and the
   # raw-getDocument guard in scripts/tests/ enforced nothing.
   # inject-sw-manifest enumerates the hashed build outputs into dist/sw.js.
-  command = "yarn install && yarn test && yarn build && node scripts/inject-sw-manifest.mjs"
+  command = "yarn install && yarn test && node scripts/check-build-env.mjs && yarn build && node scripts/inject-sw-manifest.mjs"
   publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "22"
   MISE_DISABLE = "1"
-  # Supabase: anon key is a public client key (RLS gates real access).
-  # Override these in the Netlify dashboard if you rotate them.
-  VITE_SUPABASE_URL      = "https://gmxyisjjaxtpycsmmzef.supabase.co"
-  VITE_SUPABASE_ANON_KEY = "sb_publishable_2pMOMFvyFD_LXPXgfYeREg_2g2PMVaU"
+  # SUPABASE PROJECT IDENTITY IS DELIBERATELY NOT SET HERE.
+  #
+  # It used to be, with a comment saying "Override these in the Netlify
+  # dashboard if you rotate them". That was BACKWARDS and is the bug this
+  # block now prevents: Netlify gives netlify.toml build variables precedence
+  # OVER dashboard variables. Because this file is shared by every site built
+  # from this repo, a staging site would have compiled its BROWSER bundle
+  # against production while its FUNCTIONS — which read unprefixed
+  # SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY at RUNTIME from that site's own
+  # dashboard config, a separate mechanism — talked to staging. Split-brain,
+  # and worse than no isolation because it looks isolated.
+  #
+  # Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY per site in the Netlify
+  # dashboard (site-specific by construction). `yarn dev` and local builds
+  # still fall back to the tracked .env, which holds production.
+  #
+  # EXPECTED_SUPABASE_REF is the guard: scripts/check-build-env.mjs refuses
+  # the build unless the EFFECTIVE browser config resolves to that ref.
+  # Unset means production is assumed, so production is unchanged and still
+  # checked; every non-production site MUST set it.
 
 # Bundle package.json into every function — changes each bundle's digest so
 # Netlify re-uploads them all onto the current (Node 22) runtime.
