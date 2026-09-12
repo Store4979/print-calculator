@@ -325,7 +325,9 @@ either from a passing build.
 |---|---|---|
 | 1 — staging stood up | **GREEN** 2026-09-12 | — |
 | 2 — additive identity schema | **APPLIED to staging** 2026-09-12 | `release2_01_identity_schema` |
-| 3 onward | not started | — |
+| 2b — atomic attempt accounting | **APPLIED to staging** 2026-09-12 | `release2_02_auth_attempts_fn` |
+| 3 slice 1 — kill switch + crypto core | merged, unreferenced | — |
+| 3 slice 2 — identity spine endpoints | in progress | — |
 
 **Production has nothing from Release 2.** When step 2 is eventually applied
 there, read the assigned version out of `supabase_migrations.schema_migrations`
