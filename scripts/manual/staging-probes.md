@@ -453,7 +453,7 @@ Afterwards `auth_attempts` should show **5** against `store:<T1>`, not 46.
 |---|---|---|
 | 1 (x4) | 401 | PASS |
 | 2a | 200 + ticket | PASS |
-| 2b | 401 | |
+| 2b | 401 | PASS |
 | 2c | 401 for T1 **and** 200 for T2, same token | |
 | 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
 | 3a | 200 + `__Host-pc_device` | |
