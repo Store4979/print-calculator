@@ -171,15 +171,60 @@ withholds it from a PIN manager and an Auth manager alike.
 
 ### 2c — cross-tenant owner must be refused
 
-Sign in as `owner-t2@example.invalid`. Still naming T1.
+**The admin UI cannot produce this token.** The staging build pins
+`VITE_STORE_SLUG` to `staging-t1-store`, so signing in as `owner-t2` is refused
+by the app with "That account isn't an owner or manager of this store" and the
+account is signed straight back out.
+
+That refusal is a correct result and worth recording — but it is **not** 2c. It
+is a CLIENT-SIDE gate. 2c asks whether the ENDPOINT refuses a valid, live T2
+owner token that names T1, which is the server-side tenancy bind — the same
+shape as finding P1-1 in `release2_clear_lockout`, where authorization was
+checked against one store and the action taken on another. Accepting the UI
+refusal as proof of the server property would be accepting a client gate as an
+authorization boundary, which is the category error this release exists to
+correct. An attacker does not use the admin panel.
+
+So mint the token directly from Supabase Auth's REST endpoint. This does not
+touch `printcalc_auth_v1`, so the T1 session in this window survives and the
+rest of the sequence is unaffected.
 
 ```js
-await call('enroll-ticket-create', J(null, { storeId: T1 }, token()));
+const STAGING_REF = 'lboajqihpsfrokqvjgnl';
+const STAGING_ANON = 'sb_publishable_DEDmndmu9xmhNFeXTCbO6A_HE0EBkZ6';
+
+const tokenFor = async (email, password) => {
+  const r = await fetch(
+    `https://${STAGING_REF}.supabase.co/auth/v1/token?grant_type=password`,
+    { method: 'POST',
+      headers: { apikey: STAGING_ANON, 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }) });
+  const j = await r.json();
+  if (!j.access_token) throw new Error('sign-in failed: ' + JSON.stringify(j));
+  return j.access_token;
+};
+```
+
+Then, with T2's owner password:
+
+```js
+const T2_OWNER = await tokenFor('owner-t2@example.invalid', 'PASSWORD');
+await call('enroll-ticket-create', J(null, { storeId: T1 }, T2_OWNER));
 ```
 
 Expect `401`. T2's owner holds no owner membership for T1, so the store filter
-returns nothing. This is the bind whose absence was finding P1-1 in
-`release2_clear_lockout`: authorizing one store and acting on another.
+returns nothing.
+
+Worth also confirming the token itself is good, so a `401` cannot be blamed on a
+bad sign-in — this should return `200` with `storeId` ending `...0a2`:
+
+```js
+await call('enroll-ticket-create', J(null, { storeId: T2 }, T2_OWNER));
+```
+
+That pair is what makes 2c evidence: the SAME token succeeds for its own store
+and fails for the other. One `401` alone proves nothing, because an unusable
+token also returns `401`.
 
 ---
 
@@ -409,7 +454,8 @@ Afterwards `auth_attempts` should show **5** against `store:<T1>`, not 46.
 | 1 (x4) | 401 | PASS |
 | 2a | 200 + ticket | PASS |
 | 2b | 401 | |
-| 2c | 401 | |
+| 2c | 401 for T1 **and** 200 for T2, same token | |
+| 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
 | 3a | 200 + `__Host-pc_device` | |
 | 3b | 401 | |
 | 3c | 200, kind=device, same csrf | |
