@@ -88,10 +88,11 @@ const J = (csrf, body, auth) => ({
 });
 
 const token = () => {
-  const k = Object.keys(localStorage)
-    .find(k => /^sb-.*-auth-token$/.test(k));
-  if (!k) throw new Error('not signed in');
-  return JSON.parse(localStorage.getItem(k)).access_token;
+  const raw = JSON.parse(
+    localStorage.getItem('printcalc_auth_v1') || 'null');
+  const t = raw?.access_token;
+  if (!t) throw new Error('no access_token in printcalc_auth_v1');
+  return t;
 };
 
 const T1 = '5ee41000-0000-4000-8000-0000000000a1';
@@ -100,6 +101,28 @@ const T2 = '5ee41000-0000-4000-8000-0000000000a2';
 
 `J(csrf, body, auth)` builds all three header shapes, which is what keeps every
 probe below to a single short line.
+
+`token()` reads the key this app actually uses. `src/lib/supabase.js` sets
+`storageKey: "printcalc_auth_v1"`, so the default `sb-<ref>-auth-token` key does
+not exist here, and the stored object is FLAT — `access_token` sits at the top
+level with no `currentSession` nesting.
+
+## Retry an unexpected 401 once before recording it
+
+`token()` returns whatever is in localStorage at the moment it is called, which
+may be an access token that has just expired. `enroll-ticket-create` validates
+it with `getUser()` against Supabase, so an expired token yields a genuine
+`401` — indistinguishable from "this caller is not an owner".
+
+Observed in practice: 2a returned `401`, and the identical call moments later
+returned `200`. supabase-js refreshes in the background and rewrites
+localStorage between the two.
+
+So on any **unexpected** `401` from an authorized probe, run it once more before
+writing it down. Reloading the staging tab immediately before Phase 2 makes it
+less likely. This applies only to probes that are SUPPOSED to succeed — 2b and
+2c must return `401` every time, and a `401` there is the result, not a stale
+token.
 
 ---
 
@@ -384,7 +407,7 @@ Afterwards `auth_attempts` should show **5** against `store:<T1>`, not 46.
 | probe | expected | observed |
 |---|---|---|
 | 1 (x4) | 401 | PASS |
-| 2a | 200 + ticket | |
+| 2a | 200 + ticket | PASS |
 | 2b | 401 | |
 | 2c | 401 | |
 | 3a | 200 + `__Host-pc_device` | |
