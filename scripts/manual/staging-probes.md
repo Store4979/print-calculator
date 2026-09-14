@@ -8,9 +8,27 @@ request a human makes from a browser console or a shell.
     https://printcalculator2-staging.netlify.app
 
 The staging Netlify site builds `security/release-2-slice-2` as its production
-branch, so there is no `deploy-preview-*` host for it and never was. Deploy
-Previews fire only for PRs that target a site's production branch; PR #45
-targets `main`, which is why no staging preview was ever generated.
+branch. For most of this work no staging preview host existed at all: Deploy
+Previews fire only for PRs that target a site's production branch, and PR #45
+targets `main` — which is why 30 hours of probes were aimed at a hostname
+Netlify was never going to create.
+
+## Use the PLAIN staging URL, not the staging preview
+
+Since the production branch was repointed, a second staging host also exists:
+
+    https://deploy-preview-45--printcalculator2-staging.netlify.app
+
+**Do not probe it.** It is a different ORIGIN, and `RELEASE2_ALLOWED_ORIGINS`
+lists only the plain URL. On a Netlify deploy preview, `URL` remains the site's
+main address while `DEPLOY_PRIME_URL` holds the preview address, and
+`originOk()` reads `env.URL || env.DEPLOY_PRIME_URL` — `URL` first. A console
+`fetch` from the preview therefore sends an origin matching neither the site URL
+nor the allowlist, and every probe returns `403`. If the Release 2 environment
+variables are additionally scoped to the production context, they return `404`
+instead. Both look like total failure and are only the wrong hostname.
+
+Phase 1 passed against the plain URL. Every probe below assumes it.
 
 ## Do not point this at production
 
