@@ -447,6 +447,16 @@ Afterwards `auth_attempts` should show **5** against `store:<T1>`, not 46.
 
 ---
 
+## A result is recorded only when the database agrees
+
+Every positive probe leaves a row behind, so a reported pass can be checked
+rather than trusted: 2a leaves a ticket, 3a an enrollment and a redeemed
+ticket, 3d a staff session, and every admitted login attempt an
+`auth_attempts` row. A "pass" for which the corresponding row does not exist
+was not run against this target, whatever the console showed. Phase 3 was
+reported as passing once while `device_enrollments` and `staff_sessions` were
+both empty; those entries were reverted and the phase re-run.
+
 ## Results
 
 | probe | expected | observed |
@@ -456,13 +466,13 @@ Afterwards `auth_attempts` should show **5** against `store:<T1>`, not 46.
 | 2b | 401 | PASS |
 | 2c | 401 for T1 **and** 200 for T2, same token | |
 | 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
-| 3a | 200 + `__Host-pc_device` | PASS |
-| 3b | 401 | PASS |
-| 3c | 200, kind=device, same csrf | PASS |
-| 3d | 200, role=staff, `__Host-pc_staff` | PASS |
-| 3e | 200, kind=staff | PASS |
+| 3a | 200 + `__Host-pc_device` | |
+| 3b | 401 | |
+| 3c | 200, kind=device, same csrf | |
+| 3d | 200, role=staff, `__Host-pc_staff` | |
+| 3e | 200, kind=staff | |
 | 3f-i | 401 predicted (gap) | |
-| 3f-ii | 200, role=manager | PASS |
+| 3f-ii | 200, role=manager | |
 | 4a | 401 | |
 | 4b | 401 | |
 | 4c | 403 | |
