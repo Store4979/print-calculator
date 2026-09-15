@@ -457,26 +457,35 @@ was not run against this target, whatever the console showed. Phase 3 was
 reported as passing once while `device_enrollments` and `staff_sessions` were
 both empty; those entries were reverted and the phase re-run.
 
+The rule caught a second one on 2026-09-15: 3d returned `401` while both
+limiters had admitted the attempt and `staff_sessions` stayed empty. The
+handler's uniform `401` was hiding a `42702` from
+`release2_create_staff_session` (an OUT column named `store_id` shadowing
+`employees.store_id`), visible only in the postgres log. HTTP status alone
+would have recorded a false FAIL on 3d and a false PASS on 4e. Migration 04
+fixed it; its rehearsal calls the function with real rows, which the 03
+rehearsal never did.
+
 ## Results
 
 | probe | expected | observed |
 |---|---|---|
 | 1 (x4) | 401 | PASS |
-| 2a | 200 + ticket | PASS |
+| 2a | 200 + ticket | PASS (re-run 2026-09-15 14:15Z, ticket 7962dddd…, redeemed by 3a) |
 | 2b | 401 | PASS |
-| 2c | 401 for T1 **and** 200 for T2, same token | |
+| 2c | 401 for T1 **and** 200 for T2, same token | NOT RUN 2026-09-15 — no T2 owner token was provided to the session |
 | 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
-| 3a | 200 + `__Host-pc_device` | |
-| 3b | 401 | |
-| 3c | 200, kind=device, same csrf | |
-| 3d | 200, role=staff, `__Host-pc_staff` | |
-| 3e | 200, kind=staff | |
-| 3f-i | 401 predicted (gap) | |
-| 3f-ii | 200, role=manager | |
-| 4a | 401 | |
-| 4b | 401 | |
-| 4c | 403 | |
-| 4d | 415 | |
-| 4e | 401 | |
-| 4f-iii | 5x401 then 41x429 | |
-| 4f-iv | 200 | |
+| 3a | 200 + `__Host-pc_device` | PASS — 200, enrollment b79410ed… (DB row present); cookie invisible to document.cookie as expected, attributes not inspected |
+| 3b | 401 | PASS |
+| 3c | 200, kind=device, same csrf | PASS |
+| 3d | 200, role=staff, `__Host-pc_staff` | PASS after migration 04 (2026-09-15 14:28Z): 200, employee `T1 Staff` role=staff, new csrf, expiresAt +12h; `staff_sessions` row present. First run FAILED 401: limiters admitted it, employee existed, but `release2_create_staff_session` raised 42702 `column reference "store_id" is ambiguous` (OUT column vs `employees.store_id`), rotation failed, handler returned authFailed(). Fixed by `supabase/migrations/pending/release2_04_staff_session_qualify_columns.sql`, staging ledger `20260915142741`. |
+| 3e | 200, kind=staff | PASS — 200, kind=staff, csrf identical to 3d (first run returned kind=device as a consequence of the 3d failure) |
+| 3f-i | 401 predicted (gap) | 401 — the predicted gap, confirmed with a live staff session: a reloaded tab holding only the staff csrf cannot switch employee |
+| 3f-ii | 200, role=manager | PASS — 200, employee `T1 Manager` role=manager; DB shows the 3d staff session revoked with reason `rotated: new sign-in on this device` and exactly one live session (first run FAILED 401, same 42702 as 3d) |
+| 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
+| 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
+| 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |
+| 4d | 415 | PASS — `{"ok":false,"error":"Unsupported Media Type"}` |
+| 4e | 401 | PASS — 401 re-run after 04, with 3d/3f-ii proving a correct same-store PIN on this device returns 200 |
+| 4f-iii | 5x401 then 41x429 | PASS 2026-09-15 — `401,401,401,401,401` then 41×`429`, first 429 at attempt 6 |
+| 4f-iv | 200 | PASS — 200, employee `T1 Staff` role=staff on device B (separate cookie jar: bootstrap was 401 there before enrolling); `auth_attempts` store subject read 6 afterwards (5 admitted from device A + 1 from device B), never 46 |

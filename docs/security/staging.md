@@ -327,7 +327,9 @@ either from a passing build.
 | 2 — additive identity schema | **APPLIED to staging** 2026-09-12 | `release2_01_identity_schema` |
 | 2b — atomic attempt accounting | **APPLIED to staging** 2026-09-12 | `release2_02_auth_attempts_fn` |
 | 3 slice 1 — kill switch + crypto core | merged, unreferenced | — |
-| 3 slice 2 — identity spine endpoints | in progress | — |
+| 2c — bind + atomic rotation | **APPLIED to staging** 2026-09-12 | `release2_03_bind_and_atomicity` |
+| 2d — rotation function repaired (42702) | **APPLIED to staging** 2026-09-15 | `release2_04_staff_session_qualify_columns` (`20260915142741`) |
+| 3 slice 2 — identity spine endpoints | in progress; probes 1–4e green on staging 2026-09-15, 2c and 4f outstanding | — |
 
 **Production has nothing from Release 2.** When step 2 is eventually applied
 there, read the assigned version out of `supabase_migrations.schema_migrations`
@@ -351,6 +353,17 @@ migration: `{postgres=X/postgres, service_role=X/postgres}`.
 
 This is why rule 4 requires the revoke *in the same migration* and not as a
 follow-up: between `CREATE` and a later revoke, the function is open.
+
+### A function that compiles is not a function that runs (2026-09-15)
+
+Migration 03's `release2_create_staff_session` applied cleanly, its proacl diff
+was right, and it had never executed: PL/pgSQL resolves column references at
+first execution, and the body's unqualified `store_id` was ambiguous with the
+OUT column of the same name (`42702`). Probe 3d found it, through
+`staff_sessions` staying empty while both limiters admitted the attempt. The
+03 rehearsal had never called the function. **Every function rehearsal from
+here calls the function end to end with the rows it will really see, inside
+`begin … rollback`** — see `supabase/rehearsals/release2_04_rehearsal.sql`.
 
 ## 5b. REHEARSAL DISCIPLINE — use `begin … rollback`, never a bare `DO` block
 

@@ -254,6 +254,14 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    change a return type; DROP + CREATE resets the ACL to that default AND
    discards the function comment — re-issue both. Prove it: diff `proacl`
    before/after in the rehearsal (see supabase/rehearsals/phase_e_01_rehearsal.sql).
+   AND CALL THE FUNCTION in that rehearsal with real rows, inside
+   `begin … rollback`. PL/pgSQL resolves column references at first EXECUTION,
+   not at CREATE: release2_03's rotation function applied cleanly and had never
+   run — its OUT column `store_id` shadowed `employees.store_id` (42702) and the
+   handler's uniform 401 hid it until probe 3d (2026-09-15, fixed by
+   release2_04). A `returns table (...)` OUT column name that matches any table
+   column in the body is a collision waiting to happen: alias every table and
+   qualify every column.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.
