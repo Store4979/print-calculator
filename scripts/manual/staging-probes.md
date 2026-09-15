@@ -456,13 +456,13 @@ Afterwards `auth_attempts` should show **5** against `store:<T1>`, not 46.
 | 2b | 401 | PASS |
 | 2c | 401 for T1 **and** 200 for T2, same token | |
 | 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
-| 3a | 200 + `__Host-pc_device` | |
-| 3b | 401 | |
-| 3c | 200, kind=device, same csrf | |
-| 3d | 200, role=staff, `__Host-pc_staff` | |
-| 3e | 200, kind=staff | |
+| 3a | 200 + `__Host-pc_device` | PASS |
+| 3b | 401 | PASS |
+| 3c | 200, kind=device, same csrf | PASS |
+| 3d | 200, role=staff, `__Host-pc_staff` | PASS |
+| 3e | 200, kind=staff | PASS |
 | 3f-i | 401 predicted (gap) | |
-| 3f-ii | 200, role=manager | |
+| 3f-ii | 200, role=manager | PASS |
 | 4a | 401 | |
 | 4b | 401 | |
 | 4c | 403 | |
