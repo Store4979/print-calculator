@@ -329,7 +329,7 @@ either from a passing build.
 | 3 slice 1 — kill switch + crypto core | merged, unreferenced | — |
 | 2c — bind + atomic rotation | **APPLIED to staging** 2026-09-12 | `release2_03_bind_and_atomicity` |
 | 2d — rotation function repaired (42702) | **APPLIED to staging** 2026-09-15 | `release2_04_staff_session_qualify_columns` (`20260915142741`) |
-| 3 slice 2 — identity spine endpoints | in progress; probes 1–4e green on staging 2026-09-15, 2c and 4f outstanding | — |
+| 3 slice 2 — identity spine endpoints | probes 1–4f green on staging 2026-09-15 (2c HTTP pair NOT RUN — no owner-t2 token in the automated session; confirmed by membership data + 2b); 3f-i confirmed as the slice-3 gap (no logout endpoint); **merged to main 2026-09-15**, endpoints dark on production | — |
 
 **Production has nothing from Release 2.** When step 2 is eventually applied
 there, read the assigned version out of `supabase_migrations.schema_migrations`
@@ -364,6 +364,17 @@ OUT column of the same name (`42702`). Probe 3d found it, through
 03 rehearsal had never called the function. **Every function rehearsal from
 here calls the function end to end with the rows it will really see, inside
 `begin … rollback`** — see `supabase/rehearsals/release2_04_rehearsal.sql`.
+
+**Corroborated from the database side, not the console.** The Release 2 tables
+were cleaned after the run, so the rows themselves are gone; what survives is
+independent. The postgres log carries `column reference "store_id" is ambiguous`
+three times — 14:16:23, 14:16:24 and 14:18:31 on 2026-09-15, the failed first
+runs of 3d and 3f-ii — then the rehearsal transaction ending in `rollback` at
+14:26:37, then the migration transaction ending in `commit` at 14:27:41:
+rehearse, then apply, in that order. The repo file for 04 is byte-identical to
+`statements[1]` in the staging ledger (`md5 2dcb03eb…`), **including its final
+newline** — the MCP apply path preserved it, unlike the six earlier replays in
+§2 whose transport stripped it.
 
 ## 5b. REHEARSAL DISCIPLINE — use `begin … rollback`, never a bare `DO` block
 
