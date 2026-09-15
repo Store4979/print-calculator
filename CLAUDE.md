@@ -134,8 +134,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   kiosk exit). On 2026-08-31 an audit revoked its EXECUTE on the claim that
   nothing called it, and staff sign-in was dead for 9 days. Grep for .rpc( before
   revoking anything, and never apply a DB change without a file in the repo.
-- SECURITY RELEASE 2 is planned in docs/security/release-2-plan.md (PLAN ONLY —
-  nothing applied). It replaces the anon-key client paths with server-verifiable
+- SECURITY RELEASE 2 is planned in docs/security/release-2-plan.md (slices 1–2 MERGED
+  2026-09-15: the four endpoints ship DARK on production — the kill switch in
+  netlify/lib/release2.js refuses on the production ref, observed for real —
+  and migrations 01–04 are applied to STAGING ONLY, in
+  supabase/migrations/pending/; production's database has nothing from
+  Release 2). It replaces the anon-key client paths with server-verifiable
   identity: owner-issued single-use pairing tickets -> revocable device
   enrollments -> opaque server-owned staff sessions (token HASHES only, in
   tables with RLS on and ZERO policies, reachable only by service_role). The
@@ -254,6 +258,14 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    change a return type; DROP + CREATE resets the ACL to that default AND
    discards the function comment — re-issue both. Prove it: diff `proacl`
    before/after in the rehearsal (see supabase/rehearsals/phase_e_01_rehearsal.sql).
+   AND CALL THE FUNCTION in that rehearsal with real rows, inside
+   `begin … rollback`. PL/pgSQL resolves column references at first EXECUTION,
+   not at CREATE: release2_03's rotation function applied cleanly and had never
+   run — its OUT column `store_id` shadowed `employees.store_id` (42702) and the
+   handler's uniform 401 hid it until probe 3d (2026-09-15, fixed by
+   release2_04). A `returns table (...)` OUT column name that matches any table
+   column in the body is a collision waiting to happen: alias every table and
+   qualify every column.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.
