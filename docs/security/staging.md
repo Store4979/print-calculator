@@ -330,6 +330,7 @@ either from a passing build.
 | 2c — bind + atomic rotation | **APPLIED to staging** 2026-09-12 | `release2_03_bind_and_atomicity` |
 | 2d — rotation function repaired (42702) | **APPLIED to staging** 2026-09-15 | `release2_04_staff_session_qualify_columns` (`20260915142741`) |
 | 3 slice 2 — identity spine endpoints | probes 1–4f green on staging 2026-09-15 (2c HTTP pair NOT RUN — no owner-t2 token in the automated session; confirmed by membership data + 2b); 3f-i confirmed as the slice-3 gap (no logout endpoint); **merged to main 2026-09-15**, endpoints dark on production | — |
+| 3 slice 3 — `staff-logout` (closes 3f) | code + tests written 2026-09-15; acceptance = probes 3g–3j on staging with `revoked_reason='logout'` read back | — |
 
 **Production has nothing from Release 2.** When step 2 is eventually applied
 there, read the assigned version out of `supabase_migrations.schema_migrations`
