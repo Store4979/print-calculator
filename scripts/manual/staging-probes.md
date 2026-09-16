@@ -579,8 +579,8 @@ rehearsal never did.
 | 3h | 200, kind=device | PASS — 200, kind=device, csrf identical to 3a's |
 | 3i | 200, role=staff (3f gap closed) | PASS — 200, `T1 Staff` role=staff using the csrf returned by 3g; bootstrap afterwards reads kind=staff |
 | 3j | 401 | PASS — 401 on the revoked session's csrf, run immediately after 3g |
-| 3k | 200 `{revoked:1}`, staff cookie cleared; DB live row -> `'kiosk entry'`, other reasons intact | |
-| 3l | 401, then 200 kind=device, then 200 `{revoked:0}` | |
+| 3k | 200 `{revoked:1}`, staff cookie cleared; DB live row -> `'kiosk entry'`, other reasons intact | PASS 2026-09-16 — `{"ok":true,"revoked":1}`; DB on Counter C: rotated, logout, rotated, **kiosk entry** — each row keeps its own reason (see DB note) |
+| 3l | 401, then 200 kind=device, then 200 `{revoked:0}` | PASS — 401 for the 3i staff csrf AND for the just-revoked manager csrf; bootstrap 200 kind=device with the enrollment's csrf; second revoke-all 200 `{revoked:0}` |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |
