@@ -358,6 +358,46 @@ after 3i the browser holds a NEW staff cookie, so run 3j immediately after 3g
 and before 3i, or read it as "old csrf against the new session", which is
 also 401.
 
+### 3k — kiosk entry revokes every live session on the device (slice 3)
+
+Same device as 3i, which holds a live staff session. Note what "every" can
+mean on one enrollment: rotation (F-4) guarantees at most ONE live session
+per device at any moment, so from the server's view the set of live rows on
+an enrollment has size 0 or 1. The probe therefore asserts what the endpoint
+promises: every row that IS live is revoked with the kiosk reason, rows
+already revoked keep their own reason, and other enrollments are untouched.
+Rotate once more first so the enrollment carries three reasons to compare:
+
+```js
+const CSRF_STAFF_1 = 'PASTE_csrf_FROM_3i';
+await call('staff-login', J(CSRF_DEV_A, { pin: '1101' }));   // 3i's row -> 'rotated…', new manager row live
+await call('staff-session-revoke-all', J(CSRF_DEV_A, {}));
+```
+
+Expect `200` with `{ok:true, revoked:1}` and a `Set-Cookie` that expires
+`__Host-pc_staff`. Database: on this enrollment the manager row now reads
+`revoked_reason='kiosk entry'`, the rotated and logout rows keep their
+reasons, and sessions on other enrollments are unchanged.
+
+### 3l — both staff tokens are dead, the device is not
+
+```js
+await call('staff-login', J(CSRF_STAFF_1, { pin: '1102' }));   // staff csrf of a revoked session
+await call('csrf-bootstrap');                                     // device cookie still resolves
+await call('staff-session-revoke-all', J(CSRF_DEV_A, {}));       // nothing live
+```
+
+Expect `401`, then `200 kind:"device"`, then `200 {revoked:0}`.
+
+**Scope of this substitution.** 3k/3l prove revoke-all's SERVER semantics on
+one device: every live session revoked, count returned, cookie cleared. They
+do NOT cover plan row 19 (two tabs, same browser: tab A enters kiosk, tab B
+acts as staff). Row 19 is about tab B DISCOVERING the revocation on its next
+request — a client concern for step 4 — and is not exercised here. Nor does a
+`200` mean the tab is customer-safe: an owner's Supabase Auth session in the
+same browser is a different credential class this endpoint never sees;
+clearing it is the client's job at kiosk entry (step 4).
+
 **Client contract for a logout `401`:** treat it as "already in device state —
 bootstrap again", not as an error. Refusals are uniform, so a tab cannot tell
 already-logged-out from wrong-CSRF from expired, and the correct recovery is
@@ -539,6 +579,8 @@ rehearsal never did.
 | 3h | 200, kind=device | PASS — 200, kind=device, csrf identical to 3a's |
 | 3i | 200, role=staff (3f gap closed) | PASS — 200, `T1 Staff` role=staff using the csrf returned by 3g; bootstrap afterwards reads kind=staff |
 | 3j | 401 | PASS — 401 on the revoked session's csrf, run immediately after 3g |
+| 3k | 200 `{revoked:1}`, staff cookie cleared; DB live row -> `'kiosk entry'`, other reasons intact | |
+| 3l | 401, then 200 kind=device, then 200 `{revoked:0}` | |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |
