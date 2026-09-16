@@ -535,10 +535,10 @@ rehearsal never did.
 | 3e | 200, kind=staff | PASS — 200, kind=staff, csrf identical to 3d (first run returned kind=device as a consequence of the 3d failure) |
 | 3f-i | 401 predicted (gap) | 401 — the predicted gap, confirmed with a live staff session: a reloaded tab holding only the staff csrf cannot switch employee |
 | 3f-ii | 200, role=manager | PASS — 200, employee `T1 Manager` role=manager; DB shows the 3d staff session revoked with reason `rotated: new sign-in on this device` and exactly one live session (first run FAILED 401, same 42702 as 3d) |
-| 3g | 200, kind=device, csrf = device csrf, staff cookie cleared; DB `revoked_reason='logout'` | |
-| 3h | 200, kind=device | |
-| 3i | 200, role=staff (3f gap closed) | |
-| 3j | 401 | |
+| 3g | 200, kind=device, csrf = device csrf, staff cookie cleared; DB `revoked_reason='logout'` | PASS 2026-09-16 — 200, kind=device, csrf identical to the enrollment's; the manager session row reads `revoked_reason='logout'` (see DB note below) |
+| 3h | 200, kind=device | PASS — 200, kind=device, csrf identical to 3a's |
+| 3i | 200, role=staff (3f gap closed) | PASS — 200, `T1 Staff` role=staff using the csrf returned by 3g; bootstrap afterwards reads kind=staff |
+| 3j | 401 | PASS — 401 on the revoked session's csrf, run immediately after 3g |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |
