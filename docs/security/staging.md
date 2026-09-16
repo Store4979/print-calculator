@@ -332,6 +332,8 @@ either from a passing build.
 | 3 slice 2 — identity spine endpoints | probes 1–4f green on staging 2026-09-15 (2c HTTP pair PASS 2026-09-16: same owner-t2 token, 401 naming T1 and 200 naming T2); 3f-i confirmed as the slice-3 gap (no logout endpoint); **merged to main 2026-09-15**, endpoints dark on production | — |
 | 3 slice 3 — `staff-logout` (closes 3f) | **ACCEPTED on staging 2026-09-16**: probes 3g–3j green, `revoked_reason='logout'` read back | — |
 | 3 slice 3 — `staff-session-revoke-all` (kiosk entry) | **ACCEPTED on staging 2026-09-16**: probes 3k–3l green, `'kiosk entry'` read back. Revokes STAFF sessions only — the owner Auth session is the client's job (step 4); plan row 19 (second tab discovers revocation) is a step-4 client probe, not covered here | — |
+| 2e — owner device revocation function | **APPLIED to staging** 2026-09-16 | `release2_05_revoke_enrollment` (`20260916225132`); rehearsal called it end to end incl. P5b (bind precedes the idempotent return) |
+| 3 slice 3 — `enroll-revoke` + `enroll-list` | code + tests written 2026-09-16; acceptance = probes 5a–5e | — |
 
 **Production has nothing from Release 2.** When step 2 is eventually applied
 there, read the assigned version out of `supabase_migrations.schema_migrations`
