@@ -398,6 +398,63 @@ request — a client concern for step 4 — and is not exercised here. Nor does 
 same browser is a different credential class this endpoint never sees;
 clearing it is the client's job at kiosk entry (step 4).
 
+### 5a — owner revokes the device it is standing at (slice 3)
+
+Device A holds a live staff session. Signed in as `owner-t1` in the normal
+window; the revoke is sent FROM device A's own window so the request carries
+the device's own cookies (an owner who finds a shared tablet revokes it from
+that tablet). Get `ENR_A` from 3a's `enrollmentId`.
+
+```js
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A, reason: 'probe: shared tablet' }, token()));
+```
+
+Expect `200` with `{ok:true, enrollmentId, storeId:"…0a1", sessionsRevoked:1}`.
+Database: `device_enrollments` row has `revoked_by` = owner-t1 and the reason;
+the live session row reads `revoked_reason = 'device revoked: probe: shared
+tablet'`; earlier rows keep their own reasons.
+
+### 5b — the device is dead
+
+```js
+await call('csrf-bootstrap');                                   // 401
+await call('staff-login', J(CSRF_DEV_A, { pin: '1102' }));      // 401
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A }, token()));   // 200, sessionsRevoked:0 (idempotent)
+```
+
+### 5c — wrong tenant and unknown id answer identically, and change nothing
+
+With `window.T2_OWNER` set (2c):
+
+```js
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A }, window.T2_OWNER));            // 401
+await call('enroll-revoke', J(null, { enrollmentId: crypto.randomUUID() }, token()));      // 401
+```
+
+Both `401`, same body. ENR_A's row is unchanged (still revoked by owner-t1 at
+the 5a timestamp). The first call is the P5b property from the rehearsal: a
+non-owner on an already-revoked enrollment is refused exactly as on a live
+one, so revoked-vs-live in another tenant is not enumerable by status.
+
+### 5d — the reason is bounded
+
+```js
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A, reason: 'x'.repeat(201) }, token()));   // 400
+```
+
+### 5e — list: tenant-scoped, no secrets
+
+```js
+const L = await call('enroll-list');                             // owner-t1: 200, T1 devices incl. revoked with reason, liveSessions counts
+/[0-9a-f]{64}|\x[0-9a-f]+|token|secret|created_by|revoked_by/i.test(L.body)   // false
+await fetch(FN + 'enroll-list?storeId=' + T1, { headers: { authorization: 'Bearer ' + window.T2_OWNER } }).then(r => r.status)   // 401
+```
+
+`call('enroll-list')` needs the owner token: use
+`fetch(FN + 'enroll-list', { headers: { authorization: 'Bearer ' + token() } })`.
+
+---
+
 **Client contract for a logout `401`:** treat it as "already in device state —
 bootstrap again", not as an error. Refusals are uniform, so a tab cannot tell
 already-logged-out from wrong-CSRF from expired, and the correct recovery is
@@ -581,6 +638,11 @@ rehearsal never did.
 | 3j | 401 | PASS — 401 on the revoked session's csrf, run immediately after 3g |
 | 3k | 200 `{revoked:1}`, staff cookie cleared; DB live row -> `'kiosk entry'`, other reasons intact | PASS 2026-09-16 — `{"ok":true,"revoked":1}`; DB on Counter C: rotated, logout, rotated, **kiosk entry** — each row keeps its own reason (see DB note) |
 | 3l | 401, then 200 kind=device, then 200 `{revoked:0}` | PASS — 401 for the 3i staff csrf AND for the just-revoked manager csrf; bootstrap 200 kind=device with the enrollment's csrf; second revoke-all 200 `{revoked:0}` |
+| 5a | 200 `{sessionsRevoked:1}` from the revoked device itself; DB `revoked_by`=owner-t1, cascade reason names the device | |
+| 5b | 401, 401, then 200 `{sessionsRevoked:0}` | |
+| 5c | 401 both, identical body, row unchanged | |
+| 5d | 400 | |
+| 5e | 200 with reasons and live counts, no secrets; T2 owner naming T1 -> 401 | |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |

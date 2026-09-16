@@ -16,7 +16,9 @@ const AUTH = read("../../netlify/lib/release2-auth.js");
 
 const LOGOUT_SRC = read("../../netlify/functions/staff-logout.js");
 const REVOKE_ALL_SRC = read("../../netlify/functions/staff-session-revoke-all.js");
-const ALL = { LOGIN, REDEEM, TICKET, BOOT, LOGOUT: LOGOUT_SRC, REVOKE_ALL: REVOKE_ALL_SRC };
+const REVOKE_SRC = read("../../netlify/functions/enroll-revoke.js");
+const LIST_SRC = read("../../netlify/functions/enroll-list.js");
+const ALL = { LOGIN, REDEEM, TICKET, BOOT, LOGOUT: LOGOUT_SRC, REVOKE_ALL: REVOKE_ALL_SRC, REVOKE: REVOKE_SRC, LIST: LIST_SRC };
 
 test("every slice-2 handler passes through gate() before doing anything", () => {
   for (const [name, src] of Object.entries(ALL)) {
@@ -251,7 +253,12 @@ function fakeClient(answers) {
     };
     return b;
   };
-  return { client: { from: builder, rpc: async () => ({ data: null, error: null }) }, calls };
+  const rpc = async (name, args) => {
+    const ops = [["rpc", args]];
+    calls.push({ table: "rpc:" + name, ops });
+    return answers("rpc:" + name, ops) ?? { data: null, error: null };
+  };
+  return { client: { from: builder, rpc }, calls };
 }
 
 const HEX32 = "\\x" + "ab".repeat(32);
@@ -592,6 +599,232 @@ test("revoke-all: the gate applies — wrong method, foreign origin, form conten
     assert.equal((await mod.handler({ ...ev, httpMethod: "GET" })).statusCode, 405);
     assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, origin: "https://evil.example.com" } })).statusCode, 403);
     assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, "content-type": "application/x-www-form-urlencoded" } })).statusCode, 415);
+    assert.equal(calls.length, 0);
+  });
+});
+
+// ── SLICE 3: enroll-revoke and enroll-list ──────────────────────────────────
+// Calibration as before: shape assertions plus fake-client behaviour; the
+// acceptance evidence is probes 5a–5e on staging with revoked_by and the
+// cascade reason read back.
+const REVOKE = REVOKE_SRC;
+const LIST = LIST_SRC;
+
+// p_owner IS TRUSTED BY THE FUNCTION, so the handler is the whole boundary.
+// Pin the property: the owner id comes from getUser() and from nowhere else.
+test("enroll-revoke: p_owner derives ONLY from resolveOwnerUser() (getUser), never from body, query or headers", () => {
+  assert.match(REVOKE, /const user = await resolveOwnerUser\(event, _authFactory\)/);
+  assert.match(REVOKE, /p_owner: user\.id/, "the RPC must be handed the validated user's id");
+  assert.equal((REVOKE.match(/p_owner:/g) || []).length, 1, "exactly one place sets p_owner");
+  assert.doesNotMatch(REVOKE, /body\??\.\s*(owner|user|ownerId|userId|createdBy|revokedBy)/i, "no owner id from the body");
+  assert.doesNotMatch(REVOKE, /queryStringParameters/, "no owner id from the query string");
+  assert.doesNotMatch(REVOKE, /headers\??\.?\[?["']?x-(owner|user)/i, "no owner id from a custom header");
+  assert.doesNotMatch(REVOKE, /jwt\.decode|jsonwebtoken|atob\(/, "no self-parsed JWT — getUser() validates against Supabase");
+  assert.match(AUTH, /export async function resolveOwnerUser\(event, authFactory = null/);
+  assert.match(AUTH, /asUser\.auth\.getUser\(\)/);
+});
+
+test("enroll-revoke: gate, owner JWT before anything else, one RPC, 42501 -> uniform 401, no store from the body", () => {
+  assert.match(REVOKE, /const blocked = gate\(event, \{ method: "POST" \}\)/);
+  assert.match(REVOKE, /if \(blocked\) return blocked;/);
+  const userIdx = REVOKE.indexOf("await resolveOwnerUser(");
+  const rpcIdx = REVOKE.indexOf('.rpc("release2_revoke_enrollment"');
+  assert.ok(userIdx > 0 && rpcIdx > userIdx);
+  assert.equal((REVOKE.match(/\.rpc\(/g) || []).length, 1, "one RPC; the cascade lives in the function");
+  assert.match(REVOKE, /error\.code === "42501"\) return authFailed\(\)/);
+  assert.doesNotMatch(REVOKE, /body\??\.\s*storeId/, "the store is resolved from the enrollment inside the function");
+  assert.doesNotMatch(REVOKE, /resolveDevice\(|resolveStaff\(/, "cookies are not consulted — self-revocation must not be refused");
+  assert.doesNotMatch(REVOKE, /error:\s*(e|error)\.message/);
+});
+
+test("enroll-revoke: the reason is bounded before the call", () => {
+  assert.match(REVOKE, /auditReason\(body\?\.reason\)/);
+  assert.match(REVOKE, /reason === false\) return json\(400/);
+  assert.match(AUTH, /export function auditReason\(value, max = 200\)/);
+});
+
+test("auditReason: 200 printable chars max, controls refused, blank -> null", async () => {
+  const { auditReason } = await import("../../netlify/lib/release2-auth.js");
+  assert.equal(auditReason(undefined), null);
+  assert.equal(auditReason(""), null);
+  assert.equal(auditReason("   "), null);
+  assert.equal(auditReason(" shared tablet "), "shared tablet");
+  assert.equal(auditReason("a".repeat(200)), "a".repeat(200));
+  assert.equal(auditReason("a".repeat(201)), false);
+  assert.equal(auditReason("ok\nnot"), false);
+  assert.equal(auditReason("tab\there"), false);
+  assert.equal(auditReason(42), false);
+  assert.equal(auditReason({ a: 1 }), false);
+});
+
+const OWNER = { id: "11111111-1111-4111-8111-111111111111", email: "owner-t1@example.invalid" };
+const ENR = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ST1 = "5ee41000-0000-4000-8000-0000000000a1";
+const authOk = () => ({ auth: { getUser: async () => ({ data: { user: OWNER }, error: null }) } });
+const authBad = () => ({ auth: { getUser: async () => ({ data: { user: null }, error: { message: "bad" } }) } });
+
+function revokeEvt({ body = { enrollmentId: ENR }, auth = "Bearer x", cookie = "", extra = {} } = {}) {
+  return {
+    httpMethod: "POST",
+    headers: { "content-type": "application/json", ...(auth ? { authorization: auth } : {}), ...(cookie ? { cookie } : {}), ...extra },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  };
+}
+
+test("enroll-revoke: happy path calls the function with the getUser id and returns the count; self-revocation is 200", async () => {
+  await withEnv(async () => {
+    process.env.VITE_SUPABASE_ANON_KEY = "anon";
+    const mod = await import("../../netlify/functions/enroll-revoke.js");
+    const { client, calls } = fakeClient((table, ops) =>
+      table === "rpc:release2_revoke_enrollment"
+        ? { data: [{ o_enrollment_id: ENR, o_store_id: ST1, o_sessions_revoked: 1 }], error: null }
+        : { data: null, error: null });
+    mod.__setClientFactory(() => client);
+    mod.__setAuthClientFactory(authOk);
+    // The request carries the revoked device's OWN cookies and a body/header
+    // that try to name a different owner. Neither reaches the function.
+    const res = await mod.handler(revokeEvt({
+      body: { enrollmentId: ENR, reason: " shared tablet ", ownerId: "22222222-2222-4222-8222-222222222222", userId: "evil" },
+      cookie: "__Host-pc_device=devtok; __Host-pc_staff=tok",
+      extra: { "x-owner-id": "22222222-2222-4222-8222-222222222222" },
+    }));
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(JSON.parse(res.body), { ok: true, enrollmentId: ENR, storeId: ST1, sessionsRevoked: 1 });
+    const rpc = calls.find((c) => c.table === "rpc:release2_revoke_enrollment");
+    assert.ok(rpc, "function not called");
+    assert.deepEqual(rpc.ops[0][1], { p_enrollment: ENR, p_owner: OWNER.id, p_reason: "shared tablet" });
+    assert.equal(res.headers["set-cookie"], undefined, "revocation is server-side; cookies are not touched here");
+  });
+});
+
+test("enroll-revoke: 42501 from the function is the uniform 401; other errors are 500 without detail", async () => {
+  await withEnv(async () => {
+    process.env.VITE_SUPABASE_ANON_KEY = "anon";
+    const mod = await import("../../netlify/functions/enroll-revoke.js");
+    mod.__setAuthClientFactory(authOk);
+    for (const [code, status] of [["42501", 401], ["XX000", 500]]) {
+      const { client } = fakeClient((table) =>
+        table === "rpc:release2_revoke_enrollment" ? { data: null, error: { code, message: "secret detail" } } : { data: null, error: null });
+      mod.__setClientFactory(() => client);
+      const res = await mod.handler(revokeEvt());
+      assert.equal(res.statusCode, status, code);
+      assert.doesNotMatch(res.body, /secret detail/);
+      if (status === 401) assert.equal(res.body, JSON.stringify({ ok: false, error: "Unauthorized" }));
+    }
+  });
+});
+
+test("enroll-revoke: no / bad JWT is 401 before the function is reached; bad id or reason is 400", async () => {
+  await withEnv(async () => {
+    process.env.VITE_SUPABASE_ANON_KEY = "anon";
+    const mod = await import("../../netlify/functions/enroll-revoke.js");
+    const { client, calls } = fakeClient(() => ({ data: null, error: null }));
+    mod.__setClientFactory(() => client);
+    mod.__setAuthClientFactory(authBad);
+    assert.equal((await mod.handler(revokeEvt())).statusCode, 401);
+    assert.equal((await mod.handler(revokeEvt({ auth: "" }))).statusCode, 401);
+    mod.__setAuthClientFactory(authOk);
+    assert.equal((await mod.handler(revokeEvt({ body: {} }))).statusCode, 400);
+    assert.equal((await mod.handler(revokeEvt({ body: { enrollmentId: "nope" } }))).statusCode, 400);
+    assert.equal((await mod.handler(revokeEvt({ body: { enrollmentId: ENR, reason: "x".repeat(201) } }))).statusCode, 400);
+    assert.equal((await mod.handler(revokeEvt({ body: { enrollmentId: ENR, reason: "a\nb" } }))).statusCode, 400);
+    assert.equal((await mod.handler(revokeEvt({ body: "{not json" }))).statusCode, 400);
+    assert.equal(calls.filter((c) => c.table.startsWith("rpc:")).length, 0, "nothing above may reach the function");
+  });
+});
+
+// ── enroll-list ──
+test("enroll-list: GET, owner JWT, owner memberships only, tenant-scoped, no select(*)", () => {
+  assert.match(LIST, /gate\(event, \{ method: "GET", requireJson: false \}\)/);
+  assert.match(LIST, /const user = await resolveOwnerUser\(event, _authFactory\)/);
+  assert.match(LIST, /\.eq\("user_id", user\.id\)\.eq\("role", "owner"\)/);
+  assert.match(LIST, /storeId required: caller owns multiple stores/);
+  // Strip comments first: the header quotes select("*") while forbidding it.
+  const code = LIST.replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /\.select\("\*"\)|\.select\(\)/, "columns must be named");
+  assert.doesNotMatch(code, /device_token_hash|csrf_secret|created_by|revoked_by|token_hash/, "no secret or user-id column is even selected");
+  const devSel = LIST.indexOf('.from("device_enrollments")');
+  assert.ok(devSel > 0 && LIST.indexOf('.eq("store_id", storeId)', devSel) > devSel, "devices filtered by the RESOLVED store");
+});
+
+function listEvt({ storeId = null, auth = "Bearer x" } = {}) {
+  return {
+    httpMethod: "GET",
+    headers: { ...(auth ? { authorization: auth } : {}) },
+    queryStringParameters: storeId ? { storeId } : {},
+    body: "",
+  };
+}
+
+test("enroll-list: returns the owner's devices with live counts and reasons, and NOTHING secret, even if the row carried it", async () => {
+  await withEnv(async () => {
+    process.env.VITE_SUPABASE_ANON_KEY = "anon";
+    const mod = await import("../../netlify/functions/enroll-list.js");
+    const { client } = fakeClient((table, ops) => {
+      if (table === "memberships") return { data: [{ store_id: ST1, role: "owner" }], error: null };
+      if (table === "device_enrollments") return { data: [
+        { id: "d1", label: "Counter A", created_at: "2026-09-16T10:00:00Z", last_seen_at: null, revoked_at: null, revoked_reason: null,
+          device_token_hash: "\\xdeadbeef", csrf_secret: "\\xcafebabe", created_by: OWNER.id },
+        { id: "d2", label: "Counter B", created_at: "2026-09-16T11:00:00Z", last_seen_at: "2026-09-16T12:00:00Z", revoked_at: "2026-09-16T13:00:00Z", revoked_reason: "shared tablet",
+          device_token_hash: "\\xdeadbeef", csrf_secret: "\\xcafebabe", created_by: OWNER.id, revoked_by: OWNER.id },
+      ], error: null };
+      if (table === "staff_sessions") return { data: [{ enrollment_id: "d1" }, { enrollment_id: "d1" }], error: null };
+      return { data: null, error: null };
+    });
+    mod.__setClientFactory(() => client);
+    mod.__setAuthClientFactory(authOk);
+    const res = await mod.handler(listEvt());
+    assert.equal(res.statusCode, 200, res.body);
+    const body = JSON.parse(res.body);
+    assert.equal(body.storeId, ST1);
+    assert.deepEqual(body.devices, [
+      { id: "d2", label: "Counter B", createdAt: "2026-09-16T11:00:00Z", lastSeenAt: "2026-09-16T12:00:00Z", revokedAt: "2026-09-16T13:00:00Z", revokedReason: "shared tablet", liveSessions: 0 },
+      { id: "d1", label: "Counter A", createdAt: "2026-09-16T10:00:00Z", lastSeenAt: null, revokedAt: null, revokedReason: null, liveSessions: 2 },
+    ]);
+    assert.doesNotMatch(res.body, /deadbeef|cafebabe|\\\\x|1111-4111|created_by|revoked_by|token|secret/i, "a secret-bearing row must not leak");
+  });
+});
+
+test("enroll-list: manager-only membership, or a storeId the caller does not own, is 401; several stores without storeId is 400", async () => {
+  await withEnv(async () => {
+    process.env.VITE_SUPABASE_ANON_KEY = "anon";
+    const mod = await import("../../netlify/functions/enroll-list.js");
+    mod.__setAuthClientFactory(authOk);
+    const ST2 = "5ee41000-0000-4000-8000-0000000000a2";
+    // The fake mirrors PostgREST: the role filter and the optional store filter narrow the rows.
+    const mk = (rows) => fakeClient((table, ops) => {
+      if (table !== "memberships") return { data: [], error: null };
+      const role = ops.find(([o, k]) => o === "eq" && k === "role")?.[2];
+      const st = ops.find(([o, k]) => o === "eq" && k === "store_id")?.[2];
+      return { data: rows.filter((r) => r.role === role && (!st || r.store_id === st)), error: null };
+    }).client;
+    mod.__setClientFactory(() => mk([{ store_id: ST1, role: "manager" }]));
+    assert.equal((await mod.handler(listEvt())).statusCode, 401, "manager");
+    mod.__setClientFactory(() => mk([{ store_id: ST1, role: "owner" }]));
+    assert.equal((await mod.handler(listEvt({ storeId: ST2 }))).statusCode, 401, "wrong store");
+    assert.equal((await mod.handler(listEvt({ storeId: "nope" }))).statusCode, 400, "malformed store");
+    mod.__setClientFactory(() => mk([{ store_id: ST1, role: "owner" }, { store_id: ST2, role: "owner" }]));
+    assert.equal((await mod.handler(listEvt())).statusCode, 400, "ambiguous");
+    assert.equal((await mod.handler(listEvt({ storeId: ST2 }))).statusCode, 200, "named store");
+    mod.__setAuthClientFactory(authBad);
+    assert.equal((await mod.handler(listEvt())).statusCode, 401, "bad jwt");
+  });
+});
+
+test("enroll-list / enroll-revoke: the gate applies", async () => {
+  await withEnv(async () => {
+    process.env.VITE_SUPABASE_ANON_KEY = "anon";
+    const list = await import("../../netlify/functions/enroll-list.js");
+    const rev = await import("../../netlify/functions/enroll-revoke.js");
+    const { client, calls } = fakeClient(() => ({ data: null, error: null }));
+    list.__setClientFactory(() => client); rev.__setClientFactory(() => client);
+    list.__setAuthClientFactory(authOk); rev.__setAuthClientFactory(authOk);
+    assert.equal((await list.handler({ ...listEvt(), httpMethod: "POST" })).statusCode, 405);
+    assert.equal((await list.handler({ ...listEvt(), headers: { authorization: "Bearer x", origin: "https://evil.example.com" } })).statusCode, 403);
+    const r = revokeEvt();
+    assert.equal((await rev.handler({ ...r, httpMethod: "GET" })).statusCode, 405);
+    assert.equal((await rev.handler({ ...r, headers: { ...r.headers, origin: "https://evil.example.com" } })).statusCode, 403);
+    assert.equal((await rev.handler({ ...r, headers: { ...r.headers, "content-type": "text/plain" } })).statusCode, 415);
     assert.equal(calls.length, 0);
   });
 });
