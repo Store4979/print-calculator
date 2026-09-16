@@ -14,7 +14,8 @@ const TICKET = read("../../netlify/functions/enroll-ticket-create.js");
 const BOOT = read("../../netlify/functions/csrf-bootstrap.js");
 const AUTH = read("../../netlify/lib/release2-auth.js");
 
-const ALL = { LOGIN, REDEEM, TICKET, BOOT };
+const LOGOUT_SRC = read("../../netlify/functions/staff-logout.js");
+const ALL = { LOGIN, REDEEM, TICKET, BOOT, LOGOUT: LOGOUT_SRC };
 
 test("every slice-2 handler passes through gate() before doing anything", () => {
   for (const [name, src] of Object.entries(ALL)) {
@@ -171,4 +172,246 @@ test("F-5: every limiter caller turns a throw into 503, never into permission", 
   for (const [name, src] of [["LOGIN", LOGIN], ["REDEEM", REDEEM]]) {
     assert.match(src, /limiter unavailable[\s\S]{0,220}503/, `${name} must fail closed`);
   }
+});
+
+// ── SLICE 3: staff-logout ───────────────────────────────────────────────────
+// Source-string assertions first, then behavioural ones against a fake client.
+// CALIBRATION, stated plainly: the source assertions pin the SHAPE of the
+// handler and nothing more — the 42702 rotation bug passed every one of the
+// 154 tests above, because a function that compiles and a function that runs
+// are different things. The acceptance evidence for this endpoint is the
+// staging sequence 3g/3h/3i (scripts/manual/staging-probes.md) with a live
+// session, plus `revoked_reason = 'logout'` read back from staff_sessions.
+const LOGOUT = LOGOUT_SRC;
+
+test("staff-logout passes through gate() and refuses uniformly", () => {
+  assert.match(LOGOUT, /const blocked = gate\(event, \{ method: "POST" \}\)/);
+  assert.match(LOGOUT, /if \(blocked\) return blocked;/);
+  assert.match(LOGOUT, /return authFailed\(\)/);
+  assert.doesNotMatch(LOGOUT, /error:\s*e\.message/);
+});
+
+test("staff-logout resolves a STAFF credential, interactively, and never falls back to the device", () => {
+  assert.match(LOGOUT, /resolveStaff\(sb, event, \{ interactive: true \}\)/,
+    "a logout is an act by a person; it must not be mistaken for a passive poll");
+  assert.doesNotMatch(LOGOUT, /resolveDevice\(/,
+    "a device token has nothing to log out of and must get the uniform 401");
+});
+
+test("staff-logout checks CSRF AFTER resolution and BEFORE the revoke (F-6 shape)", () => {
+  const resolveIdx = LOGOUT.indexOf("await resolveStaff(");
+  const csrfIdx = LOGOUT.indexOf("csrfOk(event, staff.csrfSecret)");
+  const revokeIdx = LOGOUT.indexOf('.from("staff_sessions")');
+  assert.ok(resolveIdx > 0 && csrfIdx > resolveIdx, "the expected secret lives on the resolved row");
+  assert.ok(revokeIdx > csrfIdx, "a forged request must revoke nothing");
+});
+
+test("staff-logout revokes server-side, the resolved row only, never a body-supplied id", () => {
+  assert.match(LOGOUT, /\.update\(\{ revoked_at: new Date\(\)\.toISOString\(\), revoked_reason: "logout" \}\)/);
+  assert.match(LOGOUT, /\.eq\("id", staff\.sessionId\)/);
+  assert.match(LOGOUT, /\.is\("revoked_at", null\)/, "a concurrent revoke must not be overwritten");
+  assert.doesNotMatch(LOGOUT, /JSON\.parse\(event\.body/, "nothing in the body is trusted");
+  assert.doesNotMatch(LOGOUT, /\.rpc\(/, "one statement on one row needs no function");
+});
+
+test("clearHostCookie keeps the __Host- attribute set and expires the cookie", async () => {
+  const { clearHostCookie, setHostCookie } = await import("../../netlify/lib/release2.js");
+  const c = clearHostCookie("__Host-pc_staff");
+  assert.match(c, /^__Host-pc_staff=; /);
+  for (const attr of ["HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=0"]) {
+    assert.ok(c.includes(attr), `missing ${attr}`);
+  }
+  assert.doesNotMatch(c, /Domain=/, "__Host- forbids a Domain attribute");
+  assert.throws(() => clearHostCookie("pc_staff"), /__Host-/);
+  // Same attribute set as the setter, so the browser matches the same cookie.
+  const set = setHostCookie("__Host-pc_staff", "x", 10).split("; ").slice(1, -1);
+  const clr = c.split("; ").slice(1, -1);
+  assert.deepEqual(clr, set);
+});
+
+// Fake PostgREST client: enough of the builder surface for resolveStaff and
+// the logout UPDATE. Each from() records the chain; awaiting it resolves via
+// the per-table answer function so a test can script row state and count
+// mutations.
+function fakeClient(answers) {
+  const calls = [];
+  const builder = (table) => {
+    const ops = [];
+    const b = {
+      select: (c) => (ops.push(["select", c]), b),
+      update: (p) => (ops.push(["update", p]), b),
+      eq: (k, v) => (ops.push(["eq", k, v]), b),
+      is: (k, v) => (ops.push(["is", k, v]), b),
+      limit: (n) => (ops.push(["limit", n]), b),
+      then: (resolve, reject) => {
+        calls.push({ table, ops });
+        try { resolve(answers(table, ops)); } catch (e) { reject(e); }
+      },
+    };
+    return b;
+  };
+  return { client: { from: builder, rpc: async () => ({ data: null, error: null }) }, calls };
+}
+
+const HEX32 = "\\x" + "ab".repeat(32);
+const B64 = Buffer.from("ab".repeat(32), "hex").toString("base64url");
+const DEV_HEX = "\\x" + "cd".repeat(32);
+const DEV_B64 = Buffer.from("cd".repeat(32), "hex").toString("base64url");
+const future = new Date(Date.now() + 3600e3).toISOString();
+
+function logoutEvent({ csrf = B64, cookie = "__Host-pc_staff=tok" } = {}) {
+  return {
+    httpMethod: "POST",
+    headers: { "content-type": "application/json", cookie, ...(csrf ? { "x-pc-csrf": csrf } : {}) },
+    body: "{}",
+  };
+}
+
+function scriptedRows({ revoked = null, enrRevoked = null } = {}) {
+  const session = { id: "s1", enrollment_id: "e1", store_id: "st1", employee_id: "emp1", employee_role: "staff",
+    csrf_secret: HEX32, revoked_at: revoked, absolute_expires_at: future, idle_expires_at: future };
+  const enr = { id: "e1", store_id: "st1", revoked_at: enrRevoked, csrf_secret: DEV_HEX };
+  return (table, ops) => {
+    const kind = ops[0][0];
+    if (table === "staff_sessions" && kind === "select") return { data: [session], error: null };
+    if (table === "staff_sessions" && kind === "update") {
+      const isNull = ops.some(([o, k]) => o === "is" && k === "revoked_at");
+      // Mirror the DB: the filtered UPDATE affects the row only while unrevoked.
+      const affected = isNull && session.revoked_at === null ? [{ id: "s1" }] : [];
+      if (affected.length) session.revoked_at = new Date().toISOString();
+      return { data: affected, error: null };
+    }
+    if (table === "device_enrollments") return { data: [enr], error: null };
+    return { data: null, error: null };
+  };
+}
+
+async function withEnv(fn) {
+  const saved = { ...process.env };
+  process.env.RELEASE2_ENABLED = "true";
+  process.env.SUPABASE_URL = "https://lboajqihpsfrokqvjgnl.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test";
+  delete process.env.URL; delete process.env.DEPLOY_PRIME_URL;
+  try { return await fn(); } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+}
+
+test("staff-logout: happy path revokes the row, clears the cookie, returns the DEVICE csrf and no key material", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    const { client, calls } = fakeClient(scriptedRows());
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(logoutEvent());
+    assert.equal(res.statusCode, 200, res.body);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.kind, "device");
+    assert.equal(body.csrf, DEV_B64, "must hand back the ENROLLMENT's token, not the session's");
+    assert.notEqual(body.csrf, B64);
+    assert.doesNotMatch(res.body, /tok|"s1"|"e1"|\\\\x|[0-9a-f]{64}/, "no token, id or hex secret in the body");
+    const sc = res.headers["set-cookie"];
+    assert.match(sc, /^__Host-pc_staff=; /);
+    assert.match(sc, /Max-Age=0/);
+    // resolveStaff({ interactive: true }) also UPDATEs the row to advance the
+    // idle clock; only the update carrying the logout reason is the revoke.
+    const upd = calls.filter((c) => c.table === "staff_sessions" && c.ops[0][0] === "update" && c.ops[0][1]?.revoked_reason === "logout");
+    assert.equal(upd.length, 1, "exactly one revoke");
+    assert.deepEqual(upd[0].ops.find(([o]) => o === "eq"), ["eq", "id", "s1"]);
+  });
+});
+
+test("staff-logout: wrong or missing CSRF is 401 and revokes NOTHING", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    for (const csrf of ["AAAA", DEV_B64, null]) {
+      const { client, calls } = fakeClient(scriptedRows());
+      mod.__setClientFactory(() => client);
+      const res = await mod.handler(logoutEvent({ csrf }));
+      assert.equal(res.statusCode, 401, `csrf=${csrf}`);
+      assert.equal(res.body, JSON.stringify({ ok: false, error: "Unauthorized" }));
+      assert.equal(res.headers["set-cookie"], undefined, "a refusal must not touch the cookie");
+      const upd = calls.filter((c) => c.table === "staff_sessions" && c.ops[0][0] === "update" && c.ops[0][1]?.revoked_reason === "logout");
+      assert.equal(upd.length, 0, `csrf=${csrf}: a forged request revoked a session`);
+    }
+  });
+});
+
+test("staff-logout: reuse after logout is the uniform 401 (row 15), and no cookie or device token is issued", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    const rows = scriptedRows();
+    const { client } = fakeClient(rows);
+    mod.__setClientFactory(() => client);
+    const first = await mod.handler(logoutEvent());
+    assert.equal(first.statusCode, 200);
+    const second = await mod.handler(logoutEvent());
+    assert.equal(second.statusCode, 401, "the same token must not resolve after revocation");
+    assert.equal(second.body, JSON.stringify({ ok: false, error: "Unauthorized" }));
+    assert.equal(second.headers["set-cookie"], undefined);
+  });
+});
+
+test("staff-logout: no cookie, or a device cookie alone, is 401", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    for (const cookie of ["", "__Host-pc_device=devtok"]) {
+      const { client, calls } = fakeClient(scriptedRows());
+      mod.__setClientFactory(() => client);
+      const res = await mod.handler(logoutEvent({ cookie }));
+      assert.equal(res.statusCode, 401, `cookie="${cookie}"`);
+      assert.equal(calls.filter((c) => c.ops[0][0] === "update").length, 0);
+    }
+  });
+});
+
+test("staff-logout: losing the race to another revocation is still success", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    // resolveStaff sees a live row; by the time the UPDATE runs, revoked_at is
+    // set (kiosk entry / device revoke / a second tab) so it affects 0 rows.
+    const base = scriptedRows();
+    const answers = (table, ops) => {
+      if (table === "staff_sessions" && ops[0][0] === "update") return { data: [], error: null };
+      return base(table, ops);
+    };
+    const { client } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(logoutEvent());
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).kind, "device");
+    assert.match(res.headers["set-cookie"], /Max-Age=0/);
+  });
+});
+
+test("staff-logout: a failed UPDATE is 500, not a silent 200 with a cleared cookie", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    const base = scriptedRows();
+    const answers = (table, ops) =>
+      table === "staff_sessions" && ops[0][0] === "update"
+        ? { data: null, error: { message: "boom" } }
+        : base(table, ops);
+    const { client } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(logoutEvent());
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.headers["set-cookie"], undefined,
+      "clearing the cookie while the row stays live would make a copied token the only live credential");
+    assert.doesNotMatch(res.body, /boom/);
+  });
+});
+
+test("staff-logout: the gate applies — wrong method, foreign origin, form content-type", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-logout.js");
+    const { client, calls } = fakeClient(scriptedRows());
+    mod.__setClientFactory(() => client);
+    const ev = logoutEvent();
+    assert.equal((await mod.handler({ ...ev, httpMethod: "GET" })).statusCode, 405);
+    assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, origin: "https://evil.example.com" } })).statusCode, 403);
+    assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, "content-type": "application/x-www-form-urlencoded" } })).statusCode, 415);
+    assert.equal(calls.length, 0, "a gated request must not reach the database at all");
+  });
 });

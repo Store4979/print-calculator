@@ -189,7 +189,7 @@ export async function resolveStaff(sb, event, { interactive } = {}) {
   // loud failure rather than a silent pick.
   const { data: enr } = await sb
     .from("device_enrollments")
-    .select("id, store_id, revoked_at")
+    .select("id, store_id, revoked_at, csrf_secret")
     .eq("id", row.enrollment_id)
     .limit(1);
   const e = enr && enr[0];
@@ -213,6 +213,10 @@ export async function resolveStaff(sb, event, { interactive } = {}) {
     employeeId: row.employee_id,
     role: row.employee_role,
     csrfSecret: row.csrf_secret,
+    // The ENROLLMENT's secret, so a handler that returns the tab to device
+    // state (staff-logout) can hand back the device token without a second
+    // round trip. Never returned to a caller while the staff session is live.
+    deviceCsrfSecret: e.csrf_secret,
   };
 }
 

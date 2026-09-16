@@ -314,6 +314,59 @@ both results.
 
 ---
 
+### 3g — logout (slice 3)
+
+Device A, holding the staff csrf from 3f-ii (the manager session).
+
+```js
+const CSRF_STAFF_A = 'PASTE_csrf_FROM_3f-ii';
+await call('staff-logout', J(CSRF_STAFF_A, {}));
+```
+
+Expect `200` with `{ok:true, kind:"device", csrf}` where `csrf` equals
+`CSRF_DEV_A`, and a `Set-Cookie` that expires `__Host-pc_staff` (`Max-Age=0`).
+The database check is the acceptance evidence: the 3f-ii session row now has
+`revoked_reason = 'logout'`, and no other session on the enrollment changed.
+
+### 3h — bootstrap falls back to the device
+
+```js
+await call('csrf-bootstrap');
+```
+
+Expect `200` with `kind:"device"` and the csrf from 3a. This is the state a
+reloaded tab lands in after logout.
+
+### 3i — the 3f gap, closed
+
+```js
+await call('staff-login', J(CSRF_DEV_A, { pin: '1102' }));
+```
+
+Expect `200` with `role:"staff"`. A tab that held only a staff token (3f-i)
+can now log out, recover the device token in the same response, and sign in
+the next employee.
+
+### 3j — reuse after logout
+
+```js
+await call('staff-logout', J(CSRF_STAFF_A, {}));
+```
+
+Expect `401` — the revoked session no longer resolves (plan row 15). Note that
+after 3i the browser holds a NEW staff cookie, so run 3j immediately after 3g
+and before 3i, or read it as "old csrf against the new session", which is
+also 401.
+
+**Client contract for a logout `401`:** treat it as "already in device state —
+bootstrap again", not as an error. Refusals are uniform, so a tab cannot tell
+already-logged-out from wrong-CSRF from expired, and the correct recovery is
+the same for all three: call `csrf-bootstrap` and use whatever token class it
+returns. A logout that "fails" has left nothing live that the caller could
+have used.
+
+---
+
 ## Phase 4 — negatives
 
 ### 4a — missing CSRF header
@@ -482,6 +535,10 @@ rehearsal never did.
 | 3e | 200, kind=staff | PASS — 200, kind=staff, csrf identical to 3d (first run returned kind=device as a consequence of the 3d failure) |
 | 3f-i | 401 predicted (gap) | 401 — the predicted gap, confirmed with a live staff session: a reloaded tab holding only the staff csrf cannot switch employee |
 | 3f-ii | 200, role=manager | PASS — 200, employee `T1 Manager` role=manager; DB shows the 3d staff session revoked with reason `rotated: new sign-in on this device` and exactly one live session (first run FAILED 401, same 42702 as 3d) |
+| 3g | 200, kind=device, csrf = device csrf, staff cookie cleared; DB `revoked_reason='logout'` | |
+| 3h | 200, kind=device | |
+| 3i | 200, role=staff (3f gap closed) | |
+| 3j | 401 | |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |

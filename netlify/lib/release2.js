@@ -164,6 +164,18 @@ export function setHostCookie(name, value, maxAgeSeconds) {
   ].join("; ");
 }
 
+/**
+ * Clear a host-only cookie. Same attribute set as setHostCookie, so the browser
+ * matches the cookie it already holds (a cookie is identified by name, domain
+ * and path, and the __Host- prefix pins the last two); Max-Age=0 expires it.
+ * The cookie value is the only thing the client held — the server-side row is
+ * revoked separately, and clearing the cookie is NOT the revocation.
+ */
+export function clearHostCookie(name) {
+  if (!/^__Host-/.test(name)) throw new Error("Release 2 cookies must use the __Host- prefix");
+  return [`${name}=`, "HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=0"].join("; ");
+}
+
 export function readCookie(event, name) {
   const raw = String(event?.headers?.cookie || event?.headers?.Cookie || "");
   for (const part of raw.split(";")) {
