@@ -15,7 +15,8 @@ const BOOT = read("../../netlify/functions/csrf-bootstrap.js");
 const AUTH = read("../../netlify/lib/release2-auth.js");
 
 const LOGOUT_SRC = read("../../netlify/functions/staff-logout.js");
-const ALL = { LOGIN, REDEEM, TICKET, BOOT, LOGOUT: LOGOUT_SRC };
+const REVOKE_ALL_SRC = read("../../netlify/functions/staff-session-revoke-all.js");
+const ALL = { LOGIN, REDEEM, TICKET, BOOT, LOGOUT: LOGOUT_SRC, REVOKE_ALL: REVOKE_ALL_SRC };
 
 test("every slice-2 handler passes through gate() before doing anything", () => {
   for (const [name, src] of Object.entries(ALL)) {
@@ -413,5 +414,184 @@ test("staff-logout: the gate applies — wrong method, foreign origin, form cont
     assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, origin: "https://evil.example.com" } })).statusCode, 403);
     assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, "content-type": "application/x-www-form-urlencoded" } })).statusCode, 415);
     assert.equal(calls.length, 0, "a gated request must not reach the database at all");
+  });
+});
+
+// ── SLICE 3: staff-session-revoke-all (kiosk entry) ─────────────────────────
+// Same calibration as staff-logout: source assertions pin shape, the fake
+// client pins behaviour, and the acceptance evidence is the staging probe
+// (3k/3l in scripts/manual/staging-probes.md) with every row on the
+// enrollment read back as revoked_reason='kiosk entry'.
+const REVOKE_ALL = REVOKE_ALL_SRC;
+
+test("revoke-all passes through gate() and refuses uniformly", () => {
+  assert.match(REVOKE_ALL, /const blocked = gate\(event, \{ method: "POST" \}\)/);
+  assert.match(REVOKE_ALL, /if \(blocked\) return blocked;/);
+  assert.match(REVOKE_ALL, /return authFailed\(\)/);
+  assert.doesNotMatch(REVOKE_ALL, /error:\s*e\.message/);
+});
+
+test("revoke-all resolves the DEVICE credential and never consults a staff session", () => {
+  assert.match(REVOKE_ALL, /await resolveDevice\(sb, event\)/,
+    "kiosk entry must work when no staff session is live or resolvable");
+  assert.doesNotMatch(REVOKE_ALL, /resolveStaff\(/);
+});
+
+test("revoke-all checks CSRF against the ENROLLMENT secret, after resolution, before the revoke", () => {
+  const resolveIdx = REVOKE_ALL.indexOf("await resolveDevice(");
+  const csrfIdx = REVOKE_ALL.indexOf("csrfOk(event, device.csrfSecret)");
+  const revokeIdx = REVOKE_ALL.indexOf('.from("staff_sessions")');
+  assert.ok(resolveIdx > 0 && csrfIdx > resolveIdx);
+  assert.ok(revokeIdx > csrfIdx, "a forged request must revoke nothing");
+});
+
+test("revoke-all is ONE filtered UPDATE on the resolved enrollment, reading nothing from the body", () => {
+  assert.match(REVOKE_ALL, /\.update\(\{ revoked_at: new Date\(\)\.toISOString\(\), revoked_reason: "kiosk entry" \}\)/);
+  assert.match(REVOKE_ALL, /\.eq\("enrollment_id", device\.enrollmentId\)/,
+    "the filter must be the RESOLVED enrollment, so no parameter can name another device");
+  assert.match(REVOKE_ALL, /\.is\("revoked_at", null\)/, "earlier revocations keep their own reason");
+  assert.doesNotMatch(REVOKE_ALL, /JSON\.parse\(event\.body/);
+  assert.doesNotMatch(REVOKE_ALL, /\.rpc\(/);
+  assert.doesNotMatch(REVOKE_ALL, /from\("device_enrollments"\)[\s\S]{0,200}\.update\(/,
+    "kiosk entry must not revoke the enrollment itself");
+});
+
+test("revoke-all states its scope: staff sessions only, the owner Auth session is the client's job", () => {
+  assert.match(REVOKE_ALL, /STAFF SESSIONS ONLY/);
+  assert.match(REVOKE_ALL, /does NOT mean the tab is customer-safe/);
+});
+
+// Fake rows for a device with two live sessions and one already-revoked one.
+function deviceRows({ enrRevoked = null, live = 2 } = {}) {
+  const enr = { id: "e1", store_id: "st1", org_id: "o1", csrf_secret: DEV_HEX, revoked_at: enrRevoked };
+  const sessions = [
+    { id: "old", enrollment_id: "e1", revoked_at: "2026-01-01T00:00:00Z", revoked_reason: "logout" },
+    ...Array.from({ length: live }, (_, i) => ({ id: `live${i}`, enrollment_id: "e1", revoked_at: null, revoked_reason: null })),
+    { id: "other", enrollment_id: "e2", revoked_at: null, revoked_reason: null },
+  ];
+  const answers = (table, ops) => {
+    const kind = ops[0][0];
+    if (table === "device_enrollments" && kind === "select") return { data: [enr], error: null };
+    if (table === "staff_sessions" && kind === "update") {
+      const patch = ops[0][1];
+      const eqEnr = ops.find(([o, k]) => o === "eq" && k === "enrollment_id")?.[2];
+      const isNull = ops.some(([o, k, v]) => o === "is" && k === "revoked_at" && v === null);
+      const hit = sessions.filter((s) => s.enrollment_id === eqEnr && (!isNull || s.revoked_at === null));
+      for (const s of hit) Object.assign(s, patch);
+      return { data: hit.map((s) => ({ id: s.id })), error: null };
+    }
+    return { data: null, error: null };
+  };
+  return { answers, sessions };
+}
+
+function revokeEvent({ csrf = DEV_B64, cookie = "__Host-pc_device=devtok; __Host-pc_staff=tok" } = {}) {
+  return {
+    httpMethod: "POST",
+    headers: { "content-type": "application/json", cookie, ...(csrf ? { "x-pc-csrf": csrf } : {}) },
+    body: "{}",
+  };
+}
+
+test("revoke-all: revokes every LIVE session on THIS enrollment only, returns the count, clears the staff cookie", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    const { answers, sessions } = deviceRows();
+    const { client } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(revokeEvent());
+    assert.equal(res.statusCode, 200, res.body);
+    const body = JSON.parse(res.body);
+    assert.deepEqual(body, { ok: true, revoked: 2 });
+    assert.match(res.headers["set-cookie"], /^__Host-pc_staff=; .*Max-Age=0/);
+    assert.equal(sessions.find((s) => s.id === "old").revoked_reason, "logout", "an earlier revocation keeps its reason");
+    assert.equal(sessions.find((s) => s.id === "other").revoked_at, null, "another enrollment's session is untouched");
+    for (const id of ["live0", "live1"]) assert.equal(sessions.find((s) => s.id === id).revoked_reason, "kiosk entry");
+    assert.doesNotMatch(res.body, /csrf|tok|e1|[0-9a-f]{64}/, "no token, id or secret in the body");
+  });
+});
+
+test("revoke-all: wrong or missing CSRF is 401 and revokes NOTHING", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    for (const csrf of ["AAAA", B64, null]) {
+      const { answers, sessions } = deviceRows();
+      const { client } = fakeClient(answers);
+      mod.__setClientFactory(() => client);
+      const res = await mod.handler(revokeEvent({ csrf }));
+      assert.equal(res.statusCode, 401, `csrf=${csrf}`);
+      assert.equal(res.headers["set-cookie"], undefined);
+      assert.equal(sessions.filter((s) => s.revoked_reason === "kiosk entry").length, 0, `csrf=${csrf}`);
+    }
+  });
+});
+
+test("revoke-all: no device cookie, or a staff cookie alone, is 401", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    for (const cookie of ["", "__Host-pc_staff=tok"]) {
+      const { answers, sessions } = deviceRows();
+      const { client } = fakeClient(answers);
+      mod.__setClientFactory(() => client);
+      const res = await mod.handler(revokeEvent({ cookie }));
+      assert.equal(res.statusCode, 401, `cookie="${cookie}"`);
+      assert.equal(sessions.filter((s) => s.revoked_reason === "kiosk entry").length, 0);
+    }
+  });
+});
+
+test("revoke-all: a revoked enrollment is 401", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    const { answers, sessions } = deviceRows({ enrRevoked: "2026-01-01T00:00:00Z" });
+    const { client } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(revokeEvent());
+    assert.equal(res.statusCode, 401);
+    assert.equal(sessions.filter((s) => s.revoked_reason === "kiosk entry").length, 0);
+  });
+});
+
+test("revoke-all: nothing live is still success with revoked: 0", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    const { answers } = deviceRows({ live: 0 });
+    const { client } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(revokeEvent());
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), { ok: true, revoked: 0 });
+    assert.match(res.headers["set-cookie"], /Max-Age=0/);
+  });
+});
+
+test("revoke-all: a failed UPDATE is 500 with no cookie change — the client must not confirm kiosk", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    const base = deviceRows().answers;
+    const answers = (table, ops) =>
+      table === "staff_sessions" && ops[0][0] === "update"
+        ? { data: null, error: { message: "boom" } }
+        : base(table, ops);
+    const { client } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const res = await mod.handler(revokeEvent());
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.headers["set-cookie"], undefined);
+    assert.doesNotMatch(res.body, /boom|revoked/);
+  });
+});
+
+test("revoke-all: the gate applies — wrong method, foreign origin, form content-type", async () => {
+  await withEnv(async () => {
+    const mod = await import("../../netlify/functions/staff-session-revoke-all.js");
+    const { answers } = deviceRows();
+    const { client, calls } = fakeClient(answers);
+    mod.__setClientFactory(() => client);
+    const ev = revokeEvent();
+    assert.equal((await mod.handler({ ...ev, httpMethod: "GET" })).statusCode, 405);
+    assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, origin: "https://evil.example.com" } })).statusCode, 403);
+    assert.equal((await mod.handler({ ...ev, headers: { ...ev.headers, "content-type": "application/x-www-form-urlencoded" } })).statusCode, 415);
+    assert.equal(calls.length, 0);
   });
 });
