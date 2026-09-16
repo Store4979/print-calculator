@@ -638,11 +638,11 @@ rehearsal never did.
 | 3j | 401 | PASS — 401 on the revoked session's csrf, run immediately after 3g |
 | 3k | 200 `{revoked:1}`, staff cookie cleared; DB live row -> `'kiosk entry'`, other reasons intact | PASS 2026-09-16 — `{"ok":true,"revoked":1}`; DB on Counter C: rotated, logout, rotated, **kiosk entry** — each row keeps its own reason (see DB note) |
 | 3l | 401, then 200 kind=device, then 200 `{revoked:0}` | PASS — 401 for the 3i staff csrf AND for the just-revoked manager csrf; bootstrap 200 kind=device with the enrollment's csrf; second revoke-all 200 `{revoked:0}` |
-| 5a | 200 `{sessionsRevoked:1}` from the revoked device itself; DB `revoked_by`=owner-t1, cascade reason names the device | |
-| 5b | 401, 401, then 200 `{sessionsRevoked:0}` | |
-| 5c | 401 both, identical body, row unchanged | |
-| 5d | 400 | |
-| 5e | 200 with reasons and live counts, no secrets; T2 owner naming T1 -> 401 | |
+| 5a | 200 `{sessionsRevoked:1}` from the revoked device itself; DB `revoked_by`=owner-t1, cascade reason names the device | PASS 2026-09-16 — run from the owner's own window enrolled as `Counter D`, so the request carried the revoked device's cookies plus the owner JWT: 200 `{sessionsRevoked:1}`. DB: `revoked_by` owner-t1, reason `probe: shared tablet`, the session reads `device revoked: probe: shared tablet`; Counter C untouched (live 1) |
+| 5b | 401, 401, then 200 `{sessionsRevoked:0}` | PASS — bootstrap 401, staff-login 401 with the device csrf AND with the staff csrf, second revoke 200 `{sessionsRevoked:0}` |
+| 5c | 401 both, identical body, row unchanged | PARTIAL — owner-t1 naming an unknown id: 401 PASS. The T2-owner halves returned 401 but the T2 token had EXPIRED ~2 h earlier (`exp` decoded in-tab), so they prove nothing; re-run with a fresh `window.T2_OWNER`. The rehearsal's P2/P5b cover the same property at the function level |
+| 5d | 400 | PASS — 201 chars and a newline both 400 `reason must be at most 200 printable characters` |
+| 5e | 200 with reasons and live counts, no secrets; T2 owner naming T1 -> 401 | PARTIAL — owner-t1: 200, `Counter D` revoked with reason and 0 live, `Counter C` live 1; body keys are exactly id/label/createdAt/lastSeenAt/revokedAt/revokedReason/liveSessions, no hex64/bytea/hash/csrf/created_by/revoked_by. The T2 halves (naming T1 -> 401, own store -> 200) NOT RUN: expired token, see 5c |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |
