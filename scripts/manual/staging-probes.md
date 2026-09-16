@@ -566,7 +566,7 @@ rehearsal never did.
 | 1 (x4) | 401 | PASS |
 | 2a | 200 + ticket | PASS (re-run 2026-09-15 14:15Z, ticket 7962dddd…, redeemed by 3a) |
 | 2b | 401 | PASS |
-| 2c | 401 for T1 **and** 200 for T2, same token | NOT RUN 2026-09-15 — no T2 owner token was provided to the session |
+| 2c | 401 for T1 **and** 200 for T2, same token | PASS 2026-09-16 — the same owner-t2 token (minted by the owner, placed in `window.T2_OWNER`) got `401` naming T1 and `200` naming T2 (ticket `d129c87d…`, storeId `…0a2`). The endpoint binds the store to the caller's membership, not to the body. DB: exactly one new ticket, store …0a2, created_by owner-t2; nothing for T1 |
 | 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
 | 3a | 200 + `__Host-pc_device` | PASS — 200, enrollment b79410ed… (DB row present); cookie invisible to document.cookie as expected, attributes not inspected |
 | 3b | 401 | PASS |
