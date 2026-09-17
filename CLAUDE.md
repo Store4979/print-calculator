@@ -282,6 +282,14 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    release2_04). A `returns table (...)` OUT column name that matches any table
    column in the body is a collision waiting to happen: alias every table and
    qualify every column.
+   SOURCE-STRING ASSERTIONS STRIP COMMENTS FIRST — `stripComments` from
+   scripts/tests/source-util.mjs, applied at the read, never to one assertion.
+   Three times (2026-09) a test matched text that merely QUOTED the thing it
+   asserted about: a doesNotMatch on the old function signature, the sw.js
+   `startsWith` comment, and enroll-list's header quoting `select("*")` while
+   forbidding it. A comment that explains why a pattern is forbidden contains
+   the pattern. The helper also normalises CRLF, without which `//.*$` never
+   reaches `$` on a Windows checkout and the comment survives.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

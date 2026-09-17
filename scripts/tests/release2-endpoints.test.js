@@ -7,7 +7,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+import { stripComments } from "./source-util.mjs";
+
+// EVERY source read here is comment-stripped. Three times an assertion in
+// this suite matched text that merely QUOTED the thing it was asserting
+// about — the old signature in a doesNotMatch, the sw.js startsWith comment,
+// and enroll-list's header quoting select("*") while forbidding it. A source
+// assertion is about code, so the string it runs against must be code only.
+const read = (p) => stripComments(readFileSync(new URL(p, import.meta.url), "utf8"));
 const LOGIN = read("../../netlify/functions/staff-login.js");
 const REDEEM = read("../../netlify/functions/enroll-redeem.js");
 const TICKET = read("../../netlify/functions/enroll-ticket-create.js");
@@ -463,10 +470,12 @@ test("revoke-all is ONE filtered UPDATE on the resolved enrollment, reading noth
     "kiosk entry must not revoke the enrollment itself");
 });
 
-test("revoke-all states its scope: staff sessions only, the owner Auth session is the client's job", () => {
-  assert.match(REVOKE_ALL, /STAFF SESSIONS ONLY/);
-  assert.match(REVOKE_ALL, /does NOT mean the tab is customer-safe/);
-});
+// (A test that asserted the handler's SCOPE comment was removed here: it
+// matched comment text, which the comment-stripping read now discards, and
+// a comment is not a guarantee. The scope — staff sessions only, the owner
+// Auth session is step-4 client work — is stated in staging-probes.md and
+// enforced by the "resolves the DEVICE credential" and "ONE filtered UPDATE"
+// tests above, which pin what the code actually touches.)
 
 // Fake rows for a device with two live sessions and one already-revoked one.
 function deviceRows({ enrRevoked = null, live = 2 } = {}) {
@@ -739,10 +748,8 @@ test("enroll-list: GET, owner JWT, owner memberships only, tenant-scoped, no sel
   assert.match(LIST, /const user = await resolveOwnerUser\(event, _authFactory\)/);
   assert.match(LIST, /\.eq\("user_id", user\.id\)\.eq\("role", "owner"\)/);
   assert.match(LIST, /storeId required: caller owns multiple stores/);
-  // Strip comments first: the header quotes select("*") while forbidding it.
-  const code = LIST.replace(/^\s*\/\/.*$/gm, "");
-  assert.doesNotMatch(code, /\.select\("\*"\)|\.select\(\)/, "columns must be named");
-  assert.doesNotMatch(code, /device_token_hash|csrf_secret|created_by|revoked_by|token_hash/, "no secret or user-id column is even selected");
+  assert.doesNotMatch(LIST, /\.select\("\*"\)|\.select\(\)/, "columns must be named");
+  assert.doesNotMatch(LIST, /device_token_hash|csrf_secret|created_by|revoked_by|token_hash/, "no secret or user-id column is even selected");
   const devSel = LIST.indexOf('.from("device_enrollments")');
   assert.ok(devSel > 0 && LIST.indexOf('.eq("store_id", storeId)', devSel) > devSel, "devices filtered by the RESOLVED store");
 });
