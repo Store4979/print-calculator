@@ -1,8 +1,11 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing here is built.** Revision 2, 2026-09-17, after
-review of revision 1 (commit `02da0eb`): six findings, four P1, all
-accepted, plus four contract corrections. §9 traces each to where it landed.
+**Status: PLAN ONLY. Nothing here is built.** Revision 3, 2026-09-17.
+Revision 2 (commit `9acadee`) accepted six findings and four contract
+corrections from the review of revision 1. Revision 3 accepts seven more
+(R1–R7, four P1) from the review of revision 2, two of which — R2 and R3 —
+were independently verified at `origin/main` to break the live counter as
+revision 2 was written. §9 traces every finding to where it landed.
 
 This is the execution plan for Part 6 of `release-2-plan.md` (the 17 paths)
 and the parts of Part 7 they drive (steps 4, 4a, 4e, 5.1–5.4, 5.6), plus the
@@ -89,10 +92,34 @@ discovery at the moment the prohibition on calling it begins.
   name in the retired list; both are inputs to the test, so the name never
   leaves discovery. Deleting a tombstone file or its list entry fails the
   test.
-- **Reach patterns** matched per line on comment-stripped source
-  (CLAUDE.md rule 4): `"<function-name>"` as a string literal;
-  `.from("…")` (any); `.rpc(`; `.channel(`; `supabase.storage` (the chain
-  breaks across lines — measured on `supabase.js:131,201,217`).
+- **Reach detection is not per-line** (R7). Revision 2's per-line scan
+  misses `supabase.from(` with `"orders"` on the next line, and an alias
+  (`const q = supabase.from; q("orders")`) defeats any textual pattern.
+  Two mechanisms, both required:
+  1. **A narrow gateway.** `@supabase/supabase-js` is imported in exactly
+     one file today, `src/lib/supabase.js`, which exports the raw client and
+     four other files use it directly (`App.jsx`, `PrintQueue.jsx`,
+     `UploadApp.jsx`, `storeConfig.js`). The test asserts the import exists
+     nowhere else; that outside the gateway the identifier `supabase` (the
+     client) is neither imported nor referenced, except by files the
+     allowlist names for the slice that removes them; and that the gateway
+     never exports the client once the last slice's D has run. Every
+     Supabase reach then lives in one small file the inventory reads.
+  2. **Whitespace-insensitive, alias-hostile matching inside the gateway**
+     on comment-stripped source: `\.from\s*\(\s*["'\x60]([^"'\x60]+)`
+     with the dot-all flag, and the same for `.rpc(`, `.channel(`, and
+     `\.storage\s*\.\s*from`; a `.from(` / `.rpc(` whose first argument
+     is **not a string literal** fails outright (a variable table name
+     defeats classification); a member access of `from`/`rpc`/`storage`
+     that is not immediately a call (`supabase.from;`, `const { from } =
+     supabase`) fails outright (aliasing). Function names: the string
+     literal anywhere in `src/`, dot-all.
+  This keeps the suite's zero-dependency property. The alternative is a
+  real parser (`acorn`, a devDependency) walking `CallExpression` nodes;
+  if the reviewer prefers it, the gateway confinement still stands and the
+  parser replaces mechanism 2. Either way the **mutants that must fail**
+  include: the literal on the next line, the aliased call, the destructured
+  method, a variable table name, and a template-literal table name.
 - **Allowlist in the test**, each entry tagged with the slice whose stage D
   removes it, or `auth-jwt` for the owner-JWT helpers that stay. Run today
   it finds every reach site behind Part 6's 17 rows (sites, not rows: rows 2
@@ -247,16 +274,37 @@ discipline for browser calls — and is not asked to be a boundary.
 requires a **verified deployment context**, read from facts Netlify fixes at
 build time and no request can influence:
 
-- `process.env.CONTEXT` must be in `RELEASE2_CONTEXTS` (default and
-  production value: `production`). Netlify sets `CONTEXT` to `production`,
-  `deploy-preview` or `branch-deploy` per deploy. The staging site builds
-  its branch *as* its production context, so it passes; a preview of either
-  site does not.
-- `RELEASE2_ENABLED=true` is set **scoped to the production context** in the
-  site's environment, so a preview build does not even carry the flag.
+- **The transport is a bundled, immutable file, not a runtime variable**
+  (R4). `CONTEXT` is a **build-time** variable; Netlify documents only
+  `URL`, `SITE_NAME` and `SITE_ID` as predefined at function runtime, so
+  `process.env.CONTEXT` inside a handler is not guaranteed and, as revision
+  2 was written, its absence would have 404'd production itself. Instead a
+  build step (`scripts/write-deploy-context.mjs`, run from the `build`
+  command before Vite) writes `netlify/lib/deploy-context.json` —
+  `{ context, siteId, siteName, deployId, commitRef, builtAt }` from the
+  build environment — and `netlify.toml`'s `included_files` (already
+  load-bearing, see CLAUDE.md) ships it inside every function bundle.
+  `release2Allowed()` reads that file; it is fixed at build and cannot be
+  changed by a request, an env edit, or a redeploy of the same build.
+  `context` must be in `RELEASE2_CONTEXTS` (default `production`). The
+  staging site builds its branch *as* its production context, so it
+  passes; a preview of either site does not. A bundle with no file, or a
+  file with no `context`, **refuses** — fail closed, never fail open.
+- `RELEASE2_ENABLED=true` is set with **scope: Functions** and **context:
+  Production** in the Netlify UI, so it is read at function runtime (the
+  scope) and absent from preview deploys (the context).
 
-Two independent build-time facts; absence of either → 404. Then, and only
-then, the `PRODUCTION_REF` refusal is deleted. `release2-guard.test.js`
+Two independent facts, one bundled at build and one scoped at the
+platform; absence of either → 404. **Proven before the ref guard is
+lifted**: a read-only `deploy-context` function that returns the bundled
+metadata (no secrets) is deployed first, and the recorded evidence is (a)
+production: `{ context: "production", siteName: "printcalculator2", … }`;
+(b) a deploy preview of production: `{ context: "deploy-preview", … }`;
+(c) staging: `{ context: "production", siteName: "printcalculator2-staging" }`;
+(d) `RELEASE2_ENABLED` readable from a production function and absent from
+the preview's. Only with all four in hand is the `PRODUCTION_REF` refusal
+deleted. `netlify dev` bundles `context: "dev"`, so local work needs
+`RELEASE2_CONTEXTS=production,dev` set locally, deliberately. `release2-guard.test.js`
 loses "refuses on the production ref" and gains: refuses when `CONTEXT` is
 `deploy-preview` or absent even with the flag; refuses when the flag is
 absent even in `production`; allows only both. The header comment is
@@ -389,11 +437,32 @@ that trusts `files[].path` inherits all of it.
 - Migration `release2_07_upload_allocations`: table
   `upload_allocations (id uuid pk, bucket text, path text unique, store_id
   uuid, org_id uuid, capability_id uuid null, expected_name text, max_bytes
-  int, created_at, consumed_by uuid null references pending_jobs, consumed_at,
-  source text)`. RLS on, zero policies. `pending_jobs.files[]` entries gain
-  **`fileId`** = the allocation id (contract correction 4): a **stable opaque
-  identifier**, minted by the server, never a filename (two files can share
-  a name, and a name is client text).
+  int, source text, created_at, consumer_kind text null check (consumer_kind
+  in ('pending_job','print_job')), consumer_id uuid null, consumed_at
+  timestamptz null, released_at timestamptz null, expired_at timestamptz
+  null)`. RLS on, zero policies.
+  **Typed consumer link, no foreign key** (R6): revision 2's `consumed_by
+  uuid references pending_jobs` could not also point at a print job (slice 7
+  shares the table) and would have blocked `complete-job` from deleting a
+  referenced queue row — or, with `on delete set null`, would have turned a
+  completed allocation back into a consumable one. **The state machine is
+  one-way and nothing is ever replayable:**
+  `allocated` (all three timestamps null) → `consumed` (`consumed_at`,
+  `consumer_kind`, `consumer_id` set, in the registration function) →
+  `released` (`released_at` set when the consumer is completed or cleaned
+  up). `expired_at` is set by the sweep on an allocation never consumed.
+  The **only** consumable state is `consumed_at is null and expired_at is
+  null`; consumption sets `consumed_at` under `for update` and no code path
+  clears it. **Ordering on completion**: (1) mark the row's allocations
+  released, (2) remove the objects, (3) delete the row. A crash after (1)
+  leaves released allocations whose objects the sweep removes; a crash after
+  (2) leaves a row that `queue-list` shows as "completing" and a retried
+  complete finishes idempotently. **The sweep** (`cleanup-stale-jobs`)
+  handles `allocated` older than three hours (past the two-hour token:
+  remove the object if present, set `expired_at`) and `released` with the
+  object still present (retry the remove). `pending_jobs.files[]` entries
+  gain **`fileId`** = the allocation id (contract correction 4): a **stable
+  opaque identifier**, minted by the server, never a filename.
 - `start-upload` (dual-mode, activation OFF in A but the allocation is
   always written): allocates before signing, returns `{ allocationId, path,
   token }`. The path is still returned — the client must upload to it and
@@ -434,7 +503,8 @@ that trusts `files[].path` inherits all of it.
     "ask the counter" message) and nothing is written. Every path in flight
     at that moment carries an allocation, so nothing is refused that was
     issued by this deployment.
-  - **At D** the old `{ path }` shape is removed; `allocationId` only.
+  - **The old `{ path }` shape stays until slice 8's D** (R2), under the
+    same checks as `allocationId`; see this slice's D and §6.4.
 
   In both modes the row's `files[]` is built **from the allocation
   records**, never from the body, and the tenant comes from the allocation,
@@ -449,21 +519,77 @@ that trusts `files[].path` inherits all of it.
   Google Doc URL produces one row with tenant fields set, a store-scoped
   queue number, and one allocation-backed `fileId`; a non-Google URL is
   refused; a private doc is refused with the sharing message.
-- **Existing rows validated or quarantined** (F1), in the same migration,
-  rehearsed first: for every `pending_jobs` row, every `files[].path` must
-  match the writer's own pattern
-  `^\d{4}-\d{2}-\d{2}/[0-9a-f-]{36}-[\w.\-]{1,80}$` **and** exist in
-  `storage.objects` for `customer-uploads` **and** the row must carry a
-  `store_id`. Rows that pass get allocation records backfilled and `fileId`s
-  assigned. Rows that fail any test are **quarantined**: `files` replaced by
-  `[]`, `quarantine_reason` set, `store_id` left as is; they show in the
-  queue as "needs attention", and are never signed or deleted through the
-  new endpoints. Rows with no `store_id` (every `fetch-link-job` row) are
-  quarantined with reason `no tenant`. The count is small and the rehearsal
-  prints the verdict per row before anything commits.
-- `cleanup-stale-jobs` gains a sweep of unconsumed allocations older than
-  three hours (past the two-hour token): remove the object if present,
-  delete the allocation.
+- **Existing rows: screened, never trusted by inference; adjudicated by
+  an authority** (R1, R3). Revision 2 backfilled trusted allocations for
+  rows whose paths matched the writer's pattern, whose objects existed, and
+  whose `store_id` was non-null. **None of those three is evidence of
+  ownership.** The pattern is the writer's, not the tenant's; existence
+  proves only that *some* upload happened; and `store_id` was written by
+  `register-job` from a body slug the caller chose. A poisoned row — one
+  registered against another customer's live object — passes all three, and
+  the backfill would have converted the poisoning into a trusted record,
+  which is worse than leaving it untrusted. So:
+  - **What the migration does to rows: nothing.** `files` is **never
+    replaced with `[]`** (revision 2 did, and that alone broke the flag-OFF
+    counter — `PrintQueue.jsx:110` maps `files[].path` for Open Files and
+    `:127` takes `files[0].path` for Send to Calculator; with `[]` there is
+    nothing to hand the legacy signer). The original references stay
+    exactly as stored, in place, and are **protected**: the new endpoints
+    act only on allocation records, and no legacy row has one until it is
+    adjudicated.
+  - **The screen**, recorded per row and per entry in a new
+    `pending_jobs_provenance` table, not inferred into trust: (a)
+    `object_exists`; (b) `sole_reference` — no other `pending_jobs` or
+    `print_jobs` row references the same path; (c) `co_created` — the
+    object's `storage.objects.created_at` falls within the two hours before
+    the row's `created_at` (the token lifetime; the legitimate flow uploads
+    then registers within minutes); (d) `tenant_present`. A row failing (b)
+    or (c) is the poisoning shape and is marked `suspect`; the rest are
+    marked `legacy-unadjudicated`. Neither mark is trust. The rehearsal
+    prints every verdict before anything commits.
+  - **Independent ownership evidence, named.** There is none in the data.
+    No path carries a tenant; no object carries an owner (service-role
+    uploads have `owner = null`); the row's `store_id` is caller-chosen. The
+    only evidence that exists is **an owner's explicit claim**, and the
+    authority that adjudicates is **the store owner, through an authorized
+    recovery view**: an owner-JWT endpoint `queue-legacy-list` showing every
+    unadjudicated row (`customer_name`, `created_at`, `queue_number`,
+    `source`, file names and sizes, the screen verdicts; **never a path**)
+    and `queue-legacy-claim { jobId }`, which creates allocation records for
+    that row's entries with `source = 'owner-claimed'`, `claimed_by`,
+    `claimed_at`, in one function that refuses if any entry's path is
+    already allocated to another store or another row (the poisoning case
+    surfaces here as a refusal with a reason, never as a silent grant).
+    **Null-store rows** (every `fetch-link-job` row) appear in that view
+    only for a deployment with exactly one store; in a multi-tenant
+    deployment they are listed by an operator-run SQL report, because no
+    tenant owner has standing to claim a row that names no tenant, and
+    guessing is exactly what R1 forbids. `store4979` is single-tenant, so
+    its owner sees and claims them. An owner may also **discard** a row
+    (`queue-legacy-discard`), which releases nothing and deletes nothing —
+    it marks the row for the sweep, which removes objects only through the
+    same sole-reference rule below.
+  - **Stage A is behaviour-preserving; stage C is the operational cutover.
+    Not both.** At A the counter is flag-OFF, `get-download-url` and
+    `complete-job` run unchanged with activation OFF, `files[]` is untouched,
+    and every row opens exactly as it did the day before. At C the counter
+    moves to endpoints that act only on allocation records, and every legacy
+    row must by then have been **claimed or discarded by the owner** — a
+    named precondition of G-counter for slice 5. Any row still
+    unadjudicated at C stays visible in the recovery view and is never
+    silently gone. In practice the queue turns over within a day and the
+    sweep removes the stale, so the set at C is expected to be empty, but
+    the plan does not depend on that.
+- **`cleanup-stale-jobs` follows the same rule** (R1). Its deletion loop
+  today removes objects at `row.files[].path` — paths the writer chose — so
+  a row registered against a victim's live object deletes the victim's file
+  when the attacker's row goes stale. From A: for rows with allocations, the
+  sweep removes objects **only through allocation records** (`released` or
+  `expired` state). For legacy rows it removes an object **only if the row
+  is the sole reference to that path and the co-creation screen passed**;
+  otherwise it deletes the row and leaves the object, logging the path for
+  the owner's report. It also sweeps `allocated` older than three hours and
+  `released` with the object present, as §6.1's state machine says.
 - New endpoints `queue-list`, `queue-download-url`, `queue-complete` (§8).
   The legacy `get-download-url` and `complete-job` gain a dual-mode
   activation (`RELEASE2_ACTIVATE_LEGACY_QUEUE`) that, when ON, requires a
@@ -481,10 +607,19 @@ tabs agree; a Google-link import appears with a correct number; a
 quarantined legacy row shows "needs attention" and cannot be opened or
 completed from the new tab; Supabase unreachable → "offline", not empty.
 
-**D.** Delete the channel, the direct reads, the two function callers, the
-legacy body-path branch of `register-job`; **tombstone** `get-download-url`
-and `complete-job`; remove paths 4–8 from the allowlist. Row 40: both
-routes 410.
+**D.** Delete the channel, the direct reads, the two staff-side function
+callers; **tombstone** `get-download-url` and `complete-job`; remove paths
+4–8 from the allowlist. Row 40: both routes 410. **The old `{ path }` input
+shape of `register-job` is NOT removed here** (R2): its callers are
+`UploadApp.jsx:193–205` and the kiosk sheet at `App.jsx:5448–5460`, which
+destructure `{ path, token }` from `start-upload` and push `{ name, path,
+type }` — neither is a staff client, neither is behind this slice's flag,
+and removing the shape at D would have broken every **fresh** customer and
+kiosk submission, not merely a mid-flow one. The exact-path form stays
+accepted, **with the identical allocation, ownership and consumption checks
+as `allocationId`** — a compatible input shape under the same checks is not
+a fallback — until slice 8's stage D, after both constructors have moved
+(§6.4 B).
 
 **E.** `drop policy anon_select_pending_jobs on public.pending_jobs; alter
 publication supabase_realtime drop table public.pending_jobs;` — rollback
@@ -530,16 +665,34 @@ carries `clientOrderId`, `quotedAt`, `quotedStoreId`, `quotedEmployeeId`,
 - `store_id`, `org_id` stamped from the enrollment; `employee_name` from the
   `employees` row; client-sent copies ignored.
 
-**Idempotency, made durable before the first request** (F3): on boot,
-before any drain, every queued row lacking `clientOrderId` is assigned one
-and the queue is **written back to `localStorage` first**; only then may a
-drain start. Drains are serialised within a tab; across tabs the unique
-index arbitrates and a `duplicate: true` response dequeues the row like a
-success. Tests, each with its failing mutation: **lost response** (server
-inserted, client saw a network error, retry → `duplicate`); **reload
-mid-drain** (ids survive, second pass yields duplicates, one row each);
-**concurrent drain** (two tabs, same queue, exactly one row per order);
-**25b**, **25c**, **65**.
+**Idempotency, made durable before the first request, and identical
+across tabs** (F3, R5). Revision 2 assigned a random `clientOrderId` to each
+legacy row at boot; two tabs booting together would assign **different**
+ids to the same row, both persist, both drain, and the unique index sees
+two keys — two orders. So legacy ids are **deterministic**: `uuidv5(NS,
+_queuedAt + "|" + canonical JSON of the row)` — any tab computes the same
+id for the same row with no coordination, and the index then arbitrates
+correctly. Rows enqueued after this slice get a random id at enqueue (one
+writer, one moment). Queue mutation and drain are additionally
+**serialised across tabs** with the Web Locks API
+(`navigator.locks.request("pc-order-queue", …)`), with a `localStorage`
+lease (token + expiry) as the best-effort fallback where Web Locks is
+absent, stated as best-effort in the code. The write-back of assigned ids
+happens under the lock, before any request.
+
+**Dequeue rule** (from the review of decision 7): **no failed save status
+may dequeue a row.** A row leaves the queue only on (a) a validated save
+acknowledgement (`ok: true` with an `orderId`), (b) a `duplicate: true`
+acknowledgement, or (c) an explicit user discard from the "orders waiting"
+view. 401, 409, 4xx, 5xx, a network error and a lost response all leave the
+row where it is. Tests, each with its failing mutation: **lost response**
+(server inserted, client saw a network error, retry → `duplicate`);
+**reload mid-drain** (ids survive, second pass yields duplicates, one row
+each); **concurrent drain** (two tabs, same queue, exactly one row per
+order); **two-tab legacy assignment** (both tabs compute the same id set;
+the mutant with random ids must fail); **no status dequeues** (every
+non-ack response leaves the queue length unchanged); **25b**, **25c**,
+**65**.
 
 **C5 deferred to slice 9, tracked there.** `orders-save` stores client
 `cost_subtotal`/`margin_pct` verbatim with `margin_source='client'`; the
@@ -569,9 +722,12 @@ in the same `upload_allocations` table (`bucket` column), keyed to the
 staff session's store; `file_urls[]` entries gain `fileId`; `jobs-save`
 accepts only this store's unconsumed allocations, builds `file_urls` from
 the records, verifies the objects, consumes in one function. **Existing
-`print_jobs` rows validated or quarantined** by the same rule as the queue
-(pattern `^jobs/[0-9a-f-]{36}/[^/]{1,120}$`, object present, `store_id`
-set). **Path 14 (`deleteJobFiles`) is deleted**, no caller; the inventory's
+`print_jobs` rows are screened and adjudicated exactly as the queue's**
+(§6.1, R1/R3): `file_urls` untouched, a provenance record per entry
+(object exists, sole reference, co-created, tenant present), an owner
+recovery view and claim, and an operational cutover at C with "claimed or
+discarded" as a G-counter precondition. Consumer link `consumer_kind =
+'print_job'`. **Path 14 (`deleteJobFiles`) is deleted**, no caller; the inventory's
 `supabase.storage` pattern fails on any `.remove(` that reappears. Signed
 upload token: Supabase's two hours; allocation single-use and swept.
 
@@ -593,7 +749,12 @@ capability's quota is enforced against its allocations.
 
 **B.** `UploadApp.jsx` **and `KioskSubmitSheet`** mint a capability before
 the first upload; both ask `csrf-bootstrap?kind=upload` for the class token
-(the kiosk also holds device and staff cookies — §0.3).
+(the kiosk also holds device and staff cookies — §0.3); and **both request
+constructors move to `{ allocationId }`** (R2) — the `{ path }` shape they
+send today is retired at this slice's D, not slice 5's.
+
+**D** (addition). Remove the exact-path input shape from `register-job`;
+`allocationId` only. Row 40 for the shape: a `{ path }` entry → 400.
 
 **C checklist.** `/upload` end to end; the kiosk "Send to counter" on both
 kiosks; a capability older than 30 minutes is refused and re-minted; the
@@ -660,14 +821,14 @@ rollback at or after "first closure" takes the full Part 7 Rollback contract.
 |---|---|---|---|---|---|
 | PIN check | 4 | grant revoke | **E** | D | client-only until E |
 | `register-job` / `fetch-link-job` path provenance | 5 | allocation recording from A; old shape accepted-and-quarantined at A; **refusal activated at C** | **C** | B | A records allocations and quarantines the unallocated; nothing is refused until C, so a flag-OFF customer upload never breaks. C's rollback restores acceptance of unallocated paths — reopening |
-| existing queue rows | 5 | backfill / quarantine | **A** | — (the quarantine is data; rollback would un-quarantine by hand) | rehearsed row-by-row before commit |
+| existing queue rows | 5 | screen at A (metadata only, `files` untouched); owner claim/discard before C; new endpoints act on claims only from C | **C** (cutover) | B | A is behaviour-preserving; the provenance table is additive and its rollback is a drop |
 | customer-file signer / deleter | 5 | activation on legacy handlers at C; tombstone at D | **C** | B | D's rollback target is the C build with activation ON — safe |
 | queue read + Realtime | 5 | grant + publication | **E** | D | |
 | `send-print-job` | 6 | activation at C | **C** | B | |
 | orders write / read | 6 | grant | **E** | D | |
 | order attribution | 6 | `orders-save` logic | **A** (for rows written by it) | — | legacy rows keep their attribution |
 | job-file signer / upload / delete | 7 | `jobs-save` provenance from A; storage policies at E | **A** / **E** | D | |
-| existing `print_jobs` rows | 7 | backfill / quarantine | **A** | — | as the queue |
+| existing `print_jobs` rows | 7 | screen at A; owner claim before C | **C** | B | as the queue |
 | upload writers' entitlement | 8 | activation at C | **C** | B | |
 | cost figures | 9 | `orders-save` computes | **A** | — | legacy rows keep `margin_source='client'` |
 
@@ -694,9 +855,11 @@ storage path; a row can reference only a path the server allocated.**
 | `csrf-bootstrap` | GET / any / passive | `?kind=staff\|device\|upload` optional | `{ ok, kind, csrf }`; staff adds `employee:{id,name,role}` | with `kind`: that class or 401 |
 | `queue-list` | GET / staff / **passive** | — | `{ ok, jobs:[{ id, customerName, jobDate, queueNumber, source, createdAt, quarantineReason, files:[{ fileId, name, size, type }] }] }` | no paths; polled |
 | `queue-download-url` | POST / staff / interactive / CSRF | `{ jobId, fileId }` | `{ ok, url, expiresAt }` (60 s) | job by id + store; `fileId` → allocation for that job; sign the allocation's path |
-| `queue-complete` | POST / staff / interactive / CSRF | `{ jobId }` | `{ ok, deleted: n }` | removes the allocations' objects, then the row |
+| `queue-complete` | POST / staff / interactive / CSRF | `{ jobId }` | `{ ok, deleted: n }` | release allocations → remove objects → delete row; idempotent on retry |
+| `queue-legacy-list` / `queue-legacy-claim` / `queue-legacy-discard` | GET, POST / **owner JWT** | `{ jobId }` | rows with screen verdicts, **no paths** | the authorized recovery view (§6.1); claim refuses a path already allocated elsewhere |
+| `deploy-context` | GET / public | — | bundled build metadata, no secrets | the R4 proof; read-only |
 | `start-upload` | POST / (slice 8: upload cap) | `{ fileName, size, type }` | `{ ok, allocationId, path, token }` | allocation written first; token lifetime is Supabase's (2 h); single-use, `max_bytes`, swept at 3 h |
-| `register-job` | POST / (slice 8: upload cap) | `{ customerName, notes, files:[{ allocationId }] }` (old shape `{ path }` accepted until D) | `{ ok, job }` | row built from allocations; objects verified; consumed atomically; tenant from allocation. Unallocated path: quarantined at A, **refused from C** |
+| `register-job` | POST / (slice 8: upload cap) | `{ customerName, notes, files:[{ allocationId }] }`; the exact-path shape `{ path }` accepted **until slice 8 D** under the identical checks | `{ ok, job }` | row built from allocations; objects verified; consumed atomically (typed consumer link); tenant from allocation. Unallocated path: written with provenance `unverified` at A, **refused from C** |
 | `fetch-link-job` | POST / (slice 8: upload cap) | `{ customerName, notes, url }` | `{ ok, job }` | allocates, stamps tenant, per-store numbering, registers via the same function |
 | `orders-list` | GET / staff / interactive | `?limit=&before=` | `{ ok, orders:[…] }` | cost/margin fields only if the session row's role is `manager` |
 | `orders-save` | POST / staff / interactive / CSRF | `{ clientOrderId, quotedAt, quotedStoreId, quotedEmployeeId, pricingVersion?, order }` | `{ ok, orderId, duplicate }` \| 409 `WRONG_STORE` | attribution per §6.2; slice 6: client cost fields stored, `margin_source='client'`; slice 9: computed, client fields **ignored**, unknown version → `unavailable` |
@@ -723,6 +886,14 @@ storage path; a row can reference only a path the server allocated.**
 | contract 2: two-hour token, not five minutes | §6.1, §6.3, §8 |
 | contract 3: "no path in any response" dropped | §6.1, §8 shared rule |
 | contract 4: opaque `fileId`, not `fileName` | §6.1, §8 |
+| **R1** backfill inferred ownership from the untrusted row; cleanup follows `files[].path` | §6.1: screen recorded, never trusted; owner claim as the only evidence and authority; null-store rows; cleanup by allocation or sole-reference only |
+| **R2** removing `{ path }` at slice 5 D breaks fresh customer/kiosk submissions | §6.1 D, §6.4 B/D, §8: shape retained under identical checks until slice 8 D |
+| **R3** `files` → `[]` broke the flag-OFF counter; A cannot be both preserving and a cutover | §6.1: references preserved in place; recovery view defined; A preserving, C the cutover with a named precondition |
+| **R4** `CONTEXT` is build-time; absent → 404s production | §4.1: bundled immutable context file + Functions-scoped flag; four-part proof before the guard lifts |
+| **R5** two tabs assign different legacy ids | §6.2: deterministic ids + Web Locks; two-tab test |
+| **R6** `consumed_by` FK blocks deletion / cannot type the consumer / replayable | §6.1: typed consumer link, one-way state machine, completion ordering, sweep |
+| **R7** per-line scanner misses multiline and aliases | §0.2: gateway confinement + dot-all alias-hostile matching (or a parser); named mutants |
+| decision 7 wording: "404 makes the client drop it" | removed; §6.2 dequeue rule: only a validated ack, a duplicate ack or an explicit discard dequeues |
 
 ---
 
@@ -758,14 +929,31 @@ storage path; a row can reference only a path the server allocated.**
    reports only that the `quotedStoreId` **the caller itself supplied** is
    not S — a relation between two values the caller already knows. It
    reveals nothing about any row in any other tenant; there is no lookup in
-   T at all. And the alternative has a cost uniform refusal never has
-   elsewhere: a 404 here would make the client treat a queued order as
-   nonexistent and drop it, which is work loss and the outcome row 25b
-   forbids ("they stay queued against T1 and surface as such"). Contrast
-   `queue-download-url`, where a wrong-store `jobId` **is** a lookup in T,
-   a distinguishable answer **would** reveal existence, and a 404 discards
-   nothing — so there the uniform 404 stands. The rule: distinguishable
+   T at all. The 409 is justified by the **safe recovery information** it
+   carries: the staffer learns that this row was quoted at another store
+   and can recover it on the right device (row 25b: "they stay queued
+   against T1 and surface as such"). It is **not** justified by any other
+   status being permission to lose work — under §6.2's dequeue rule no
+   failed status, 404 included, ever dequeues a row; a uniform 404 would
+   merely leave the row queued with no way to tell the staffer why it will
+   never save. Contrast `queue-download-url`, where a wrong-store `jobId`
+   **is** a lookup in T and a distinguishable answer **would** reveal
+   existence — so there the uniform 404 stands. The rule: distinguishable
    refusal is permitted only where the caller is already authenticated to a
-   store, the response is computed from values the caller supplied, and a
-   uniform answer would destroy work.
+   store, the response is computed from values the caller supplied, and the
+   distinction gives the caller information needed to recover their own
+   work.
 8. Soak lengths (§2).
+9. **Legacy-row adjudication by owner claim** (§6.1): the only ownership
+   evidence is an explicit claim; null-store rows are claimable only in a
+   single-store deployment, otherwise operator-reported. Every legacy row
+   claimed or discarded is a G-counter precondition for slices 5 and 7.
+10. **Scanner mechanism** (§0.2): gateway confinement plus dot-all,
+    alias-hostile matching keeps the suite zero-dependency; a parser is the
+    alternative if the reviewer wants AST-level certainty.
+11. **Deterministic legacy ids** (§6.2): `uuidv5` over `_queuedAt` and the
+    canonical row, so tabs agree without coordination; Web Locks as the
+    serialiser, `localStorage` lease as the stated best-effort fallback.
+12. **Deployment context transport** (§4.1): a bundled file written at
+    build, plus a Functions-scoped, production-context flag; the four-part
+    proof precedes lifting the ref guard.
