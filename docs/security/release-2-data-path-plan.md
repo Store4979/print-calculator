@@ -1,11 +1,12 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing here is built.** Revision 3, 2026-09-17.
-Revision 2 (commit `9acadee`) accepted six findings and four contract
-corrections from the review of revision 1. Revision 3 accepts seven more
-(R1–R7, four P1) from the review of revision 2, two of which — R2 and R3 —
-were independently verified at `origin/main` to break the live counter as
-revision 2 was written. §9 traces every finding to where it landed.
+**Status: PLAN ONLY. Nothing here is built.** Revision 4, 2026-09-17.
+Revision 2 (`9acadee`) accepted six findings and four contract corrections
+from the review of revision 1. Revision 3 (`5a03024`) accepted seven more
+(R1–R7). Revision 4 accepts three from the review of revision 3 (S1–S3,
+two P1), takes the parser option for the scanner, and corrects three
+assertions that had gone stale. §9 traces every finding to where it
+landed.
 
 This is the execution plan for Part 6 of `release-2-plan.md` (the 17 paths)
 and the parts of Part 7 they drive (steps 4, 4a, 4e, 5.1–5.4, 5.6), plus the
@@ -97,29 +98,39 @@ discovery at the moment the prohibition on calling it begins.
   (`const q = supabase.from; q("orders")`) defeats any textual pattern.
   Two mechanisms, both required:
   1. **A narrow gateway.** `@supabase/supabase-js` is imported in exactly
-     one file today, `src/lib/supabase.js`, which exports the raw client and
-     four other files use it directly (`App.jsx`, `PrintQueue.jsx`,
-     `UploadApp.jsx`, `storeConfig.js`). The test asserts the import exists
-     nowhere else; that outside the gateway the identifier `supabase` (the
-     client) is neither imported nor referenced, except by files the
-     allowlist names for the slice that removes them; and that the gateway
-     never exports the client once the last slice's D has run. Every
-     Supabase reach then lives in one small file the inventory reads.
-  2. **Whitespace-insensitive, alias-hostile matching inside the gateway**
-     on comment-stripped source: `\.from\s*\(\s*["'\x60]([^"'\x60]+)`
-     with the dot-all flag, and the same for `.rpc(`, `.channel(`, and
-     `\.storage\s*\.\s*from`; a `.from(` / `.rpc(` whose first argument
-     is **not a string literal** fails outright (a variable table name
-     defeats classification); a member access of `from`/`rpc`/`storage`
-     that is not immediately a call (`supabase.from;`, `const { from } =
-     supabase`) fails outright (aliasing). Function names: the string
-     literal anywhere in `src/`, dot-all.
-  This keeps the suite's zero-dependency property. The alternative is a
-  real parser (`acorn`, a devDependency) walking `CallExpression` nodes;
-  if the reviewer prefers it, the gateway confinement still stands and the
-  parser replaces mechanism 2. Either way the **mutants that must fail**
-  include: the literal on the next line, the aliased call, the destructured
-  method, a variable table name, and a template-literal table name.
+     one file today, `src/lib/supabase.js`, which exports the raw client;
+     four files use it directly (`App.jsx`, `PrintQueue.jsx`,
+     `UploadApp.jsx`, `storeConfig.js`). **The gateway is two files, not
+     one**: `src/lib/supabase.js` and `src/lib/storeConfig.js`.
+     `storeConfig.js` holds the retained owner-JWT helpers (public price
+     book reads; owner writes under RLS) and legitimately needs the client
+     after every slice has run, so the export restriction is: the raw
+     client may be imported **only** by `storeConfig.js`; `App.jsx`,
+     `PrintQueue.jsx` and `UploadApp.jsx` lose their imports at their
+     slices' D (allowlisted until then); no other file may ever import it.
+     The test asserts the package import exists only in `supabase.js`, the
+     client identifier is referenced only inside the two gateway files
+     (plus allowlisted files until their slice), and nothing else in `src/`
+     names it.
+  2. **A real parser inside the gateway** (the reviewer's choice over
+     textual matching). `acorn` as a devDependency — the suite's
+     zero-dependency property is traded for AST-level certainty on the two
+     files that matter. The scan walks `CallExpression` nodes whose callee
+     is a `MemberExpression` with property `from`, `rpc` or `channel` on
+     the client (or on `client.storage`), takes the first argument, and
+     **fails** unless it is a string `Literal` — a variable, a template
+     literal with expressions, or a computed value is a failure, not an
+     unknown. It also fails on any `MemberExpression` naming those
+     properties that is **not** the callee of a call (aliasing:
+     `const q = supabase.from;`), on destructuring of the client
+     (`const { from } = supabase`), and on **computed access**
+     (`supabase["from"]`, `supabase[m]`). Function names: string literals
+     anywhere in `src/`, from the AST of every file.
+  The **mutants that must fail**, each a test: the literal on the next
+  line; the aliased method; the destructured method; computed access with
+  a literal and with a variable; a variable table name; a template-literal
+  table name; the client imported by a third file; a `.from` call on a
+  variable that was assigned the client.
 - **Allowlist in the test**, each entry tagged with the slice whose stage D
   removes it, or `auth-jwt` for the owner-JWT helpers that stay. Run today
   it finds every reach site behind Part 6's 17 rows (sites, not rows: rows 2
@@ -294,8 +305,12 @@ build time and no request can influence:
   Production** in the Netlify UI, so it is read at function runtime (the
   scope) and absent from preview deploys (the context).
 
-Two independent facts, one bundled at build and one scoped at the
-platform; absence of either → 404. **Proven before the ref guard is
+Two independent facts of different kinds — stated precisely, because
+revision 3 called both "build-time" and the second is not: the bundled
+file is a **build-time fact**, immutable for the life of the bundle; the
+flag is a **runtime value** that the platform scopes to Functions in the
+production context, so it is present at runtime only where the platform
+put it and no request can supply it. Absence of either → 404. **Proven before the ref guard is
 lifted**: a read-only `deploy-context` function that returns the bundled
 metadata (no secrets) is deployed first, and the recorded evidence is (a)
 production: `{ context: "production", siteName: "printcalculator2", … }`;
@@ -321,9 +336,20 @@ rewritten to describe this (comment discipline).
    synthetic rows created inside the transaction. Same proofs as staging,
    including 05's P5b. A migration rehearsed only on staging has not been
    rehearsed against the data it will run on.
-3. **Env on the production site**: `RELEASE2_ENABLED=true` (production
-   context only), `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app`,
-   `RELEASE2_CONTEXTS=production`.
+3. **Env on the production site**: `RELEASE2_ENABLED=true` (Functions
+   scope, production context only),
+   `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app`,
+   `RELEASE2_CONTEXTS=production`. **And, closing the "older deployments"
+   writer class** (§6.1): `SUPABASE_SERVICE_ROLE_KEY` is scoped to the
+   **production context only**. Today every deploy preview and branch
+   deploy of the production site runs the *legacy* functions — which are
+   not Release 2 gated — against production Supabase with the production
+   service key, so an old preview's `register-job` can write an unvalidated
+   row into the production queue at any time, for as long as the preview
+   exists. With the key absent from previews, every legacy handler's
+   existing guard (`if (!SB_KEY) return bad(500, "Service role key not
+   configured")`) refuses, and the writer class is gone. Verified in step 6
+   by calling a preview's `register-job` and recording the 500.
 4. **Code**: §4.1's context check lands first; the ref refusal is removed
    in the same change, after it.
 5. Deploy. Phase 1 on production: four uniform 401s. Then the positive
@@ -333,7 +359,9 @@ rewritten to describe this (comment discipline).
    revoked.
 6. **Preview refusal, proven not assumed**: a `curl` with **no Origin
    header** to a deploy-preview URL of the production site → 404. A second
-   curl with the staging Origin → 404. Both recorded.
+   curl with the staging Origin → 404. A third, to the preview's legacy
+   `register-job` with a well-formed body → 500 "Service role key not
+   configured". All three recorded.
 
 **Rollback of stage 0:** `RELEASE2_ENABLED=false` + redeploy → every endpoint
 404s. Migrations stay: RLS on, zero policies, service-role only. Not an
@@ -453,14 +481,45 @@ that trusts `files[].path` inherits all of it.
   up). `expired_at` is set by the sweep on an allocation never consumed.
   The **only** consumable state is `consumed_at is null and expired_at is
   null`; consumption sets `consumed_at` under `for update` and no code path
-  clears it. **Ordering on completion**: (1) mark the row's allocations
-  released, (2) remove the objects, (3) delete the row. A crash after (1)
-  leaves released allocations whose objects the sweep removes; a crash after
-  (2) leaves a row that `queue-list` shows as "completing" and a retried
-  complete finishes idempotently. **The sweep** (`cleanup-stale-jobs`)
-  handles `allocated` older than three hours (past the two-hour token:
-  remove the object if present, set `expired_at`) and `released` with the
-  object still present (retry the remove). `pending_jobs.files[]` entries
+  clears it.
+
+  **Expiry claims the allocation atomically BEFORE any storage I/O** (S2).
+  Revision 3 had the sweep remove the object and then set `expired_at`, so
+  a registration could consume a still-unexpired allocation while the
+  delete was in flight and acknowledge a job whose file then vanished. The
+  completion path already had the right order; expiry now uses it. A SQL
+  function `release2_expire_allocations(p_older_than)` selects `allocated`
+  rows older than the threshold `for update skip locked`, sets
+  `expired_at`, and returns their paths; only then does the sweep remove
+  the objects, setting `object_removed_at` on success and retrying on the
+  next run while it is null. Under that discipline a concurrent registration
+  either consumed first (expiry then sees `consumed_at` and skips) or expiry
+  won (consumption fails with "upload expired — please upload again"); an
+  acknowledged job never loses its file.
+
+  **The full set of allowed states**, enforced by a CHECK constraint so an
+  impossible combination cannot be written:
+
+  | state | `consumed_at` | `released_at` | `expired_at` | `object_removed_at` |
+  |---|---|---|---|---|
+  | allocated | null | null | null | null |
+  | consumed | set | null | null | null |
+  | released | set | set | null | null, then set |
+  | expired | null | null | set | null, then set |
+
+  Anything else — released without consumed, expired and consumed, expired
+  and released, removed while allocated or consumed — is rejected by the
+  constraint. Removal of an object happens **only** from `released` or
+  `expired`, and only through the record.
+
+  **Ordering on completion**: (1) mark the row's allocations released
+  (under the same lock), (2) remove the objects, (3) delete the row. A
+  crash after (1) leaves released allocations whose objects the sweep
+  removes; a crash after (2) leaves a row that `queue-list` shows as
+  "completing" and a retried complete finishes idempotently. **The sweep**
+  (`cleanup-stale-jobs`) runs `release2_expire_allocations` at three hours
+  (past the two-hour token), then removes objects for `expired` and
+  `released` rows with `object_removed_at` null. `pending_jobs.files[]` entries
   gain **`fileId`** = the allocation id (contract correction 4): a **stable
   opaque identifier**, minted by the server, never a filename.
 - `start-upload` (dual-mode, activation OFF in A but the allocation is
@@ -480,10 +539,18 @@ that trusts `files[].path` inherits all of it.
   `files[]` built the old way, `{ name, path, size, type }`. Every path
   they post after A deploys carries an allocation, because the new
   `start-upload` wrote one before issuing it — so the old shape is matched
-  to its allocation by exact `path` and verified like the new shape. The
-  one caller that can present a path with **no** allocation is a customer
-  mid-flow at the deploy moment (path issued by the old `start-upload`,
-  registered against the new handler). Revision 2 let that request fail;
+  to its allocation by exact `path` and verified like the new shape.
+  **Three classes of caller can present a path with no allocation**
+  (revision 3 named only the first, which was wrong): a legitimate customer
+  mid-flow at the deploy moment (path issued by the old `start-upload`);
+  **any public caller**, since `register-job` is unauthenticated until
+  slice 8 and a body path can be fabricated; and **older deployments** —
+  a deploy preview or branch deploy running pre-slice-5 handlers against
+  the same database, which stage 0 eliminates by scoping the service key
+  (§4.2 step 3). The first is served safely as below; the second is
+  refused from C and, until then, produces a row whose entries are marked
+  `unverified` and which is never claimable (§ existing rows); the third
+  is closed at stage 0. Revision 2 let the deploy-moment request fail;
   that is a customer-facing failure at a deploy moment — F4's failure mode
   reappearing inside F1's fix — and the safe form costs nothing. So:
   - **At A**, an entry with an allocation (by `allocationId`, or by exact
@@ -549,47 +616,102 @@ that trusts `files[].path` inherits all of it.
     prints every verdict before anything commits.
   - **Independent ownership evidence, named.** There is none in the data.
     No path carries a tenant; no object carries an owner (service-role
-    uploads have `owner = null`); the row's `store_id` is caller-chosen. The
-    only evidence that exists is **an owner's explicit claim**, and the
-    authority that adjudicates is **the store owner, through an authorized
-    recovery view**: an owner-JWT endpoint `queue-legacy-list` showing every
-    unadjudicated row (`customer_name`, `created_at`, `queue_number`,
-    `source`, file names and sizes, the screen verdicts; **never a path**)
-    and `queue-legacy-claim { jobId }`, which creates allocation records for
-    that row's entries with `source = 'owner-claimed'`, `claimed_by`,
-    `claimed_at`, in one function that refuses if any entry's path is
-    already allocated to another store or another row (the poisoning case
-    surfaces here as a refusal with a reason, never as a silent grant).
-    **Null-store rows** (every `fetch-link-job` row) appear in that view
-    only for a deployment with exactly one store; in a multi-tenant
-    deployment they are listed by an operator-run SQL report, because no
-    tenant owner has standing to claim a row that names no tenant, and
-    guessing is exactly what R1 forbids. `store4979` is single-tenant, so
-    its owner sees and claims them. An owner may also **discard** a row
-    (`queue-legacy-discard`), which releases nothing and deletes nothing —
-    it marks the row for the sweep, which removes objects only through the
-    same sole-reference rule below.
+    uploads have `owner = null`); the row's `store_id` is caller-chosen.
+  - **First claim is not ownership** (S1). Revision 3 let a store owner
+    claim any unadjudicated row, refusing only a path *already* allocated.
+    A poisoned row is unallocated by construction, so whichever owner
+    claimed first would win and the genuine owner's later claim would be
+    the one refused. Being T1's owner is authority over T1; it is not
+    authority over an object of unknown ownership. **The authority model,
+    decided by the dataset, not by who arrives first:**
+    - The migration classifies the legacy dataset in a `DO` block and
+      records the verdict in `pending_jobs_legacy_dataset (mode, store_id,
+      decided_at, decided_by)`: **`single-store`** if exactly one store
+      exists in the deployment *and* every legacy row's `store_id` is null
+      or equals it; otherwise **`multi-store`**. The operator confirms the
+      verdict out of band before the migration is applied (it is printed by
+      the rehearsal), so the mode is an explicit migration restriction, not
+      an inference.
+    - In **`single-store` mode** the one question — which tenant — has
+      exactly one possible answer, and the store's owner adjudicates the
+      remaining question, whether the reference is intact, through the
+      recovery view: `queue-legacy-list` (owner JWT; `customer_name`,
+      `created_at`, `queue_number`, `source`, file names and sizes, the
+      screen verdicts; **never a path**), `queue-legacy-claim { jobId }` and
+      `queue-legacy-discard { jobId }`. A claim is granted only for a row
+      whose every entry passed the screen (`object_exists`,
+      `sole_reference`, `co_created`); a row with any `suspect` entry
+      **cannot be claimed by anyone** — it is quarantined for re-upload
+      (the counter asks the customer to submit again) or operator disposal.
+      Null-store rows (every `fetch-link-job` row) are claimable here,
+      because there is one store. `store4979` is in this mode.
+    - In **`multi-store` mode** a tenant's claim is a **submission**, not
+      a grant: `queue-legacy-claim` writes a claim request. An **operator**
+      — authority over the whole dataset, exercised from the SQL editor
+      through `release2_legacy_grant(claim_id)` / `release2_legacy_deny`,
+      recorded with `decided_by` — grants a submission only when the row's
+      entries passed the screen **and no other store has submitted a claim
+      on any of the same paths**. Two submissions on one path, or any
+      `suspect` verdict, are **denied to both** and the row is quarantined
+      for re-upload. Null-store rows are never claimable by a tenant in
+      this mode; they are listed for the operator only. Staging has two
+      stores and is therefore in this mode, which is where the operator
+      path is exercised.
+    - `unverified` entries (rows written after A by a public caller with a
+      fabricated path, §6.1 `register-job`) are the poisoning shape by
+      definition and are never claimable in either mode.
+    - A **grant** creates the allocation records (`source =
+      'owner-claimed'` or `'operator-granted'`, `claimed_by`, `claimed_at`);
+      a **discard** releases nothing and deletes nothing — it marks the row
+      for the retention policy below.
   - **Stage A is behaviour-preserving; stage C is the operational cutover.
     Not both.** At A the counter is flag-OFF, `get-download-url` and
     `complete-job` run unchanged with activation OFF, `files[]` is untouched,
     and every row opens exactly as it did the day before. At C the counter
     moves to endpoints that act only on allocation records, and every legacy
-    row must by then have been **claimed or discarded by the owner** — a
-    named precondition of G-counter for slice 5. Any row still
+    row must by then have been **adjudicated — claimed, denied or
+    discarded — under the dataset's authority model** — a named
+    precondition of G-counter for slice 5. Any row still
     unadjudicated at C stays visible in the recovery view and is never
     silently gone. In practice the queue turns over within a day and the
     sweep removes the stale, so the set at C is expected to be empty, but
     the plan does not depend on that.
-- **`cleanup-stale-jobs` follows the same rule** (R1). Its deletion loop
-  today removes objects at `row.files[].path` — paths the writer chose — so
-  a row registered against a victim's live object deletes the victim's file
-  when the attacker's row goes stale. From A: for rows with allocations, the
-  sweep removes objects **only through allocation records** (`released` or
-  `expired` state). For legacy rows it removes an object **only if the row
-  is the sole reference to that path and the co-creation screen passed**;
-  otherwise it deletes the row and leaves the object, logging the path for
-  the owner's report. It also sweeps `allocated` older than three hours and
-  `released` with the object present, as §6.1's state machine says.
+- **`cleanup-stale-jobs` and a retention policy for unknown legacy
+  objects** (R1, S1). The deletion loop today removes objects at
+  `row.files[].path` — paths the writer chose — so a row registered against
+  a victim's live object deletes the victim's file when the attacker's row
+  goes stale. Revision 3 let the sweep delete a legacy object when
+  `sole_reference` and `co_created` passed; those are **metadata by this
+  document's own wording** and cannot become ownership evidence at the
+  point of removal. So the sweep **never deletes an object that has no
+  allocation record**, full stop. What it does instead is governed by an
+  explicit **retention policy**, tested as a policy:
+  - **Scope**: bucket `customer-uploads` (and `job-files` from slice 7).
+  - **Protected**: any object whose path has an allocation in `allocated`
+    or `consumed` state is never touched by anything but the state machine.
+  - **Allocated objects**: removed only from `released` or `expired`,
+    through the record (§6.1 state machine).
+  - **Unknown legacy objects** — present in the bucket, no allocation
+    record — are **quarantined for authorized disposal**: the sweep lists
+    them (path, size, `created_at`, referencing rows if any) into a
+    `legacy_objects_report` table and deletes nothing. **Age**: an unknown
+    object becomes *eligible* for disposal 30 days after stage A. **Who may
+    delete**: the operator only, through `release2_dispose_legacy_objects`
+    from the SQL editor, which takes the paths under `for update`, refuses
+    any path that has acquired an allocation since the report, records the
+    disposal, and returns the list for the remote remove; never the sweep,
+    never a tenant owner, never a claim or discard. **Concurrency**: the
+    same `for update skip locked` discipline as expiry, so a claim being
+    granted and a disposal cannot interleave on one path.
+  - **Legacy rows** whose objects are unknown: the sweep may delete a stale
+    *row* (a tenant-attributed record) after the existing 24-hour cutoff,
+    but the object stays in the report until the operator disposes of it.
+  - The policy test asserts, on a scripted bucket and table, that the sweep
+    issues **no** `remove` for any path without a `released`/`expired`
+    allocation, that the report contains every unknown object, and that
+    disposal refuses a path with a live allocation; its mutants (a sweep
+    that removes on `sole_reference`, a disposal that skips the lock) must
+    fail.
 - New endpoints `queue-list`, `queue-download-url`, `queue-complete` (§8).
   The legacy `get-download-url` and `complete-job` gain a dual-mode
   activation (`RELEASE2_ACTIVATE_LEGACY_QUEUE`) that, when ON, requires a
@@ -665,20 +787,44 @@ carries `clientOrderId`, `quotedAt`, `quotedStoreId`, `quotedEmployeeId`,
 - `store_id`, `org_id` stamped from the enrollment; `employee_name` from the
   `employees` row; client-sent copies ignored.
 
-**Idempotency, made durable before the first request, and identical
-across tabs** (F3, R5). Revision 2 assigned a random `clientOrderId` to each
-legacy row at boot; two tabs booting together would assign **different**
-ids to the same row, both persist, both drain, and the unique index sees
-two keys — two orders. So legacy ids are **deterministic**: `uuidv5(NS,
-_queuedAt + "|" + canonical JSON of the row)` — any tab computes the same
-id for the same row with no coordination, and the index then arbitrates
-correctly. Rows enqueued after this slice get a random id at enqueue (one
-writer, one moment). Queue mutation and drain are additionally
-**serialised across tabs** with the Web Locks API
-(`navigator.locks.request("pc-order-queue", …)`), with a `localStorage`
-lease (token + expiry) as the best-effort fallback where Web Locks is
-absent, stated as best-effort in the code. The write-back of assigned ids
-happens under the lock, before any request.
+**Every stored occurrence gets its own durable identity, assigned under a
+serialised migration** (F3, R5, S3). Revision 2 assigned random ids at
+boot, so two tabs could assign different ids to one row and insert twice.
+Revision 3 derived the id from content — `uuidv5(_queuedAt + canonical
+row)` — so tabs would agree; but `orderQueue.js:48–53` does a plain push
+with no per-entry identity, so **two identical orders queued in the same
+millisecond are two entries with identical content and identical
+`_queuedAt`**, and the content-derived id collapses them into one: one
+saves, one acks as duplicate, the dequeue removes both — a lost order, and
+two identical orders in a minute (two 4×6 photo jobs, two card reorders)
+is ordinary counter traffic. **Content is not identity when content
+repeats.** So:
+
+- Every entry gets a **random `clientOrderId` at enqueue** from this
+  slice on — one writer, one moment, one identity per occurrence.
+- Legacy entries (no id) are migrated by **exactly one tab under the Web
+  Locks API** (`navigator.locks.request("pc-order-queue", { mode:
+  "exclusive" }, …)`): the holder reads the queue, assigns a random id to
+  each entry lacking one — **one id per occurrence, identical entries
+  included** — writes the whole queue back in one `setItem`, and releases.
+  A second tab waits for the lock, then reads a queue that is already
+  migrated. Two tabs migrating two identical entries therefore converge on
+  **two ids**, because only one tab assigns and it assigns per entry.
+- Every drain and every dequeue also runs under the same lock, and a
+  dequeue targets an entry **by id**, never by content or index.
+- **Unsupported browsers**: Web Locks is available on every device the
+  counter runs (Safari ≥ 15.4, Chrome ≥ 69). Where `navigator.locks` is
+  absent, the client performs **no destructive queue write at all** — no
+  migration, no drain, no dequeue — and shows "N orders waiting — update
+  this browser to save them". Revision 3's `localStorage` lease fallback is
+  **withdrawn**: a best-effort lease cannot back a no-loss promise for
+  destructive writes, so the safe behaviour is to do nothing destructive.
+- **A known window, bounded and stated**: a tab still running a
+  pre-slice-6 bundle (served by the service worker before its update
+  lands) drains by direct insert with no id and takes no lock. If it and a
+  fresh tab race on the same entry, two rows can result. The window is the
+  stale tab's lifetime; the existing sw update flow ends it, and the
+  counter checklist includes reloading every open tab after the flag flip.
 
 **Dequeue rule** (from the review of decision 7): **no failed save status
 may dequeue a row.** A row leaves the queue only on (a) a validated save
@@ -724,9 +870,10 @@ accepts only this store's unconsumed allocations, builds `file_urls` from
 the records, verifies the objects, consumes in one function. **Existing
 `print_jobs` rows are screened and adjudicated exactly as the queue's**
 (§6.1, R1/R3): `file_urls` untouched, a provenance record per entry
-(object exists, sole reference, co-created, tenant present), an owner
-recovery view and claim, and an operational cutover at C with "claimed or
-discarded" as a G-counter precondition. Consumer link `consumer_kind =
+(object exists, sole reference, co-created, tenant present), the same
+dataset-decided authority model for claims, the same retention policy for
+unknown objects, and an operational cutover at C with "adjudicated" as a
+G-counter precondition. Consumer link `consumer_kind =
 'print_job'`. **Path 14 (`deleteJobFiles`) is deleted**, no caller; the inventory's
 `supabase.storage` pattern fails on any `.remove(` that reappears. Signed
 upload token: Supabase's two hours; allocation single-use and swept.
@@ -821,14 +968,14 @@ rollback at or after "first closure" takes the full Part 7 Rollback contract.
 |---|---|---|---|---|---|
 | PIN check | 4 | grant revoke | **E** | D | client-only until E |
 | `register-job` / `fetch-link-job` path provenance | 5 | allocation recording from A; old shape accepted-and-quarantined at A; **refusal activated at C** | **C** | B | A records allocations and quarantines the unallocated; nothing is refused until C, so a flag-OFF customer upload never breaks. C's rollback restores acceptance of unallocated paths — reopening |
-| existing queue rows | 5 | screen at A (metadata only, `files` untouched); owner claim/discard before C; new endpoints act on claims only from C | **C** (cutover) | B | A is behaviour-preserving; the provenance table is additive and its rollback is a drop |
+| existing queue rows | 5 | screen at A (metadata only, `files` untouched); adjudication (owner in `single-store`, operator in `multi-store`) before C; new endpoints act on grants only from C | **C** (cutover) | B | A is behaviour-preserving; the provenance and dataset-mode tables are additive and their rollback is a drop |
 | customer-file signer / deleter | 5 | activation on legacy handlers at C; tombstone at D | **C** | B | D's rollback target is the C build with activation ON — safe |
 | queue read + Realtime | 5 | grant + publication | **E** | D | |
 | `send-print-job` | 6 | activation at C | **C** | B | |
 | orders write / read | 6 | grant | **E** | D | |
 | order attribution | 6 | `orders-save` logic | **A** (for rows written by it) | — | legacy rows keep their attribution |
 | job-file signer / upload / delete | 7 | `jobs-save` provenance from A; storage policies at E | **A** / **E** | D | |
-| existing `print_jobs` rows | 7 | screen at A; owner claim before C | **C** | B | as the queue |
+| existing `print_jobs` rows | 7 | screen at A; adjudication before C under the same authority model | **C** | B | as the queue |
 | upload writers' entitlement | 8 | activation at C | **C** | B | |
 | cost figures | 9 | `orders-save` computes | **A** | — | legacy rows keep `margin_source='client'` |
 
@@ -856,7 +1003,8 @@ storage path; a row can reference only a path the server allocated.**
 | `queue-list` | GET / staff / **passive** | — | `{ ok, jobs:[{ id, customerName, jobDate, queueNumber, source, createdAt, quarantineReason, files:[{ fileId, name, size, type }] }] }` | no paths; polled |
 | `queue-download-url` | POST / staff / interactive / CSRF | `{ jobId, fileId }` | `{ ok, url, expiresAt }` (60 s) | job by id + store; `fileId` → allocation for that job; sign the allocation's path |
 | `queue-complete` | POST / staff / interactive / CSRF | `{ jobId }` | `{ ok, deleted: n }` | release allocations → remove objects → delete row; idempotent on retry |
-| `queue-legacy-list` / `queue-legacy-claim` / `queue-legacy-discard` | GET, POST / **owner JWT** | `{ jobId }` | rows with screen verdicts, **no paths** | the authorized recovery view (§6.1); claim refuses a path already allocated elsewhere |
+| `queue-legacy-list` / `queue-legacy-claim` / `queue-legacy-discard` | GET, POST / **owner JWT** | `{ jobId }` | rows with screen verdicts, **no paths** | the recovery view (§6.1). `single-store`: claim grants for intact rows only. `multi-store`: claim is a submission; grant/deny is the operator's, from SQL. `suspect` and `unverified` rows: never claimable |
+| `release2_expire_allocations`, `release2_legacy_grant` / `_deny`, `release2_dispose_legacy_objects` | SQL functions, `service_role` / operator | — | — | expiry and disposal claim rows `for update skip locked` **before** any storage I/O; rehearsed with real rows |
 | `deploy-context` | GET / public | — | bundled build metadata, no secrets | the R4 proof; read-only |
 | `start-upload` | POST / (slice 8: upload cap) | `{ fileName, size, type }` | `{ ok, allocationId, path, token }` | allocation written first; token lifetime is Supabase's (2 h); single-use, `max_bytes`, swept at 3 h |
 | `register-job` | POST / (slice 8: upload cap) | `{ customerName, notes, files:[{ allocationId }] }`; the exact-path shape `{ path }` accepted **until slice 8 D** under the identical checks | `{ ok, job }` | row built from allocations; objects verified; consumed atomically (typed consumer link); tenant from allocation. Unallocated path: written with provenance `unverified` at A, **refused from C** |
@@ -894,6 +1042,13 @@ storage path; a row can reference only a path the server allocated.**
 | **R6** `consumed_by` FK blocks deletion / cannot type the consumer / replayable | §6.1: typed consumer link, one-way state machine, completion ordering, sweep |
 | **R7** per-line scanner misses multiline and aliases | §0.2: gateway confinement + dot-all alias-hostile matching (or a parser); named mutants |
 | decision 7 wording: "404 makes the client drop it" | removed; §6.2 dequeue rule: only a validated ack, a duplicate ack or an explicit discard dequeues |
+| **S1** first claim is not ownership; cleanup cannot turn metadata into ownership at removal | §6.1: dataset-decided authority model (`single-store` owner / `multi-store` operator over submissions), conflicts and `suspect` denied to all; retention policy — the sweep never removes an unallocated object, operator-only disposal after 30 days under lock |
+| **S2** expiry deleted before claiming | §6.1: `release2_expire_allocations` claims under `for update skip locked` before any I/O; removal retried; allowed-state table as a CHECK |
+| **S3** content-derived ids collapse identical entries | §6.2: random id per occurrence; one-tab migration under Web Locks; no destructive write without Web Locks; lease withdrawn |
+| scanner: parser + gateway; reconcile `storeConfig.js` | §0.2: `acorn`, gateway is two files, raw client importable only by `storeConfig.js`; computed-access and alias mutants |
+| stale: decision 3's quarantine rule | §10 decision 3 rewritten |
+| stale: "both build-time facts" | §4.1, §10 decision 4: one build-time fact, one runtime platform-scoped value |
+| stale: "only deploy-moment callers can supply unallocated paths" | §6.1: three caller classes named; public callers refused from C and unclaimable until then; older deployments closed at stage 0 by scoping the service key |
 
 ---
 
@@ -912,11 +1067,19 @@ storage path; a row can reference only a path the server allocated.**
    and C a deploy-moment row can exist with an unverified entry, served by
    the legacy signer that the flag-OFF counter is using anyway, and never
    by the new endpoints.
-3. **Quarantine rule for legacy rows** (§6.1): pattern + object present +
-   tenant set, else quarantined with a reason; `fetch-link-job` rows all
-   fall to `no tenant`.
-4. **Deployment context** (§4.1): `CONTEXT` allowlist plus a
-   context-scoped flag, both build-time facts.
+3. **Legacy rows are screened, never trusted by inference, and adjudicated
+   under a dataset-decided authority model** (§6.1): `files` untouched; a
+   per-entry screen recorded as metadata; `single-store` mode lets the one
+   owner adjudicate intact rows and forbids claiming any `suspect` row;
+   `multi-store` mode makes tenant claims submissions that an operator
+   grants only without conflict; conflicts and `suspect` rows are denied to
+   everyone and quarantined for re-upload. Revision 2's pattern/object/
+   tenant quarantine rule is withdrawn.
+4. **Deployment context** (§4.1): one **build-time** fact (the bundled
+   `deploy-context.json`) plus one **runtime** value the platform scopes to
+   Functions in the production context (`RELEASE2_ENABLED`), neither of
+   which a request can supply; and the service key scoped to production so
+   older deployments cannot write.
 5. `csrf-bootstrap` returns the employee (§5.1) versus a client cache.
 6. 404 for wrong-store rows (§8) versus Part 8's 403.
 7. **`WRONG_STORE` as a distinguishable 409 on `orders-save`** (§6.2) — a
@@ -944,16 +1107,26 @@ storage path; a row can reference only a path the server allocated.**
    distinction gives the caller information needed to recover their own
    work.
 8. Soak lengths (§2).
-9. **Legacy-row adjudication by owner claim** (§6.1): the only ownership
-   evidence is an explicit claim; null-store rows are claimable only in a
-   single-store deployment, otherwise operator-reported. Every legacy row
-   claimed or discarded is a G-counter precondition for slices 5 and 7.
-10. **Scanner mechanism** (§0.2): gateway confinement plus dot-all,
-    alias-hostile matching keeps the suite zero-dependency; a parser is the
-    alternative if the reviewer wants AST-level certainty.
-11. **Deterministic legacy ids** (§6.2): `uuidv5` over `_queuedAt` and the
-    canonical row, so tabs agree without coordination; Web Locks as the
-    serialiser, `localStorage` lease as the stated best-effort fallback.
+9. **Authority over legacy rows follows the dataset** (§6.1): the
+   migration classifies `single-store` or `multi-store` and records it; the
+   owner adjudicates only in the former; an operator adjudicates
+   submissions in the latter; first-come claims are gone. Every legacy row
+   claimed, denied or discarded is a G-counter precondition for slices 5
+   and 7.
+10. **Scanner mechanism** (§0.2): parser (`acorn`) plus gateway
+    confinement, as the reviewer chose; the gateway is `supabase.js` and
+    `storeConfig.js`, and only the latter may import the raw client after
+    the last slice.
+11. **Per-occurrence identity** (§6.2): random id per entry at enqueue;
+    legacy migration by one tab under Web Locks; no destructive queue write
+    without Web Locks; the lease fallback withdrawn.
 12. **Deployment context transport** (§4.1): a bundled file written at
     build, plus a Functions-scoped, production-context flag; the four-part
     proof precedes lifting the ref guard.
+13. **Retention policy for unknown legacy objects** (§6.1): the sweep never
+    removes an object without an allocation; unknown objects are reported,
+    eligible after 30 days, and disposed of only by the operator under the
+    same lock discipline as expiry.
+14. **Expiry before I/O** (§6.1): `allocated → expired` is claimed under
+    the lock, then the object is removed and retried; the allowed-state
+    table is a CHECK constraint.
