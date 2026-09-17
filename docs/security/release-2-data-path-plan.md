@@ -1,12 +1,13 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing here is built.** Written 2026-09-17 after slice 3
-was accepted on staging. This is the execution plan for Part 6 of
-`release-2-plan.md` (the 17 paths) and the parts of Part 7 they drive
-(steps 4, 4a, 4e, 5.1–5.4, 5.6), plus the closure of C5. It does NOT cover
-the rest of the cost transition (4b–4d, 5.5) or the excess-grant sweep
-(5.7); those are named where they touch this work and otherwise left to
-their own plan.
+**Status: PLAN ONLY. Nothing here is built.** Revision 2, 2026-09-17, after
+review of revision 1 (commit `02da0eb`): six findings, four P1, all
+accepted, plus four contract corrections. §9 traces each to where it landed.
+
+This is the execution plan for Part 6 of `release-2-plan.md` (the 17 paths)
+and the parts of Part 7 they drive (steps 4, 4a, 4e, 5.1–5.4, 5.6), plus the
+closure of C5. It does NOT cover the rest of the cost transition (4b–4d,
+5.5) or the excess-grant sweep (5.7).
 
 Everything shipped so far adds endpoints nothing calls. This is the first
 work that changes what the counter does.
@@ -15,101 +16,112 @@ work that changes what the counter does.
 
 ## 0. Amendments to Part 6 and Part 7
 
-### 0.1 Step 4 says "one release, all 17 paths". This plan slices it.
+### 0.1 The unit of closure (from review finding F1)
 
-Step 4's reasoning is: *"a partial move means a partial grant closure, which
-is no closure."* That is true of a **grant** and false of the **client**.
-Grants close per object, and step 5 already says so — "one object at a time,
-each with its own rollback file". A table's grant can close the moment every
-path that reaches **that table** has moved:
+Revision 1 sliced by **browser path and table grant**: the queue slice would
+add `queue-download-url`, which loads a `pending_jobs` row by id *and* the
+session's store, then signs the path stored in that row. The row lookup is
+correct. **The row's contents are attacker-controlled.** `register-job`
+takes `files` from the request body and inserts them verbatim, with no path
+validation and no caller check — its own comment says caller validation is
+"Phase B section 5". `fetch-link-job` uploads and inserts on its own with no
+tenant fields at all. So a store-scoped reader built on those rows signs
+whatever path a writer chose to store, and the closure is hollow.
 
-| object | paths that reach it | closes when |
-|---|---|---|
-| `verify_employee_pin` EXECUTE | 15 (two callers) | slice 4 |
-| `pending_jobs` SELECT + Realtime, `get-download-url`, `complete-job` | 4, 5, 6, 7, 8 | slice 5 |
-| `orders` `anon_rw_orders` | 1, 2, 3 | slice 6 |
-| `print_jobs` anon policies, `job_files_anon_*` | 9–14 | slice 7 |
-| `start-upload` / `register-job` / `fetch-link-job` (authentication, not a grant) | 17, incl. the kiosk (§0.2) | slice 8 |
-| `orders.cost_subtotal` / `margin_pct` accepted from the browser (C5) | 2, 3 — the *content* of the write, not the grant | slice 9 |
+**The unit of closure is a protected operation plus its dependencies —
+the privileged writers that produce the rows it reads, and the provenance of
+every stored reference it acts on. Not browser paths, not table grants.**
+A slice closes an operation only when:
 
-So the client moves in slices, each ending in the closure of exactly the
-object(s) its paths reach. What must NOT happen — and what step 4 was really
-guarding against — is closing an object while a path to it remains. The
-inventory gate in §0.2 makes that mechanical rather than a matter of care.
+1. every browser path to the object has moved (Part 6's list, mechanised in
+   §0.2);
+2. every **writer** of the rows the operation reads either validates what it
+   stores or is replaced;
+3. every **stored reference** the operation will act on — a storage path, a
+   file entry, an employee attribution, a cost figure — either has recorded
+   provenance or has been validated or quarantined, **including rows that
+   already exist**.
 
-**Why slice at all.** One release of all 17 paths means one counter
-confirmation covering sign-in, orders, the queue, uploads, job files and
-email at once, and one rollback that reverts all of them. A failure in job
-files would roll back sign-in. Slicing makes each confirmation small enough
-to actually run at a working counter, and each rollback narrow enough to
-leave the rest standing. The reviewer is asked to accept this amendment to
-step 4's wording; the property step 4 protects is kept.
+Applied to every slice in §1: the queue (paths written by `register-job` and
+`fetch-link-job`), job files (`print_jobs.file_urls[].path` written by the
+client today — the same shape as the queue), orders (employee attribution
+and, in slice 9, cost figures). Revision 1's "queue before orders" ordering
+was right about the chain and wrong about the direction of the queue's own
+dependency; §1 keeps the order and adds the writers.
 
-### 0.2 Part 6's inventory missed the kiosk. The gate must be a grep, not a list.
+### 0.2 Step 4's "one release, all 17 paths" becomes slices; the gate is a test
 
-Part 6's table of 17 paths was verified by two reviewers. It still lists
-`UploadApp.jsx:192,203,180` as the only callers of `start-upload`,
-`register-job` and `fetch-link-job`, and **`App.jsx:5448` and `:5459` also
-call `start-upload` and `register-job`** — the kiosk's "Send to counter"
-sheet uploads through the same unauthenticated functions the `/upload` page
-uses. Step 4a authenticates those functions. If the kiosk client is not
-moved onto a capability at the same time, step 4a breaks the kiosk submit,
-on the customer-facing device, on a Saturday.
+Step 4's reasoning — *a partial move means a partial grant closure* — is
+true of a grant and false of the client. Grants close per object, and step 5
+already says so. With §0.1's definition, each slice closes exactly the
+operations whose dependencies it has covered:
 
-**Why the list missed it, and why a better list would too.** The kiosk
-callers do not contain the string `/.netlify/functions/start-upload`. They
-call `callQueueFn("start-upload", …)`, and the URL is assembled inside the
-helper from a template. A reviewer searching for the URL finds
-`UploadApp.jsx`, which builds its URL the same way but happens to sit next
-to its `FN()` helper, and stops. The name and the route live in different
-places, and a hand-maintained table is a second copy of a truth that
-already exists in two other places — the filesystem (`netlify/functions/`)
-and the schema (the table names). Copies drift. Two careful reviewers did
-not fail; the artefact did.
+| operation | browser paths | writers / provenance | closes in |
+|---|---|---|---|
+| PIN check (`verify_employee_pin` EXECUTE) | 15 (two callers) | `employees` rows, written under the owner's JWT + RLS — trusted | slice 4 |
+| sign / delete a customer file; read the queue | 4, 5, 6, 7, 8 | `register-job`, `fetch-link-job`; every existing `files[].path` | slice 5 |
+| save / list orders; email a quote | 1, 2, 3, 16 | `orders-save` (new); queued-order attribution | slice 6 |
+| sign / upload / delete a job file; read Job History | 9–14 | `jobs-save` (new); every existing `file_urls[].path` | slice 7 |
+| create an upload (entitlement) | 17 + the kiosk | the capability | slice 8 |
+| the cost figures on an order (C5) | content of 2, 3 | `orders-save` computing, not accepting | slice 9 |
 
-**The gate is therefore mechanical, and it is a test.** The sources of
-truth are enumerated, not remembered:
+**The inventory is a test, not a list, and it enumerates from what is
+deployed and applied — not from source files that can be renamed or
+deleted.** Revision 1 proposed enumerating tables from `create table` lines
+and functions from `netlify/functions/*.js`. Both fail in exactly the case
+that matters (finding F5): `orders` was created by
+`alter table public.transactions rename to orders` and has no `create table`
+line anywhere; and deleting `get-download-url.js` removes its basename from
+discovery at the moment the prohibition on calling it begins.
 
-- **function names** = the basenames of `netlify/functions/*.js`;
-- **table names** = every `create table public.<name>` in
-  `supabase/migrations/`;
-- **reach patterns** in `src/`, matched per line on comment-stripped source
-  (CLAUDE.md rule 4):
-  `"<function-name>"` as a string literal anywhere;
-  `.from("<table>")`; `.rpc(`; `.channel(`; `supabase.storage` (the chain
-  breaks across lines, so `.storage.from(` on one line does not match —
-  measured on `supabase.js:131,201,217`).
+`scripts/tests/release2-inventory.test.js`:
 
-`scripts/tests/release2-inventory.test.js` runs that enumeration and
-compares it to an **allowlist in the test**, where every permitted reach is
-tagged with the slice that removes it. The test fails on any reach not in
-the allowlist — a new direct path cannot be added without either moving it
-or adding it to the plan with a slice. As each slice reaches stage D, its
-entries are deleted from the allowlist, and the test then fails if the reach
-ever reappears. Run today, before any slice, the enumeration finds every
-reach site behind Part 6's 17 rows (it counts sites, not rows: rows 2 and 3
-share `supabase.js:388`, rows 12 and 13 share `:201`, and the offline drain
-in `orderQueue.js` takes its insert function as a parameter so its reach is
-that same site), the three `employees` helpers that run under the owner's
-JWT and are allowlisted permanently, **and the two kiosk callers** — which
-is the point.
+- **Tables** come from `supabase/tables.json`, a committed snapshot of
+  `information_schema.tables` for `public` (and `storage.buckets`)
+  generated by the same drift-check procedure that already reconciles the
+  ledger, and refreshed by it. The test does not enumerate tables to grep
+  for; it greps **every** `.from("<x>")` literal in `src/` and classifies
+  `<x>`: a known table, a known bucket, or a failure. A rename produces a
+  name the snapshot knows; a stale name (`transactions`) fails.
+- **Functions** come from `netlify/functions/*.js` **plus
+  `netlify/functions/_retired.json`**, the list of route tombstones (§2).
+  A retired function keeps a file that answers 410 to everyone and keeps its
+  name in the retired list; both are inputs to the test, so the name never
+  leaves discovery. Deleting a tombstone file or its list entry fails the
+  test.
+- **Reach patterns** matched per line on comment-stripped source
+  (CLAUDE.md rule 4): `"<function-name>"` as a string literal;
+  `.from("…")` (any); `.rpc(`; `.channel(`; `supabase.storage` (the chain
+  breaks across lines — measured on `supabase.js:131,201,217`).
+- **Allowlist in the test**, each entry tagged with the slice whose stage D
+  removes it, or `auth-jwt` for the owner-JWT helpers that stay. Run today
+  it finds every reach site behind Part 6's 17 rows (sites, not rows: rows 2
+  and 3 share `supabase.js:388`, rows 12 and 13 share `:201`, the drain in
+  `orderQueue.js` takes its insert function as a parameter), the three
+  `employees` helpers, **and the two kiosk callers** at `App.jsx:5448,5459`
+  that Part 6 missed because `callQueueFn("start-upload", …)` assembles the
+  route from a template and the literal URL never appears.
 
-`G-inventory` in §3 is this test, green, on the build being deployed. Not a
-grep somebody ran.
+**Every gate is falsified before it is trusted** (F5). A companion
+`release2-inventory.mutation.test.js` copies `src/` to a temp dir, injects
+one forbidden reach of each kind — a `.from("orders")`, a
+`"get-download-url"` literal, a `supabase.storage` chain, a stale table
+name — and asserts the inventory check **fails** on each; it also deletes a
+tombstone entry and asserts failure. A gate that has never been seen to fail
+has not been shown to gate anything. The same rule applies to the
+behavioural tests in §6: each is paired with the mutation that must make it
+fail.
 
 ### 0.3 The kiosk needs three credential classes
 
-The kiosk device is **enrolled** (an owner pairs it, per step 4's confirm
-list) so that kiosk exit can be a PIN sign-in and kiosk entry can revoke
-sessions. But its customer-facing action — sending a job to the counter — is
-an **upload**, which under Part 3.2 needs an upload capability, not a device
-token. So a kiosk holds a `__Host-pc_device` cookie always, a
-`__Host-pc_staff` cookie while a staffer has exited kiosk mode, and mints a
-`__Host-pc_upload` capability per customer submission. Three cookies, three
-classes, each consulted only by the endpoints of its class. Part 3.1's rule
-that a device token "gets you as far as staff-login and no further" already
-implies this; stated here so slice 8 does not let the device token authorise
-an upload.
+The kiosk device is enrolled (an owner pairs it), so kiosk exit is a PIN
+sign-in and kiosk entry revokes sessions. Its customer-facing action —
+sending a job to the counter — is an **upload**, which needs an upload
+capability. A kiosk therefore holds `__Host-pc_device` always,
+`__Host-pc_staff` while a staffer has exited kiosk mode, and mints
+`__Host-pc_upload` per customer submission. Each endpoint consults only its
+own class, and `csrf-bootstrap` hands out the token **for the class asked
+for** (§8), not merely the highest class present.
 
 ---
 
@@ -117,509 +129,643 @@ an upload.
 
 | slice | paths | what the counter gains | what closes |
 |---|---|---|---|
-| **0 — production light-up** *(its own review round, §4)* | none | Release 2 exists on production; nothing calls it | nothing — it opens the endpoints |
-| **4 — identity at the counter** *(the first client slice, §5)* | 15: `findEmployeeByPin` from `EmployeeLogin` and the kiosk exit | PIN sign-in through `staff-login` on an enrolled device; sign-out; kiosk entry revokes server-side; sessions expire; owner pairs and revokes devices | **S1**: `verify_employee_pin` EXECUTE revoked from `anon`, `authenticated` (step 5.6) |
-| **5 — queue, staff side** | 4, 5, 6, 7, 8 | queue tab and badge poll `queue-list`; download and complete through staff endpoints; file paths never reach the browser | step 5.2 (`anon_select_pending_jobs`, publication) and step 4e for `get-download-url`, `complete-job` |
-| **6 — orders and email** | 1, 2, 3, 16 | orders save and list through staff endpoints; drain is idempotent; margin fields server-gated by role; email needs a staff session | step 5.1 (`anon_rw_orders`); `send-print-job` authenticated (4a, part) |
-| **7 — jobs and job files** | 9, 10, 11, 12, 13, 14 | Job History and attachments through staff endpoints; path 14 deleted | steps 5.3, 5.4 |
-| **8 — customer upload capability** | 17 + the kiosk submit | `/upload` and the kiosk mint a capability; the three retained functions require it; recorded paths only | step 4a (`resolveUpload` ×3) |
-| **9 — C5: server-stamped cost and margin** (§6.5) | the content of 2 and 3 | `orders-save` computes cost and margin from the server-side price book at the order's `pricing_version`; client-sent values ignored | the browser's ability to write the store's margin history |
+| **0 — production light-up** *(its own review round, §4)* | none | Release 2 exists on production; nothing calls it | nothing — it opens the endpoints, behind a verified deployment context |
+| **4 — identity at the counter** *(§5)* | 15 | PIN sign-in through `staff-login` on an enrolled device; sign-out; kiosk entry revokes server-side; sessions expire; owner pairs and revokes devices | **S1**: `verify_employee_pin` EXECUTE revoked (5.6) |
+| **5 — queue: provenance, writers, staff side** *(§6.1)* | 4, 5, 6, 7, 8 | uploads get allocation records; `register-job` and `fetch-link-job` store only allocated paths and stamp the tenant; existing rows validated or quarantined; queue tab and badge poll; download and complete by opaque file id | 5.2; the legacy signer and deleter tombstoned (4e) |
+| **6 — orders and email** *(§6.2)* | 1, 2, 3, 16 | orders through staff endpoints; drain idempotent, original store and employee preserved; margin server-gated by role; email needs a staff session | 5.1; `send-print-job` authenticated (4a, part) |
+| **7 — jobs and job files** *(§6.3)* | 9–14 | job-file uploads allocated; existing `file_urls` validated or quarantined; download by opaque id; path 14 deleted | 5.3, 5.4 |
+| **8 — customer upload capability** *(§6.4)* | 17 + kiosk | `/upload` and the kiosk mint a capability; the three writers require it | 4a (`resolveUpload` ×3) |
+| **9 — C5: cost and margin computed server-side** *(§6.5)* | content of 2, 3 | `orders-save` computes from the price book at the order's `pricing_version`; client figures accepted and ignored | the browser's ability to write the store's margin history |
 
-**Order and why.** 0 first and alone (§4). 4 next because every staff
-endpoint needs the staff cookie it creates, and because S1 is the one closure
-that needs no other path moved. 5 before 6 because `get-download-url` signs
-any path it is handed and `pending_jobs` is anon-readable — customer files
-are enumerable and downloadable by anyone today, which outranks the orders
-exposure. 6 next as the highest-traffic path. 7 last of the staff slices as
-the least-used surface. 8 is independent of the staff cookie and can run in
-parallel with 6–7 once 5 has landed. 9 depends on the cost substep's
-`pricing_version` and sits after it; it is in this document so it is not
-lost (§6.5).
+**Order.** 0 alone. 4 first because every staff endpoint needs the staff
+cookie. 5 next because customer files are downloadable by anyone today — and
+now with its writers, because a reader on unvalidated rows closes nothing.
+6, 7 follow. 8 is independent of the staff cookie and can run alongside 6–7
+once 5 has landed; it changes the customer's page. 9 sits immediately after
+the cost substep's 4b and is tracked here so it cannot slip silently.
 
-**Not in these slices:** the employee-management and store-config writers
-(`listEmployees`, `createEmployee`, `updateEmployee`, `publishStoreConfig`
-and the rest of `storeConfig.js`) run under the owner's Auth JWT and RLS,
-not the anon key, and are not among the 17. They stay. The inventory test
-allowlists them permanently, tagged `auth-jwt`. Note for the cost substep:
-`storeConfig.js:41–50` and `:82` use `select("*")` on `stores` and
-`sheet_prices`; step 5.5's column privileges will make those fail with
-"permission denied for column" until they name their columns.
+**Stays:** the employee-management and store-config writers
+(`listEmployees`, `createEmployee`, `updateEmployee`, `publishStoreConfig`,
+the rest of `storeConfig.js`) run under the owner's JWT and RLS; allowlisted
+`auth-jwt`. Note for the cost substep: `storeConfig.js:41–50,82` use
+`select("*")` on `stores` and `sheet_prices`; step 5.5's column privileges
+will break those until they name columns.
 
 ---
 
 ## 2. The stage sequence, defined once
 
-Every client slice runs the same five stages.
+**Principle: no runtime fallback.** "Dual-path" means both implementations
+are in the bundle, selected by a **build-time flag per slice**
+(`VITE_R2_IDENTITY`, `VITE_R2_QUEUE`, …). The client never tries the
+endpoint and falls back to the direct path. A fallback makes an unenrolled
+device, an expired session or a wrong-store refusal *succeed* through the
+door the release is closing, and for writes can insert twice; a slice's
+confirmation is only evidence if every observed request went through the
+new path. Netlify env vars are per site, so staging runs a slice ON while
+production runs it OFF from the same commit.
 
-**Principle: no runtime fallback.** "Dual-path" has exactly one meaning
-here: both implementations are in the bundle, selected by a **build-time
-flag per slice** (`VITE_R2_IDENTITY`, `VITE_R2_QUEUE`, …). The client never
-tries the endpoint and falls back to the direct path on failure. A fallback
-hides exactly the failures the counter confirmation exists to find — an
-unenrolled device, an expired session, a wrong-store refusal — by making
-them succeed through the door the release is closing, and for writes it can
-insert twice. A slice's confirmation is only evidence if every request it
-observed went through the new path. Netlify env vars are per site, so
-staging runs a slice ON while production runs it OFF from the same commit.
-This is not a preference to be traded for convenience; a fallback would
-make the confirmation gates below meaningless.
+**Retained handlers are dual-mode with separate activation** (F4). Where a
+slice adds authentication or provenance to a handler the flag-OFF client
+still calls (`send-print-job`, `start-upload`, `register-job`,
+`fetch-link-job`, and the legacy signer/deleter before they are
+tombstoned), stage A ships the handler with **both** branches and a
+server-side activation variable (`RELEASE2_ACTIVATE_<HANDLER>`), OFF. Stage C
+flips the handler's activation together with the client flag, in one
+redeploy. Stage D deletes the unauthenticated branch. Without this, stage A
+would break every flag-OFF client — which is every production client.
 
-| stage | what lands | who confirms | rollback | rollback class |
+**Route tombstones, not deletions** (F5). A retired function's file is
+replaced by a handler that returns `410 Gone` to every request, with no
+imports and no client, and its name is added to `_retired.json`. The URL
+stays discoverable and refused; the inventory test keeps forbidding its
+name in `src/`. Part 7's rollback section already names a 410 tombstone as
+valid closure.
+
+| stage | what lands | who confirms | rollback | class |
 |---|---|---|---|---|
-| **A — additive, server** | new endpoints; additive migrations (indexes, columns), each rehearsed with real rows in `begin … rollback`, applied, ledger version read back, file placed | staging probes (the sequence in `staging-probes.md`, extended per slice) | none needed — endpoints refuse without identity; additive schema harms nothing | — |
-| **B — deploy, dual-path** | client carries both paths; flag ON for the staging site, OFF for production | staging: probe doc + the slice's confirm checklist against the staging tenants | none needed in production — the legacy path is what runs | — |
-| **C — counter-confirm** | flag flipped ON for production (env change **plus manual redeploy** — env changes do not reach running deploys) | **the owner at the real counter**, against the slice's checklist; then a soak | flag OFF + redeploy → legacy path. **Cheap**: no grant has moved, nothing reopens | not an incident |
-| **D — tighten, client** | legacy path and flag deleted; the slice's entries removed from the inventory allowlist; for 4e-type deletions the old function files removed | build passes with the inventory test green; legacy-route inventory (Part 8 row 40) shows the old URLs 404; short soak | redeploy the stage-C build. Still cheap: grants still open | not an incident |
-| **E — tighten, grants** | the step-5 migration for that object, with its `.rollback.sql` captured verbatim from `pg_policies` / `proacl` beforehand; the step-6 denial probes for that object run immediately | denial probes green; counter still working | restore the policy = **reopening**. The full Rollback contract from Part 7: named owner, compensating restriction, expiry, tracked as an incident, sessions revoked on the way back up. **Policy first, then client** if the client also goes back | **incident** |
+| **A — additive, server** | new endpoints; additive migrations, each rehearsed with real rows in `begin … rollback`, applied, ledger read back, file placed; dual-mode retained handlers, activation OFF; **provenance backfill and quarantine of existing rows where the slice needs it** | staging probes | redeploy previous functions; additive schema stays. A refuses nothing a flag-OFF client sends (slice 5's `register-job` accepts and quarantines the old shape; refusal activates at C). The one thing A's rollback cannot undo is data: quarantine verdicts on existing rows stay — see §7 | not an incident (data verdicts recorded) |
+| **B — deploy, dual-path** | client carries both paths; flag ON for staging, OFF for production | staging: probe doc + the slice's checklist | none in production — legacy runs | — |
+| **C — counter-confirm** | client flag ON **and** the slice's handler activations ON for production, one env change plus manual redeploy | **the owner at the real counter**, then a soak | flags OFF + redeploy. Cheap for the client; **reopening for any handler C activated** — see §7 | per §7 |
+| **D — tighten, client and routes** | legacy client path and flag deleted; unauthenticated handler branches deleted; retired routes tombstoned; the slice's inventory entries removed | inventory test green; row 40 shows the old URLs 410; short soak | redeploy the stage-C build — which still has activation ON, so nothing reopens | not an incident |
+| **E — tighten, grants** | the step-5 migration for the object, `.rollback.sql` captured verbatim beforehand; step-6 denial probes run immediately | denial probes green; counter working | restore the policy = **reopening**. Full Part 7 Rollback contract | incident |
 
-**Why D and E are separate.** D is the last moment a rollback is cheap.
-Running the legacy-free client at the counter for a soak *before* closing
-the grant means the grant closure, when it comes, changes nothing the counter
-can observe — every request was already going through the endpoint. If the
-grant closure breaks something, that something was reaching the table by a
-path the inventory did not enumerate, which is exactly the finding step 5
-exists to surface, and it surfaces with the cheap rollback already spent and
-the expensive one in hand. That asymmetry is deliberate: the expensive
-rollback should only ever be needed for an unknown path, never for a known
-one.
+**Why D and E are separate.** D is the last moment the grant rollback is
+unspent. Running the legacy-free client at the counter before closing the
+grant means the grant closure changes nothing the counter can observe. If it
+breaks something, that something reached the table by a path the inventory
+did not enumerate — the finding step 5 exists to surface.
 
-**Soak lengths.** C: three business days including one weekend day, because
-the kiosk sees different traffic on a Saturday. D: one business day. Both
-measured on the Netlify function logs: no 5xx, no limiter 503, 401 rates
-consistent with observed PIN mistakes, and — for slices with a deleted
-legacy path — no request to the old URL.
+**Soak lengths.** C: three business days including one weekend day (the
+kiosk sees different traffic on a Saturday). D: one business day. Measured on
+the function logs: no 5xx, no limiter 503, 401 rates consistent with PIN
+mistakes, no request to a tombstoned route except probes.
 
 ---
 
 ## 3. The gates
 
-| gate | sits between | passes when |
+| gate | between | passes when |
 |---|---|---|
-| **G0 — production lit** | stage 0 and every client slice | migrations 01–05 in production's ledger with files named and byte-identical; the ref refusal removed; Phase 1 probes (four 401s) green on `printcalculator2.netlify.app`; the inventory test proves nothing in the client calls an endpoint yet |
+| **G0 — production lit** | stage 0 and every client slice | migrations 01–05 in production's ledger with files named and byte-identical; deployment-context check in place (§4); Phase 1 probes green on production; a preview deploy **refused with 404 by a curl carrying no Origin**; inventory test proves nothing in the client calls an endpoint yet |
 | **G-staging** (per slice) | B and C | the slice's staging probes and checklist green, DB agreeing |
-| **G-counter** (per slice) | C and D | the owner has run the slice's checklist at the real counter; C soak complete |
-| **G-inventory** (per slice) | D and E | `release2-inventory.test.js` green with the slice's entries removed from the allowlist; for 4e deletions the old URLs return 404 on the deployed build (row 40); D soak complete |
-| **G-denial** (per slice) | E and the next slice | the step-6 probes for the closed object green: the direct path is refused *and* the counter still works |
+| **G-counter** (per slice) | C and D | the owner has run the slice's checklist at the counter; C soak complete |
+| **G-inventory** (per slice) | D and E | inventory test green with the slice's entries removed; mutation test green; row 40 shows tombstoned routes 410; D soak complete |
+| **G-denial** (per slice) | E and the next slice | step-6 probes for the closed object green: direct path refused *and* the counter works |
 
-A gate is owner-run where it says "owner". The rest are reproducible from
-the repo and the probe doc.
+Each gate's test has been **seen to fail** under its mutation before it is
+relied on (§0.2). Gates marked "owner" are owner-run; the rest are
+reproducible from the repo and the probe doc.
 
 ---
 
 ## 4. Stage 0 — Release 2 reaches production. Its own review round.
 
-Nothing in Release 2 runs on production today: the kill switch in
-`netlify/lib/release2.js` refuses on the production ref, says so is "not
-configurable by an environment variable", and the file's own header says the
-module is removed "when Release 2 reaches production for real". Stage 0 is
-that moment. **It is a different risk class from the client slices that
-follow**, and is reviewed and landed on its own:
+Nothing in Release 2 runs on production today: `release2Allowed()` refuses
+on the production ref. Stage 0 is the moment that changes, and it is a
+different risk class from every client slice: the client slices change
+which door the counter uses and roll back by flag; stage 0 changes whether
+the doors exist on production at all, puts five staging-only migrations into
+the production ledger, and is the first time service-role-backed endpoints
+sit in front of the production database. It ships alone, is confirmed
+alone, and no client slice's stage B starts until G0 passes.
 
-- The client slices change *which door the counter uses*; a rollback flips
-  a flag. Stage 0 changes *whether the doors exist on production at all*, and
-  puts five migrations into the production ledger that have only ever run on
-  staging.
-- It is the first time service-role-backed endpoints are reachable from
-  the internet in front of the production database. Every property the
-  slice 2 and 3 probes established was established on staging; stage 0 is
-  where those probes are re-run against production, with real
-  `store4979` rows behind them.
-- Its rollback is an env flag, but its *blast radius* is every endpoint at
-  once, not one path.
+### 4.1 Origin is not a deployment boundary (F2)
 
-So stage 0 ships alone, is confirmed alone, and no client slice's stage B
-starts until G0 has passed. Its steps:
+Revision 1 said deploy previews would be kept off the endpoints because
+`originOk()` reads `env.URL` first and refuses a preview's Origin. That is
+wrong twice over: **`originOk()` returns `true` when there is no Origin
+header** — that is by design, it is a CSRF check for browsers — so any
+non-browser request to a preview URL passes it; and Origin is
+client-supplied in any case. A preview deploy of the production site runs
+with the production service-role key, so removing the ref refusal with
+nothing in its place would put an unauthenticated route to production
+Supabase on every PR. `originOk()` stays exactly what it is — the CSRF
+discipline for browser calls — and is not asked to be a boundary.
+
+**Replacement, before the ref refusal is removed:** `release2Allowed()`
+requires a **verified deployment context**, read from facts Netlify fixes at
+build time and no request can influence:
+
+- `process.env.CONTEXT` must be in `RELEASE2_CONTEXTS` (default and
+  production value: `production`). Netlify sets `CONTEXT` to `production`,
+  `deploy-preview` or `branch-deploy` per deploy. The staging site builds
+  its branch *as* its production context, so it passes; a preview of either
+  site does not.
+- `RELEASE2_ENABLED=true` is set **scoped to the production context** in the
+  site's environment, so a preview build does not even carry the flag.
+
+Two independent build-time facts; absence of either → 404. Then, and only
+then, the `PRODUCTION_REF` refusal is deleted. `release2-guard.test.js`
+loses "refuses on the production ref" and gains: refuses when `CONTEXT` is
+`deploy-preview` or absent even with the flag; refuses when the flag is
+absent even in `production`; allows only both. The header comment is
+rewritten to describe this (comment discipline).
+
+### 4.2 Steps
 
 1. **Migrations 01–05 to production**, one at a time, in ledger order, each
-   read back and its file moved out of `pending/` under the assigned version,
-   byte-identical to `statements[1]` (the trailing-newline transport
-   difference documented in `staging.md` §2 is checked, not assumed). 01's
-   `employees_id_store_uniq` constraint cannot fail on data — `id` is the
-   primary key. 03 must follow 02 (it drops 02's `clear_lockout` signature).
+   read back and its file moved out of `pending/` under the assigned
+   version, byte-identical to `statements[1]` (the trailing-newline
+   transport difference in `staging.md` §2 is checked, not assumed). 03 must
+   follow 02.
 2. **Rehearse 03, 04 and 05 on production** in `begin … rollback` with
-   synthetic rows created inside the transaction (an enrollment for
-   `store4979`, a synthetic employee — the role trigger admits `postgres`).
-   Same proofs as the staging rehearsals, including 05's P5b. A migration
-   that has only been rehearsed on staging has not been rehearsed against
-   the data it will run on.
-3. **Env on the production site**: `RELEASE2_ENABLED=true`,
-   `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app`.
-   `SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` already exist. Nothing changes
-   yet: the ref refusal still wins.
-4. **Code**: delete the `PRODUCTION_REF` refusal and its branch in
-   `release2Allowed()`; keep the flag check and the "URL must parse" check.
-   `RELEASE2_ENABLED` becomes production's kill switch from here on. Update
-   the header comment to say what the module now does (comment discipline —
-   the current text would become a false claim), and `release2-guard.test.js`
-   loses the "refuses on the production ref" case and gains "refuses when the
-   flag is absent, on any ref".
-5. Deploy. Probe Phase 1 on production: four uniform 401s. Then the
-   positive probes with real rows: an owner mints and redeems a ticket on a
-   scratch device, signs in a real PIN, logs out, revokes the device — the
-   slice 2/3 sequence, on production, with the database read back. The
-   scratch enrollment is revoked at the end and stays in the audit trail.
-6. Deploy previews of the production site: `originOk()` reads `env.URL`
-   first, so a preview origin is refused with 403 — previews cannot drive the
-   endpoints, which is the intended outcome of the kill switch's old job.
-   Confirmed by a probe from a preview, not assumed.
+   synthetic rows created inside the transaction. Same proofs as staging,
+   including 05's P5b. A migration rehearsed only on staging has not been
+   rehearsed against the data it will run on.
+3. **Env on the production site**: `RELEASE2_ENABLED=true` (production
+   context only), `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app`,
+   `RELEASE2_CONTEXTS=production`.
+4. **Code**: §4.1's context check lands first; the ref refusal is removed
+   in the same change, after it.
+5. Deploy. Phase 1 on production: four uniform 401s. Then the positive
+   probes with real rows: an owner mints and redeems a ticket on a scratch
+   device, signs in a real PIN, logs out, revokes the device, with the
+   database read back. The scratch enrollment stays in the audit trail,
+   revoked.
+6. **Preview refusal, proven not assumed**: a `curl` with **no Origin
+   header** to a deploy-preview URL of the production site → 404. A second
+   curl with the staging Origin → 404. Both recorded.
 
 **Rollback of stage 0:** `RELEASE2_ENABLED=false` + redeploy → every endpoint
-404s. The migrations stay: RLS on, zero policies, service-role only. Not an
-incident — nothing the client uses has changed — but it is a reversal of a
-reviewed decision and is recorded as such.
+404s. Migrations stay: RLS on, zero policies, service-role only. Not an
+incident, but a reversal of a reviewed decision, recorded as such.
 
 ---
 
 ## 5. Slice 4 — identity at the counter, and S1
 
-### 5.1 Stage A — server
+### 5.1 Stage A
 
-No new endpoints. One small change to `csrf-bootstrap`: the `kind:"staff"`
-branch also returns `employee: { id, name, role }`. After a reload the tab
-must know who is signed in and whether to render margin; today that comes
-from `currentEmployee` in `localStorage`, which is client-trusted and
-exactly what Release 2 replaces. The plan's "no session content is returned"
-meant no token, session id or key material — this is the same display
-information `staff-login` already returns to the same holder, and the
-authority for margin *data* stays with the endpoints that check the session
-row (`orders-list` in slice 6, `pricing-costs` in the cost substep). One
-test: the staff branch returns exactly `kind`, `csrf`, `employee` and
-nothing else. **Put to the reviewer** — the alternative is a client-side cache
-of `{name, role}` cleared on logout, which is the C3-style persistence the
-plan is trying to stop.
+No new endpoints. Two changes to `csrf-bootstrap`:
+
+- **Class-specific bootstrap** (contract correction 1): `GET
+  csrf-bootstrap?kind=staff|device|upload` returns the token for **that**
+  class if its cookie resolves, else 401. Without `kind`, the current
+  staff-then-device order. Needed because classes coexist on one device
+  (§0.3): a kiosk that has exited to staff mode still needs the upload
+  class's token for a customer submission, and a tab holding a staff
+  session cannot otherwise recover the device token (the 3f shape,
+  generalised). Each endpoint compares only against its own class's secret.
+- The `staff` branch also returns `employee: { id, name, role }` — display
+  state for a reloaded tab; the authority for margin *data* stays with the
+  endpoints that read the session row. **Put to the reviewer** against a
+  client-side cache that C3 would then have to clear.
 
 ### 5.2 Stage B — client, behind `VITE_R2_IDENTITY`
 
-New: `src/lib/release2Client.js`. One module, the only place that knows the
-endpoint names (so the inventory test can allowlist it by file):
+New `src/lib/release2Client.js`, the only module that knows endpoint names:
+`call()`, in-memory `csrf` per class, the **401 contract** (401 → bootstrap
+for the class → retry once, or raise the PIN prompt, or "this device isn't
+paired"; never a fallback), `bootstrap(kind)`, `login(pin)`, `logout()`,
+`kioskEnter()`, `pairDevice(label)`, `listDevices()`, `revokeDevice()`.
 
-- `call(name, {csrf, body})` — same-origin `fetch`, JSON, `x-pc-csrf` when
-  given; cookies ride along (same-origin default).
-- In-memory `csrf` and `kind`. **The 401 contract**, applied to every call:
-  a 401 from any staff endpoint → `bootstrap()` → if `kind:"staff"` retry
-  once with the fresh token → if `kind:"device"` raise the PIN prompt → if
-  401 raise "this device isn't paired". Never an error dialog for a 401, and
-  never a fallback to a direct path (§2).
-- `bootstrap()`, `login(pin)`, `logout()`, `kioskEnter()`, `pairDevice(label)`
-  (ticket-create then redeem, from the owner's own session, in one action —
-  the 5a shape), `listDevices()`, `revokeDevice(id, reason)`.
+Behind the flag: `EmployeeLogin` uses `login(pin)` for staff sign-in and
+kiosk exit; boot calls `bootstrap()` and `currentEmployee` comes from it —
+never written to `localStorage`, and the existing key is deleted on
+upgrade; sign-out → `logout()`; kiosk entry → `kioskEnter()` with the badge
+reading **"not confirmed"** until the 200 arrives; session expiry raises the
+PIN prompt over the current screen with React state intact; Admin gains a
+**Devices** section (pair, list with live counts and reasons, revoke with a
+bounded reason); owner sign-in on a kiosk-enrolled device warns.
 
-Changes, each behind the flag:
-
-- `EmployeeLogin.jsx`: `login(pin)` instead of `findEmployeeByPin`. Same
-  "wrong PIN" message on 401; a locked device (429) says so and names the
-  wait. Serves both callers — staff sign-in and kiosk exit.
-- `App.jsx` boot: `bootstrap()`; `currentEmployee` comes from its response,
-  is never written to `localStorage`, and the existing key is **deleted on
-  upgrade** (a device that has run the app for months still holds it).
-- Sign-out button → `logout()` → device state → PIN prompt.
-- Kiosk entry → `kioskEnter()`; the kiosk badge shows **"not confirmed"**
-  until the 200 with its count arrives, and retries (Part 3.1's
-  offline-must-not-lie rule). Kiosk exit → `login(pin)`.
-- Session expiry UX: the first 401 after 60 idle minutes or 12 hours raises
-  the PIN prompt over the current screen; React state is untouched, so the
-  quote in progress survives re-login. **This is a new counter behaviour**
-  — today a PIN login persists indefinitely — and is on the checklist.
-- Admin panel: a **Devices** section for owners — "Pair this device"
-  (label, then `pairDevice`), the list from `enroll-list` with live-session
-  counts and revocation reasons, and Revoke with a bounded reason. Owner-only
-  in the client by membership role, and enforced by the endpoints regardless.
-- Owner sign-in on a kiosk-enrolled device warns (Part 3.1).
-
-`yarn dev` note: `__Host-` cookies need HTTPS, so the endpoint path cannot be
-exercised on `http://localhost`. Flag OFF keeps local dev on the legacy path
-until stage D; after D, local work on identity uses `netlify dev` over HTTPS
-or staging. Recorded so nobody weakens the cookie attributes to make
-localhost work.
+`yarn dev` cannot exercise the endpoint path (`__Host-` needs HTTPS);
+flag OFF keeps local dev on the legacy path until D. Recorded so nobody
+weakens cookie attributes for localhost.
 
 Tests: the 401 contract on a fake `fetch`; flag ON → no `.rpc(` reaches
-`verify_employee_pin` (behavioural, mocked client); kiosk "not confirmed"
-until 200; `kiosk-guard.test.js` unchanged and green; the inventory test
-with path 15's two entries still allowlisted (they leave at D).
+`verify_employee_pin`; "not confirmed" until 200; `kiosk-guard` green;
+each paired with its failing mutation.
 
-### 5.3 Stage C — the counter checklist (gate G-counter, owner-run)
+### 5.3 Stage C — counter checklist (owner)
 
-1. Owner pairs the counter iPad and both kiosk devices from Admin → Devices;
-   the list shows three, labelled.
-2. Staff PIN signs in on each; a manager sees margin, staff does not (Phase E
-   gates unchanged).
-3. Six wrong PINs on one device → locked message; a second device still
-   signs in (F-2 at the counter).
-4. Reload mid-quote: still signed in, quote intact (bootstrap).
-5. Sign out → PIN prompt; sign in as a different employee (the 3f gap, at
-   the counter).
-6. Leave a tab idle 61 minutes; the next action prompts for a PIN; the
-   quote is intact.
-7. Kiosk entry: badge reads "not confirmed" until the server answers, then
-   "kiosk"; a second staff tab's next action prompts for a PIN (row 19, the
-   client half). Kiosk exit by PIN.
-8. Owner revokes a device from the list; that device's next action says
-   "not paired"; owner re-pairs it.
-9. Supabase unreachable: pricing still works (public config, unchanged);
-   sign-in fails with the same message as today (the RPC needed the network
-   too). No regression.
-10. Queued-order handover (rows 22b–22d): **unchanged in this slice** —
-    orders still go direct. Recorded as not exercised.
+1. Owner pairs the counter iPad and both kiosks; the list shows three.
+2. Staff PIN signs in on each; manager sees margin, staff does not.
+3. Six wrong PINs on one device → locked; a second device still signs in.
+4. Reload mid-quote: still signed in, quote intact.
+5. Sign out → PIN prompt; sign in as a different employee.
+6. 61 idle minutes → PIN prompt on next action; quote intact.
+7. Kiosk entry "not confirmed" until the server answers; a second staff
+   tab's next action prompts for a PIN; kiosk exit by PIN.
+8. Owner revokes a device; it says "not paired"; owner re-pairs it.
+9. Supabase unreachable: pricing works; sign-in fails as today.
+10. Queued-order handover: unchanged in this slice, recorded as not
+    exercised.
 
-Then the C soak.
+### 5.4 Stage D
 
-### 5.4 Stage D — tighten, client
+Delete `findEmployeeByPin`, the legacy branches, the flag,
+`getStoredEmployee`; remove path 15 from the allowlist — the test is now the
+"grep before revoking" that the 2026-08-31 outage lacked, kept green
+forever. `release2-pin-parity.test.js` stays.
 
-Delete `findEmployeeByPin`, the legacy branches in `EmployeeLogin` and the
-kiosk exit, the flag, and `getStoredEmployee`. Remove path 15's entries from
-the inventory allowlist; the test now fails on any `.rpc(` of
-`verify_employee_pin` — the 2026-08-31 outage was a revoke issued on the
-claim that nothing called it, and CLAUDE.md says to grep before revoking;
-the test is that grep, kept green forever. `release2-pin-parity.test.js`
-stays: the RPC text still exists and `PIN_LOOKUP` still mirrors it. D soak.
+### 5.5 Stage E — S1 closes
 
-### 5.5 Stage E — S1 closes (gate G-denial)
-
-Migration `release2_06_revoke_pin_rpc_execute.sql`:
-`revoke execute on function public.verify_employee_pin(uuid, text) from anon,
-authenticated;` — `service_role` keeps it; PUBLIC is not on the ACL today
-(`staging.md` §2 verification) and the migration asserts that in a `DO`
-block before revoking. Rollback file = the body of
-`20260909160307_restore_pin_rpc_execute_for_app_roles.sql`, which already
-exists for exactly this. The function is **not dropped**: rollback is a grant,
-not a re-create.
-
-Denial probes: from a browser console with the anon key,
-`supabase.rpc('verify_employee_pin', …)` → 42501; from an owner's
-authenticated session → 42501; `staff-login` at the counter still 200.
-
-**Rollback of E** is the reopening kind. Compensating restriction: the
-endpoints stay deployed and the devices stay enrolled so the client can be
-moved forward again in one deploy; expiry set when pulled. Then update
-CLAUDE.md: the PHASE S section and the `verify_employee_pin` gotcha.
+`release2_06_revoke_pin_rpc_execute.sql`: revoke EXECUTE on
+`verify_employee_pin(uuid, text)` from `anon`, `authenticated`;
+`service_role` keeps it; a `DO` block asserts PUBLIC is absent first.
+Rollback = the body of `20260909160307_restore_pin_rpc_execute_for_app_roles.sql`.
+Not dropped. Denial: anon and authenticated `rpc()` → 42501; `staff-login`
+still 200. Then CLAUDE.md's PHASE S section and the gotcha are updated.
 
 ---
 
 ## 6. Slices 5–9
 
-Each follows §2. Only what is specific to the slice is listed.
+### 6.1 Slice 5 — queue: provenance, writers, staff side (paths 4–8)
 
-### 6.1 Slice 5 — queue, staff side (paths 4–8)
+**What is wrong today, precisely.** `start-upload` mints a path and records
+nothing. `register-job` inserts `files[]` from the body verbatim — any path,
+any count — and resolves the store from a body slug. `fetch-link-job`
+uploads and inserts on its own with **no `store_id`/`org_id`** (both
+nullable, so it succeeds and the row is invisible to any store-scoped
+reader) and numbers by a **global** `count(*)+1`. `get-download-url` signs
+any path in the bucket. `complete-job` deletes any row and the paths it
+holds. `cleanup-stale-jobs` sweeps old rows, never orphan objects. A reader
+that trusts `files[].path` inherits all of it.
 
-**A.** Endpoints `queue-list`, `queue-download-url`, `queue-complete` (§7).
-No schema change.
+**A — additive, server.**
 
-**B.** `PrintQueue.jsx`: poll `queue-list` every 15 s while the tab is
-visible, immediately on focus; the Realtime channel and the direct
-`pending_jobs` read go behind the flag. The badge (`App.jsx:1359`, its
-channel at `:1366`) reads the same response. Download and complete by
-`jobId` + `fileName`; **no storage path is ever in the browser** — the
-response strips `files[].path` and the server signs the path it stored.
+- Migration `release2_07_upload_allocations`: table
+  `upload_allocations (id uuid pk, bucket text, path text unique, store_id
+  uuid, org_id uuid, capability_id uuid null, expected_name text, max_bytes
+  int, created_at, consumed_by uuid null references pending_jobs, consumed_at,
+  source text)`. RLS on, zero policies. `pending_jobs.files[]` entries gain
+  **`fileId`** = the allocation id (contract correction 4): a **stable opaque
+  identifier**, minted by the server, never a filename (two files can share
+  a name, and a name is client text).
+- `start-upload` (dual-mode, activation OFF in A but the allocation is
+  always written): allocates before signing, returns `{ allocationId, path,
+  token }`. The path is still returned — the client must upload to it and
+  hand it back — so the contract says **"download and complete never accept
+  a path, and a row can reference only an allocated one"**, not "no path in
+  any response" (contract correction 3; revision 1's claim was false on its
+  face, `start-upload` has always returned one). The signed upload token's
+  lifetime is **Supabase's, fixed at two hours for `createSignedUploadUrl`,
+  not a parameter we set** (contract correction 2; revision 1's "5 min" was
+  invented). The bound on an allocation is therefore the record, not the
+  token: single-use, `max_bytes`, and swept.
+- `register-job` — **old shape accepted and quarantined at A; refused from C.**
+  The flag-OFF callers of `register-job` are not the staff client: they are
+  `UploadApp.jsx` and the kiosk's Send-to-counter sheet, and both post
+  `files[]` built the old way, `{ name, path, size, type }`. Every path
+  they post after A deploys carries an allocation, because the new
+  `start-upload` wrote one before issuing it — so the old shape is matched
+  to its allocation by exact `path` and verified like the new shape. The
+  one caller that can present a path with **no** allocation is a customer
+  mid-flow at the deploy moment (path issued by the old `start-upload`,
+  registered against the new handler). Revision 2 let that request fail;
+  that is a customer-facing failure at a deploy moment — F4's failure mode
+  reappearing inside F1's fix — and the safe form costs nothing. So:
+  - **At A**, an entry with an allocation (by `allocationId`, or by exact
+    `path` for the old shape) is verified against the object, consumed
+    atomically, and given its `fileId`. An entry with a path and **no
+    allocation** is accepted only if the path matches the writer's pattern
+    and the object exists; the row is then written **quarantined**
+    (`quarantine_reason = 'unallocated path at registration'`, the entry
+    marked `provenance: 'unverified'`). The customer sees success and the
+    counter sees the row. The new endpoints never sign or delete a
+    quarantined entry; the legacy signer, which is what the flag-OFF counter
+    uses until C, still serves it. Between A and C the only rows that can
+    be quarantined this way are deploy-moment ones, and they are served and
+    completed through the legacy path like any other.
+  - **At C**, `RELEASE2_ACTIVATE_REGISTER_PROVENANCE` flips with the client
+    flag: an entry with no allocation is **refused** (400, the existing
+    "ask the counter" message) and nothing is written. Every path in flight
+    at that moment carries an allocation, so nothing is refused that was
+    issued by this deployment.
+  - **At D** the old `{ path }` shape is removed; `allocationId` only.
 
-**C checklist.** A real customer upload appears within one poll; it opens;
-completing it removes the row and its objects (checked in Storage); the badge
-matches the tab; two staff tabs both see it; Supabase unreachable → the tab
-says "offline", not an empty queue.
+  In both modes the row's `files[]` is built **from the allocation
+  records**, never from the body, and the tenant comes from the allocation,
+  never from the body slug. The verify-and-consume is a SQL function,
+  rehearsed, so a concurrent second registration of the same allocation
+  fails on `consumed_at`.
+- **`fetch-link-job` gets its own migration and treatment** (F1): it
+  allocates through the same record, stamps `store_id`/`org_id` (from
+  `STORE_SLUG` until slice 8 gives it a capability), numbers per store per
+  day by `max+1` like `register-job` with the same 23505 retry, and registers
+  through the same SQL function. A **link-import acceptance test**: a public
+  Google Doc URL produces one row with tenant fields set, a store-scoped
+  queue number, and one allocation-backed `fileId`; a non-Google URL is
+  refused; a private doc is refused with the sharing message.
+- **Existing rows validated or quarantined** (F1), in the same migration,
+  rehearsed first: for every `pending_jobs` row, every `files[].path` must
+  match the writer's own pattern
+  `^\d{4}-\d{2}-\d{2}/[0-9a-f-]{36}-[\w.\-]{1,80}$` **and** exist in
+  `storage.objects` for `customer-uploads` **and** the row must carry a
+  `store_id`. Rows that pass get allocation records backfilled and `fileId`s
+  assigned. Rows that fail any test are **quarantined**: `files` replaced by
+  `[]`, `quarantine_reason` set, `store_id` left as is; they show in the
+  queue as "needs attention", and are never signed or deleted through the
+  new endpoints. Rows with no `store_id` (every `fetch-link-job` row) are
+  quarantined with reason `no tenant`. The count is small and the rehearsal
+  prints the verdict per row before anything commits.
+- `cleanup-stale-jobs` gains a sweep of unconsumed allocations older than
+  three hours (past the two-hour token): remove the object if present,
+  delete the allocation.
+- New endpoints `queue-list`, `queue-download-url`, `queue-complete` (§8).
+  The legacy `get-download-url` and `complete-job` gain a dual-mode
+  activation (`RELEASE2_ACTIVATE_LEGACY_QUEUE`) that, when ON, requires a
+  staff session and resolves the path **through the allocation record for
+  that job** rather than signing what it is handed.
 
-**D.** Delete the channel, the direct reads, the two function callers, and
-**`netlify/functions/get-download-url.js` and `complete-job.js`** (4e for
-these two). Row 40: the old URLs return 404 on the deployed build. Inventory
-allowlist loses paths 4–8.
+**B.** `PrintQueue.jsx` polls `queue-list` every 15 s while visible, at
+once on focus; the Realtime channel and direct reads go behind the flag;
+the badge reads the same response; download and complete by `{ jobId,
+fileId }`. Quarantined rows render with their reason and no file actions.
 
-**E.** Migration: `drop policy anon_select_pending_jobs on public.pending_jobs;
-alter publication supabase_realtime drop table public.pending_jobs;` —
-rollback recreates the policy verbatim (captured from `pg_policies` first)
-and re-adds the table. Denial: anon `select` on `pending_jobs` → 0 rows;
-an anon Realtime subscription receives nothing on a new insert; the old
-function URLs 404. `register-job` (service role) is unaffected.
+**C checklist.** A real customer upload appears within one poll and opens;
+completing it removes the row and its objects; the badge matches; two staff
+tabs agree; a Google-link import appears with a correct number; a
+quarantined legacy row shows "needs attention" and cannot be opened or
+completed from the new tab; Supabase unreachable → "offline", not empty.
+
+**D.** Delete the channel, the direct reads, the two function callers, the
+legacy body-path branch of `register-job`; **tombstone** `get-download-url`
+and `complete-job`; remove paths 4–8 from the allowlist. Row 40: both
+routes 410.
+
+**E.** `drop policy anon_select_pending_jobs on public.pending_jobs; alter
+publication supabase_realtime drop table public.pending_jobs;` — rollback
+recreates the policy verbatim and re-adds the table. Denial: anon select →
+0 rows; an anon subscription receives nothing; tombstones 410.
+
+**What slice 5 leaves open, by design:** anyone can still call
+`start-upload` and `register-job` and create allocation-backed rows. That is
+abuse (spam, storage cost), not integrity — the rows can only ever reference
+objects the server allocated. Slice 8's capability and limiter close it.
 
 ### 6.2 Slice 6 — orders and email (paths 1, 2, 3, 16)
 
-**A.** Endpoints `orders-list`, `orders-save`; `send-print-job` gains
-`resolveStaff` + CSRF (its 4a item). Additive migration `release2_07`:
-`orders.client_order_id uuid` and a unique index on
-`(store_id, client_order_id) where client_order_id is not null` — the
-idempotency key the plan requires to be stable across sign-out and
-re-enrolment, so a retried drain cannot double-insert.
+**A.** `orders-list`, `orders-save` (§8); `send-print-job` dual-mode with
+`RELEASE2_ACTIVATE_SEND` (activation at C, unauthenticated branch deleted
+at D). Migration `release2_08`: `orders.client_order_id uuid`, unique on
+`(store_id, client_order_id) where client_order_id is not null`;
+`orders.quoted_at timestamptz`; `orders.submitted_by_employee_id uuid`;
+`orders.attribution_note text`; `orders.margin_source text` (`'client'` for
+everything until slice 9).
 
-**B.** `insertOrder` → `orders-save`; `fetchOrders` → `orders-list`;
-`orderQueue.js` drains through `orders-save`. The `pendingTransactions`
-key does not change (renaming orphans queued rows). Every enqueued row gets
-a `clientOrderId` at enqueue; rows queued before the upgrade get one at
-drain. **Drain triggers**: reconnect *and* a successful `staff-login`. On
-401 the rows stay queued and the bar shows "N orders waiting — sign in to
-save". **Never discarded.**
+**Original store and employee are preserved and validated separately from
+the submitting session** (F3; Part 8 rows 25b, 25c, 65). A queued row
+carries `clientOrderId`, `quotedAt`, `quotedStoreId`, `quotedEmployeeId`,
+`quotedEmployeeName`, and the order. `orders-save` receives them and:
 
-**C5 is deferred to slice 9, and tracked there.** `orders-save` in this
-slice stores the client's `cost_subtotal` and `margin_pct` verbatim — the
-same integrity as today, no worse. This slice fixes *who* can write; slice 9
-fixes *what* is written. The handler carries a comment that says exactly
-that, and the inventory test allowlists `orders-save`'s two client-supplied
-cost fields under slice 9 so they cannot be forgotten (§6.5).
+- **Store**: `quotedStoreId` must equal the session's enrollment store.
+  Otherwise **409 `WRONG_STORE`**; the row is not written, stays queued, and
+  the client shows it as "queued for another store" rather than retrying
+  (25b: a device re-enrolled to T2 never drains T1's rows into T2). This is
+  a distinguishable refusal on purpose; §10 decision 7 records why it must
+  not be made uniform.
+- **Employee**: `employee_id` is the **quoting** employee. If that employee
+  exists in this store and is active → attributed normally. If inactive →
+  attributed to them, `attribution_note = 'quoting employee inactive at
+  save'` (25c, 65: recovery by a newly authenticated employee keeps A's
+  attribution). If the id is missing (a row queued by a pre-slice client
+  carries `employee_id` in its columns, which is used as `quotedEmployeeId`;
+  a row with neither) → saved with `employee_id` = the submitter and
+  `attribution_note = 'quoting employee unknown; attributed to submitter'`.
+  **Never silently reassigned.** `submitted_by_employee_id` is always the
+  session's employee.
+- `store_id`, `org_id` stamped from the enrollment; `employee_name` from the
+  `employees` row; client-sent copies ignored.
 
-**C checklist.** A real order saves and appears in history; manager sees the
-margin column, staff does not — **the first server-enforced margin gate**;
-network off, two orders queued, network on, both drain exactly once
-(`client_order_id` unique); reload with queued rows and an expired session →
-prompt → sign in → drain; a quote emails to the store; the kiosk is
-unaffected (its submit is an upload, slice 8).
+**Idempotency, made durable before the first request** (F3): on boot,
+before any drain, every queued row lacking `clientOrderId` is assigned one
+and the queue is **written back to `localStorage` first**; only then may a
+drain start. Drains are serialised within a tab; across tabs the unique
+index arbitrates and a `duplicate: true` response dequeues the row like a
+success. Tests, each with its failing mutation: **lost response** (server
+inserted, client saw a network error, retry → `duplicate`); **reload
+mid-drain** (ids survive, second pass yields duplicates, one row each);
+**concurrent drain** (two tabs, same queue, exactly one row per order);
+**25b**, **25c**, **65**.
 
-**E.** `drop policy anon_rw_orders on public.orders;` — no replacement,
-function-only. Denial: anon insert → 42501; anon select → 0 rows.
+**C5 deferred to slice 9, tracked there.** `orders-save` stores client
+`cost_subtotal`/`margin_pct` verbatim with `margin_source='client'`; the
+handler says so; the allowlist tags the two fields `slice-9`. A
+**behavioural cost-tampering test exists from this slice** (F5): it asserts
+the stored value equals the sent value *and* `margin_source='client'` — so
+the gap is measured, not assumed — and slice 9 inverts it.
+
+**C checklist.** A real order saves; manager sees the margin column, staff
+does not — the first server-enforced margin gate; network off, two orders
+queued, network on, both drain exactly once; reload with queued rows and an
+expired session → prompt → sign in as a *different* employee → the orders
+carry the original employee; a row queued before this deploy drains with its
+id assigned first; a quote emails; the kiosk is unaffected.
+
+**E.** `drop policy anon_rw_orders on public.orders;` Denial: anon insert →
+42501; anon select → 0 rows.
 
 ### 6.3 Slice 7 — jobs and job files (paths 9–14)
 
+The queue's shape again: `print_jobs.file_urls[].path` is written by the
+client today, so the same provenance work applies.
+
 **A.** `jobs-list`, `jobs-save`, `job-file-upload-url`,
-`job-file-download-url` (§7). **Path 14 (`deleteJobFiles`) is deleted, not
-moved**: no caller, and the inventory test's `supabase.storage` pattern
-fails on any `.remove(` that reappears. Additive: a `job_file_paths` table
-(or a column on `print_jobs`) recording every path the server minted, so
-`jobs-save` accepts recorded paths only — the same rule `register-job`
-follows.
+`job-file-download-url` (§8). Allocation records for the `job-files` bucket
+in the same `upload_allocations` table (`bucket` column), keyed to the
+staff session's store; `file_urls[]` entries gain `fileId`; `jobs-save`
+accepts only this store's unconsumed allocations, builds `file_urls` from
+the records, verifies the objects, consumes in one function. **Existing
+`print_jobs` rows validated or quarantined** by the same rule as the queue
+(pattern `^jobs/[0-9a-f-]{36}/[^/]{1,120}$`, object present, `store_id`
+set). **Path 14 (`deleteJobFiles`) is deleted**, no caller; the inventory's
+`supabase.storage` pattern fails on any `.remove(` that reappears. Signed
+upload token: Supabase's two hours; allocation single-use and swept.
 
-**B.** `fetchPrintJobs`, the save path in `App.jsx`, `uploadJobFiles`,
-`downloadJobFile`, `getJobFileSignedUrl` → the four endpoints.
-
-**C checklist.** A job saves with two attachments; Job History lists it and
-downloads each; a job with no files saves; a 60 MB file is refused with the
-bucket's message.
+**C checklist.** A job saves with two attachments; Job History lists and
+downloads each by id; a job with no files saves; a quarantined legacy job
+shows "attachments need attention"; a 60 MB file is refused by the bucket.
 
 **E.** Drop the two `print_jobs` anon policies and the three
-`job_files_anon_*` policies, two migrations, two rollback files. Denial: anon
-select/insert on `print_jobs` refused; anon `createSignedUrl` and `upload`
-on `job-files` refused.
+`job_files_anon_*` policies; two migrations, two rollback files. Denial:
+anon select/insert on `print_jobs` refused; anon `createSignedUrl` and
+`upload` on `job-files` refused.
 
 ### 6.4 Slice 8 — customer upload capability (path 17 + the kiosk submit)
 
-**A.** `upload-capability-create` (§7); `resolveUpload` in `start-upload`,
-`register-job`, `fetch-link-job`; paths recorded on
-`upload_capability_files` (table exists since 01). The `cleanup-stale-jobs`
-guard shipped in Release 1 (its tests are in the suite).
+**A.** `upload-capability-create` (§8); `resolveUpload` added dual-mode to
+`start-upload`, `register-job`, `fetch-link-job` under
+`RELEASE2_ACTIVATE_UPLOAD_CAP`; allocations record `capability_id`; the
+capability's quota is enforced against its allocations.
 
-**B.** `UploadApp.jsx` **and `KioskSubmitSheet` in `App.jsx`** mint a
-capability before the first upload; `start-upload` and `register-job` calls
-carry the cookie; `register-job` accepts only paths this capability
-recorded. `fetch-link-job` (the QR hand-off) is keyed by capability, not by
-an unauthenticated id.
+**B.** `UploadApp.jsx` **and `KioskSubmitSheet`** mint a capability before
+the first upload; both ask `csrf-bootstrap?kind=upload` for the class token
+(the kiosk also holds device and staff cookies — §0.3).
 
-**C checklist.** A customer at `/upload` completes end to end; the kiosk
-"Send to counter" completes **on both kiosk devices**; a capability older
-than 30 minutes is refused and the page re-mints; the per-source limiter
-refuses the 41st mint in 15 minutes from one address and the counter is
+**C checklist.** `/upload` end to end; the kiosk "Send to counter" on both
+kiosks; a capability older than 30 minutes is refused and re-minted; the
+41st mint in 15 minutes from one address is refused and the counter is
 unaffected.
 
-**D/E.** There is no grant to close: the tightening *is* the handler
-authentication. D deletes the unauthenticated branches; E is the direct
-probe of each function under no identity and under a wrong-kind identity
-(Part 8 rows 38–39). Rollback of E strips authentication from three
-service-role handlers — reopening class, with the compensating restrictions
-Part 7 names for 4a.
+**D/E.** D deletes the unauthenticated branches. E is the direct probe of
+each writer under no identity and under a wrong-kind identity (rows 38–39).
 
-### 6.5 Slice 9 — C5: cost and margin stamped server-side
+### 6.5 Slice 9 — C5: cost and margin computed server-side
 
-**The finding it closes.** Part 6.2 C5, in the reviewer's words: the cost
-and margin on a saved order are supplied by the client and stored verbatim,
-so anyone who can insert an order can write whatever margin they like into
-the store's own history. Slice 6 narrows *who* can insert to a staff
-session and changes nothing about *what* they can write. A staffer's
-browser — or a devtools console on the counter iPad — still sets
-`margin_pct`. That is an integrity gap in the store's own books, and it is
-deferred, not accepted.
+**The finding it closes.** Part 6.2 C5: cost and margin on a saved order
+are supplied by the client and stored verbatim. Slice 6 narrows *who* can
+write; a devtools console on the counter iPad still sets `margin_pct`. An
+integrity gap in the store's own books — deferred, not accepted.
 
-**Why it is deferred.** Stamping server-side needs (a) the server to hold
-the price book that produced the quote, and (b) the order to say *which*
-version of the price book that was — the `pricing_version` from Part 6.2's
-"offline quotes" section. Both come from the cost substep (4b), which
-publishes the versioned price book and moves costs behind `pricing-costs`.
-Building C5 before that means building a second, unversioned server-side
-cost model that 4b then replaces. Slice 9 therefore sits **immediately after
-4b** and is the first thing to land once it has.
+**Why deferred.** Server-side computation needs the versioned price book
+(`pricing_version`) from the cost substep's 4b. Slice 9 lands **immediately
+after 4b**.
 
-**What lands.**
+**What lands** (F6 shapes the contract):
 
-- **A.** Additive migration: `orders.pricing_version text`,
-  `orders.margin_source text` (`'client'` for every row written before this
-  slice, `'server'` after, `'unavailable'` when the version has aged out).
-  `orders-save` computes `cost_subtotal` and `margin_pct` from the
-  server-side copy of the price book at the order's `pricing_version` and
-  **ignores the client's values**; if that version is no longer available the
-  order still saves with `margin_pct = null` and `margin_source =
-  'unavailable'` — an order is never rejected or discarded because its
-  pricing version aged out. The snapshot the client sends still carries its
-  own numbers for the customer-facing PDF; the *stored* margin is the
-  server's.
-- **B.** The client stamps `pricing_version` on every quote at the moment it
-  is priced (from the price book it loaded), and the offline queue carries
-  it — an order quoted at 9 am and drained at 2 pm records the margin that
-  was true at 9 am.
-- **C checklist.** A saved order's `margin_pct` matches
-  `src/lib/margin.js` for the same inputs (the pure engine is the oracle);
-  a devtools-altered `margin_pct` on the request is ignored, the stored value
-  is the server's; a price change between quote and drain leaves the
-  drained order at the quote-time margin; a queued order whose version has
-  been retired saves with `margin_source = 'unavailable'` and the dashboard
-  shows "—", never 100%.
-- **D.** `orders-save` stops accepting `cost_subtotal` / `margin_pct` at
-  all (400 on presence, so a stale client is loud, not silently ignored);
-  the two fields leave the client whitelist; the slice 9 allowlist entries
-  are removed from the inventory test.
-- **E.** Nothing to revoke: the closure is in the handler. The denial probe
-  is the devtools test above, run on production.
+- `orders.pricing_version text`. `orders-save` computes `cost_subtotal` and
+  `margin_pct` from the server-side price book at the order's
+  `pricing_version` and records `margin_source='server'`.
+- **Deprecated client cost fields are accepted and ignored, never a 400**
+  (F6). A 400 on presence would strand every queued order from a client one
+  version behind, on a device that cannot be upgraded until it reconnects
+  — the exact row-loss the drain design forbids. The handler ignores them,
+  counts the occurrence in the logs, and the client stops sending them at D.
+- **An unknown or retired `pricing_version` saves with `margin_pct = null`
+  and `margin_source='unavailable'`. It is never repriced at the current
+  version** (F6): silently repricing would rewrite history with numbers
+  that were not true when the customer was quoted. An order is never
+  rejected and never discarded for its version.
+- The client stamps `pricing_version` at quote time; the offline queue
+  carries it.
+- **C checklist.** Stored `margin_pct` matches `src/lib/margin.js` for the
+  same inputs (the pure engine is the oracle); a devtools-altered value is
+  ignored and `margin_source='server'`; a price change between quote and
+  drain leaves the drained order at the quote-time margin; a retired version
+  saves `unavailable` and the dashboard shows "—", never 100%.
+- **D.** The two fields leave the client whitelist; the `slice-9` allowlist
+  entries are removed; the slice-6 tampering test is inverted: sent value ≠
+  stored value, `margin_source='server'`.
 
-**Tracking.** Slice 9 has a row in §1, a gate like every other slice, and
-allowlist entries in the inventory test that fail the build if they are
-deleted without the handler change. If the cost substep slips, slice 9 slips
-with it — and the entry in this document is what makes that visible rather
-than silent.
+**Tracking.** A row in §1, the gate structure of every slice, and allowlist
+entries that fail the build if deleted without the handler change. If the
+cost substep slips, slice 9 slips visibly.
 
 ---
 
-## 7. Endpoint contracts
+## 7. Per-surface transition table (F4)
 
-**Shared, every new endpoint.** `gate()` first (kill-switch flag, method,
-Origin allowlist, JSON on mutations). Credential resolved first, CSRF
-compared to that row's secret second, on every mutation. The store is the
-resolved row's, never a body field. Any credential failure → uniform 401.
-A row that is unknown **or belongs to another store** → uniform 404
-`{"ok":false,"error":"Not Found"}`, so the response cannot distinguish
-"exists elsewhere" from "does not exist". *(Part 8 row 10 says 403; a 403
-that differs from the unknown-id response tells the caller the row exists
-in another tenant. Put to the reviewer.)* No token, session id, storage path
-or key material in any response. `cache-control: no-store`. `interactive`
-stated per endpoint, never defaulted.
+Revision 1 said every stage-D rollback was cheap. It is not: deleting the
+legacy signer in D and rolling D back restores an unauthenticated signer —
+Part 7's step-4e reopening contract, not a flag flip. And activating
+authentication on a retained handler at A would break every flag-OFF
+client. This table records, per surface, **the first stage whose rollback
+reopens something** and **the last stage whose rollback is safe**. Every
+rollback at or after "first closure" takes the full Part 7 Rollback contract.
+
+| surface | slice | mechanism of closure | first closure | last safe rollback | note |
+|---|---|---|---|---|---|
+| PIN check | 4 | grant revoke | **E** | D | client-only until E |
+| `register-job` / `fetch-link-job` path provenance | 5 | allocation recording from A; old shape accepted-and-quarantined at A; **refusal activated at C** | **C** | B | A records allocations and quarantines the unallocated; nothing is refused until C, so a flag-OFF customer upload never breaks. C's rollback restores acceptance of unallocated paths — reopening |
+| existing queue rows | 5 | backfill / quarantine | **A** | — (the quarantine is data; rollback would un-quarantine by hand) | rehearsed row-by-row before commit |
+| customer-file signer / deleter | 5 | activation on legacy handlers at C; tombstone at D | **C** | B | D's rollback target is the C build with activation ON — safe |
+| queue read + Realtime | 5 | grant + publication | **E** | D | |
+| `send-print-job` | 6 | activation at C | **C** | B | |
+| orders write / read | 6 | grant | **E** | D | |
+| order attribution | 6 | `orders-save` logic | **A** (for rows written by it) | — | legacy rows keep their attribution |
+| job-file signer / upload / delete | 7 | `jobs-save` provenance from A; storage policies at E | **A** / **E** | D | |
+| existing `print_jobs` rows | 7 | backfill / quarantine | **A** | — | as the queue |
+| upload writers' entitlement | 8 | activation at C | **C** | B | |
+| cost figures | 9 | `orders-save` computes | **A** | — | legacy rows keep `margin_source='client'` |
+
+The "—" rollbacks are integrity closures whose reversal reintroduces
+untrusted data, not access; they are recorded as reopening and take the
+contract like any other.
+
+---
+
+## 8. Endpoint contracts
+
+**Shared.** `gate()` first (deployment context + flag, method, Origin
+allowlist as CSRF discipline, JSON on mutations). Credential resolved
+first; CSRF compared to **that class's** secret second, on every mutation.
+The store is the resolved row's, never a body field. Credential failure →
+uniform 401. A row unknown **or in another store** → uniform 404 *(Part 8
+row 10 says 403; a distinguishable 403 reveals existence in another tenant —
+put to the reviewer)*. **Download, complete and delete never accept a
+storage path; a row can reference only a path the server allocated.**
+`no-store`. `interactive` explicit per endpoint.
 
 | endpoint | method / credential / interactive | request | response | notes |
 |---|---|---|---|---|
-| `queue-list` | GET / staff / **passive** | — | `{ ok, jobs:[{ id, customerName, jobDate, queueNumber, source, createdAt, files:[{ name, size, type }] }] }` for the session's store | `files[].path` stripped. Polled; must not hold a session open |
-| `queue-download-url` | POST / staff / interactive / CSRF | `{ jobId, fileName }` | `{ ok, url, expiresAt }` (60 s) | job loaded by id **and** session store; the path signed is the one **stored** for that `fileName`, never a client path |
-| `queue-complete` | POST / staff / interactive / CSRF | `{ jobId }` | `{ ok, deleted: n }` | same load rule; objects removed then the row; missing row → 404 |
-| `orders-list` | GET / staff / interactive | `?limit=&before=` | `{ ok, orders:[…] }` | `cost_subtotal`, `margin_pct` present **only if the session row's role is `manager`** (row 11: never from the request) |
-| `orders-save` (slice 6) | POST / staff / interactive / CSRF | `{ clientOrderId, order:{ whitelist minus tenant/employee fields } }` | `{ ok, orderId, duplicate }` | `store_id`, `org_id`, `employee_id`, `employee_name` stamped from the session; client-sent copies ignored; unknown keys → 400; duplicate `clientOrderId` → 200 with `duplicate:true`, no second row. **Stores client `cost_subtotal` / `margin_pct` verbatim until slice 9** |
-| `orders-save` (slice 9) | as above | `order` also carries `pricingVersion`; `cost_subtotal` / `margin_pct` **refused** (400) | as above | cost and margin computed server-side at `pricingVersion`; `margin_source` recorded |
-| `jobs-list` / `jobs-save` | as orders | as orders; `file_urls[].path` must be paths this store's `job-file-upload-url` minted | as orders | recorded paths only |
-| `job-file-upload-url` | POST / staff / interactive / CSRF | `{ fileName, size, type }` | `{ ok, path, url, expiresAt }` (5 min) | path is **server-minted** (`jobs/<id>/<safeName>`), recorded before the URL is returned; size checked against the bucket limit |
-| `job-file-download-url` | POST / staff / interactive / CSRF | `{ jobId, fileName }` | `{ ok, url, expiresAt }` | serves paths 12 and 13; same rule as the queue variant |
-| `upload-capability-create` | POST / **public** / — | `{ storeSlug }` | `{ ok, expiresAt, maxFiles, maxBytes }` + `Set-Cookie __Host-pc_upload` (30 min) | slug validated against `stores`; limiter `ticketSource`-shaped per address; rate and quota are the only bounds — say so in the handler |
-| `start-upload` / `register-job` / `fetch-link-job` | POST / **upload capability** / — | unchanged bodies | unchanged | `resolveUpload`; every issued path recorded on the capability; `register-job` refuses paths it did not issue; wrong-kind cookie (device, staff) → 401 |
-| `send-print-job` | POST / staff / interactive / CSRF | unchanged | unchanged | `resolveStaff` before the mail is built; wrong-kind → 401 |
-| `csrf-bootstrap` *(change)* | GET / any / passive | — | staff branch adds `employee:{ id, name, role }` | see §5.1 |
+| `csrf-bootstrap` | GET / any / passive | `?kind=staff\|device\|upload` optional | `{ ok, kind, csrf }`; staff adds `employee:{id,name,role}` | with `kind`: that class or 401 |
+| `queue-list` | GET / staff / **passive** | — | `{ ok, jobs:[{ id, customerName, jobDate, queueNumber, source, createdAt, quarantineReason, files:[{ fileId, name, size, type }] }] }` | no paths; polled |
+| `queue-download-url` | POST / staff / interactive / CSRF | `{ jobId, fileId }` | `{ ok, url, expiresAt }` (60 s) | job by id + store; `fileId` → allocation for that job; sign the allocation's path |
+| `queue-complete` | POST / staff / interactive / CSRF | `{ jobId }` | `{ ok, deleted: n }` | removes the allocations' objects, then the row |
+| `start-upload` | POST / (slice 8: upload cap) | `{ fileName, size, type }` | `{ ok, allocationId, path, token }` | allocation written first; token lifetime is Supabase's (2 h); single-use, `max_bytes`, swept at 3 h |
+| `register-job` | POST / (slice 8: upload cap) | `{ customerName, notes, files:[{ allocationId }] }` (old shape `{ path }` accepted until D) | `{ ok, job }` | row built from allocations; objects verified; consumed atomically; tenant from allocation. Unallocated path: quarantined at A, **refused from C** |
+| `fetch-link-job` | POST / (slice 8: upload cap) | `{ customerName, notes, url }` | `{ ok, job }` | allocates, stamps tenant, per-store numbering, registers via the same function |
+| `orders-list` | GET / staff / interactive | `?limit=&before=` | `{ ok, orders:[…] }` | cost/margin fields only if the session row's role is `manager` |
+| `orders-save` | POST / staff / interactive / CSRF | `{ clientOrderId, quotedAt, quotedStoreId, quotedEmployeeId, pricingVersion?, order }` | `{ ok, orderId, duplicate }` \| 409 `WRONG_STORE` | attribution per §6.2; slice 6: client cost fields stored, `margin_source='client'`; slice 9: computed, client fields **ignored**, unknown version → `unavailable` |
+| `jobs-list` / `jobs-save` | as orders | `file_urls:[{ allocationId }]` | as orders | recorded paths only |
+| `job-file-upload-url` | POST / staff / interactive / CSRF | `{ fileName, size, type }` | `{ ok, allocationId, path, url }` | as `start-upload`, `job-files` bucket, store from session |
+| `job-file-download-url` | POST / staff / interactive / CSRF | `{ jobId, fileId }` | `{ ok, url, expiresAt }` | as the queue variant |
+| `upload-capability-create` | POST / public | `{ storeSlug }` | `{ ok, expiresAt, maxFiles, maxBytes }` + `__Host-pc_upload` | slug validated; per-address limiter; rate and quota are the only bounds — said in the handler |
+| `send-print-job` | POST / staff / interactive / CSRF | unchanged | unchanged | activation at C |
+| `get-download-url`, `complete-job` | — | — | **410** from D | tombstones in `_retired.json` |
 
 ---
 
-## 8. Decisions for the reviewer
+## 9. Review traceability
 
-1. **Slicing step 4** (§0.1). The property is kept per object; the wording
-   changes.
-2. **A grep-based inventory gate replaces the maintained list** (§0.2).
-   Two reviewers verified the list and it still missed the kiosk callers,
-   because the name and the route live in different places. The test
-   enumerates from the filesystem and the schema.
-3. **Stage 0 is its own review round** (§4). Migrations 01–05 to production
-   and the removal of the ref refusal are the moment Release 2 stops being
-   staging-only — a different risk class from any client slice.
-4. **No runtime fallback, as a principle** (§2). A fallback hides exactly
-   the failures the counter confirmation exists to find.
-5. **`csrf-bootstrap` returns the employee** (§5.1) versus a client-side
-   cache that C3 would then have to clear.
-6. **404 for wrong-store rows** (§7) versus the plan's 403.
-7. **C5 is deferred to a named slice 9** (§6.5), gated on the cost substep's
-   `pricing_version`, tracked by an inventory allowlist entry that fails the
-   build if it is deleted without the handler change. Deferring is fine;
-   losing track of it is not.
-8. **Soak lengths** (§2): three business days for C including a weekend day,
-   one for D.
+| finding | where it landed |
+|---|---|
+| **F1** readers on unvalidated rows; writers and provenance in scope; legacy rows; `fetch-link-job` | §0.1 (unit of closure), §1, §6.1 (allocations, `register-job`, `fetch-link-job` migration + link-import test, quarantine), §6.3 (same for job files) |
+| **F2** Origin is not a deployment boundary | §4.1: `CONTEXT` + context-scoped flag before the ref refusal goes; `originOk()` stays CSRF only; G0 proves a preview 404s to a curl with no Origin |
+| **F3** original store/employee; rows 25b/25c/65; durable idempotency; lost response, reload, concurrent drain | §6.2 |
+| **F4** per-surface first closure / last safe rollback; D is reopening for the signer; activation separate from A | §2 (dual-mode + activation), §7 (table) |
+| **F5** rename invisible to CREATE enumeration; deleted names leave discovery; tampering tests; falsify each gate | §0.2 (`tables.json` from applied schema, `_retired.json`, classify every `.from`), mutation test, §6.2 tampering test, §3 |
+| **F6** never 400 on deprecated fields; unknown versions never repriced | §6.5 |
+| contract 1: class-specific bootstrap | §0.3, §5.1, §8 |
+| contract 2: two-hour token, not five minutes | §6.1, §6.3, §8 |
+| contract 3: "no path in any response" dropped | §6.1, §8 shared rule |
+| contract 4: opaque `fileId`, not `fileName` | §6.1, §8 |
+
+---
+
+## 10. Decisions for the reviewer
+
+1. Slicing step 4 by **unit of closure** (§0.1), with the per-surface
+   table (§7) as the honest account of what each stage's rollback reopens.
+2. **Provenance on `register-job`: recorded from A, refused from C**
+   (§6.1, §7 row 2). Stated explicitly: requiring allocations at A would
+   break only a customer mid-flow at the deploy moment, since every path
+   issued after A carries an allocation — but that is still a customer
+   upload failing on production because a stage-A deploy landed, F4's
+   failure mode inside F1's fix. So A accepts the old shape, matches it to
+   its allocation where one exists, and **quarantines** the rest; refusal
+   activates at C with the client flag. Cost of the safe form: between A
+   and C a deploy-moment row can exist with an unverified entry, served by
+   the legacy signer that the flag-OFF counter is using anyway, and never
+   by the new endpoints.
+3. **Quarantine rule for legacy rows** (§6.1): pattern + object present +
+   tenant set, else quarantined with a reason; `fetch-link-job` rows all
+   fall to `no tenant`.
+4. **Deployment context** (§4.1): `CONTEXT` allowlist plus a
+   context-scoped flag, both build-time facts.
+5. `csrf-bootstrap` returns the employee (§5.1) versus a client cache.
+6. 404 for wrong-store rows (§8) versus Part 8's 403.
+7. **`WRONG_STORE` as a distinguishable 409 on `orders-save`** (§6.2) — a
+   deliberate departure from uniform refusal, and the reason is the threat
+   model, not convenience. **Do not "correct" this to a 404 later.**
+   Uniform refusal (401 and 404 indistinguishable from unknown) exists so an
+   unauthenticated or wrong-class prober cannot enumerate whether a row, a
+   device or a tenant exists. `orders-save`'s caller is a different model:
+   it already holds a valid staff session for some store S, and the 409
+   reports only that the `quotedStoreId` **the caller itself supplied** is
+   not S — a relation between two values the caller already knows. It
+   reveals nothing about any row in any other tenant; there is no lookup in
+   T at all. And the alternative has a cost uniform refusal never has
+   elsewhere: a 404 here would make the client treat a queued order as
+   nonexistent and drop it, which is work loss and the outcome row 25b
+   forbids ("they stay queued against T1 and surface as such"). Contrast
+   `queue-download-url`, where a wrong-store `jobId` **is** a lookup in T,
+   a distinguishable answer **would** reveal existence, and a 404 discards
+   nothing — so there the uniform 404 stands. The rule: distinguishable
+   refusal is permitted only where the caller is already authenticated to a
+   store, the response is computed from values the caller supplied, and a
+   uniform answer would destroy work.
+8. Soak lengths (§2).
