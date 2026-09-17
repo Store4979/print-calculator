@@ -3525,10 +3525,16 @@ const handleFrontFiles = async (files) => {
       setPendingOrder(null);
       if (result.ok) {
         setSavedJobToast(`Order saved — $${row.total.toFixed(2)}, recorded by ${employee.name}.`);
-      } else {
+        setTimeout(() => setSavedJobToast(""), 4000);
+      } else if (result.queued) {
         setSavedJobToast("Order saved locally — will sync when connection returns.");
+        setTimeout(() => setSavedJobToast(""), 4000);
+      } else {
+        // The insert failed AND localStorage refused the row. Nothing holds
+        // this order. Say so loudly and do not clear the message on a timer.
+        setSavedJobToast("Order NOT saved and could not be queued — keep the customer's details and retry.");
+        alert("Order NOT saved and could not be queued on this device. Keep the customer's details and retry before they leave.");
       }
-      setTimeout(() => setSavedJobToast(""), 4000);
       setPendingOrdersCount(loadPendingOrders().length);
       if (activeTab === "paper") pushRecentConfig();
       else if (activeTab === "large") pushLfRecentConfig();
