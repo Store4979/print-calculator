@@ -1,12 +1,14 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing here is built.** Revision 4, 2026-09-17.
+**Status: PLAN ONLY. Nothing here is built.** Revision 5, 2026-09-17.
 Revision 2 (`9acadee`) accepted six findings and four contract corrections
 from the review of revision 1. Revision 3 (`5a03024`) accepted seven more
-(R1–R7). Revision 4 accepts three from the review of revision 3 (S1–S3,
-two P1), takes the parser option for the scanner, and corrects three
-assertions that had gone stale. §9 traces every finding to where it
-landed.
+(R1–R7). Revision 4 (`4e814be`) accepted three (S1–S3), took the parser
+option and corrected three stale assertions. Revision 5 accepts three P1s
+from the review of revision 4 (T1–T3) and six reconciliations. **T3 is
+also a data-loss defect in shipped code today** (§6.2), independent of
+this plan, and is called out as a standalone fix for `main`. §9 traces
+every finding to where it landed.
 
 This is the execution plan for Part 6 of `release-2-plan.md` (the 17 paths)
 and the parts of Part 7 they drive (steps 4, 4a, 4e, 5.1–5.4, 5.6), plus the
@@ -113,7 +115,10 @@ discovery at the moment the prohibition on calling it begins.
      (plus allowlisted files until their slice), and nothing else in `src/`
      names it.
   2. **A real parser inside the gateway** (the reviewer's choice over
-     textual matching). `acorn` as a devDependency — the suite's
+     textual matching). `acorn` **plus `acorn-jsx`** as devDependencies —
+     every scanned file in `src/` except the two gateway modules is `.jsx`,
+     so a parser without JSX support would fail on the very files the
+     inventory has to read — the suite's
      zero-dependency property is traded for AST-level certainty on the two
      files that matter. The scan walks `CallExpression` nodes whose callee
      is a `MemberExpression` with property `from`, `rpc` or `channel` on
@@ -339,17 +344,44 @@ rewritten to describe this (comment discipline).
 3. **Env on the production site**: `RELEASE2_ENABLED=true` (Functions
    scope, production context only),
    `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app`,
-   `RELEASE2_CONTEXTS=production`. **And, closing the "older deployments"
-   writer class** (§6.1): `SUPABASE_SERVICE_ROLE_KEY` is scoped to the
-   **production context only**. Today every deploy preview and branch
-   deploy of the production site runs the *legacy* functions — which are
-   not Release 2 gated — against production Supabase with the production
-   service key, so an old preview's `register-job` can write an unvalidated
-   row into the production queue at any time, for as long as the preview
-   exists. With the key absent from previews, every legacy handler's
-   existing guard (`if (!SB_KEY) return bad(500, "Service role key not
-   configured")`) refuses, and the writer class is gone. Verified in step 6
-   by calling a preview's `register-job` and recording the 500.
+   `RELEASE2_CONTEXTS=production`. **And the "older deployments" writer
+   class, bounded honestly** (§6.1, T1). Today every deploy preview and
+   branch deploy of the production site runs the *legacy* functions — not
+   Release 2 gated — against production Supabase with the production
+   service key. Revision 4 said scoping `SUPABASE_SERVICE_ROLE_KEY` to the
+   production context would make that class "gone". **It does not.**
+   Netlify snapshots environment values per deploy and function bundles
+   are immutable, so an old preview permalink keeps running its old
+   `register-job` with the key it captured at build; and historical
+   **production** permalinks (`<deploy-id>--printcalculator2.netlify.app`)
+   were never previews and are outside the scoping entirely. The bounded
+   claim is: **future** previews and branch deploys lack the key, and
+   their legacy handlers refuse with the existing guard. Everything already
+   built keeps its key until the key itself is invalid. So:
+   - **Inventory the immutable URLs** — every historical production
+     deploy, every preview and branch deploy, every alias — from the
+     Netlify API, into `docs/security/deploy-inventory.md`, refreshed at
+     each cutover.
+   - **At each cutover**, retire what can be retired (delete or lock old
+     deploys through the API, so their permalinks 404) and **invalidate the
+     credential the rest captured**: rotate the Supabase service key to a
+     new secret and revoke the old one, through a **rehearsed transition**
+     on staging first (old preview → refused with DB and object readback;
+     new deploy → works). Rotation is the only control that reaches a
+     permalink nobody can delete.
+   - **Rollback consequence, stated**: "publish an old deploy" republishes
+     an immutable bundle with its **captured** key, which is now revoked,
+     so its functions fail. After rotation, every rollback is a **fresh
+     build of the old commit**, never a republish. Part 7's rollback
+     contract gains that line.
+   - **Probe the exact old URLs with readback**, not a status code: call
+     each inventoried legacy `register-job` with a marker customer name and
+     a fabricated path, then read `pending_jobs` for the marker and
+     `storage.objects` for the path — nothing written. A generic 500 does
+     not say which control refused (missing key, revoked key, or a bug),
+     and the readback is what proves the write did not happen.
+   - **Re-run after every rollback rehearsal**, not once at stage 0: a
+     rollback that republishes anything reopens exactly this class.
 4. **Code**: §4.1's context check lands first; the ref refusal is removed
    in the same change, after it.
 5. Deploy. Phase 1 on production: four uniform 401s. Then the positive
@@ -359,9 +391,10 @@ rewritten to describe this (comment discipline).
    revoked.
 6. **Preview refusal, proven not assumed**: a `curl` with **no Origin
    header** to a deploy-preview URL of the production site → 404. A second
-   curl with the staging Origin → 404. A third, to the preview's legacy
-   `register-job` with a well-formed body → 500 "Service role key not
-   configured". All three recorded.
+   curl with the staging Origin → 404. Third, the inventoried legacy URLs
+   (step 3) each probed with a marker name and a fabricated path, with the
+   `pending_jobs` and `storage.objects` readback showing nothing written —
+   recorded per URL, not as one status code.
 
 **Rollback of stage 0:** `RELEASE2_ENABLED=false` + redeploy → every endpoint
 404s. Migrations stay: RLS on, zero policies, service-role only. Not an
@@ -468,7 +501,8 @@ that trusts `files[].path` inherits all of it.
   int, source text, created_at, consumer_kind text null check (consumer_kind
   in ('pending_job','print_job')), consumer_id uuid null, consumed_at
   timestamptz null, released_at timestamptz null, expired_at timestamptz
-  null)`. RLS on, zero policies.
+  null, object_removed_at timestamptz null, remove_attempts int not null
+  default 0)`. RLS on, zero policies.
   **Typed consumer link, no foreign key** (R6): revision 2's `consumed_by
   uuid references pending_jobs` could not also point at a print job (slice 7
   shares the table) and would have blocked `complete-job` from deleting a
@@ -545,12 +579,18 @@ that trusts `files[].path` inherits all of it.
   mid-flow at the deploy moment (path issued by the old `start-upload`);
   **any public caller**, since `register-job` is unauthenticated until
   slice 8 and a body path can be fabricated; and **older deployments** —
-  a deploy preview or branch deploy running pre-slice-5 handlers against
-  the same database, which stage 0 eliminates by scoping the service key
-  (§4.2 step 3). The first is served safely as below; the second is
-  refused from C and, until then, produces a row whose entries are marked
-  `unverified` and which is never claimable (§ existing rows); the third
-  is closed at stage 0. Revision 2 let the deploy-moment request fail;
+  any immutable historical deploy (production permalinks included) running
+  pre-slice-5 handlers with a captured key against the same database. The
+  first is served safely as below; the second is refused from C and, until
+  then, produces a row whose entries are marked `unverified` and which is
+  never claimable (§ existing rows); the third is **bounded, not closed**,
+  by §4.2 step 3 — future deploys lack the key, historical ones are
+  inventoried, retired where possible, and otherwise cut off by rotating
+  the key, with readback probes re-run after every rollback rehearsal.
+  Until rotation, an unvalidated row from an old deploy is possible and
+  would land, like any post-A unallocated path, as `unverified` — which is
+  why `unverified` is never claimable. Revision 2 let the deploy-moment
+  request fail;
   that is a customer-facing failure at a deploy moment — F4's failure mode
   reappearing inside F1's fix — and the safe form costs nothing. So:
   - **At A**, an entry with an allocation (by `allocationId`, or by exact
@@ -626,12 +666,22 @@ that trusts `files[].path` inherits all of it.
     decided by the dataset, not by who arrives first:**
     - The migration classifies the legacy dataset in a `DO` block and
       records the verdict in `pending_jobs_legacy_dataset (mode, store_id,
-      decided_at, decided_by)`: **`single-store`** if exactly one store
-      exists in the deployment *and* every legacy row's `store_id` is null
-      or equals it; otherwise **`multi-store`**. The operator confirms the
-      verdict out of band before the migration is applied (it is printed by
-      the rehearsal), so the mode is an explicit migration restriction, not
-      an inference.
+      decided_at, decided_by, attestation)`: **`single-store`** only if
+      the **whole historical dataset** names one store — not today's store
+      count. The check takes the union of every `store_id` and `org_id`
+      that appears anywhere: `stores`, `organizations` with a store,
+      `memberships`, `pending_jobs`, `print_jobs`, `orders`, the archive
+      table, and every `store_id` carried on an allocation or a storage
+      path prefix — and requires that union (nulls aside) to have exactly
+      one member. A store that was deleted and cascaded leaves its
+      orphaned objects behind, so the object report (§ retention) is part
+      of the check: an object whose path prefix names any other slug fails
+      it. Otherwise **`multi-store`**. The operator confirms the verdict
+      **and attests** that no other tenant's data was ever loaded into this
+      project — recorded in `attestation` with their identity — before the
+      migration is applied (the rehearsal prints the union). The mode is an
+      explicit migration restriction backed by an attestation, not an
+      inference from a count.
     - In **`single-store` mode** the one question — which tenant — has
       exactly one possible answer, and the store's owner adjudicates the
       remaining question, whether the reference is intact, through the
@@ -697,12 +747,40 @@ that trusts `files[].path` inherits all of it.
     `legacy_objects_report` table and deletes nothing. **Age**: an unknown
     object becomes *eligible* for disposal 30 days after stage A. **Who may
     delete**: the operator only, through `release2_dispose_legacy_objects`
-    from the SQL editor, which takes the paths under `for update`, refuses
-    any path that has acquired an allocation since the report, records the
-    disposal, and returns the list for the remote remove; never the sweep,
-    never a tenant owner, never a claim or discard. **Concurrency**: the
-    same `for update skip locked` discipline as expiry, so a claim being
-    granted and a disposal cannot interleave on one path.
+    from the SQL editor; never the sweep, never a tenant owner, never a
+    claim or discard. **Concurrency and durability** (T2): revision 4
+    relied on a row lock that ends with the transaction, and on `for
+    update` over `upload_allocations` — which locks **nothing** when no
+    allocation row exists, which is precisely the case for an unknown
+    legacy object. A grant could therefore allocate a path after disposal
+    committed and before the remote delete landed, and the newly allocated
+    object would vanish. So:
+    - **A durable exclusion table**, `path_exclusions (bucket text, path
+      text, reason text, created_at, removed_at null, primary key (bucket,
+      path))`. Disposal **inserts the exclusion atomically, in the same
+      transaction, before it returns a removal list**. The row is never
+      deleted: it survives a failed remote delete and every retry
+      (`remove_attempts` on the report row; `removed_at` set only on
+      success) and it stays after completion, so the exact `(bucket, path)`
+      can never be allocated again. Paths are date-prefixed UUIDs, so a
+      permanent exclusion costs nothing legitimate.
+    - **The exclusion is a mandatory precondition** for every
+      `start-upload` allocation, every `job-file-upload-url` allocation,
+      every legacy grant (owner or operator) and every claim submission:
+      `not exists (select 1 from path_exclusions where bucket = … and path
+      = …)`, checked inside the same function that writes the allocation.
+    - **What is locked when no row exists**: a transaction-scoped
+      advisory lock on `hashtext(bucket || '/' || path)` —
+      `pg_advisory_xact_lock` — taken by allocation, grant, expiry and
+      disposal alike, **before** the exclusion check and before any row is
+      read or written. That is the canonical serialization for a path;
+      the row locks on `upload_allocations` remain for the state machine
+      but no longer carry the exclusion. Two operations on one path
+      cannot interleave whether or not an allocation row exists yet.
+    - The mutants that must fail: a grant that skips the exclusion check;
+      a disposal that returns paths before inserting exclusions; a retry
+      path that deletes the exclusion; an allocation that takes the row
+      lock but not the advisory lock.
   - **Legacy rows** whose objects are unknown: the sweep may delete a stale
     *row* (a tenant-attributed record) after the existing 24-hour cutoff,
     but the object stays in the report until the operator disposes of it.
@@ -819,12 +897,55 @@ repeats.** So:
   this browser to save them". Revision 3's `localStorage` lease fallback is
   **withdrawn**: a best-effort lease cannot back a no-loss promise for
   destructive writes, so the safe behaviour is to do nothing destructive.
+- **A data-loss defect in shipped code, independent of this plan** (T3).
+  `orderQueue.js:59–74` `drainPendingOrders` loads the queue, awaits each
+  insert in a loop, then calls `writePendingOrders(remaining)` — a
+  **whole-key overwrite of a snapshot taken before the awaits**. Anything
+  enqueued during those awaits is erased. It needs no second tab:
+  `saveOrderWithFallback` at `:83` fires `drainPendingOrders(insertFn)
+  .catch(() => {})` **without awaiting**, and the `online` handler at
+  `App.jsx:1518` does the same, so a drain runs in the background while the
+  counter keeps working; an order that fails and queues mid-drain is
+  destroyed by that drain's final write. `writePendingOrders` also swallows
+  storage errors, so "queued" can be reported when nothing was stored.
+  **This is a standalone defect on production today and is proposed as a
+  small fix to `main` ahead of this slice**: a random `_id` per entry at
+  enqueue (legacy entries assigned one at drain start and written back
+  before any insert); the drain's final write a **merge** — re-read the
+  stored queue and remove flushed entries by `_id`, never overwrite with a
+  snapshot; at most one drain in flight per tab; persistence failure
+  surfaced (`queued: false`) so the UI never says "queued" for an order
+  that was not stored; Web Locks around the read-modify-write where
+  available. Tests: enqueue during an in-flight drain survives; two
+  identical entries drain as two inserts and both dequeue; a failed write
+  is reported; the snapshot-overwrite mutant fails. Slice 6 adopts `_id` as
+  the source of `clientOrderId`.
+- **In this slice, the new protocol is isolated from old clients and every
+  read-modify-write is under the lock** (T3). Old-bundle tabs cannot be
+  quiesced from inside a new tab — a stale tab announces nothing — so the
+  new client does not share a key with them: new entries live under a
+  **new key**, `pendingOrders_v2`, which no old bundle reads or
+  overwrites. Legacy entries are **moved** from `pendingTransactions` to
+  `v2` under the lock in one atomic pair of writes (write `v2`, then clear
+  the old key); an old-bundle drain that races can at worst re-insert an
+  entry the move already took, by the anon path, which is the bounded
+  double-insert window below, and can never erase a `v2` entry. **Enqueue,
+  migration, drain and dequeue are all under the same Web Lock** — not
+  only migration and drain — so no read-modify-write on `v2` ever
+  overwrites another's write. **Failed persistence is failure to queue**:
+  `setItem` is verified by reading the key back, and if the entry is not
+  durably stored the client reports "not saved and could not be queued"
+  and **never acknowledges or sends an identity it could not persist** —
+  an id that reaches the server without a stored row behind it is exactly
+  the unstable identity that produces a duplicate on the next attempt.
 - **A known window, bounded and stated**: a tab still running a
   pre-slice-6 bundle (served by the service worker before its update
-  lands) drains by direct insert with no id and takes no lock. If it and a
-  fresh tab race on the same entry, two rows can result. The window is the
-  stale tab's lifetime; the existing sw update flow ends it, and the
-  counter checklist includes reloading every open tab after the flag flip.
+  lands) drains the **old key** by direct insert with no id and takes no
+  lock. It can double-insert an entry the migration already moved; it
+  cannot touch `v2`. The window is the stale tab's lifetime; the C cutover
+  procedure has the owner **close or reload every counter tab on all three
+  devices before the flag flip**, recorded as a checklist step, and the
+  existing sw update flow ends any tab that was missed.
 
 **Dequeue rule** (from the review of decision 7): **no failed save status
 may dequeue a row.** A row leaves the queue only on (a) a validated save
@@ -835,10 +956,15 @@ row where it is. Tests, each with its failing mutation: **lost response**
 (server inserted, client saw a network error, retry → `duplicate`);
 **reload mid-drain** (ids survive, second pass yields duplicates, one row
 each); **concurrent drain** (two tabs, same queue, exactly one row per
-order); **two-tab legacy assignment** (both tabs compute the same id set;
-the mutant with random ids must fail); **no status dequeues** (every
-non-ack response leaves the queue length unchanged); **25b**, **25c**,
-**65**.
+order); **two-tab legacy migration** (two tabs, two identical legacy
+entries, exactly two ids and two rows; the mutant that assigns ids
+**outside the lock** — an unsynchronized assignment — must fail); **enqueue
+during drain** (an entry enqueued while a drain awaits survives the drain's
+final write; the snapshot-overwrite mutant must fail); **failed
+persistence** (a `setItem` that does not read back leaves the queue
+unchanged, returns `queued: false`, and no request carries the id); **no
+status dequeues** (every non-ack response leaves the queue length
+unchanged); **25b**, **25c**, **65**.
 
 **C5 deferred to slice 9, tracked there.** `orders-save` stores client
 `cost_subtotal`/`margin_pct` verbatim with `margin_source='client'`; the
@@ -1034,13 +1160,13 @@ storage path; a row can reference only a path the server allocated.**
 | contract 2: two-hour token, not five minutes | §6.1, §6.3, §8 |
 | contract 3: "no path in any response" dropped | §6.1, §8 shared rule |
 | contract 4: opaque `fileId`, not `fileName` | §6.1, §8 |
-| **R1** backfill inferred ownership from the untrusted row; cleanup follows `files[].path` | §6.1: screen recorded, never trusted; owner claim as the only evidence and authority; null-store rows; cleanup by allocation or sole-reference only |
+| **R1** backfill inferred ownership from the untrusted row; cleanup follows `files[].path` | §6.1: screen recorded, never trusted; adjudication under the dataset-decided authority model (superseding the rev-3 owner-claim); the sweep never removes an object without an allocation record (superseding the rev-3 sole-reference rule) |
 | **R2** removing `{ path }` at slice 5 D breaks fresh customer/kiosk submissions | §6.1 D, §6.4 B/D, §8: shape retained under identical checks until slice 8 D |
 | **R3** `files` → `[]` broke the flag-OFF counter; A cannot be both preserving and a cutover | §6.1: references preserved in place; recovery view defined; A preserving, C the cutover with a named precondition |
 | **R4** `CONTEXT` is build-time; absent → 404s production | §4.1: bundled immutable context file + Functions-scoped flag; four-part proof before the guard lifts |
-| **R5** two tabs assign different legacy ids | §6.2: deterministic ids + Web Locks; two-tab test |
+| **R5** two tabs assign different legacy ids | §6.2: one-tab migration under Web Locks assigning a random id per occurrence (the rev-3 deterministic id was withdrawn by S3); two-tab test |
 | **R6** `consumed_by` FK blocks deletion / cannot type the consumer / replayable | §6.1: typed consumer link, one-way state machine, completion ordering, sweep |
-| **R7** per-line scanner misses multiline and aliases | §0.2: gateway confinement + dot-all alias-hostile matching (or a parser); named mutants |
+| **R7** per-line scanner misses multiline and aliases | §0.2: parser (`acorn` + `acorn-jsx`) plus gateway confinement (the rev-3 textual option was withdrawn by the rev-3 review); named mutants incl. aliases and computed access |
 | decision 7 wording: "404 makes the client drop it" | removed; §6.2 dequeue rule: only a validated ack, a duplicate ack or an explicit discard dequeues |
 | **S1** first claim is not ownership; cleanup cannot turn metadata into ownership at removal | §6.1: dataset-decided authority model (`single-store` owner / `multi-store` operator over submissions), conflicts and `suspect` denied to all; retention policy — the sweep never removes an unallocated object, operator-only disposal after 30 days under lock |
 | **S2** expiry deleted before claiming | §6.1: `release2_expire_allocations` claims under `for update skip locked` before any I/O; removal retried; allowed-state table as a CHECK |
@@ -1048,7 +1174,11 @@ storage path; a row can reference only a path the server allocated.**
 | scanner: parser + gateway; reconcile `storeConfig.js` | §0.2: `acorn`, gateway is two files, raw client importable only by `storeConfig.js`; computed-access and alias mutants |
 | stale: decision 3's quarantine rule | §10 decision 3 rewritten |
 | stale: "both build-time facts" | §4.1, §10 decision 4: one build-time fact, one runtime platform-scoped value |
-| stale: "only deploy-moment callers can supply unallocated paths" | §6.1: three caller classes named; public callers refused from C and unclaimable until then; older deployments closed at stage 0 by scoping the service key |
+| stale: "only deploy-moment callers can supply unallocated paths" | §6.1: three caller classes named; public callers refused from C and unclaimable until then; older deployments **bounded**, not closed (T1) |
+| **T1** service-key scoping does not retire immutable old deploys; production permalinks outside it | §4.2 step 3 and 6: bounded claim; immutable-URL inventory; retire or rotate the key through a rehearsed transition; rollback = fresh build, never republish; readback probes per URL, re-run after every rollback rehearsal |
+| **T2** disposal exclusion must outlive the transaction; `for update` on an empty lookup locks nothing | §6.1: durable `path_exclusions` keyed `(bucket, path)`, inserted before the removal list is returned, retained across retry and after completion; mandatory precondition on every allocation/grant/claim; `pg_advisory_xact_lock` on the path hash as the canonical serialization |
+| **T3** whole-key overwrite of a pre-await snapshot; unawaited background drains; swallowed persistence errors | §6.2: standalone fix proposed for `main`; in the slice, a new key isolated from old bundles, every RMW under the lock, failed persistence = failure to queue, no unstable identity ever sent |
+| reconciliations: `object_removed_at` in the schema; unsynchronized-assignment mutant; R1/R5/R7 rows; "only deploy-moment" sentence; historical-dataset single-store check; JSX parser | §6.1 schema; §6.2 tests; this table; §6.1; §6.1 dataset mode; §0.2 |
 
 ---
 
@@ -1078,8 +1208,10 @@ storage path; a row can reference only a path the server allocated.**
 4. **Deployment context** (§4.1): one **build-time** fact (the bundled
    `deploy-context.json`) plus one **runtime** value the platform scopes to
    Functions in the production context (`RELEASE2_ENABLED`), neither of
-   which a request can supply; and the service key scoped to production so
-   older deployments cannot write.
+   which a request can supply. The service key scoped to production
+   **bounds** the older-deployments class to future deploys; immutable
+   historical deploys are retired or cut off by key rotation (§4.2, T1),
+   which makes every post-rotation rollback a fresh build.
 5. `csrf-bootstrap` returns the employee (§5.1) versus a client cache.
 6. 404 for wrong-store rows (§8) versus Part 8's 403.
 7. **`WRONG_STORE` as a distinguishable 409 on `orders-save`** (§6.2) — a
@@ -1117,16 +1249,25 @@ storage path; a row can reference only a path the server allocated.**
     confinement, as the reviewer chose; the gateway is `supabase.js` and
     `storeConfig.js`, and only the latter may import the raw client after
     the last slice.
-11. **Per-occurrence identity** (§6.2): random id per entry at enqueue;
-    legacy migration by one tab under Web Locks; no destructive queue write
-    without Web Locks; the lease fallback withdrawn.
+11. **Per-occurrence identity and isolation from old clients** (§6.2):
+    random id per entry at enqueue; a new storage key no old bundle touches;
+    legacy entries moved by one tab under Web Locks; enqueue and every RMW
+    under the same lock; failed persistence is failure to queue and no
+    identity is sent unpersisted; no destructive queue write without Web
+    Locks; the lease fallback withdrawn.
+11a. **T3 as a standalone fix to `main` first** (§6.2): the shipped drain
+    erases entries enqueued during its awaits, on production, today. The
+    proposed fix is small, pure-module, testable, and forward-compatible
+    with slice 6. Recommended ahead of the slice; awaiting the decision.
 12. **Deployment context transport** (§4.1): a bundled file written at
     build, plus a Functions-scoped, production-context flag; the four-part
     proof precedes lifting the ref guard.
 13. **Retention policy for unknown legacy objects** (§6.1): the sweep never
     removes an object without an allocation; unknown objects are reported,
-    eligible after 30 days, and disposed of only by the operator under the
-    same lock discipline as expiry.
+    eligible after 30 days, and disposed of only by the operator, who
+    first writes a **durable exclusion** for `(bucket, path)` that every
+    later allocation, grant and claim must check; serialization by an
+    advisory lock on the path, since no row exists to lock.
 14. **Expiry before I/O** (§6.1): `allocated → expired` is claimed under
     the lock, then the object is removed and retried; the allowed-state
     table is a CHECK constraint.
