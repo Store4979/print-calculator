@@ -1140,7 +1140,10 @@ handler says so; the allowlist tags the two fields `slice-9`. A
 the stored value equals the sent value *and* `margin_source='client'` — so
 the gap is measured, not assumed — and slice 9 inverts it.
 
-**C checklist.** A real order saves; manager sees the margin column, staff
+**C checklist.** **Before the flag flip**: the pre-#46 retirement
+checkpoint is recorded per device — every app tab closed and the browser
+restarted on the counter iPad, both kiosks and any staff device, with
+device, date and person (V1). Then: a real order saves; manager sees the margin column, staff
 does not — the first server-enforced margin gate; network off, two orders
 queued, network on, both drain exactly once; reload with queued rows and an
 expired session → prompt → sign in as a *different* employee → the orders
