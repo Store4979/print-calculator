@@ -1,9 +1,9 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing in this plan is built.** Revision 6,
-2026-09-18. Revisions 2–5 accepted the findings of four review rounds
-(§9). Revision 6 accepts three corrections from the review of revision 5
-(U1–U3, two P1) and four further items. The standalone T3 fix is
+**Status: PLAN ONLY. Nothing in this plan is built.** Revision 7,
+2026-09-18. Revisions 2–6 accepted the findings of five review rounds
+(§9). Revision 7 accepts two corrections from the review of revision 6
+(V1–V2, one P1) and four reconciliations. The standalone T3 fix is
 **shipped**: PR #46, merged to `main` at `9937728`, live on production,
 and this branch is rebased onto it, so the queue module's shipped shape
 (`_id` per entry, `LOCK_NAME = "pc-order-queue"`, `assignMissingIds`,
@@ -639,7 +639,14 @@ that trusts `files[].path` inherits all of it.
   INSERT` trigger on `pending_jobs` (and `print_jobs`) that writes a
   provenance row `unverified` for every entry whose path has no allocation
   at insert time. The new `register-job` marks its own rows; the trigger
-  catches everyone else's. Revision 2 let the deploy-moment request fail;
+  catches everyone else's. **The reader's denial is the gate and is
+  mandatory on its own**: a reader denies on *missing* provenance whether
+  or not the trigger exists or fired — the trigger adds evidence for the
+  recovery view, it is not what protects the signer. A reader that
+  required the `unverified` mark before denying would trust every row the
+  trigger missed. The test asserts denial on a row with no provenance
+  record at all, with the trigger absent. Revision 2 let the deploy-moment
+  request fail;
   that is a customer-facing failure at a deploy moment — F4's failure mode
   reappearing inside F1's fix — and the safe form costs nothing. So:
   - **At A**, an entry with an allocation (by `allocationId`, or by exact
@@ -747,10 +754,15 @@ that trusts `files[].path` inherits all of it.
       operator confirms the verdict **and attests** that no other tenant's
       data was ever loaded into this project — recorded in `attestation`
       with their identity — before the migration is applied (the rehearsal
-      prints all three sets and the unknowns). **The rehearsal also proves
-      the predicate on both fixtures**: staging (two stores) must classify
-      `multi-store`; a scripted single-store copy must classify
-      `single-store` — the case revision 5 could not produce.
+      prints all three sets and the unknowns). **The rehearsal proves the
+      predicate on a fixture set, not a fixture**: staging (two stores)
+      must classify `multi-store`; a scripted single-store copy must
+      classify `single-store` — the case revision 5 could not produce;
+      and a scripted copy carrying **a null-store row and a row whose
+      `org_id` is foreign or resolves to no organization** must surface
+      both as **unknowns** that force adjudication, so the separate org
+      check cannot be satisfied by omission — a predicate that never sees
+      an unresolved org has not been shown to catch one.
     - In **`single-store` mode** the one question — which tenant — has
       exactly one possible answer, and the store's owner adjudicates the
       remaining question, whether the reference is intact, through the
@@ -904,8 +916,23 @@ objects the server allocated. Slice 8's capability and limiter close it.
 
 **A.** `orders-list`, `orders-save` (§8); `send-print-job` dual-mode with
 `RELEASE2_ACTIVATE_SEND` (activation at C, unauthenticated branch deleted
-at D). Migration `release2_08`: `orders.client_order_id uuid`, unique on
-`(store_id, client_order_id) where client_order_id is not null`;
+at D). Migration `release2_08`: **`orders.client_order_id text`**, with
+`check (client_order_id ~ '^[A-Za-z0-9_-]{1,64}$')`, unique on
+`(store_id, client_order_id) where client_order_id is not null`. **Why
+text, not uuid** (V2): the shipped generator (`orderQueue.js:66–68`)
+returns `crypto.randomUUID()` when it exists and otherwise a
+`q_<base36>_<base36>` fallback — and `randomUUID` needs a secure
+context, so the fallback will fire somewhere eventually. That value
+cannot enter a `uuid` column, and the order carrying it would be
+undrainable. A deterministic v5 mapping from the `_id` cannot rescue it
+client-side either: `crypto.subtle` is unavailable in exactly the
+contexts where the fallback fires. So the **stable representation of
+every persisted source id is the `_id` itself, as bounded opaque text**,
+sent verbatim as `clientOrderId` and stored as sent. Mapping an identity
+is not hashing content: two identical orders already hold different
+`_id`s and stay distinct. **Never reminted on retry** — the id is read
+from the persisted entry every time — and **never a reason to discard a
+queued order**: an entry with a `q_` id drains like any other.
 `orders.quoted_at timestamptz`; `orders.submitted_by_employee_id uuid`;
 `orders.attribution_note text`; `orders.margin_source text` (`'client'` for
 everything until slice 9).
@@ -947,8 +974,10 @@ two identical orders in a minute (two 4×6 photo jobs, two card reorders)
 is ordinary counter traffic. **Content is not identity when content
 repeats.** So:
 
-- Every entry gets a **random `clientOrderId` at enqueue** from this
-  slice on — one writer, one moment, one identity per occurrence.
+- Every entry gets a **random `_id` at enqueue** (the shipped generator,
+  UUID or `q_` fallback) — one writer, one moment, one identity per
+  occurrence — and that `_id`, verbatim, is its `clientOrderId` (§ A
+  above for the representation).
 - Legacy entries (no id) are given ids **in place**, by whichever tab
   holds the Web Lock (`navigator.locks.request("pc-order-queue", { mode:
   "exclusive" }, …)`) — the shipped `assignMissingIds`: the holder reads
@@ -1035,18 +1064,48 @@ repeats.** So:
     stored is reported "not saved and could not be queued" and **never
     acknowledged or sent** — an id on the wire with no stored row behind
     it is the unstable identity that produces a duplicate next time.
-- **Two residual windows, bounded and stated, neither a loss.** (1) A
-  *post-#46, pre-slice-6* tab may drain a legacy entry by direct anon
-  insert while a slice-6 tab drains the same entry through `orders-save`:
-  the old tab inserts outside the lock, then finds the entry already
-  dequeued. Result: a **duplicate** row in history, visible and
-  recoverable, never a lost order. It closes at slice 6's stage E, when
-  the anon insert is refused. (2) A *pre-#46* tab can still overwrite the
-  legacy key from a snapshot — the shipped defect's own residual, which
-  #46 being live already ends as those tabs reload; it cannot touch
-  `pendingOrders_v2`. The C cutover has the owner **close or reload every
-  counter tab on all three devices before the flag flip**, recorded as a
-  checklist step; the sw update flow ends any tab that was missed.
+- **Two residual windows, stated honestly — one is a duplicate, the
+  other is an inherited loss risk** (V1; revision 6's "neither a loss" is
+  withdrawn). (1) A *post-#46, pre-slice-6* tab may drain a legacy entry
+  by direct anon insert while a slice-6 tab drains the same entry through
+  `orders-save`: the old tab inserts outside the lock, then finds the
+  entry already dequeued. Result: a **duplicate** row in history, visible
+  and recoverable. It closes at slice 6's stage E, when the anon insert
+  is refused. (2) A *pre-#46* tab **can still lose legacy-key entries.**
+  Its drain's failure path writes back a pre-await snapshot of the legacy
+  key, no new-tab lock can reach that write, and the legacy key has none
+  of the new key's isolation — so an entry a cooperating writer appended
+  to the legacy key during that old drain's awaits is erased. The
+  reproduction is sound and uses two writer classes this plan permits to
+  coexist. **Pre-#46 tabs therefore carry an inherited loss risk for the
+  legacy backlog until they are retired**, and no no-loss claim is made
+  for that backlog before then. Recorded explicitly:
+  - **The window**: from #46 going live (2026-09-18) until every pre-#46
+    execution context is gone.
+  - **The affected population**: entries in `pendingTransactions` on a
+    device where a pre-#46 tab still exists — including a tab
+    **suspended in the background that can resume** days later with its
+    old bundle still loaded (a suspended iPad tab keeps its JavaScript; a
+    service-worker update does not swap a page's already-loaded code),
+    and any offline context that resumes. New-key entries are outside the
+    population by construction.
+  - **The operational exit criterion, operator-verified — a compatibility
+    checkpoint before slice 6's stage C**: on each counter device (the
+    counter iPad and both kiosks) and any staff device that has run the
+    app, the owner **closes every tab of the app and restarts the
+    browser** after #46 is live, and records device, date and who did it
+    in the checklist. Quiescence is **not** inferred from inside a tab —
+    a stale tab announces nothing and `navigator.locks.query()` cannot
+    see a writer that is not holding the lock — and in-place draining is
+    kept; the checkpoint is a human act, recorded, and it is the only
+    thing that turns "inherited risk" into "retired". Until it is
+    recorded for a device, that device's legacy backlog is treated as
+    at-risk and the counter is told so.
+  - **The mixed-version failure-path test stays**: the shipped pre-#46
+    drain (copied verbatim as a mutant) runs its failure path while a
+    cooperating writer appends to the legacy key, and the test asserts
+    the append **is lost** — the inherited risk, demonstrated — and that
+    an entry in `pendingOrders_v2` is untouched by the same run.
 
 **Dequeue rule** (from the review of decision 7): **no failed save status
 may dequeue a row.** A row leaves the queue only on (a) a validated save
@@ -1057,7 +1116,14 @@ row where it is. Tests, each with its failing mutation: **lost response**
 (server inserted, client saw a network error, retry → `duplicate`);
 **reload mid-drain** (ids survive, second pass yields duplicates, one row
 each); **concurrent drain** (two tabs, same queue, exactly one row per
-order); **two-tab legacy id assignment** (two tabs, two identical legacy
+order); **id representation** (an entry with a UUID `_id`, an entry with an
+existing `q_` `_id`, and two identical id-less legacy occurrences each
+drain to **exactly one server row per occurrence**, and a restart after a
+lost acknowledgement produces no second row — all with the generator's
+fallback **forced** by removing `crypto.randomUUID` while
+`navigator.locks` remains available; the mutant that remints an id on
+retry, and the mutant that skips an entry for having a `q_` id, must
+fail); **two-tab legacy id assignment** (two tabs, two identical legacy
 entries, exactly two ids and two rows; the mutant that assigns ids
 **outside the lock** — an unsynchronized assignment — must fail); **enqueue
 during drain** (an entry enqueued while a drain awaits survives the drain's
@@ -1278,13 +1344,16 @@ storage path; a row can reference only a path the server allocated.**
 | stale: "only deploy-moment callers can supply unallocated paths" | §6.1: three caller classes named; public callers refused from C and unclaimable until then; older deployments **bounded**, not closed (T1) |
 | **T1** service-key scoping does not retire immutable old deploys; production permalinks outside it | §4.2 step 3 and 6: bounded claim; immutable-URL inventory; retire or rotate the key through a rehearsed transition; rollback = fresh build, never republish; readback probes per URL, re-run after every rollback rehearsal |
 | **T2** disposal exclusion must outlive the transaction; `for update` on an empty lookup locks nothing | §6.1: durable `path_exclusions` keyed `(bucket, path)`, inserted before the removal list is returned, retained across retry and after completion; mandatory precondition on every allocation/grant/claim; `pg_advisory_xact_lock` on the path hash as the canonical serialization |
-| **T3** whole-key overwrite of a pre-await snapshot; unawaited background drains; swallowed persistence errors | §6.2: standalone fix proposed for `main`; in the slice, a new key isolated from old bundles, every RMW under the lock, failed persistence = failure to queue, no unstable identity ever sent |
+| **T3** whole-key overwrite of a pre-await snapshot; unawaited background drains; swallowed persistence errors | §6.2: standalone fix **SHIPPED** (PR #46, `main` at `9937728`); in the slice, a new key isolated from old bundles, every RMW under the lock, failed persistence = failure to queue, no unstable identity ever sent |
 | reconciliations: `object_removed_at` in the schema; unsynchronized-assignment mutant; R1/R5/R7 rows; "only deploy-moment" sentence; historical-dataset single-store check; JSX parser | §6.1 schema; §6.2 tests; this table; §6.1; §6.1 dataset mode; §0.2 |
-| **U1** two `setItem`s are not a transaction; a non-cooperating writer's append during handoff is lost | §6.2: "atomic pair" withdrawn; retained-source reconciliation — legacy key never cleared, entries drained in place by `_id` with the shipped merge, pre-fix entries handled separately, restartable; residual windows are duplicates, never losses |
+| **U1** two `setItem`s are not a transaction; a non-cooperating writer's append during handoff is lost | §6.2: "atomic pair" withdrawn; retained-source reconciliation — legacy key never cleared, entries drained in place by `_id` with the shipped merge, pre-fix entries handled separately, restartable; one residual window is a duplicate, the other an inherited loss risk with a recorded exit criterion (V1) |
 | **U2** a locked deploy still serves; the signer is a separate bundle; "service key" unnamed | §4.2 step 3: lock withdrawn, three mechanisms (delete, verified restriction, credential revocation) recorded per URL; signer/deleter in the inventory and probed individually; key type established in rehearsal (legacy JWT vs `sb_secret_`), full rotation procedure incl. the client's anon key |
 | **U3** the store/org union could never be single-store | §6.1: canonical store ids, org mappings validated separately, slugs resolved through `stores.slug`; unknowns listed and adjudicated, never dropped; the predicate proven on both fixtures in the rehearsal |
 | standalone fix status | header, §6.2, §10 11a: SHIPPED at `9937728`; branch rebased; shipped names are the slice-6 baseline |
-| "old handlers stamp `unverified`" | §6.1: withdrawn; missing provenance is untrusted by reader default, and an `AFTER INSERT` trigger adds the mark for rows no new handler wrote |
+| "old handlers stamp `unverified`" | §6.1: withdrawn; missing provenance is denied by the reader unconditionally, and an `AFTER INSERT` trigger adds the mark as evidence for the recovery view |
+| **V1** "neither a loss" was false: the old drain's failure path erases legacy-key appends | §6.2: withdrawn; window, affected population (incl. suspended/resumable contexts) and an operator-verified compatibility checkpoint recorded as the exit criterion; in-place draining kept; mixed-version failure-path test kept |
+| **V2** the shipped `q_` fallback id cannot enter a `uuid` column | §6.2 A: `client_order_id` is bounded opaque text, the `_id` verbatim; never reminted, never a reason to discard; four representation tests with the fallback forced |
+| reconciliations: decision 11 "moved"; T3 trace row "proposed"; null-store / unresolved-org fixture; missing-provenance denial independent of the trigger | §10 11; this table; §6.1 fixtures; §6.1 |
 | status wording | header table: code deployed dark / gates verified live / migrations applied / client paths enabled, each stated separately |
 
 ---
@@ -1357,11 +1426,14 @@ storage path; a row can reference only a path the server allocated.**
     `storeConfig.js`, and only the latter may import the raw client after
     the last slice.
 11. **Per-occurrence identity and isolation from old clients** (§6.2):
-    random id per entry at enqueue; a new storage key no old bundle touches;
-    legacy entries moved by one tab under Web Locks; enqueue and every RMW
-    under the same lock; failed persistence is failure to queue and no
-    identity is sent unpersisted; no destructive queue write without Web
-    Locks; the lease fallback withdrawn.
+    random `_id` per entry at enqueue, sent verbatim as bounded opaque
+    text; a new storage key no old bundle touches; legacy entries **drained
+    in place**, never moved, ids assigned in place under Web Locks; enqueue
+    and every RMW under the same lock; failed persistence is failure to
+    queue and no identity is sent unpersisted; no destructive queue write
+    without Web Locks; the lease fallback withdrawn. Pre-#46 tabs carry an
+    inherited loss risk for the legacy backlog until the operator-verified
+    retirement checkpoint is recorded per device (V1).
 11a. **T3 standalone fix: SHIPPED** (§6.2) — PR #46, `main` at `9937728`,
     live on production, branch rebased onto it. Slice 6 builds on the
     shipped module's names and lock, and drains the legacy key in place
