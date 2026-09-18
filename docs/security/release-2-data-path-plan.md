@@ -1,9 +1,9 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing in this plan is built.** Revision 7,
-2026-09-18. Revisions 2–6 accepted the findings of five review rounds
-(§9). Revision 7 accepts two corrections from the review of revision 6
-(V1–V2, one P1) and four reconciliations. The standalone T3 fix is
+**Status: PLAN ONLY. Nothing in this plan is built.** Revision 8,
+2026-09-18. Revisions 2–7 accepted the findings of six review rounds
+(§9). Revision 8 accepts one P2 and one wording correction from the
+review of revision 7 (W1, W2). The standalone T3 fix is
 **shipped**: PR #46, merged to `main` at `9937728`, live on production,
 and this branch is rebased onto it, so the queue module's shipped shape
 (`_id` per entry, `LOCK_NAME = "pc-order-queue"`, `assignMissingIds`,
@@ -924,11 +924,13 @@ returns `crypto.randomUUID()` when it exists and otherwise a
 `q_<base36>_<base36>` fallback — and `randomUUID` needs a secure
 context, so the fallback will fire somewhere eventually. That value
 cannot enter a `uuid` column, and the order carrying it would be
-undrainable. A deterministic v5 mapping from the `_id` cannot rescue it
-client-side either: `crypto.subtle` is unavailable in exactly the
-contexts where the fallback fires. So the **stable representation of
-every persisted source id is the `_id` itself, as bounded opaque text**,
-sent verbatim as `clientOrderId` and stored as sent. Mapping an identity
+undrainable. So the **stable representation of every persisted source id
+is the `_id` itself, as bounded opaque text**, sent verbatim as
+`clientOrderId` and stored as sent. That choice stands on **preserving
+existing identities without conversion** — it needs no claim that a
+mapping would be impossible, and revision 7's sentence about
+`crypto.subtle` is withdrawn: `newId()` tests only whether `randomUUID`
+is absent or throws and never inspects `subtle` (W2). Mapping an identity
 is not hashing content: two identical orders already hold different
 `_id`s and stay distinct. **Never reminted on retry** — the id is read
 from the persisted entry every time — and **never a reason to discard a
@@ -1090,17 +1092,50 @@ repeats.** So:
     and any offline context that resumes. New-key entries are outside the
     population by construction.
   - **The operational exit criterion, operator-verified — a compatibility
-    checkpoint before slice 6's stage C**: on each counter device (the
-    counter iPad and both kiosks) and any staff device that has run the
-    app, the owner **closes every tab of the app and restarts the
-    browser** after #46 is live, and records device, date and who did it
-    in the checklist. Quiescence is **not** inferred from inside a tab —
-    a stale tab announces nothing and `navigator.locks.query()` cannot
-    see a writer that is not holding the lock — and in-place draining is
-    kept; the checkpoint is a human act, recorded, and it is the only
-    thing that turns "inherited risk" into "retired". Until it is
-    recorded for a device, that device's legacy backlog is treated as
-    at-risk and the counter is told so.
+    checkpoint before slice 6's stage C** (W1). Closing the old contexts
+    is necessary and **not sufficient**: `public/sw.js` serves navigations
+    network-first with the cached shell as the fallback, and assets
+    cache-first with a background refresh, so a device closed, restarted
+    and reopened **offline or on a flaky connection gets the cached
+    pre-#46 shell and the cached pre-#46 bundle, both successfully** — the
+    likeliest reopen condition for a counter tablet. A restart terminates
+    the old context; it does not establish what the next one loads. The
+    checkpoint therefore has three parts, per device (the counter iPad,
+    both kiosks, any staff device that has run the app), each recorded
+    with device, date and person:
+    1. **Close** every tab of the app and restart the browser after #46
+       is live.
+    2. **Reopen the canonical app URL ONLINE** and **verify from the
+       running client** that its build is #46 or later. **A server deploy
+       id is not evidence of the client currently executing.** The
+       evidence is a **build stamp compiled into the bundle** — Vite
+       `define` of Netlify's `COMMIT_REF` and `DEPLOY_ID` at build time,
+       rendered in the Admin panel footer — and its short SHA is checked
+       against `git` to descend from `9937728`. **That stamp does not
+       exist in the shipped client today**, so this checkpoint cannot be
+       passed by any device until a small standalone PR ships it (the
+       #46 shape: its own review, ahead of the slice). Until then every
+       device is **unverified**.
+    3. **Reopen OFFLINE** (network off at the device) and verify the
+       same stamp: after step 2 the service worker has stored the fresh
+       shell and, on first fetch, the fresh bundle, so an offline reopen
+       must now serve the fixed pair. A device that shows an older stamp
+       offline, or cannot show one, **stays unverified and does not
+       pass.**
+    **Do NOT clear site data** on any device: that destroys the backlog
+    this checkpoint exists to protect. The shell refresh in steps 2–3 is
+    the service worker's own network-first navigation and asset fetch,
+    which cannot touch `localStorage` (a service worker has no access to
+    it); the only thing that can is a person clearing site data, which is
+    forbidden here, and the checkpoint record includes the queue's entry
+    count before and after so a loss would be visible. Quiescence is
+    **not** inferred from inside a tab — a stale tab announces nothing
+    and `navigator.locks.query()` cannot see a writer that is not holding
+    the lock — and in-place draining is kept; the checkpoint is a human
+    act with evidence from the executing client, recorded, and it is the
+    only thing that turns "inherited risk" into "retired". Until all
+    three parts are recorded for a device, that device's legacy backlog
+    is treated as at-risk and the counter is told so.
   - **The mixed-version failure-path test stays**: the shipped pre-#46
     drain (copied verbatim as a mutant) runs its failure path while a
     cooperating writer appends to the legacy key, and the test asserts
@@ -1142,8 +1177,11 @@ the gap is measured, not assumed — and slice 9 inverts it.
 
 **C checklist.** **Before the flag flip**: the pre-#46 retirement
 checkpoint is recorded per device — every app tab closed and the browser
-restarted on the counter iPad, both kiosks and any staff device, with
-device, date and person (V1). Then: a real order saves; manager sees the margin column, staff
+restarted, then an **online reopen showing a client build stamp at or
+after `9937728`**, then an **offline reopen showing the same stamp**, on
+the counter iPad, both kiosks and any staff device, with device, date
+and person, and **without clearing site data** (V1, W1); a device that
+cannot show the stamp offline does not pass. Then: a real order saves; manager sees the margin column, staff
 does not — the first server-enforced margin gate; network off, two orders
 queued, network on, both drain exactly once; reload with queued rows and an
 expired session → prompt → sign in as a *different* employee → the orders
@@ -1356,6 +1394,8 @@ storage path; a row can reference only a path the server allocated.**
 | "old handlers stamp `unverified`" | §6.1: withdrawn; missing provenance is denied by the reader unconditionally, and an `AFTER INSERT` trigger adds the mark as evidence for the recovery view |
 | **V1** "neither a loss" was false: the old drain's failure path erases legacy-key appends | §6.2: withdrawn; window, affected population (incl. suspended/resumable contexts) and an operator-verified compatibility checkpoint recorded as the exit criterion; in-place draining kept; mixed-version failure-path test kept |
 | **V2** the shipped `q_` fallback id cannot enter a `uuid` column | §6.2 A: `client_order_id` is bounded opaque text, the `_id` verbatim; never reminted, never a reason to discard; four representation tests with the fallback forced |
+| **W1** restart does not establish what the next context loads; the sw serves the cached pre-#46 shell and bundle offline | §6.2 checkpoint: online reopen with a client build stamp verified from the executing bundle, then an offline reopen showing the same; a server deploy id is not evidence; site data never cleared; the stamp is a prerequisite PR because none exists today |
+| **W2** "`crypto.subtle` is unavailable in exactly the contexts where the fallback fires" was wrong; `newId()` never inspects `subtle` | §6.2 A: sentence withdrawn; opaque text stands on preserving identities without conversion |
 | reconciliations: decision 11 "moved"; T3 trace row "proposed"; null-store / unresolved-org fixture; missing-provenance denial independent of the trigger | §10 11; this table; §6.1 fixtures; §6.1 |
 | status wording | header table: code deployed dark / gates verified live / migrations applied / client paths enabled, each stated separately |
 
