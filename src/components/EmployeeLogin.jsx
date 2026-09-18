@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { findEmployeeByPin, isSupabaseConfigured, setStoredEmployee } from "../lib/supabase.js";
+import { formatBuildStamp, BUILD } from "../lib/buildStamp.js";
 
 const KEY_GRID = ["1","2","3","4","5","6","7","8","9","clear","0","ok"];
 
@@ -145,6 +146,19 @@ export default function EmployeeLogin({ onLogin, onCancel, title = "Employee Sig
             Cancel
           </button>
         )}
+        {/* Client build stamp: the same compile-time value as the Admin
+            footer, shown here so a device can be checked with no admin
+            sign-in at all. This dialog is what staff and the kiosk exit
+            already reach. A commit hash is not a secret. Readable offline,
+            because it is part of the bundle the service worker cached. */}
+        <div
+          className="emp-login-build-stamp"
+          data-build-commit={BUILD.commit || ""}
+          data-build-deploy={BUILD.deployId || ""}
+          style={{ marginTop:14, fontSize:10, opacity:0.6, fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace", wordBreak:"break-all", textAlign:"center" }}
+        >
+          {formatBuildStamp()}
+        </div>
       </div>
     </div>
   );

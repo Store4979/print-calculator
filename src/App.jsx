@@ -36,6 +36,7 @@ import {
 import {
   saveOrderWithFallback, drainPendingOrders, loadPendingOrders,
 } from "./lib/orderQueue.js";
+import { formatBuildStamp, BUILD } from "./lib/buildStamp.js";
 import {
   fetchStoreConfig, publishStoreConfig,
   getSession, onAuthChange, getRoleForSession, isAdminRole, signOut,
@@ -4364,6 +4365,19 @@ try {
                 setOverrides={setSigns365Overrides}
               />
               </>)}
+              {/* Client build stamp. Compiled into THIS bundle at build time
+                  (vite.config.js `define`), so it names the code that is
+                  actually running — including after an offline reopen from
+                  the service worker cache. Not a server value; nothing is
+                  fetched to display it. */}
+              <div
+                className="admin-build-stamp"
+                data-build-commit={BUILD.commit || ""}
+                data-build-deploy={BUILD.deployId || ""}
+                style={{ marginTop:18, paddingTop:10, borderTop:"1px solid var(--border, #e5e7eb)", fontSize:11, opacity:0.75, fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace", wordBreak:"break-all" }}
+              >
+                {formatBuildStamp()}
+              </div>
             </div>
           </div>
         )}
