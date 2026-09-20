@@ -8,11 +8,17 @@
 //     what is executing — the distinction W1 exists to make.
 //  2. A missing value renders as an unmistakable MISSING, never a blank and
 //     never something that reads as a version.
-// Plus: when a `dist/` exists, the literal is inside the emitted MAIN bundle
-// — the file the service worker caches — so it is readable offline.
+// What is NOT here: any read of the repo's dist/. On Netlify `yarn test` runs
+// BEFORE `yarn build`, and the checkout is not clean — the previous deploy's
+// dist/ is restored with the build cache. The first version of this file read
+// dist/ behind an existsSync guard, assuming CI would never have one; PR #47's
+// production-site preview then failed in `yarn test` on the 09-18 bundle. The
+// emitted-bundle check belongs after the build, in scripts/inject-sw-manifest.mjs
+// (asserted wired and ordered below), and section 3 keeps dist/ out of this
+// directory.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { stripComments } from "./source-util.mjs";
 import { formatBuildStamp, MISSING_STAMP } from "../../src/lib/buildStamp.js";
 
@@ -112,25 +118,23 @@ test("MUTANT: a renderer that falls back to 'unknown' or an empty string for a m
   assert.match(bad, /unknown/, "the mutant reads as a version line with a soft word in it");
 });
 
-// ── 3. in the bundle the service worker caches ─────────────────────────────
-test("when dist/ exists, the __PC_BUILD__ literal is inside the emitted MAIN bundle (the file sw.js caches), so it is readable offline", () => {
-  const dist = new URL("../../dist/assets/", import.meta.url);
-  if (!existsSync(dist)) {
-    // No build in this checkout: nothing to assert against. Recorded, not
-    // passed silently — the Netlify build command runs `yarn test` BEFORE
-    // `yarn build`, so this branch is what CI sees; the assertion below is
-    // for a local `yarn build && yarn test`.
-    return;
+// ── 3. yarn test never reads the repo's dist/ ──────────────────────────────
+// A test that reads dist/ asserts against whatever build happens to be on
+// disk. On Netlify that is the PREVIOUS deploy's output, so it either fails
+// the deploy for a reason unrelated to the code under test (PR #47) or, worse,
+// passes on stale output. Post-build assertions live in inject-sw-manifest.mjs.
+// Second time this has bitten: sw-cache.test.js ("the SOURCE worker carries
+// the injection marker") already declined to read dist/ for this reason, in a
+// comment; a comment is remembered, this test makes it unrepresentable.
+// Temp-dir fixtures named "dist" (build-env-bundle, inject-sw-manifest) are
+// fine and are not matched: the forbidden thing is a path into THIS repo.
+test("no test in scripts/tests reads the repo's dist/ — post-build checks belong in inject-sw-manifest.mjs", () => {
+  const here = new URL("./", import.meta.url);
+  const files = readdirSync(here).filter((f) => /\.test\.js$/.test(f));
+  assert.ok(files.includes("build-stamp.test.js"), "this file is in the set it checks");
+  for (const f of files) {
+    const src = stripComments(readFileSync(new URL(f, here), "utf8"));
+    assert.doesNotMatch(src, /["'`]\.\.\/\.\.\/dist(?:\/|["'`])/, `${f} reads the repo's dist/`);
+    assert.doesNotMatch(src, /\/dist\/assets\//, `${f} reads the repo's dist/assets/`);
   }
-  const main = readdirSync(dist).find((f) => /^main-[\w-]+\.js$/.test(f));
-  assert.ok(main, "main bundle present");
-  const js = readFileSync(new URL(main, dist), "utf8");
-  // The define inlines an object literal with these keys; the minifier may
-  // unquote them, so accept both spellings. What matters is that the value is
-  // a LITERAL in the file, with a build-time timestamp.
-  assert.match(js, /"?commit"?:/);
-  assert.match(js, /"?deployId"?:/);
-  assert.match(js, /"?builtAt"?:"20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d/);
-  assert.match(js, /BUILD STAMP MISSING/, "the MISSING text ships in the bundle too, so an offline local bundle still says so");
-  assert.doesNotMatch(js, /__PC_BUILD__/, "the identifier must be REPLACED by the literal, not left for runtime");
 });
