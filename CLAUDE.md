@@ -109,6 +109,22 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - The /upload redirect in netlify.toml must come BEFORE the catch-all SPA redirect.
 - Tailwind specificity conflicts need ultra-specific selectors or targeted !important.
 - Netlify env var changes do NOT apply to running deploys — manual redeploy required.
+- NETLIFY'S CHECKOUT IS NOT CLEAN: the previous deploy's `dist/` comes back with
+  the build cache, and `yarn test` runs BEFORE `yarn build` in the command. A
+  test that reads `dist/` — even behind `if (existsSync(dist))` — asserts
+  against the PREVIOUS build. Seen 2026-09-20 on PR #47's production-site
+  preview: `yarn test` read a `dist/assets/main-*.js` whose chunk hashes were
+  the ones production was serving from 09-18, and failed the deploy on a
+  bundle the PR had not built. Second bite: scripts/tests/sw-cache.test.js
+  ("the SOURCE worker carries the injection marker") had already declined to
+  read dist/ for this reason, in a comment nobody re-read. Post-build
+  assertions go in scripts/inject-sw-manifest.mjs (runs after the build, can
+  fail the deploy); scripts/tests/build-stamp.test.js now forbids dist/ reads
+  across scripts/tests/, so the trap is unrepresentable rather than remembered.
+  Reading the red: the four GitHub checks (deploy-preview status + Header
+  rules / Redirect rules / Pages changed) all fail together on ANY build
+  failure and say nothing about which step — open the deploy log (the check's
+  target_url) and find the first non-zero exit before naming a cause.
 - netlify.toml [functions] included_files=["package.json"] is load-bearing: it
   changes each function bundle's digest so runtime upgrades actually re-deploy them.
 - applyScenario only sets fields present in a config — tile presets must explicitly

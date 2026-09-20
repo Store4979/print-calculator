@@ -133,6 +133,57 @@ if (missing.length) {
       "  The cache allowlist would not cover them. Aborting.");
 }
 
+// ── Build stamp invariant (2026-09-18) ──────────────────────────────────────
+// The client build stamp (vite.config.js `define` -> src/lib/buildStamp.js)
+// exists so a counter device can prove which bundle it is RUNNING, including
+// after an offline reopen from this worker's cache. That only works if the
+// stamp is a LITERAL inside the emitted main bundle. This step runs after
+// `yarn build` on Netlify (scripts/tests run BEFORE the build and cannot see
+// dist/), so it is the one place the emitted artefact can be checked and the
+// deploy failed. Checked here, before anything is written, like the manifest.
+//
+// What is asserted: the main bundle contains the inlined object with a
+// build-time `builtAt`, the MISSING text (so a local bundle still says so),
+// and NOT the raw identifier (which would mean `define` did not apply). On a
+// Netlify build, COMMIT_REF and DEPLOY_ID must also be present as literals:
+// a production bundle that says MISSING is honest but useless for the device
+// retirement checkpoint, so it does not ship.
+//
+// SCOPE: the check applies when the dist holds this app's entry bundle,
+// main-*.js (vite.config.js rollupOptions.input `main`; a test pins that
+// name). The injector's own fixture tests drive it against throwaway dists
+// with no such bundle, and for those it says so and skips. A real build that
+// emitted no main bundle would also skip, which is why the entry name is
+// pinned by test rather than trusted.
+const mainBundle = diskAssets.find((u) => /^\/assets\/main-[\w-]+\.js$/.test(u));
+if (!mainBundle) {
+  console.log("inject-sw-manifest: no main-*.js entry bundle in this dist; build stamp invariant not applicable (fixture or non-app dist)");
+} else {
+  const js = readFileSync(join(DIST, mainBundle.slice(1)), "utf8");
+  const problems = [];
+  if (/__PC_BUILD__/.test(js)) problems.push("the __PC_BUILD__ identifier survived: vite `define` did not apply");
+  if (!/"?builtAt"?:"20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d/.test(js)) problems.push("no build-time builtAt literal in the main bundle");
+  if (!/"?commit"?:/.test(js) || !/"?deployId"?:/.test(js)) problems.push("stamp object keys not found in the main bundle");
+  if (!/BUILD STAMP MISSING/.test(js)) problems.push("the MISSING text is not in the main bundle");
+  const onNetlify = Boolean(process.env.NETLIFY || process.env.DEPLOY_ID || process.env.BUILD_ID || process.env.SITE_ID);
+  if (onNetlify) {
+    // Match the literal's own values, not the env: the env could be set while
+    // the define silently dropped it.
+    const commitLit = js.match(/"?commit"?:"([0-9a-f]{7,40})"/);
+    const deployLit = js.match(/"?deployId"?:"([0-9a-f]{8,})"/);
+    if (!commitLit) problems.push("Netlify build but the main bundle carries no commit literal: COMMIT_REF was empty at build time");
+    if (!deployLit) problems.push("Netlify build but the main bundle carries no deployId literal: DEPLOY_ID was empty at build time");
+    if (commitLit && process.env.COMMIT_REF && commitLit[1] !== String(process.env.COMMIT_REF).trim())
+      problems.push(`bundle commit ${commitLit[1]} != build env COMMIT_REF ${process.env.COMMIT_REF}`);
+  }
+  if (problems.length) {
+    die("inject-sw-manifest: BUILD STAMP invariant failed; refusing to ship a bundle that cannot identify itself:",
+        ...problems.map((p) => "  " + p),
+        `  (bundle: ${mainBundle}, netlify=${onNetlify})`);
+  }
+  console.log(`inject-sw-manifest: build stamp present in ${mainBundle}${onNetlify ? " (Netlify: commit + deployId literals verified)" : " (local build: MISSING stamp is expected and present)"}`);
+}
+
 // Validation passed. Only now is anything written.
 if (pendingWrite !== null) writeFileSync(SW, pendingWrite, "utf8");
 
