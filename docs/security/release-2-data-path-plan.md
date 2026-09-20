@@ -1,26 +1,34 @@
 # Release 2 — moving the 17 client data paths (stage 0, slices 4–9)
 
-**Status: PLAN ONLY. Nothing in this plan is built.** Revision 8,
-2026-09-18. Revisions 2–7 accepted the findings of six review rounds
-(§9). Revision 8 accepts one P2 and one wording correction from the
-review of revision 7 (W1, W2). The standalone T3 fix is
-**shipped**: PR #46, merged to `main` at `9937728`, live on production,
-and this branch is rebased onto it, so the queue module's shipped shape
-(`_id` per entry, `LOCK_NAME = "pc-order-queue"`, `assignMissingIds`,
-`dequeueById`, one drain in flight) is the source baseline slice 6
-builds on.
+**Status: PLAN ONLY. Nothing in this plan is built.** Revision 9,
+2026-09-20. Revisions 2–7 accepted the findings of six review rounds
+(§9). Revision 8 accepted one P2 and one wording correction from the
+review of revision 7 (W1, W2) and was **accepted with no blocking
+findings**; revision 9 records that, the second standalone PR, and two
+wording corrections from that review (§6.2: page code can write
+`localStorage`; a queue-count decrease is reconciled against acknowledged
+saves). The standalone T3 fix is **shipped**: PR #46, merged to `main` at
+`9937728`, live on production, so the queue module's shipped shape (`_id`
+per entry, `LOCK_NAME = "pc-order-queue"`, `assignMissingIds`,
+`dequeueById`, one drain in flight) is the source baseline slice 6 builds
+on. The **client build stamp** the §6.2 checkpoint depends on is
+**merged**: PR #47, `main` at `7ec5af4` (`src/lib/buildStamp.js`,
+compiled in by `vite.config.js`, checked post-build by
+`scripts/inject-sw-manifest.mjs`). This branch is rebased onto `7ec5af4`.
+Merged source, live deployment and completed device checkpoints are three
+separate facts; §6.2 states which are established.
 
 **What is true of production today, stated in four separate columns**
 (a corrected earlier habit of saying "production is untouched by Release
 2"; four guarded routes plus four absent routes is not eight guard
 passes):
 
-| | state on production (`main` at `9937728`) |
+| | state on production (`main` at `7ec5af4`) |
 |---|---|
 | **code deployed, dark** | slice 2's four functions (`staff-login`, `enroll-redeem`, `enroll-ticket-create`, `csrf-bootstrap`) are deployed and refuse with the kill switch's JSON 404. Slice 3's four exist only on this branch; on production they are **absent** (HTML 404), which is not a guard pass. `netlify/lib/release2.js` is deployed. |
 | **gates verified live** | the production-ref refusal, verified 2026-09-18 on all four deployed routes (status, content type and body recorded per route). Not verified: a preview URL with and without an Origin header (that is G0's probe). |
 | **migrations applied** | none from Release 2. Production's ledger ends at `phase_e_03`. Staging has 01–05. |
-| **client paths enabled** | none. No client on any site calls a Release 2 endpoint; the standalone queue fix (#46) is a client change but not a Release 2 path. |
+| **client paths enabled** | none. No client on any site calls a Release 2 endpoint; the standalone queue fix (#46) and the build stamp (#47) are client changes but not Release 2 paths. |
 
 This is the execution plan for Part 6 of `release-2-plan.md` (the 17 paths)
 and the parts of Part 7 they drive (steps 4, 4a, 4e, 5.1–5.4, 5.6), plus the
@@ -1109,13 +1117,23 @@ repeats.** So:
        running client** that its build is #46 or later. **A server deploy
        id is not evidence of the client currently executing.** The
        evidence is a **build stamp compiled into the bundle** — Vite
-       `define` of Netlify's `COMMIT_REF` and `DEPLOY_ID` at build time,
-       rendered in the Admin panel footer — and its short SHA is checked
-       against `git` to descend from `9937728`. **That stamp does not
-       exist in the shipped client today**, so this checkpoint cannot be
-       passed by any device until a small standalone PR ships it (the
-       #46 shape: its own review, ahead of the slice). Until then every
-       device is **unverified**.
+       `define` of Netlify's `COMMIT_REF` and `DEPLOY_ID` at build time
+       (`src/lib/buildStamp.js`), rendered in the employee PIN dialog
+       footer (reachable with no admin sign-in), the Admin panel footer
+       and one `console.info` line at boot; a missing value renders
+       `BUILD STAMP MISSING`, never anything version-shaped — and its
+       commit is checked against `git` to descend from `9937728`. Any
+       stamp at all implies #47, which contains #46. **Three facts,
+       established separately** (review of revision 8): (i) the stamp's
+       **source is merged** — PR #47, `main` at `7ec5af4`, this branch
+       rebased onto it; (ii) it is **deployed** — production deploy
+       `6ab020c5…` of `7ec5af4` reached `ready` 2026-09-20 18:07Z, and
+       the `main-*.js` production served at 18:21Z carried
+       `commit:"7ec5af4…", context:"production"`; that is the server's
+       answer about what it serves and says nothing about what any
+       device is executing; (iii) **device checkpoints completed: none.**
+       No device has recorded steps 1–3, so every device is
+       **unverified** until it does.
     3. **Reopen OFFLINE** (network off at the device) and verify the
        same stamp: after step 2 the service worker has stored the fresh
        shell and, on first fetch, the fresh bundle, so an offline reopen
@@ -1124,11 +1142,21 @@ repeats.** So:
        pass.**
     **Do NOT clear site data** on any device: that destroys the backlog
     this checkpoint exists to protect. The shell refresh in steps 2–3 is
-    the service worker's own network-first navigation and asset fetch,
-    which cannot touch `localStorage` (a service worker has no access to
-    it); the only thing that can is a person clearing site data, which is
-    forbidden here, and the checkpoint record includes the queue's entry
-    count before and after so a loss would be visible. Quiescence is
+    the service worker's own network-first navigation and asset fetch; a
+    service worker has no access to `localStorage`, but **page code
+    does**, and the reopened app's page code writes the queue key
+    legitimately: `drainPendingOrders` runs on mount and on every
+    `online` event, and a save during the check enqueues or drains. So the
+    checkpoint record holds the queue's entry count before and after,
+    **reconciled against acknowledged saves**: the decrease must equal the
+    number of orders the drain acknowledged (the app's "Synced N unsynced
+    orders" toast, `App.jsx:1273`) **and** those N rows must be read back
+    from `public.orders` for the store in the check window. A decrease
+    that reconciles is a drain; a decrease that does not is a loss and
+    the device does not pass. Without this step a normal drain reads as
+    data loss and a real loss hides behind one. Clearing site data — the
+    one act that empties the key with no save behind it — is forbidden
+    here. Quiescence is
     **not** inferred from inside a tab — a stale tab announces nothing
     and `navigator.locks.query()` cannot see a writer that is not holding
     the lock — and in-place draining is kept; the checkpoint is a human
@@ -1394,7 +1422,7 @@ storage path; a row can reference only a path the server allocated.**
 | "old handlers stamp `unverified`" | §6.1: withdrawn; missing provenance is denied by the reader unconditionally, and an `AFTER INSERT` trigger adds the mark as evidence for the recovery view |
 | **V1** "neither a loss" was false: the old drain's failure path erases legacy-key appends | §6.2: withdrawn; window, affected population (incl. suspended/resumable contexts) and an operator-verified compatibility checkpoint recorded as the exit criterion; in-place draining kept; mixed-version failure-path test kept |
 | **V2** the shipped `q_` fallback id cannot enter a `uuid` column | §6.2 A: `client_order_id` is bounded opaque text, the `_id` verbatim; never reminted, never a reason to discard; four representation tests with the fallback forced |
-| **W1** restart does not establish what the next context loads; the sw serves the cached pre-#46 shell and bundle offline | §6.2 checkpoint: online reopen with a client build stamp verified from the executing bundle, then an offline reopen showing the same; a server deploy id is not evidence; site data never cleared; the stamp is a prerequisite PR because none exists today |
+| **W1** restart does not establish what the next context loads; the sw serves the cached pre-#46 shell and bundle offline | §6.2 checkpoint: online reopen with a client build stamp verified from the executing bundle, then an offline reopen showing the same; a server deploy id is not evidence; site data never cleared; the stamp shipped as PR #47 (`main` at `7ec5af4`), merged and deployed, with no device checkpoint yet recorded — three facts kept separate |
 | **W2** "`crypto.subtle` is unavailable in exactly the contexts where the fallback fires" was wrong; `newId()` never inspects `subtle` | §6.2 A: sentence withdrawn; opaque text stands on preserving identities without conversion |
 | reconciliations: decision 11 "moved"; T3 trace row "proposed"; null-store / unresolved-org fixture; missing-provenance denial independent of the trigger | §10 11; this table; §6.1 fixtures; §6.1 |
 | status wording | header table: code deployed dark / gates verified live / migrations applied / client paths enabled, each stated separately |
@@ -1481,6 +1509,11 @@ storage path; a row can reference only a path the server allocated.**
     live on production, branch rebased onto it. Slice 6 builds on the
     shipped module's names and lock, and drains the legacy key in place
     rather than moving it (U1).
+11b. **Client build stamp: MERGED and DEPLOYED** (§6.2) — PR #47, `main` at
+    `7ec5af4`, production deploy `6ab020c5…` ready 2026-09-20 18:07Z,
+    branch rebased onto it. It is the evidence the retirement checkpoint
+    reads from the executing client; **no device checkpoint is recorded**,
+    so nothing about the legacy backlog's risk has changed yet.
 12. **Deployment context transport** (§4.1): a bundled file written at
     build, plus a Functions-scoped, production-context flag; the four-part
     proof precedes lifting the ref guard.
