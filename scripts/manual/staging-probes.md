@@ -184,7 +184,9 @@ they prove nothing about the context condition. Write-free key probe
 preview has **no service-role key**; the 56 older preview permalinks that do
 are listed in `docs/security/deploy-inventory.md`.
 
-**0b-staging — the staging site's preview: MISSING.** The staging site built
+**0b-staging — MISSING (second attempt, branch deploy, 2026-09-23 17:37–17:48Z).** Pushes of `fcb5da6` and `8821573` to `security/release-2-stage-0` produced no branch deploy on the staging site; `https://security-release-2-stage-0--printcalculator2-staging.netlify.app` was not probed because no deploy exists behind it.
+
+**0b-staging — the staging site's preview: MISSING (first attempt).** The staging site built
 no preview for PR #48 (polled 15:16–15:40Z; its only previews ever are PR
 #45's, immutable, pre-stage-0). The context-denial evidence proper —
 `csrf-bootstrap` 404 with and without an Origin header on a bundle where the

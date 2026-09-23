@@ -36,6 +36,15 @@ site, 79 of them deploy previews. Probed 2026-09-23T15:41:50Z.
 | legacy routes | present: `register-job` (GET reports its algorithm), `start-upload`, `fetch-link-job`, `get-download-url`, `complete-job`, `send-print-job` (405 on GET) — all refuse work for want of the key |
 | Release 2 routes | `csrf-bootstrap` → `404` with no Origin, with the staging Origin, with its own Origin. **Masked**: the production-ref refusal fires first on this site, so these 404s are NOT evidence for the context condition. Recorded as §4.1 evidence **(b)** (context = deploy-preview) and the flag-absence half of **(d)** only. |
 
+### Every PR #48 preview so far — none holds the key (probed 2026-09-23 17:49Z)
+
+| deploy id | commit | built (UTC) | service-role key | `deploy-context` |
+|---|---|---|---|---|
+| `6ab40f88d8322c00084cf8d9` | `8821573` | 17:42 | absent | `deploy-preview`, flag absent |
+| `6ab40e674e6ec500087de9bc` | `fcb5da6` | 17:37 | absent | `deploy-preview`, flag absent |
+| `6ab3f40c055a620008aec356` | `47551b4` | 15:45 | absent | `deploy-preview`, flag absent |
+| `6ab3efa301777b0008a746f1` | `b294791` | 15:26 | absent | `deploy-preview`, flag absent |
+
 ### Retained previews that HOLD the key — 56 deployments
 
 Live legacy writers, reachable by permalink, each with the production
@@ -284,7 +293,7 @@ touch production's published deploy or its database.
 
 ## Staging site `printcalculator2-staging`
 
-No deploy preview was built for PR #48 (polled 15:16–15:40Z; the site's only
+No **branch deploy** of `security/release-2-stage-0` was built either: pushes at 17:37:42Z (`fcb5da6`) and 17:42:29Z (`8821573`) each rebuilt PR #48's production-site preview within seconds and the staging site's own production branch, but produced no staging branch deploy (polled to 17:48:45Z) — the staging site is not building that branch. No deploy preview was built for PR #48 either (polled 15:16–15:40Z; the site's only
 previews ever are PR #45's, 2026-09-14/15). **Recorded as missing.** The
 staging-preview half of 0b — `deploy-context` reporting `deploy-preview` under
 the staging site name, and `csrf-bootstrap` 404 with and without an Origin
