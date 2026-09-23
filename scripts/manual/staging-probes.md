@@ -154,23 +154,45 @@ Status: **PASS** — `200 application/json`, `Cache-Control: no-store`. Recorded
 
 This is §4.1's evidence **(c)**: staging reports `production` under its own site name.
 
-### 0b — a deploy preview of the staging site reports `deploy-preview` and its endpoints 404
+### 0b — a deploy preview reports `deploy-preview`; its Release 2 endpoints 404
 
-Status: **NOT OBSERVABLE YET.** The only previews the staging site has ever
-built are PR #45's (last one 2026-09-15, commit `8e57598`), and preview
-deploys are immutable: that bundle predates stage 0, has no `deploy-context`
-route (the SPA catch-all returns `index.html`, `200 text/html`), and its gate
-has no context condition. PR #45 is closed, so it will never rebuild. 0b needs
-a **fresh** preview build of this code on the staging site, which needs an
-open PR; the staging site builds no branch deploys (every non-production
-deploy in its history is `review 45`).
+Run 2026-09-23 against PR #48's previews (draft, `security/release-2-stage-0` → main, head `b294791`).
 
-**Control, recorded because it is the hazard itself:** the four Release 2
-endpoints on that old preview answer **`401 application/json`** — the
-preview's endpoints are LIVE (flag present, staging ref, no credential →
-uniform 401). That is finding F2 observed on the staging site: under the
-pre-stage-0 guard a deploy preview runs the endpoints. Under `6c47eb6` the
-same request on a fresh preview must be `404`, and that is what 0b will show.
+**0b-prod — the production site's preview.** `deploy-preview-48--printcalculator2.netlify.app`,
+deploy `6ab3efa301777b0008a746f1`, permalink `6ab3efa301777b0008a746f1--printcalculator2.netlify.app`.
+
+`GET /.netlify/functions/deploy-context` → `200 application/json`, `Cache-Control: no-store`:
+
+```json
+{"ok":true,"reason":null,"source":"LAMBDA_TASK_ROOT","triedWithoutFinding":[],
+ "context":"deploy-preview","siteId":"03ff880d-eb73-4035-8b71-3588b22a0b20","siteName":"printcalculator2",
+ "deployId":"6ab3efa301777b0008a746f1","commitRef":"b294791db2451f84239af1994478af6d7afbee4c",
+ "builtAt":"2026-09-23T15:26:54.897Z","validContexts":["production","deploy-preview","branch-deploy","dev"],
+ "allowedContexts":["production"],"contextAllowed":false,"flagPresent":false,
+ "note":"Context condition only. This route does not evaluate the Release 2 gate, which also reads the project URL and the flag's value."}
+```
+
+`GET csrf-bootstrap` — no Origin: `{"ok":false,"error":"Not Found"}` → `404 application/json`;
+with `Origin: https://printcalculator2-staging.netlify.app`: `404`; with its own Origin: `404`.
+
+Status: **PASS as evidence (b) and the flag-absence half of (d) ONLY.** The
+bundle reports `deploy-preview` under the production site's name, and the
+Functions-scoped flag is absent in the preview. The 404s are **masked**: on
+this site the production-ref refusal fires before the context condition, so
+they prove nothing about the context condition. Write-free key probe
+(`POST {}` to `start-upload`): `500 Service role key not configured` — this
+preview has **no service-role key**; the 56 older preview permalinks that do
+are listed in `docs/security/deploy-inventory.md`.
+
+**0b-staging — the staging site's preview: MISSING.** The staging site built
+no preview for PR #48 (polled 15:16–15:40Z; its only previews ever are PR
+#45's, immutable, pre-stage-0). The context-denial evidence proper —
+`csrf-bootstrap` 404 with and without an Origin header on a bundle where the
+ref refusal is NOT in the way — is therefore **not yet observed**. The old #45
+artefact was not used as a substitute (it answers 401: live endpoints, the F2
+hazard). To obtain it: enable deploy previews on the staging site for PR
+#48, or branch-deploy `security/release-2-stage-0` there (context
+`branch-deploy`, also outside the allow-list → must 404).
 
 ### 0c — Phase 1 re-run on plain staging, curl, no cookie, no Origin
 
