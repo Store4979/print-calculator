@@ -9,7 +9,7 @@
 // exactly where it matters. So: the value is written to a file at build time,
 // the reader has no default, and every malformed shape below is refused.
 //
-// Numbered to match the report: DC-1 … DC-22.
+// Numbered to match the report: DC-1 … DC-23.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -213,8 +213,15 @@ test("DC-15 gate() carries the context condition, and still says nothing to the 
 
 // ── 3. the writer ──────────────────────────────────────────────────────────
 
-function runWriter(env) {
+function runWriter(env, { preexisting = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dcw-"));
+  if (preexisting !== null) {
+    // Simulate Netlify's not-clean checkout: the previous deploy's file is
+    // already on disk when the writer runs.
+    const p = join(root, CONTEXT_FILE);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, typeof preexisting === "string" ? preexisting : JSON.stringify(preexisting), "utf8");
+  }
   // A hosted build is detected from NETLIFY/CI/BUILD_ID/DEPLOY_ID/SITE_ID, so
   // the inherited environment is NOT passed through: a CI run of this suite
   // would otherwise make every "local" case hosted.
@@ -286,6 +293,33 @@ test("DC-19 a local build writes nulls the reader rejects, and may claim nothing
   assert.equal(lie.status, 1);
   assert.equal(lie.file, null);
   assert.match(lie.stderr, /not hosted by Netlify/);
+});
+
+test("DC-23 the writer OVERWRITES a pre-existing deploy-context.json; it never skips because one is there", () => {
+  // Netlify's checkout is not clean (CLAUDE.md): the previous deploy's file can
+  // be on disk when this build's writer runs. A writer that skipped an existing
+  // file would ship the OLD deploy's context under a new commit — the exact
+  // staleness the injector cross-check exists to catch, but the writer must
+  // not create it in the first place.
+  const stale = validContext({ context: "production", commitRef: "9937728" + "0".repeat(33), deployId: "STALE-DEPLOY" });
+  const r = runWriter(NETLIFY_ENV, { preexisting: stale });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.file.commitRef, NETLIFY_ENV.COMMIT_REF, "the new commit, not the stale one");
+  assert.equal(r.file.deployId, NETLIFY_ENV.DEPLOY_ID);
+  assert.equal(r.file.context, "deploy-preview", "the new context, not the stale production");
+  assert.notEqual(r.file.builtAt, stale.builtAt);
+
+  // And when the writer REFUSES, the stale file is not left behind to be
+  // trusted by a later step: a refusal exits 1 and the build stops, but a
+  // retried build must not find yesterday's file looking valid.
+  const refused = runWriter({ ...NETLIFY_ENV, CONTEXT: "" }, { preexisting: stale });
+  assert.equal(refused.status, 1);
+  assert.equal(refused.file, null, "a refusal removes any pre-existing context file");
+
+  // Unparseable leftovers are overwritten too, not tripped over.
+  const junk = runWriter(NETLIFY_ENV, { preexisting: "{not json" });
+  assert.equal(junk.status, 0, junk.stderr);
+  assert.equal(junk.file.commitRef, NETLIFY_ENV.COMMIT_REF);
 });
 
 // ── 4. the diagnostic route ────────────────────────────────────────────────

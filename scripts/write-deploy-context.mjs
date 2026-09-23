@@ -20,7 +20,7 @@
 // The staleness cross-check — that this file describes the SAME commit as the
 // bundle's own __PC_BUILD__ stamp — lives in scripts/inject-sw-manifest.mjs,
 // which runs after the build and can fail the deploy.
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isHostedBuild } from "./check-build-env.mjs";
@@ -92,6 +92,9 @@ export function buildPayload(env = process.env) {
 function main() {
   const { payload, errors, hosted } = buildPayload(process.env);
   if (errors.length) {
+    // Do not leave a previous build's file behind: the checkout is not clean,
+    // and a stale file that survives a refusal would look valid to a retry.
+    try { rmSync(OUT, { force: true }); } catch { /* best-effort; the exit code is the gate */ }
     die(
       "[write-deploy-context] REFUSED: the build environment does not describe this deployment:",
       ...errors.map((e) => `  - ${e}`),

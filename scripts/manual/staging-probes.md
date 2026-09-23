@@ -126,6 +126,70 @@ token.
 
 ---
 
+## Phase 0 — stage 0: the deployment context (2026-09-23, deploy `6ab3be3c…` of `6c47eb6`)
+
+`release2Allowed()` now has a third condition: `netlify/lib/deploy-context.json`,
+written at build and shipped inside every function bundle, must carry a
+`context` in `RELEASE2_CONTEXTS`. The production-ref refusal is still in place.
+`GET /.netlify/functions/deploy-context` is a read-only diagnostic outside the
+gate; it reports the context condition only, never the gate's verdict.
+
+### 0a — the plain staging site reports itself
+
+`curl https://printcalculator2-staging.netlify.app/.netlify/functions/deploy-context`
+
+Status: **PASS** — `200 application/json`, `Cache-Control: no-store`. Recorded:
+
+| field | value |
+|---|---|
+| `ok` | `true` |
+| `source` | **`LAMBDA_TASK_ROOT`** — `included_files` shipped the file; the module-relative candidate missed (the bundler inlines the lib, so `import.meta.url` is the function's own path) and the second candidate found it at `<task root>/netlify/lib/deploy-context.json`. This was the one assumption the local build could not verify. |
+| `context` | `production` |
+| `siteName` / `siteId` | `printcalculator2-staging` / `3106189d-9053-46a3-bfc7-22ba6b52511a` |
+| `deployId` | `6ab3be3c58ae100008e98f37` — equals the Netlify deploy id that served it |
+| `commitRef` | `6c47eb6e05df21816f326ea6f35e8e4096db0edd` |
+| `builtAt` | `2026-09-23T11:56:01.768Z` |
+| `allowedContexts` / `contextAllowed` | `["production"]` / `true` |
+| `flagPresent` | `true` |
+
+This is §4.1's evidence **(c)**: staging reports `production` under its own site name.
+
+### 0b — a deploy preview of the staging site reports `deploy-preview` and its endpoints 404
+
+Status: **NOT OBSERVABLE YET.** The only previews the staging site has ever
+built are PR #45's (last one 2026-09-15, commit `8e57598`), and preview
+deploys are immutable: that bundle predates stage 0, has no `deploy-context`
+route (the SPA catch-all returns `index.html`, `200 text/html`), and its gate
+has no context condition. PR #45 is closed, so it will never rebuild. 0b needs
+a **fresh** preview build of this code on the staging site, which needs an
+open PR; the staging site builds no branch deploys (every non-production
+deploy in its history is `review 45`).
+
+**Control, recorded because it is the hazard itself:** the four Release 2
+endpoints on that old preview answer **`401 application/json`** — the
+preview's endpoints are LIVE (flag present, staging ref, no credential →
+uniform 401). That is finding F2 observed on the staging site: under the
+pre-stage-0 guard a deploy preview runs the endpoints. Under `6c47eb6` the
+same request on a fresh preview must be `404`, and that is what 0b will show.
+
+### 0c — Phase 1 re-run on plain staging, curl, no cookie, no Origin
+
+Status: **PASS** — the context condition admits the real site; the four
+credential-free calls are still refused uniformly:
+
+```
+POST staff-login            {"ok":false,"error":"Unauthorized"} -> 401 application/json
+POST enroll-redeem          {"ok":false,"error":"Unauthorized"} -> 401 application/json
+POST enroll-ticket-create   {"ok":false,"error":"Unauthorized"} -> 401 application/json
+GET  csrf-bootstrap         {"ok":false,"error":"Unauthorized"} -> 401 application/json
+```
+
+401, not 404: the gate passed all three conditions and the handler refused
+for want of a credential — which is the point. A 404 here would have meant
+the context file did not ship.
+
+---
+
 ## Phase 1 — unauthenticated routing smoke tests
 
 Status: **PASSED** — `401` on all four.
