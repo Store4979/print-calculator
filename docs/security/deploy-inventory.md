@@ -209,6 +209,73 @@ can fall back onto a surviving key-holder. Order of urgency:
 3. **Carrying both fixes** (12): no known defect, but a live service-role writer set on a permalink
    nobody needs; the plan's retirement rule applies to the class, not the defect.
 
+**The approved list (2026-09-23, Ryan): all 56 key-bearing previews.**
+Tier 1 = missing the cleanup-stale-jobs fix (42), tier 2 = missing only the
+recipient fix (2), tier 3 = carrying both (12). This block is the ONLY source
+`scripts/manual/delete-preview-deploys.mjs` reads ids from; an id not in it
+cannot be deleted by the script. Changing it is a reviewed commit.
+
+<!-- DELETE-LIST:BEGIN — machine-read by scripts/manual/delete-preview-deploys.mjs; one row per deploy: id | PR | commit | tier -->
+```delete-list
+6a5fb25be785700008594817 | 29 | fdc31c3066ab | 1
+6a601121c7f43600080ace91 | 30 | bef94cc16a5f | 1
+6a609d9b6e2b010008e4701d | 31 | 5fe358c2fbe2 | 1
+6a60df7c72b06b00095706c9 | 31 | c5f9a91ea909 | 1
+6a612672813cd600081bb9bb | 32 | 6535717fd878 | 1
+6a615ce014582d00082b8fc9 | 33 | fdf63aedb99a | 1
+6a6670dd935a640009132e26 | 34 | b1f51871fad6 | 1
+6a694837be66d2000814c691 | 35 | 2ee6f0bbc52e | 1
+6a6951343b4b0100093a4aad | 35 | 65b87e322e48 | 1
+6a69521ae77b8e0008cab8b9 | 35 | 0ef7a657b162 | 1
+6a69535a83be0b0009bf8453 | 35 | 6507fd8e4147 | 1
+6a6a147d13108b0008d28634 | 35 | b4b3852d13ea | 1
+6a6a55bd4aa3d200086629b6 | 36 | f9765696e77d | 1
+6a6a55d651b30500085a2ad5 | 37 | 8205d226ba05 | 1
+6a6a99aa7965770008feab95 | 37 | 6e45bd7912d1 | 1
+6aa2ba6c4723f800096e2b82 | 37 | 748f45aec40a | 1
+6aa05237dde06400074428ac | 38 | 3fe3ce3d125a | 1
+6aa184fc3061e80007eb907d | 39 | 288d184a7e08 | 1
+6aa1873eee13c70008d2aba7 | 39 | 88438578ddb5 | 1
+6aa18ebcc0615a000840cdef | 40 | f4e4509f3e0a | 1
+6aa1efb8817b7c0008ef56df | 41 | f5cf2302a735 | 1
+6aa2b806bd19220008cd2350 | 41 | 92df7d9ad441 | 1
+6aa2ba87034ae30009eb7e5b | 42 | 69d4bfb26610 | 1
+6aa2d85fe22b1f000826f8a5 | 43 | 6d8a405e1044 | 1
+6aa31186185cb4000850775a | 43 | 83294a28ca91 | 1
+6aa418133948e70008fb1e40 | 43 | 62a943233bd9 | 1
+6aa41eb8cae4590008947e65 | 43 | 1905b88c83a0 | 1
+6aa41f5b5b99fc0009345539 | 43 | 1ce78491a47c | 1
+6aa42b3c60fee800089edb4c | 44 | 81d33dabfe98 | 1
+6aa4897e6cc424000833a95b | 44 | 2cae8bd9cd9d | 1
+6aa48b888b63af0008c2be72 | 44 | 57d69f928f06 | 1
+6aa49a680044aa000871e75a | 44 | 406933676717 | 1
+6aa49f8e89ac8a00081a2f44 | 44 | 88ec2c70aa18 | 1
+6aa4a1c3122c5c0007ba84c6 | 44 | 68ea008f61fc | 1
+6aa4a6e773d1830009f60e59 | 44 | 6c3c1470c0df | 1
+6aa5503a9922850008784086 | 44 | 9051c0e23ba5 | 1
+6aa55539a321d0000894f9b6 | 44 | f90a2639ef83 | 1
+6aa555a46d1d0c0008be7650 | 44 | 02636ea8f992 | 1
+6aa5594dff6f6f00086665c0 | 44 | 95a0b8c9b0c4 | 1
+6aa5845cb3e9800008232379 | 44 | 85502dec479d | 1
+6aa587d57345c3000893fea4 | 44 | b2ac88a27608 | 1
+6aa588e86320810008f82544 | 44 | 10b6e04f5177 | 1
+6aa58d3cc9d46f000897cae2 | 44 | 9c99bbfaeaeb | 2
+6aa5bf17ff6f6f000874b0fa | 45 | 00f78e081187 | 2
+6aa802021f0c9f00085e4466 | 45 | c61905368829 | 3
+6aa80ed4ce8bfb00080b9b91 | 45 | 6eb57551eb0e | 3
+6aa80f6f16ae3c0008f47628 | 45 | 0a9c61a15236 | 3
+6aa8177f0933cc00077e5b76 | 45 | 3ac5b05c4adf | 3
+6aa827595766b400089ca6ec | 45 | aea456ee3dc7 | 3
+6aa8292e7fad050007292c3d | 45 | 34a69ec7e401 | 3
+6aa94ce90ab9280008e1c5d3 | 45 | d0391f1c94cd | 3
+6aa94db75638680009babccc | 45 | 2627687bf815 | 3
+6aa963505b88680008939395 | 45 | e833e886891e | 3
+6aa994ab65368c000995736a | 45 | 8e575986a9a2 | 3
+6aad54ddafc4080008f11279 | 46 | cefda591556a | 3
+6ab01d907071af0008909199 | 47 | 73abb2a3b9b9 | 3
+```
+<!-- DELETE-LIST:END -->
+
 Not proposed: the 22 previews with no functions or a module-scope crash (no
 writer exists), and #48's preview (no key). Deletion is one of the three
 retirement mechanisms; after each deletion the permalink is probed and the
