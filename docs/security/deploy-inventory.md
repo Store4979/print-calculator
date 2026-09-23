@@ -110,9 +110,11 @@ recorded here per URL when taken. **None taken yet.**
 | `6ab3efa301777b0008a746f1` | #48 | `b294791db245` | 2026-09-23T15:26 | ready | absent | route present |
 
 The #48 preview lacks the key while every ready preview from #29 to #47 holds
-it: the key's availability to the `deploy-preview` context changed on this
-site between 2026-09-20 17:53Z (#47's preview) and 2026-09-23 15:26Z. Not
-changed by this session; cause to be recorded by the operator. (#25–#28
+it. **Cause, recorded 2026-09-23:** Ryan cleared `SUPABASE_SERVICE_ROLE_KEY`
+from the production site's **Deploy Previews** context that day, before #48
+built. Every preview built before that change captured the key and keeps it
+(the table above); every preview built after it does not. This is plan §4.2
+step 3's "future previews lack the key" — done, and observed. (#25–#28
 answered 500 with an older handler's wording and are listed under "neither"
 as `unknown (500)`; they predate the key being set at all.)
 
@@ -142,6 +144,76 @@ as `unknown (500)`; they predate the key being set at all.)
 | `69f11e8031a04e0008a5ca65` | #4 | `85790b25c1aa` | 2026-04-28T20:54 | ready | no functions | no route |
 | `69efa06d0258150009c4415a` | #3 | `35642cccffe9` | 2026-04-27T17:44 | ready | no functions | no route |
 | `69ea366eb345cb0008d4de89` | #2 | `1e909012f5b5` | 2026-04-23T15:10 | ready | no functions | no route |
+
+### Classification of the 56 key-bearing previews, by commit ancestry only
+
+Two fixes matter for what a retained legacy bundle can do with the key it
+holds. Both are judged by `git merge-base --is-ancestor` against the fix
+commit on its own branch AND its landing commit on `main` (squash merges put
+the fix under a different SHA on `main`): **nothing was called** on any of
+these deployments — a `cleanup-stale-jobs` call deletes data and a
+`send-print-job` call sends mail.
+
+- **cleanup-stale-jobs secret fix** — `9c99bbf` on `security/release-2-plan`
+  ("ROW 41 FAILS: cleanup-stale-jobs was an unauthenticated destructive URL"),
+  landed as squash `7f89876` (PR #44). A bundle WITHOUT it exposes an
+  unauthenticated destructive URL.
+- **PR #43 send-print-job recipient fix** — `1ce7849` on
+  `security/audit-2026-09-10` (recipient resolved server-side, body cannot
+  choose it), landed by merge `10235f2`. A bundle WITHOUT it lets the request
+  body choose the mail recipient.
+
+Four commits are **unresolvable**: force-pushed away, on no ref GitHub still
+serves (`refs/pull/N/head` and every branch were fetched). They are judged as
+holding the key (probed) and as lacking both fixes (unknown ≠ fixed).
+
+**Grouped by PR, every deploy id listed.** Deleting only a PR's latest deploy
+makes `deploy-preview-N--printcalculator2.netlify.app` fall back to the next
+older one, which also holds the key — so a PR is retired only when every id
+in its row is gone.
+
+| PR | deploys (newest first) | cleanup fix | recipient fix |
+|---|---|---|---|
+| #29 | `6a5fb25be785700008594817` (`fdc31c30`) | no | no |
+| #30 | `6a601121c7f43600080ace91` (`bef94cc1`) | no | no |
+| #31 | `6a60df7c72b06b00095706c9` (`c5f9a91e`)<br>`6a609d9b6e2b010008e4701d` (`5fe358c2`) | no<br>no | no<br>no |
+| #32 | `6a612672813cd600081bb9bb` (`6535717f`) | no | no |
+| #33 | `6a615ce014582d00082b8fc9` (`fdf63aed`) | no | no |
+| #34 | `6a6670dd935a640009132e26` (`b1f51871`) | no | no |
+| #35 | `6a6a147d13108b0008d28634` (`b4b3852d`)<br>`6a69535a83be0b0009bf8453` (`6507fd8e`)<br>`6a69521ae77b8e0008cab8b9` (`0ef7a657`)<br>`6a6951343b4b0100093a4aad` (`65b87e32`)<br>`6a694837be66d2000814c691` (`2ee6f0bb`) | no<br>no<br>no<br>no<br>no | no<br>no<br>no<br>no<br>no |
+| #36 | `6a6a55bd4aa3d200086629b6` (`f9765696`) | no | no |
+| #37 | `6aa2ba6c4723f800096e2b82` (`748f45ae`)<br>`6a6a99aa7965770008feab95` (`6e45bd79`)<br>`6a6a55d651b30500085a2ad5` (`8205d226`) | no<br>unresolvable<br>unresolvable | no<br>unresolvable<br>unresolvable |
+| #38 | `6aa05237dde06400074428ac` (`3fe3ce3d`) | no | no |
+| #39 | `6aa1873eee13c70008d2aba7` (`88438578`)<br>`6aa184fc3061e80007eb907d` (`288d184a`) | no<br>no | no<br>no |
+| #40 | `6aa18ebcc0615a000840cdef` (`f4e4509f`) | no | no |
+| #41 | `6aa2b806bd19220008cd2350` (`92df7d9a`)<br>`6aa1efb8817b7c0008ef56df` (`f5cf2302`) | no<br>no | no<br>no |
+| #42 | `6aa2ba87034ae30009eb7e5b` (`69d4bfb2`) | no | no |
+| #43 | `6aa41f5b5b99fc0009345539` (`1ce78491`)<br>`6aa41eb8cae4590008947e65` (`1905b88c`)<br>`6aa418133948e70008fb1e40` (`62a94323`)<br>`6aa31186185cb4000850775a` (`83294a28`)<br>`6aa2d85fe22b1f000826f8a5` (`6d8a405e`) | no<br>unresolvable<br>no<br>no<br>no | **yes**<br>unresolvable<br>no<br>no<br>no |
+| #44 | `6aa58d3cc9d46f000897cae2` (`9c99bbfa`)<br>`6aa588e86320810008f82544` (`10b6e04f`)<br>`6aa587d57345c3000893fea4` (`b2ac88a2`)<br>`6aa5845cb3e9800008232379` (`85502dec`)<br>`6aa5594dff6f6f00086665c0` (`95a0b8c9`)<br>`6aa555a46d1d0c0008be7650` (`02636ea8`)<br>`6aa55539a321d0000894f9b6` (`f90a2639`)<br>`6aa5503a9922850008784086` (`9051c0e2`)<br>`6aa4a6e773d1830009f60e59` (`6c3c1470`)<br>`6aa4a1c3122c5c0007ba84c6` (`68ea008f`)<br>`6aa49f8e89ac8a00081a2f44` (`88ec2c70`)<br>`6aa49a680044aa000871e75a` (`40693367`)<br>`6aa48b888b63af0008c2be72` (`57d69f92`)<br>`6aa4897e6cc424000833a95b` (`2cae8bd9`)<br>`6aa42b3c60fee800089edb4c` (`81d33dab`) | **yes**<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>unresolvable<br>no<br>no | no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>no<br>unresolvable<br>no<br>no |
+| #45 | `6aa994ab65368c000995736a` (`8e575986`)<br>`6aa963505b88680008939395` (`e833e886`)<br>`6aa94db75638680009babccc` (`2627687b`)<br>`6aa94ce90ab9280008e1c5d3` (`d0391f1c`)<br>`6aa8292e7fad050007292c3d` (`34a69ec7`)<br>`6aa827595766b400089ca6ec` (`aea456ee`)<br>`6aa8177f0933cc00077e5b76` (`3ac5b05c`)<br>`6aa80f6f16ae3c0008f47628` (`0a9c61a1`)<br>`6aa80ed4ce8bfb00080b9b91` (`6eb57551`)<br>`6aa802021f0c9f00085e4466` (`c6190536`)<br>`6aa5bf17ff6f6f000874b0fa` (`00f78e08`) | **yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes** | **yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>**yes**<br>no |
+| #46 | `6aad54ddafc4080008f11279` (`cefda591`) | **yes** | **yes** |
+| #47 | `6ab01d907071af0008909199` (`73abb2a3`) | **yes** | **yes** |
+
+Totals: 56 key-bearing previews; **44 lack at least one of the two
+fixes**; 12 carry both (all PR #45 from `c619053` on, #46, #47) and still hold the
+production service-role key with live legacy writers.
+
+### Proposed deletion list — proposal only, nothing deleted
+
+Delete **all 56 key-bearing preview deploys**, every id per PR, so no alias
+can fall back onto a surviving key-holder. Order of urgency:
+
+1. **Missing the cleanup-stale-jobs fix** (42 deploys: PRs #29–#44 and the four
+   unresolvable): each is an unauthenticated destructive URL with the production key.
+2. **Missing the recipient fix but carrying the cleanup fix** (2): body-chosen mail recipient.
+3. **Carrying both fixes** (12): no known defect, but a live service-role writer set on a permalink
+   nobody needs; the plan's retirement rule applies to the class, not the defect.
+
+Not proposed: the 22 previews with no functions or a module-scope crash (no
+writer exists), and #48's preview (no key). Deletion is one of the three
+retirement mechanisms; after each deletion the permalink is probed and the
+result recorded here per URL (§4.2 step 3). Deletion of a preview does not
+touch production's published deploy or its database.
 
 ## Staging site `printcalculator2-staging`
 
