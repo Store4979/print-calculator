@@ -18,61 +18,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { stripComments } from "./source-util.mjs";
 import {
-  runInventory, compareToAllowlist, appliedBaselineVersion,
+  runInventory, compareToAllowlist, appliedBaselineVersion, protectedNamesByState,
   GATEWAY, CLIENT_INIT, APPROVED_RPC, SNAPSHOT_PROJECT,
 } from "./inventory-check.mjs";
+import { ALLOWLIST, RETIRED_EVER } from "./inventory-allowlist.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-
-// Routes that have EVER been retired (a slice's stage D adds here and never
-// removes). Retirement survives the deletion of both the tombstone file and
-// the _retired.json entry because this list is a third, reviewed record.
-export const RETIRED_EVER = Object.freeze([]);
-
-// file | kind | name  ->  { count, slice }
-// kind: table | view | bucket | rpc | channel | fn | route-builder | holds-client
-export const ALLOWLIST = Object.freeze({
-  // ── App.jsx: queue badge (slice 5), kiosk upload (slice 8), email (slice 6)
-  "src/App.jsx|table|pending_jobs":            { count: 1, slice: "5" },
-  "src/App.jsx|channel|pending_jobs_badge":    { count: 1, slice: "5" },
-  "src/App.jsx|bucket|customer-uploads":       { count: 1, slice: "8" },
-  "src/App.jsx|fn|start-upload":               { count: 1, slice: "8" },   // kiosk caller Part 6 missed
-  "src/App.jsx|fn|register-job":               { count: 1, slice: "8" },   // kiosk caller Part 6 missed
-  "src/App.jsx|fn|send-print-job":             { count: 1, slice: "6" },
-  "src/App.jsx|route-builder|template":        { count: 1, slice: "8" },   // callQueueFn
-  "src/App.jsx|holds-client|import supabase":  { count: 1, slice: "8" },   // last use is the kiosk upload
-  // ── PrintQueue.jsx: the staff queue (slice 5)
-  "src/components/PrintQueue.jsx|table|pending_jobs":           { count: 1, slice: "5" },
-  "src/components/PrintQueue.jsx|channel|pending_jobs":         { count: 1, slice: "5" },
-  "src/components/PrintQueue.jsx|fn|get-download-url":          { count: 2, slice: "5" },   // legacy signer
-  "src/components/PrintQueue.jsx|fn|complete-job":              { count: 1, slice: "5" },   // legacy deleter
-  "src/components/PrintQueue.jsx|route-builder|template":       { count: 1, slice: "5" },   // FN()
-  "src/components/PrintQueue.jsx|holds-client|import supabase": { count: 1, slice: "5" },
-  // ── UploadApp.jsx: the customer page (slice 8)
-  "src/UploadApp.jsx|bucket|customer-uploads":      { count: 1, slice: "8" },
-  "src/UploadApp.jsx|fn|start-upload":              { count: 1, slice: "8" },
-  "src/UploadApp.jsx|fn|register-job":              { count: 1, slice: "8" },
-  "src/UploadApp.jsx|fn|fetch-link-job":            { count: 1, slice: "8" },
-  "src/UploadApp.jsx|route-builder|template":       { count: 1, slice: "8" },   // FN()
-  "src/UploadApp.jsx|holds-client|import supabase": { count: 1, slice: "8" },
-  // ── storeConfig.js: owner-JWT price book and store config (stays)
-  "src/lib/storeConfig.js|table|stores":        { count: 5, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|table|paper_types":   { count: 5, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|table|sheet_prices":  { count: 2, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|table|discounts":     { count: 3, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|table|addons":        { count: 2, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|table|settings":      { count: 2, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|table|memberships":   { count: 1, slice: "auth-jwt" },
-  "src/lib/storeConfig.js|holds-client|import supabase": { count: 1, slice: "auth-jwt" },
-  // ── supabase.js: the gateway itself
-  "src/lib/supabase.js|holds-client|defines the client": { count: 1, slice: "auth-jwt" },
-  "src/lib/supabase.js|table|print_jobs":       { count: 3, slice: "7" },
-  "src/lib/supabase.js|bucket|job-files":       { count: 4, slice: "7" },   // upload/download/signed-url/delete
-  "src/lib/supabase.js|table|orders":           { count: 2, slice: "6" },   // rows 2 and 3 share the insert
-  "src/lib/supabase.js|rpc|verify_employee_pin": { count: 1, slice: "4" },  // path 15, S1
-  "src/lib/supabase.js|table|employees":        { count: 3, slice: "auth-jwt" },
-  "src/lib/supabase.js|table|stores":           { count: 1, slice: "auth-jwt" },
-});
 
 const run = () => runInventory({ root: ROOT, retiredEver: RETIRED_EVER });
 
@@ -113,23 +64,26 @@ test("INV-4 the gateway is two files, the package import is one file, and §0.2'
 
 test("INV-5 the protected Release 2 names come from the migration files in both lifecycle locations, never from the snapshot", () => {
   const SRC = stripComments(readFileSync(new URL("./inventory-check.mjs", import.meta.url), "utf8"));
-  const fn = SRC.slice(SRC.indexOf("export function protectedNamesFromMigrations"), SRC.indexOf("export function compareToAllowlist"));
+  const fn = SRC.slice(SRC.indexOf("function createdTables"), SRC.indexOf("export function tombstoneProblem"));
   assert.match(fn, /"pending"/, "reads supabase/migrations/pending/");
-  assert.match(fn, /join\(root, "supabase", "migrations"\)\]/, "and supabase/migrations/ itself (the applied names)");
+  assert.match(fn, /createdTables\(join\(root, "supabase", "migrations"\)\)/, "and supabase/migrations/ itself (the applied names)");
   assert.match(fn, /create\\s\+table/i, "derives names from CREATE TABLE statements");
   assert.doesNotMatch(fn, /tables\.json|snapshot|tables\b/, "the protected set does not read the snapshot");
   assert.match(SRC, /protected set is empty/, "an empty protected set is a failure");
 });
 
-test("INV-6 the snapshot is the production capture at the repo's applied baseline", () => {
+test("INV-6 the snapshot is the production capture at the repo's applied baseline, and its Release 2 table presence follows applied migration state", () => {
   const snap = JSON.parse(readFileSync(new URL("../../supabase/tables.json", import.meta.url), "utf8"));
   assert.equal(snap.project, SNAPSHOT_PROJECT);
   assert.equal(snap.query, "scripts/manual/tables-snapshot.sql");
   assert.equal(snap.ledgerVersion, appliedBaselineVersion(ROOT), "ledger version at capture == newest applied migration file");
   assert.doesNotMatch(JSON.stringify(snap), /RECORDED BY HAND/);
-  // The Release 2 tables are NOT in the snapshot today (production has none),
-  // and MUT-13 proves the prohibition does not depend on that.
-  for (const t of ["staff_sessions", "device_enrollments", "enrollment_tickets", "auth_attempts"]) {
-    assert.ok(!snap.tables.includes(t), `${t} in the production snapshot would mean stage 0 ran`);
-  }
+  // Presence is decided by where each release2 migration lives, not by a
+  // fixed expectation: a legitimate stage-0 apply plus a snapshot refresh
+  // passes; either half alone fails (MUT-26). The browser prohibition on
+  // these names (MUT-18) is independent of both.
+  const { applied, pendingOnly } = protectedNamesByState(ROOT);
+  assert.ok(applied.size + pendingOnly.size > 0, "a protected set exists");
+  for (const tname of applied) assert.ok(snap.tables.includes(tname), `${tname}: applied on production, so the snapshot must list it`);
+  for (const tname of pendingOnly) assert.ok(!snap.tables.includes(tname), `${tname}: still pending, so the snapshot must not list it`);
 });

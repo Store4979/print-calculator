@@ -23,12 +23,13 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInventory, compareToAllowlist, appliedBaselineVersion } from "./inventory-check.mjs";
+import { ALLOWLIST, RETIRED_EVER } from "./inventory-allowlist.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const BASELINE = appliedBaselineVersion(ROOT);
 
 const FIXTURE_TABLES = {
-  project: "gmxyisjjaxtpycsmmzef", capturedBy: "fixture", query: "scripts/manual/tables-snapshot.sql", capturedAt: "fixture",
+  project: "gmxyisjjaxtpycsmmzef", capturedBy: "fixture", query: "scripts/manual/tables-snapshot.sql", capturedAt: "2026-09-23T14:59:46Z",
   database: "postgres", role: "postgres", ledgerVersion: BASELINE,
   tables: ["addons", "discounts", "employees", "memberships", "orders", "paper_types", "pending_jobs",
            "print_jobs", "settings", "sheet_prices", "stores"],
@@ -53,21 +54,30 @@ const write = (root, rel, body) => {
 };
 const IMPORT = 'import { supabase } from "./lib/supabase.js";\n';
 
-/** Run one mutant; return errors and helpers. */
+/** Run one mutant; return errors and helpers. `gate` is the COMPOSED verdict:
+ *  scanner errors plus the real allowlist's problems — what CI would say. */
 function mutate(apply, opts = {}) {
   const root = copyTree();
   try {
     apply(root);
-    const r = runInventory({ root, ...opts });
-    return { errors: r.errors, joined: r.errors.join("\n"), sites: r.sites, siteIn: (file) => r.sites.filter((s) => s.file === file) };
+    const r = runInventory({ root, retiredEver: RETIRED_EVER, ...opts });
+    const gate = [...r.errors, ...compareToAllowlist(r.sites, ALLOWLIST)];
+    return { errors: r.errors, joined: r.errors.join("\n"), gate, gateJoined: gate.join("\n"), sites: r.sites, siteIn: (file) => r.sites.filter((s) => s.file === file) };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
+/** Edit a file in the copy by exact replacement (asserts the anchor is unique). */
+function edit(root, rel, from, to) {
+  const p = join(root, rel);
+  const src = readFileSync(p, "utf8");
+  assert.equal(src.split(from).length - 1, 1, `anchor not unique in ${rel}: ${from}`);
+  writeFileSync(p, src.replace(from, to), "utf8");
+}
 
 test("CONTROL — the unmutated copy with the fixture snapshot scans clean, and the fixture is validated (not skipped)", () => {
   const r = mutate(() => {});
-  assert.deepEqual(r.errors, [], "\n  " + r.errors.join("\n  "));
+  assert.deepEqual(r.gate, [], "\n  " + r.gate.join("\n  "));
   assert.ok(r.sites.length > 40, "the real sites are found");
   assert.ok(BASELINE, "the copied tree has an applied baseline to reconcile against");
 });
@@ -155,7 +165,7 @@ test("MUT-11 dynamic route construction in a new file is a route-builder site th
   assert.deepEqual(r.siteIn("src/mutant.js").map((s) => `${s.kind}|${s.name}`), ["route-builder|template"]);
   const problems = compareToAllowlist(r.sites, {});   // an empty allowlist: everything is a problem
   assert.ok(problems.some((p) => p.includes("src/mutant.js|route-builder|template")), "the allowlist sees the new builder");
-  assert.match(mutate((root) => write(root, "src/mutant.js", "export const u = \"/.netlify/functions/../admin\";\n")).joined, /route literal .* is not exactly/);
+  assert.match(mutate((root) => write(root, "src/mutant.js", "export const u = \"/.netlify/functions/../admin\";\n")).joined, /route piece .* is not a full/);
   assert.match(mutate((root) => write(root, "src/mutant.js", "export const u = \"/.netlify/functions/no-such-fn\";\n")).joined, /is not a function in netlify\/functions/);
 });
 
@@ -217,7 +227,7 @@ test("MUT-17 tombstone bookkeeping: entry without a file; tombstone file without
   assert.match(mutate((root) => {
     write(root, "netlify/functions/_retired.json", { retired: ["some-old-route"] });
     write(root, "netlify/functions/some-old-route.js", "export const handler = async () => ({ statusCode: 410 });\n");
-  }).joined, /lacks the marker/);
+  }).joined, /is not in the tombstone form/);
 });
 
 // ── A1: protected names survive the migration leaving pending/ ──────────────
@@ -279,4 +289,87 @@ test("MUT-20 snapshot validation: missing, malformed, empty, wrong project, unap
   assert.match(mutate((root) => write(root, "supabase/tables.json", { ...FIXTURE_TABLES, project: "RECORDED BY HAND: MCP project_id" })).joined, /RECORDED BY HAND/);
   assert.match(mutate((root) => write(root, "supabase/tables.json", { ...FIXTURE_TABLES, ledgerVersion: "20200101000000" })).joined, /ledgerVersion 20200101000000 != newest applied migration file/);
   assert.match(mutate((root) => write(root, "supabase/tables.json", { ...FIXTURE_TABLES, views: "none" })).joined, /has no views array/);
+});
+
+// ── review of b294791: I1–I4, INV-6 — every case judged by the COMPOSED gate ──
+
+test("MUT-21 (I1) a boolean-only use is a guard; a value escape through || or && fails, including export-then-.from", () => {
+  const ok = mutate((root) => write(root, "src/mutant.js", IMPORT + "export const f = () => { if (!supabase) return null; return supabase ? 1 : 0; };\nsupabase && console.log(1);\n"));
+  assert.deepEqual(ok.errors, [], "guards alone raise no scanner error (the new file is still refused by the allowlist as a holder — that is INV-2, not I1)");
+  assert.match(mutate((root) => write(root, "src/mutant.js", IMPORT + "export const c = supabase || null;\nexport const f = () => c.from(\"orders\");\n")).gateJoined, /escapes as a value through a logical expression/);
+  assert.match(mutate((root) => write(root, "src/mutant.js", IMPORT + "export const f = () => supabase && supabase;\n")).gateJoined, /escapes as a value/);
+  assert.match(mutate((root) => write(root, "src/mutant.js", IMPORT + "const c = supabase ?? null;\nexport const f = () => c.from(\"orders\");\n")).gateJoined, /escapes as a value/);
+});
+
+test("MUT-22 (I1) dynamic import of the package outside the gateway fails", () => {
+  assert.match(mutate((root) => write(root, "src/mutant.js", "export const f = async () => (await import(\"@supabase/supabase-js\")).createClient(\"u\", \"k\");\n")).gateJoined,
+    /dynamic import\(\) of @supabase\/supabase-js; only src\/lib\/supabase\.js may/);
+});
+
+test("MUT-23 (I1) a route built piecewise fails outside the approved dispatcher", () => {
+  assert.match(mutate((root) => write(root, "src/mutant.js", "export const call = (n) => fetch(\"/.netlify/\" + \"functions/\" + n);\n")).gateJoined, /route piece "\/\.netlify\/" is not a full/);
+  assert.match(mutate((root) => write(root, "src/mutant.js", "const P = \"/.netlify/functions/\";\nexport const call = (n) => fetch(P + n);\n")).gateJoined, /route piece "\/\.netlify\/functions\/" is not a full/);
+  assert.match(mutate((root) => write(root, "src/mutant.js", "export const call = (n) => fetch([\".netlify\", \"functions\", n].join(\"/\"));\n")).gateJoined, /route piece "\.netlify" is not a full/);
+});
+
+test("MUT-24 (I2) a shadowing binding inside an already-allowlisted function defeats the constant: parameter, nested local, catch, destructuring", () => {
+  const SIG = "export const downloadJobFile = async (path) => {";
+  assert.match(mutate((root) => edit(root, "src/lib/supabase.js", SIG, "export const downloadJobFile = async (path, JOB_FILES_BUCKET) => {")).gateJoined,
+    /identifier JOB_FILES_BUCKET is shadowed here by a parameter/, "parameter shadow — site count unchanged, so only the scanner can catch it");
+  assert.match(mutate((root) => edit(root, "src/lib/supabase.js", SIG, SIG + "\n  const JOB_FILES_BUCKET = path;")).gateJoined,
+    /identifier JOB_FILES_BUCKET is shadowed here by a const in an enclosing block/, "nested-local shadow");
+  assert.match(mutate((root) => edit(root, "src/lib/supabase.js", SIG, "export const downloadJobFile = async ({ path, JOB_FILES_BUCKET }) => {")).gateJoined,
+    /shadowed here by a parameter/, "destructuring parameter shadow");
+  assert.match(mutate((root) => write(root, "src/mutant.js", IMPORT + "const B = \"job-files\";\nexport const f = () => { try { throw 0; } catch (B) { return supabase.storage.from(B).list(); } };\n")).gateJoined,
+    /shadowed here by a catch binding/, "catch shadow");
+});
+
+test("MUT-25 (I3) the tombstone form is parsed: a 200 with a 410 comment, a request-dependent branch, an extra statement and a parameter all fail", () => {
+  const retire = (root, body) => { write(root, "netlify/functions/_retired.json", { retired: ["old-route"] }); write(root, "netlify/functions/old-route.js", body); };
+  assert.deepEqual(mutate((root) => retire(root, TOMBSTONE)).errors, [], "control: the real tombstone form passes the scanner");
+  assert.match(mutate((root) => retire(root, "export const TOMBSTONE = true;\n// answers 410\nexport const handler = async () => ({ statusCode: 200, body: \"410 Gone\" });\n")).gateJoined,
+    /statusCode is 200, not the literal 410/);
+  assert.match(mutate((root) => retire(root, "export const TOMBSTONE = true;\nexport const handler = async (event) => (event.httpMethod === \"GET\" ? { statusCode: 410 } : { statusCode: 200 });\n")).gateJoined,
+    /handler must take no parameters/);
+  assert.match(mutate((root) => retire(root, "export const TOMBSTONE = true;\nexport const handler = async () => (Math.random() > 0.5 ? { statusCode: 410 } : { statusCode: 410 });\n")).gateJoined,
+    /handler must return an object literal/);
+  assert.match(mutate((root) => retire(root, "export const TOMBSTONE = true;\nconst x = 1;\nexport const handler = async () => ({ statusCode: 410 });\n")).gateJoined,
+    /has 3 top-level statements/);
+  assert.match(mutate((root) => retire(root, "export const TOMBSTONE = true;\nexport const handler = async () => ({ statusCode: 410, body: JSON.stringify({}) });\n")).gateJoined,
+    /property "body" is not a literal/);
+});
+
+test("MUT-26 (I4) capturedAt, capturedBy, database and query: missing, empty and invalid each fail", () => {
+  const snap = (over) => (root) => { const o = { ...FIXTURE_TABLES, ...over }; for (const k of Object.keys(over)) if (over[k] === undefined) delete o[k]; write(root, "supabase/tables.json", o); };
+  assert.match(mutate(snap({ capturedAt: undefined })).gateJoined, /capturedAt is missing or not a UTC timestamp/);
+  assert.match(mutate(snap({ capturedAt: "" })).gateJoined, /capturedAt is missing or not/);
+  assert.match(mutate(snap({ capturedAt: "yesterday" })).gateJoined, /capturedAt is missing or not/);
+  assert.match(mutate(snap({ capturedAt: "2026-13-45T99:00:00Z" })).gateJoined, /capturedAt is missing or not/);
+  assert.match(mutate(snap({ capturedBy: undefined })).gateJoined, /capturedBy is missing or empty/);
+  assert.match(mutate(snap({ capturedBy: "   " })).gateJoined, /capturedBy is missing or empty/);
+  assert.match(mutate(snap({ database: undefined })).gateJoined, /database is missing or empty/);
+  assert.match(mutate(snap({ database: "" })).gateJoined, /database is missing or empty/);
+  assert.match(mutate(snap({ query: undefined })).gateJoined, /query must name scripts\/manual\/tables-snapshot\.sql/);
+  assert.match(mutate(snap({ query: "something-else.sql" })).gateJoined, /query must name/);
+});
+
+test("MUT-27 (INV-6) Release 2 table presence follows applied state: apply + refresh passes; refresh alone fails; apply alone fails; the browser prohibition holds in every case", () => {
+  const R2 = ["auth_attempts", "device_enrollments", "enrollment_tickets", "staff_sessions", "upload_capabilities", "upload_capability_files"];
+  const applyAll = (root) => {
+    const pending = join(root, "supabase", "migrations", "pending"), applied = join(root, "supabase", "migrations");
+    for (const f of readdirSync(pending)) if (/^release2_/.test(f)) renameSync(join(pending, f), join(applied, `20260930120000_${f}`));
+  };
+  const refreshed = { ...FIXTURE_TABLES, ledgerVersion: "20260930120000", tables: [...FIXTURE_TABLES.tables, ...R2] };
+
+  const both = mutate((root) => { applyAll(root); write(root, "supabase/tables.json", refreshed); });
+  assert.deepEqual(both.gate, [], "a legitimate stage-0 apply with a refreshed snapshot passes: " + both.gateJoined);
+
+  const refreshOnly = mutate((root) => write(root, "supabase/tables.json", { ...FIXTURE_TABLES, tables: [...FIXTURE_TABLES.tables, ...R2] }));
+  assert.match(refreshOnly.gateJoined, /contains "[a-z_]+", which no applied migration creates/);
+
+  const applyOnly = mutate((root) => { applyAll(root); write(root, "supabase/tables.json", { ...FIXTURE_TABLES, ledgerVersion: "20260930120000" }); });
+  assert.match(applyOnly.gateJoined, /lacks "[a-z_]+", which an APPLIED release2 migration creates/);
+
+  const prohibitionStillHolds = mutate((root) => { applyAll(root); write(root, "supabase/tables.json", refreshed); write(root, "src/mutant.js", IMPORT + "export const f = () => supabase.from(\"staff_sessions\").select(\"*\");\n"); });
+  assert.match(prohibitionStillHolds.gateJoined, /names the Release 2 table "staff_sessions"/, "independent of applied state and of the snapshot");
 });

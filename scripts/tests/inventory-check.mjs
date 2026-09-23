@@ -50,6 +50,27 @@
 //  - Allowances are per occurrence with expected cardinality (A3):
 //    compareToAllowlist() fails a second reach in an allowlisted file, a
 //    removed allowance with the caller present, and a stale unused allowance.
+//
+// Review of b294791 (I1–I4, INV-6):
+//  - I1 a boolean-only use of the client is a guard; anything that lets the
+//    VALUE escape (`supabase || null` stored, returned or exported) fails.
+//    `import("@supabase/supabase-js")` is the package import and follows its
+//    policy. A route built piecewise ("/.netlify/" + "functions/" + name)
+//    fails: the only route construction allowed is a full literal or an
+//    allowlisted template dispatcher.
+//  - I2 a candidate constant is resolved against the ACTUAL lexical binding
+//    at the use site: a parameter, local, catch or destructuring binding of
+//    the same name in any enclosing scope shadows it and the use fails.
+//  - I3 a tombstone is a parsed form: no imports, exactly the marker and a
+//    zero-parameter handler whose whole body returns a literal object with
+//    statusCode 410 and no request-dependent branch. A 200 with a "410"
+//    comment is not a tombstone.
+//  - I4 the snapshot must record capturedAt (a real timestamp), capturedBy,
+//    database and the query path.
+//  - INV-6 the snapshot's Release 2 table presence is tied to applied
+//    migration state: names from APPLIED release2 files must be present,
+//    names still only in pending/ must be absent. The browser prohibition on
+//    those names is independent of both.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep, basename } from "node:path";
 import { Parser } from "acorn";
@@ -122,13 +143,49 @@ function topLevelStringConsts(ast) {
   return m;
 }
 
-function staticString(node, consts) {
+// Every name a pattern binds (Identifier, {a, b: c}, [d], e = 1, ...rest).
+function patternNames(p, out = []) {
+  if (!p) return out;
+  switch (p.type) {
+    case "Identifier": out.push(p.name); break;
+    case "ObjectPattern": for (const q of p.properties) patternNames(q.type === "RestElement" ? q.argument : q.value, out); break;
+    case "ArrayPattern": for (const e of p.elements) patternNames(e, out); break;
+    case "AssignmentPattern": patternNames(p.left, out); break;
+    case "RestElement": patternNames(p.argument, out); break;
+    default: break;
+  }
+  return out;
+}
+// I2: is `name` re-bound by any scope enclosing `node` (below the top level)?
+function shadowedBy(name, node, parentOf) {
+  for (let cur = parentOf(node); cur; cur = parentOf(cur)) {
+    if (/^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(cur.type)) {
+      for (const p of cur.params) if (patternNames(p).includes(name)) return `parameter of the enclosing ${cur.type}`;
+      if (cur.id && cur.id.name === name) return "the enclosing function's own name";
+    }
+    if (cur.type === "CatchClause" && cur.param && patternNames(cur.param).includes(name)) return "catch binding";
+    if (cur.type === "BlockStatement" || cur.type === "ForStatement" || cur.type === "ForInStatement" || cur.type === "ForOfStatement" || cur.type === "SwitchStatement") {
+      const stmts = cur.type === "BlockStatement" ? cur.body : cur.type === "SwitchStatement" ? cur.cases.flatMap((c) => c.consequent) : [cur.init || cur.left].filter(Boolean);
+      for (const st of stmts) {
+        if (st && st.type === "VariableDeclaration") for (const d of st.declarations) if (patternNames(d.id).includes(name)) return `${st.kind} in an enclosing block`;
+        if (st && (st.type === "FunctionDeclaration" || st.type === "ClassDeclaration") && st.id?.name === name) return "declaration in an enclosing block";
+      }
+    }
+  }
+  return null;
+}
+
+function staticString(node, consts, parentOf = null) {
   if (!node) return { ok: false, why: "no argument" };
   if (node.type === "Literal" && typeof node.value === "string") return { ok: true, value: node.value };
   if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
     return { ok: true, value: node.quasis.map((q) => q.value.cooked).join("") };
   }
-  if (node.type === "Identifier" && consts.has(node.name)) return { ok: true, value: consts.get(node.name), via: node.name };
+  if (node.type === "Identifier" && consts.has(node.name)) {
+    const shadow = parentOf ? shadowedBy(node.name, node, parentOf) : null;
+    if (shadow) return { ok: false, why: `identifier ${node.name} is shadowed here by a ${shadow}; the top-level const does not apply` };
+    return { ok: true, value: consts.get(node.name), via: node.name };
+  }
   if (node.type === "Identifier") return { ok: false, why: `identifier ${node.name} is not a same-file top-level const string` };
   if (node.type === "TemplateLiteral") return { ok: false, why: "template literal with expressions" };
   return { ok: false, why: `${node.type} is not a string literal` };
@@ -174,12 +231,24 @@ export function readTablesSnapshot(path, { root } = {}) {
   if (j.project !== SNAPSHOT_PROJECT) return { error: `${rel} project is ${JSON.stringify(j.project)}, expected ${SNAPSHOT_PROJECT} (production)` };
   if (!SNAPSHOT_ROLES.includes(j.role)) return { error: `${rel} was captured as role ${JSON.stringify(j.role)}; approved: ${SNAPSHOT_ROLES.join(", ")}` };
   if (typeof j.ledgerVersion !== "string" || !/^\d{14}$/.test(j.ledgerVersion)) return { error: `${rel} records no ledgerVersion` };
+  // I4: provenance fields.
+  if (typeof j.capturedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(j.capturedAt) || Number.isNaN(Date.parse(j.capturedAt))) {
+    return { error: `${rel} capturedAt is missing or not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)` };
+  }
+  if (typeof j.capturedBy !== "string" || !j.capturedBy.trim()) return { error: `${rel} capturedBy is missing or empty` };
+  if (typeof j.database !== "string" || !j.database.trim()) return { error: `${rel} database is missing or empty` };
+  if (j.query !== "scripts/manual/tables-snapshot.sql") return { error: `${rel} query must name scripts/manual/tables-snapshot.sql` };
   if (root) {
     const baseline = appliedBaselineVersion(root);
     if (!baseline) return { error: "no applied migration files under supabase/migrations/ to reconcile the snapshot against" };
     if (baseline !== j.ledgerVersion) {
       return { error: `${rel} ledgerVersion ${j.ledgerVersion} != newest applied migration file ${baseline}: the snapshot and the repo describe different schemas — recapture` };
     }
+    // INV-6: Release 2 table presence follows applied migration state.
+    const { applied, pendingOnly } = protectedNamesByState(root);
+    const have = new Set(j.tables);
+    for (const t of applied) if (!have.has(t)) return { error: `${rel} lacks "${t}", which an APPLIED release2 migration creates: the snapshot predates the apply — recapture` };
+    for (const t of pendingOnly) if (have.has(t)) return { error: `${rel} contains "${t}", which no applied migration creates (still in pending/): either the apply is unrecorded or the snapshot is not production's` };
   }
   return { snapshot: j };
 }
@@ -194,18 +263,69 @@ export function readRetired(path) {
 
 // A1: both lifecycle locations. pending/release2_*.sql before stage 0,
 // <version>_release2_*.sql after.
-export function protectedNamesFromMigrations(root) {
+function createdTables(dir) {
   const names = new Set();
-  const dirs = [join(root, "supabase", "migrations", "pending"), join(root, "supabase", "migrations")];
-  for (const dir of dirs) {
-    if (!existsSync(dir)) continue;
-    for (const f of readdirSync(dir)) {
-      if (!/(^|_)release2_.*\.sql$/i.test(f) || /\.rollback\.sql$/i.test(f)) continue;
-      const sql = readFileSync(join(dir, f), "utf8");
-      for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)) names.add(m[1].toLowerCase());
-    }
+  if (!existsSync(dir)) return names;
+  for (const f of readdirSync(dir)) {
+    if (!/(^|_)release2_.*\.sql$/i.test(f) || /\.rollback\.sql$/i.test(f)) continue;
+    const sql = readFileSync(join(dir, f), "utf8");
+    for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)) names.add(m[1].toLowerCase());
   }
   return names;
+}
+/** Names by lifecycle state: created by an APPLIED file, or only by a pending one. */
+export function protectedNamesByState(root) {
+  const applied = createdTables(join(root, "supabase", "migrations"));
+  const pending = createdTables(join(root, "supabase", "migrations", "pending"));
+  const pendingOnly = new Set([...pending].filter((n) => !applied.has(n)));
+  return { applied, pendingOnly, all: new Set([...applied, ...pending]) };
+}
+export function protectedNamesFromMigrations(root) {
+  return protectedNamesByState(root).all;
+}
+
+/**
+ * I3: is this source a tombstone, in the one form allowed?
+ *   export const TOMBSTONE = true;
+ *   export const handler = async () => ({ statusCode: 410, ... literals ... });
+ * No imports, no other statements, zero handler parameters, no branch of any
+ * kind, statusCode a literal 410. Returns null when it is, else the reason.
+ */
+export function tombstoneProblem(src) {
+  let ast;
+  try { ast = JSXParser.parse(src, { ecmaVersion: "latest", sourceType: "module", locations: true }); }
+  catch (e) { return `does not parse (${e.message})`; }
+  const body = ast.body;
+  if (body.some((st) => st.type === "ImportDeclaration" || st.type === "ImportExpression")) return "imports something; a tombstone imports nothing";
+  if (body.length !== 2) return `has ${body.length} top-level statements; a tombstone has exactly two`;
+  const [a, b] = body;
+  const isExportConst = (st, name) => st.type === "ExportNamedDeclaration" && st.declaration?.type === "VariableDeclaration" && st.declaration.kind === "const" && st.declaration.declarations.length === 1 && st.declaration.declarations[0].id.type === "Identifier" && st.declaration.declarations[0].id.name === name;
+  if (!isExportConst(a, "TOMBSTONE") || a.declaration.declarations[0].init?.type !== "Literal" || a.declaration.declarations[0].init.value !== true) return 'first statement must be `export const TOMBSTONE = true;`';
+  if (!isExportConst(b, "handler")) return "second statement must be `export const handler = ...`";
+  const fn = b.declaration.declarations[0].init;
+  if (!fn || !/^(ArrowFunctionExpression|FunctionExpression)$/.test(fn.type)) return "handler must be a function expression";
+  if (fn.params.length !== 0) return "handler must take no parameters; a tombstone does not read the request";
+  let ret;
+  if (fn.expression) ret = fn.body;
+  else if (fn.body.type === "BlockStatement" && fn.body.body.length === 1 && fn.body.body[0].type === "ReturnStatement") ret = fn.body.body[0].argument;
+  else return "handler body must be a single return of a literal object";
+  if (!ret || ret.type !== "ObjectExpression") return "handler must return an object literal";
+  let status = null;
+  for (const p of ret.properties) {
+    if (p.type !== "Property" || p.computed || p.key.type !== "Identifier") return "handler object has a non-plain property";
+    if (p.value.type === "Literal") { if (p.key.name === "statusCode") status = p.value.value; continue; }
+    if (p.value.type === "ObjectExpression" && p.value.properties.every((q) => q.type === "Property" && !q.computed && q.value.type === "Literal")) continue;
+    return `handler property "${p.key.name}" is not a literal`;
+  }
+  if (status !== 410) return `handler statusCode is ${JSON.stringify(status)}, not the literal 410`;
+  let branchy = null;
+  walk(fn, (n, p) => {
+    if (branchy || n === fn) return;
+    if (n.type === "Identifier" && p && p.type === "Property" && p.key === n && !p.computed) return;   // a plain key, not a reference
+    if (/^(IfStatement|ConditionalExpression|LogicalExpression|SwitchStatement|TryStatement|CallExpression|MemberExpression|Identifier|AwaitExpression)$/.test(n.type)) branchy = n.type;
+  });
+  if (branchy) return `handler contains a ${branchy}; a tombstone has no branch, call or reference`;
+  return null;
 }
 
 /**
@@ -267,10 +387,8 @@ export function runInventory({ root, retiredEver = [] }) {
   for (const name of retired) {
     const p = join(fnDir, `${name}.js`);
     if (!existsSync(p)) { errors.push(`retired route ${name} has no tombstone file netlify/functions/${name}.js`); continue; }
-    const src = readFileSync(p, "utf8");
-    if (/^\s*import\s/m.test(src) || /require\(/.test(src)) errors.push(`tombstone netlify/functions/${name}.js imports something; a tombstone imports nothing`);
-    if (!/410/.test(src)) errors.push(`tombstone netlify/functions/${name}.js does not answer 410`);
-    if (!/export const TOMBSTONE = true/.test(src)) errors.push(`tombstone netlify/functions/${name}.js lacks the marker "export const TOMBSTONE = true"`);
+    const problem = tombstoneProblem(readFileSync(p, "utf8"));
+    if (problem) errors.push(`tombstone netlify/functions/${name}.js is not in the tombstone form: ${problem}`);
   }
   // The other direction: a file that IS a tombstone but is not listed.
   for (const name of fnFiles) {
@@ -351,6 +469,7 @@ export function runInventory({ root, retiredEver = [] }) {
         const staticSrc = s.type === "Literal" ? String(s.value) : s.type === "TemplateLiteral" && s.expressions.length === 0 ? s.quasis.map((q) => q.value.cooked).join("") : null;
         if (staticSrc === null) errors.push(`${file}:${node.loc.start.line}: dynamic import() with a non-literal specifier; the scan cannot see what it loads`);
         else if (isClientImportSource(staticSrc)) errors.push(`${file}:${node.loc.start.line}: dynamic import() of the gateway module hides the client from the scan`);
+        else if (staticSrc === "@supabase/supabase-js" && file !== CLIENT_INIT) errors.push(`${file}:${node.loc.start.line}: dynamic import() of @supabase/supabase-js; only ${CLIENT_INIT} may import the package`);
         return;
       }
 
@@ -362,9 +481,9 @@ export function runInventory({ root, retiredEver = [] }) {
       if ((node.type === "Literal" && typeof node.value === "string") || (node.type === "TemplateLiteral" && node.expressions.length === 0)) {
         const v = node.type === "Literal" ? node.value : node.quasis.map((q) => q.value.cooked).join("");
         const line = node.loc.start.line;
-        if (v.includes(ROUTE_PREFIX)) {
+        if (/\.netlify/i.test(v)) {
           const m = /^\/\.netlify\/functions\/([a-z0-9-]+)$/.exec(v);
-          if (!m) errors.push(`${file}:${line}: route literal ${JSON.stringify(v)} is not exactly ${ROUTE_PREFIX}<name>`);
+          if (!m) errors.push(`${file}:${line}: route piece ${JSON.stringify(v)} is not a full ${ROUTE_PREFIX}<name> literal; routes are not built piecewise — use a full literal or the allowlisted dispatcher`);
           else if (!fnNames.has(m[1])) errors.push(`${file}:${line}: route literal names "${m[1]}", which is not a function in netlify/functions/`);
           else { if (retired.has(m[1]) || retiredEver.includes(m[1])) errors.push(`${file}:${line}: names the retired route "${m[1]}"`); site(line, "fn", m[1]); }
         } else if (fnNames.has(v)) {
@@ -387,11 +506,23 @@ export function runInventory({ root, retiredEver = [] }) {
         errors.push(`${file}:${line}: the client is placed in an object literal`);
         return;
       }
-      // Truthiness guards are fine.
+      // Truthiness guards are fine — but only where the VALUE cannot escape.
+      // `if (!supabase)`, `supabase ? a : b`, `supabase && doThing()` as a
+      // statement are guards; `const c = supabase || null`, `return supabase
+      // && x`, `export const c = supabase || fallback` let the client out.
       if (parent && parent.type === "UnaryExpression" && parent.operator === "!") return;
-      if (parent && parent.type === "IfStatement" && parent.test === node) return;
-      if (parent && parent.type === "ConditionalExpression" && parent.test === node) return;
-      if (parent && parent.type === "LogicalExpression") return;
+      if (parent && /^(IfStatement|ConditionalExpression|WhileStatement|DoWhileStatement|ForStatement)$/.test(parent.type) && parent.test === node) return;
+      if (parent && parent.type === "LogicalExpression") {
+        let top = parent, above = parentOf(top);
+        while (above && above.type === "LogicalExpression") { top = above; above = parentOf(top); }
+        const guardPosition =
+          (above && /^(IfStatement|ConditionalExpression|WhileStatement|DoWhileStatement|ForStatement)$/.test(above.type) && above.test === top) ||
+          (above && above.type === "UnaryExpression" && above.operator === "!") ||
+          (above && above.type === "ExpressionStatement");
+        if (guardPosition) return;
+        errors.push(`${file}:${line}: the client escapes as a value through a logical expression (${above ? above.type : "top level"}); only a boolean guard may hold it`);
+        return;
+      }
 
       if (!parent || parent.type !== "MemberExpression" || parent.object !== node) {
         errors.push(`${file}:${line}: the client is used as a value (${parent ? parent.type : "top level"}); it may only be the object of an allowed member chain`);
@@ -406,7 +537,7 @@ export function runInventory({ root, retiredEver = [] }) {
       if (CALLED_PROPS.has(prop)) {
         if (!isCallee) { errors.push(`${file}:${line}: supabase.${prop} is referenced without being called (aliasing)`); return; }
         if (!REACH_PROPS.has(prop)) return;
-        const arg = staticString(gp.arguments[0], consts);
+        const arg = staticString(gp.arguments[0], consts, parentOf);
         if (!arg.ok) { errors.push(`${file}:${line}: supabase.${prop}(${arg.why}); the name must be knowable at parse time`); return; }
         if (prop === "from") {
           if (tables.has(arg.value)) site(line, "table", arg.value);
@@ -432,7 +563,7 @@ export function runInventory({ root, retiredEver = [] }) {
           errors.push(`${file}:${line}: supabase.storage.from is referenced without being called`);
           return;
         }
-        const arg = staticString(ggp.arguments[0], consts);
+        const arg = staticString(ggp.arguments[0], consts, parentOf);
         if (!arg.ok) { errors.push(`${file}:${line}: supabase.storage.from(${arg.why})`); return; }
         if (buckets.has(arg.value)) site(line, "bucket", arg.value);
         else if (tables.has(arg.value) || views.has(arg.value)) errors.push(`${file}:${line}: storage.from("${arg.value}") names a TABLE, not a bucket — kinds do not mix`);
