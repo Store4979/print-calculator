@@ -175,13 +175,44 @@ if (!mainBundle) {
     if (!deployLit) problems.push("Netlify build but the main bundle carries no deployId literal: DEPLOY_ID was empty at build time");
     if (commitLit && process.env.COMMIT_REF && commitLit[1] !== String(process.env.COMMIT_REF).trim())
       problems.push(`bundle commit ${commitLit[1]} != build env COMMIT_REF ${process.env.COMMIT_REF}`);
+
+    // ── Staleness cross-check: deploy-context.json describes THIS build ────
+    // The function bundles carry netlify/lib/deploy-context.json and the
+    // Release 2 gate trusts it. Netlify does not hand each build a clean
+    // checkout — the previous deploy's files can still be on disk (that is how
+    // a stale dist/ failed PR #47 in `yarn test`) — so a build whose writer
+    // step did not run could ship a bundle whose context file describes an
+    // OLDER deploy. Two comparisons, both here because this is the one step
+    // that runs after the build and can fail the deploy: the file against the
+    // build environment, and the file against the client bundle's own
+    // __PC_BUILD__ commit. Local builds write nulls and are not checked.
+    const DC = join(ROOT, "netlify/lib/deploy-context.json");
+    if (!existsSync(DC)) {
+      problems.push("netlify/lib/deploy-context.json is absent on a Netlify build: scripts/write-deploy-context.mjs did not run");
+    } else {
+      let dc = null;
+      try { dc = JSON.parse(readFileSync(DC, "utf8")); } catch { problems.push("netlify/lib/deploy-context.json is not valid JSON"); }
+      if (dc) {
+        const ctxCommit = String(dc.commitRef ?? "").trim();
+        if (!ctxCommit) {
+          problems.push("deploy-context.json carries no commitRef on a Netlify build");
+        } else {
+          if (process.env.COMMIT_REF && ctxCommit !== String(process.env.COMMIT_REF).trim())
+            problems.push(`deploy-context.json commitRef ${ctxCommit} != build env COMMIT_REF ${process.env.COMMIT_REF} (stale context file)`);
+          if (commitLit && ctxCommit !== commitLit[1])
+            problems.push(`deploy-context.json commitRef ${ctxCommit} != bundle __PC_BUILD__ commit ${commitLit[1]} (one of the two is stale)`);
+        }
+        if (!String(dc.context ?? "").trim())
+          problems.push("deploy-context.json carries no context on a Netlify build");
+      }
+    }
   }
   if (problems.length) {
     die("inject-sw-manifest: BUILD STAMP invariant failed; refusing to ship a bundle that cannot identify itself:",
         ...problems.map((p) => "  " + p),
         `  (bundle: ${mainBundle}, netlify=${onNetlify})`);
   }
-  console.log(`inject-sw-manifest: build stamp present in ${mainBundle}${onNetlify ? " (Netlify: commit + deployId literals verified)" : " (local build: MISSING stamp is expected and present)"}`);
+  console.log(`inject-sw-manifest: build stamp present in ${mainBundle}${onNetlify ? " (Netlify: commit + deployId literals verified; deploy-context.json agrees)" : " (local build: MISSING stamp is expected and present)"}`);
 }
 
 // Validation passed. Only now is anything written.

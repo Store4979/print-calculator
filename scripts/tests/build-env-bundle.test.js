@@ -377,7 +377,7 @@ test("MODE INVARIANT: the real netlify.toml AND package.json both match expectat
 // exiting 0 in pinned production mode against a bundle built in staging mode.
 // These cases exist so that gap cannot be re-introduced silently in EITHER file.
 const REAL_TOML_COMMAND =
-  "yarn install && yarn test && node scripts/check-build-env.mjs && yarn build && node scripts/inject-sw-manifest.mjs";
+  "yarn install && yarn test && node scripts/check-build-env.mjs && node scripts/write-deploy-context.mjs && yarn build && node scripts/inject-sw-manifest.mjs";
 
 for (const [label, mutation, expectMatch] of [
   [

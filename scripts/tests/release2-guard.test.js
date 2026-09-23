@@ -24,6 +24,13 @@ import {
   PRODUCTION_REF,
 } from "../../netlify/lib/release2.js";
 
+// The guard now has a THIRD condition: a verified deployment context read
+// from a file compiled into the bundle (netlify/lib/deploy-context.js). These
+// tests are about conditions 1 and 2, so they inject a valid context rather
+// than depending on whether a generated file happens to be on disk — the
+// context condition has its own suite, release2-deploy-context.test.js.
+const OK_CTX = { ok: true, context: "production", reason: null, source: "test", tried: [], meta: {} };
+
 const STAGING_REF = "lboajqihpsfrokqvjgnl";
 const PROD_URL = `https://${PRODUCTION_REF}.supabase.co`;
 const STAGING_URL = `https://${STAGING_REF}.supabase.co`;
@@ -43,7 +50,7 @@ test("projectRefFromUrl", () => {
 
 test("THE HAZARD: production project is refused even WITH the flag set", () => {
   // This is the condition that does not depend on remembering anything.
-  const r = release2Allowed({ RELEASE2_ENABLED: "true", SUPABASE_URL: PROD_URL });
+  const r = release2Allowed({ RELEASE2_ENABLED: "true", SUPABASE_URL: PROD_URL }, { deployContext: OK_CTX });
   assert.equal(r.ok, false);
   assert.equal(r.status, 404);
   assert.match(r.reason, /refuse to run against the production project/);
@@ -51,13 +58,13 @@ test("THE HAZARD: production project is refused even WITH the flag set", () => {
 });
 
 test("production preview shape — flag absent AND production URL — refused", () => {
-  const r = release2Allowed({ SUPABASE_URL: PROD_URL });
+  const r = release2Allowed({ SUPABASE_URL: PROD_URL }, { deployContext: OK_CTX });
   assert.equal(r.ok, false);
   assert.equal(r.status, 404);
 });
 
 test("staging project WITHOUT the flag is refused (fail-closed)", () => {
-  const r = release2Allowed({ SUPABASE_URL: STAGING_URL });
+  const r = release2Allowed({ SUPABASE_URL: STAGING_URL }, { deployContext: OK_CTX });
   assert.equal(r.ok, false);
   assert.equal(r.status, 404);
   assert.match(r.reason, /not enabled on this deployment/);
@@ -65,7 +72,7 @@ test("staging project WITHOUT the flag is refused (fail-closed)", () => {
 
 test("flag must be exactly 'true'", () => {
   for (const v of ["TRUE", "1", "yes", "true ", " true", "", "false"]) {
-    const r = release2Allowed({ RELEASE2_ENABLED: v, SUPABASE_URL: STAGING_URL });
+    const r = release2Allowed({ RELEASE2_ENABLED: v, SUPABASE_URL: STAGING_URL }, { deployContext: OK_CTX });
     // " true" and "true " trim to "true" and are accepted; the rest are not.
     const expected = v.trim() === "true";
     assert.equal(r.ok, expected, `flag ${JSON.stringify(v)}`);
@@ -73,20 +80,20 @@ test("flag must be exactly 'true'", () => {
 });
 
 test("missing SUPABASE_URL is 503, not a silent pass", () => {
-  const r = release2Allowed({ RELEASE2_ENABLED: "true" });
+  const r = release2Allowed({ RELEASE2_ENABLED: "true" }, { deployContext: OK_CTX });
   assert.equal(r.ok, false);
   assert.equal(r.status, 503);
 });
 
-test("staging project WITH the flag is allowed", () => {
-  const r = release2Allowed({ RELEASE2_ENABLED: "true", SUPABASE_URL: STAGING_URL });
+test("staging project WITH the flag AND a verified context is allowed", () => {
+  const r = release2Allowed({ RELEASE2_ENABLED: "true", SUPABASE_URL: STAGING_URL }, { deployContext: OK_CTX });
   assert.equal(r.ok, true);
   assert.match(r.reason, new RegExp(STAGING_REF));
 });
 
 test("a disabled deployment answers 404, indistinguishable from absent", () => {
   // So probing cannot map which deployments carry Release 2 code.
-  const res = gate(ev(), { env: { SUPABASE_URL: PROD_URL } });
+  const res = gate(ev(), { env: { SUPABASE_URL: PROD_URL }, deployContext: OK_CTX });
   assert.equal(res.statusCode, 404);
   assert.equal(JSON.parse(res.body).error, "Not Found");
   assert.doesNotMatch(res.body, /production/i, "the refusal must not explain itself to the caller");
@@ -95,17 +102,17 @@ test("a disabled deployment answers 404, indistinguishable from absent", () => {
 
 test("gate: method, origin and content-type, in that order", () => {
   const env = { RELEASE2_ENABLED: "true", SUPABASE_URL: STAGING_URL, URL: "https://site.example" };
-  assert.equal(gate(ev({ httpMethod: "GET" }), { env }).statusCode, 405);
+  assert.equal(gate(ev({ httpMethod: "GET" }), { env, deployContext: OK_CTX }).statusCode, 405);
   assert.equal(
-    gate(ev({ headers: { "content-type": "application/json", origin: "https://evil.example" } }), { env })
+    gate(ev({ headers: { "content-type": "application/json", origin: "https://evil.example" } }), { env, deployContext: OK_CTX })
       .statusCode,
     403
   );
   assert.equal(
-    gate(ev({ headers: { "content-type": "application/x-www-form-urlencoded" } }), { env }).statusCode,
+    gate(ev({ headers: { "content-type": "application/x-www-form-urlencoded" } }), { env, deployContext: OK_CTX }).statusCode,
     415
   );
-  assert.equal(gate(ev(), { env }), null, "a good request passes the gate");
+  assert.equal(gate(ev(), { env, deployContext: OK_CTX }), null, "a good request passes the gate");
 });
 
 test("credential-installing endpoints: the form-POST shape is blocked", () => {

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { stripComments } from "./source-util.mjs";
+import { withRepoDeployContext, validContext } from "./deploy-context-fixture.mjs";
 
 // EVERY source read here is comment-stripped. Three times an assertion in
 // this suite matched text that merely QUOTED the thing it was asserting
@@ -301,13 +302,20 @@ function scriptedRows({ revoked = null, enrRevoked = null } = {}) {
   };
 }
 
+// These tests drive the REAL handlers, so they pass through the REAL gate —
+// which since stage 0 also requires a verified deployment context read from a
+// bundled file. There is deliberately no environment switch for that reader
+// (netlify/lib/deploy-context.js), so the fixture writes the file the reader
+// looks for and restores whatever was there.
 async function withEnv(fn) {
   const saved = { ...process.env };
   process.env.RELEASE2_ENABLED = "true";
   process.env.SUPABASE_URL = "https://lboajqihpsfrokqvjgnl.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test";
   delete process.env.URL; delete process.env.DEPLOY_PRIME_URL;
-  try { return await fn(); } finally {
+  try {
+    return await withRepoDeployContext(validContext({ context: "production" }), fn);
+  } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
     Object.assign(process.env, saved);
   }

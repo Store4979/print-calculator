@@ -12,7 +12,7 @@
 // production — which violates "production stays untouched for the whole of
 // Release 2" without anyone doing anything wrong.
 //
-// TWO INDEPENDENT CONDITIONS, both required, fail-closed:
+// THREE INDEPENDENT CONDITIONS, all required, fail-closed:
 //
 //   1. RELEASE2_ENABLED must be exactly "true". Absent or anything else →
 //      refuse. Staging sets it; production and its previews do not. A flag
@@ -20,15 +20,29 @@
 //   2. The project the function would actually talk to must NOT be the
 //      production ref. This does not depend on remembering anything: even
 //      with the flag set, an endpoint pointed at production refuses.
+//   3. The deployment must carry a VERIFIED CONTEXT — a file written at build
+//      time into the function bundle (./deploy-context.js reads it), whose
+//      `context` is in RELEASE2_CONTEXTS (default: production only). Absent,
+//      malformed, or a context outside the allowed list → refuse. No request,
+//      header or dashboard edit can change a bundled file.
 //
-// Condition 2 is the one that matters. Condition 1 is what keeps the surface
-// closed everywhere it has not been deliberately opened.
+// Condition 2 is the one that matters TODAY. Condition 3 is what is meant to
+// replace it: stage 0 of docs/security/release-2-data-path-plan.md deletes
+// condition 2, and §4.1 allows that deletion only once four observations have
+// been recorded from the read-only netlify/functions/deploy-context.js route —
+// production reporting production, a preview of production reporting
+// deploy-preview, staging reporting production under its own site name, and
+// the Functions-scoped flag present in production and absent in the preview.
+// Until those are in hand and the stage 0 production review has run, condition
+// 2 stays. Condition 1 is what keeps the surface closed everywhere it has not
+// been deliberately opened.
 //
-// This whole module is removed, not merely flipped, when Release 2 reaches
+// Condition 2 is removed, not merely flipped, when Release 2 reaches
 // production for real — at which point the endpoints are the supported path
-// and a staging-only guard would be a lie. Until then it is load-bearing.
+// and a staging-only refusal would be a lie. Until then it is load-bearing.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { readDeployContext, allowedContexts } from "./deploy-context.js";
 
 export const PRODUCTION_REF = "gmxyisjjaxtpycsmmzef";
 
@@ -42,8 +56,11 @@ export function projectRefFromUrl(url) {
  * Is this deployment allowed to run Release 2 endpoints at all?
  * Returns { ok, status, reason } — never throws, so a handler cannot
  * accidentally treat an error as permission.
+ *
+ * `deployContext` is an injection point for tests ONLY. Handlers never pass
+ * it, so on a real deployment the value always comes from the bundled file.
  */
-export function release2Allowed(env = process.env) {
+export function release2Allowed(env = process.env, { deployContext = null } = {}) {
   const flag = String(env.RELEASE2_ENABLED || "").trim();
   const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL || "";
   const ref = projectRefFromUrl(url);
@@ -61,6 +78,26 @@ export function release2Allowed(env = process.env) {
   if (!ref) {
     return { ok: false, status: 503, reason: "SUPABASE_URL is missing or not a Supabase project URL." };
   }
+  // Condition 3. Checked before the flag so the log says which fact was
+  // missing; both must pass either way.
+  const dc = deployContext || readDeployContext();
+  if (!dc.ok) {
+    return {
+      ok: false,
+      status: 404,
+      reason: `Release 2 refuses: the deployment context is unverified (${dc.reason}).`,
+    };
+  }
+  const contexts = allowedContexts(env);
+  if (!contexts.includes(dc.context)) {
+    return {
+      ok: false,
+      status: 404,
+      reason:
+        `Release 2 refuses: deployment context ${JSON.stringify(dc.context)} is not in ` +
+        `RELEASE2_CONTEXTS (${contexts.join(", ")}).`,
+    };
+  }
   if (flag !== "true") {
     return {
       ok: false,
@@ -68,7 +105,7 @@ export function release2Allowed(env = process.env) {
       reason: "Release 2 endpoints are not enabled on this deployment (RELEASE2_ENABLED !== 'true').",
     };
   }
-  return { ok: true, status: 200, reason: `enabled for project ${ref}` };
+  return { ok: true, status: 200, reason: `enabled for project ${ref} in context ${dc.context}` };
 }
 
 // ── Responses ───────────────────────────────────────────────────────────────
@@ -132,8 +169,8 @@ export function contentTypeOk(event) {
  * One gate for every Release 2 endpoint. Call it first, return its response if
  * it produces one. Never returns a reason to the caller — reasons are logged.
  */
-export function gate(event, { method = "POST", requireJson = true, env = process.env } = {}) {
-  const allowed = release2Allowed(env);
+export function gate(event, { method = "POST", requireJson = true, env = process.env, deployContext = null } = {}) {
+  const allowed = release2Allowed(env, { deployContext });
   if (!allowed.ok) {
     console.warn("[release2] refused:", allowed.reason);
     return allowed.status === 503

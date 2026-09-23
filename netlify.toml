@@ -3,7 +3,7 @@
   # install+build only, so no test had ever blocked a deploy and the
   # raw-getDocument guard in scripts/tests/ enforced nothing.
   # inject-sw-manifest enumerates the hashed build outputs into dist/sw.js.
-  command = "yarn install && yarn test && node scripts/check-build-env.mjs && yarn build && node scripts/inject-sw-manifest.mjs"
+  command = "yarn install && yarn test && node scripts/check-build-env.mjs && node scripts/write-deploy-context.mjs && yarn build && node scripts/inject-sw-manifest.mjs"
   publish = "dist"
   functions = "netlify/functions"
 
@@ -33,8 +33,14 @@
 
 # Bundle package.json into every function — changes each bundle's digest so
 # Netlify re-uploads them all onto the current (Node 22) runtime.
+#
+# netlify/lib/deploy-context.json is written by scripts/write-deploy-context.mjs
+# during the build command (before `yarn build`) and is READ FROM DISK at
+# request time by netlify/lib/deploy-context.js — the bundler inlines imported
+# JS but not a file opened with fs, so it must be shipped here or the Release 2
+# gate refuses everything. It is generated, not tracked (.gitignore).
 [functions]
-  included_files = ["package.json"]
+  included_files = ["package.json", "netlify/lib/deploy-context.json"]
 
 # Customer self-serve upload page. MUST stay above the SPA catch-all below,
 # or "/upload" gets rewritten to the calculator's index.html.

@@ -334,6 +334,7 @@ either from a passing build.
 | 3 slice 3 — `staff-session-revoke-all` (kiosk entry) | **ACCEPTED on staging 2026-09-16**: probes 3k–3l green, `'kiosk entry'` read back. Revokes STAFF sessions only — the owner Auth session is the client's job (step 4); plan row 19 (second tab discovers revocation) is a step-4 client probe, not covered here | — |
 | 2e — owner device revocation function | **APPLIED to staging** 2026-09-16 | `release2_05_revoke_enrollment` (`20260916225132`); rehearsal called it end to end incl. P5b (bind precedes the idempotent return) |
 | 3 slice 3 — `enroll-revoke` + `enroll-list` | **ACCEPTED on staging 2026-09-17**: 5a–5e green incl. the T2 halves with a positive control (owner-t2 own-store list 200 before and after the 401s) | — |
+| stage 0 (staging half) — verified deployment context | built on `security/release-2-stage-0`, NOT yet deployed. `release2Allowed()` gains a third condition read from `netlify/lib/deploy-context.json`, written at build; the production-ref refusal stays. **Under `netlify dev` and any local build the writer records nulls (or `dev`), the reader rejects them, and every Release 2 endpoint answers 404 — by design**; local work that needs them sets `RELEASE2_CONTEXTS=production,dev` deliberately. Phase 0 probes 0a–0c pending | — |
 
 **Production has nothing from Release 2.** When step 2 is eventually applied
 there, read the assigned version out of `supabase_migrations.schema_migrations`
