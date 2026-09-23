@@ -1,0 +1,4 @@
+{
+  "$comment": "Route tombstones: functions retired at a slice stage D. Each name here keeps a file netlify/functions/<name>.js that answers 410 to every request and imports nothing. Both the file and this entry are inputs to scripts/tests/inventory-check.mjs, so the name never leaves discovery; a client literal naming a retired route fails the inventory.",
+  "retired": []
+}

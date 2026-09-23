@@ -54,8 +54,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   increase model. Writes the same App.jsx state the old price tables did.
 - src/lib/margin.js — PURE cost & margin engine (no React/Supabase). Every
   margin number on every surface comes from here. Unit-tested by `yarn test`.
-- scripts/tests/*.test.js — `yarn test` (node --test, zero deps). The kiosk
-  leak guard lives here; keep it green before any PR.
+- scripts/tests/*.test.js — `yarn test` (node --test). The kiosk leak guard
+  lives here; keep it green before any PR. Two devDependencies and no more,
+  both PINNED EXACTLY (no lockfile is committed — the supabase-js lesson):
+  `acorn` + `acorn-jsx`, used only by scripts/tests/inventory-check.mjs, the
+  Release 2 reach inventory (release2-inventory.test.js + its mutation
+  companion). It PARSES src/ and classifies every table/bucket/rpc/channel/
+  function the client names against supabase/tables.json (captured by
+  scripts/manual/tables-snapshot.sql — never edit by hand) and
+  netlify/functions/*.js + _retired.json; a new reach site fails until it is
+  allowlisted with its slice tag, and a `.from` on a variable, an alias, a
+  destructure, computed access or a second importer of the raw client fails
+  outright. The Release 2 table names FORBIDDEN in src/ come from
+  supabase/migrations/pending/release2_*.sql, not from the snapshot.
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
 - src/lib/orderQueue.js — offline order queue. localStorage key is still
   "pendingTransactions" on purpose (renaming it orphans queued orders); rows
