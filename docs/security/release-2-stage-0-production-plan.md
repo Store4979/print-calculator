@@ -1,6 +1,6 @@
 # Release 2 — stage 0, production half
 
-**Status: PLAN ONLY, for its own review round. Nothing here has been applied.**
+**Status: ON HOLD — do not review yet.** Superseded pending the staging ledger reconciliation (`release-2-staging-reconciliation.md`): its F1 treats the 01–03 mismatch as something to carry into production, which is the wrong order. It will be rewritten against the reconciled staging ledger and Codex's six requirements. Nothing here has been applied.
 Written 2026-09-24 on `security/release-2-slice-2`. Implements §4.2 of
 `release-2-data-path-plan.md` for production after the staging half was
 accepted (0a, 0b on both sites, 0c, preview deletion verified, inventory
@@ -70,7 +70,7 @@ never pasted into a session.
 deploys: the published one and three rollback targets kept; 28 key-bearing or
 key-unknown deploys proposed for deletion (`deploy-inventory.md`,
 `PRODUCTION-DELETE-LIST`); 39 have no functions. Deletion reaches permalinks
-nobody should use; only rotation reaches the kept four.
+nobody should use; the kept four are kept on purpose, so rotation is the mechanism that retires their key without removing them. (Six older previews #24–#28 also remain: four hold the key, two unknown.)
 
 ---
 
