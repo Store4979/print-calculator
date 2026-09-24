@@ -71,6 +71,21 @@
 //    migration state: names from APPLIED release2 files must be present,
 //    names still only in pending/ must be absent. The browser prohibition on
 //    those names is independent of both.
+//
+// Review of ff677d6 (INV-R1..R3):
+//  - R1 a route may be written in exactly two forms: the full literal
+//    "/.netlify/functions/<name>", or the dispatcher template
+//    `/.netlify/functions/${x}` (one expression, nothing after it), which is an
+//    allowlisted route-builder site. ANY other string piece or template quasi
+//    shaped like a route (".netlify", "netlify/", "/functions/") fails. BOUND,
+//    stated: detection is lexical on those three shapes; a route assembled from
+//    pieces none of which contains one of them (e.g. "/.net" + "lify" + "/fun" +
+//    "ctions/" + name) is not detected.
+//  - R2 re-exporting the package in any form — `export {…} from`, `export * from`,
+//    `export * as x from`, aliases — fails in every file, the gateway included.
+//  - R3 a `var` anywhere in an enclosing function body (any nested block, a
+//    for-head), hoisted to the whole function, shadows the constant; a `var` in a
+//    NESTED function does not.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep, basename } from "node:path";
 import { Parser } from "acorn";
@@ -94,6 +109,9 @@ export const APPROVED_RPC = Object.freeze({ verify_employee_pin: "4" });
 const REACH_PROPS = new Set(["from", "rpc", "channel"]);
 const CALLED_PROPS = new Set(["from", "rpc", "channel", "removeChannel"]);
 const ROUTE_PREFIX = "/.netlify/functions/";
+// A string piece shaped like part of a Netlify function route (R1). Path
+// shapes only: the word "Netlify" in prose (the build-stamp message) is fine.
+const ROUTE_SHAPE = /\.netlify|netlify\/|\/functions\//i;
 
 const posix = (p) => p.split(sep).join("/");
 
@@ -157,11 +175,29 @@ function patternNames(p, out = []) {
   return out;
 }
 // I2: is `name` re-bound by any scope enclosing `node` (below the top level)?
+// Every `var` binding anywhere in a function's body, stopping at nested
+// functions (their vars are theirs). `var` hoists to the whole function, so a
+// declaration in a sibling block still binds the name at the use site.
+function functionVarNames(fn) {
+  const names = [];
+  const visit = (n) => {
+    if (!n || typeof n !== "object") return;
+    if (Array.isArray(n)) { n.forEach(visit); return; }
+    if (typeof n.type !== "string") return;
+    if (n !== fn && /^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type)) return;
+    if (n.type === "VariableDeclaration" && n.kind === "var") for (const d of n.declarations) names.push(...patternNames(d.id));
+    for (const k of Object.keys(n)) if (k !== "type" && k !== "loc" && n[k] && typeof n[k] === "object") visit(n[k]);
+  };
+  visit(fn.body);
+  return names;
+}
+
 function shadowedBy(name, node, parentOf) {
   for (let cur = parentOf(node); cur; cur = parentOf(cur)) {
     if (/^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(cur.type)) {
       for (const p of cur.params) if (patternNames(p).includes(name)) return `parameter of the enclosing ${cur.type}`;
       if (cur.id && cur.id.name === name) return "the enclosing function's own name";
+      if (functionVarNames(cur).includes(name)) return "var hoisted to the enclosing function";
     }
     if (cur.type === "CatchClause" && cur.param && patternNames(cur.param).includes(name)) return "catch binding";
     if (cur.type === "BlockStatement" || cur.type === "ForStatement" || cur.type === "ForInStatement" || cur.type === "ForOfStatement" || cur.type === "SwitchStatement") {
@@ -444,6 +480,9 @@ export function runInventory({ root, retiredEver = [] }) {
           }
         }
       }
+      if ((st.type === "ExportNamedDeclaration" || st.type === "ExportAllDeclaration") && st.source && String(st.source.value) === "@supabase/supabase-js") {
+        errors.push(`${file}:${st.loc.start.line}: re-exports @supabase/supabase-js (${st.type === "ExportAllDeclaration" ? (st.exported ? "export * as " + (st.exported.name ?? st.exported.value) : "export *") : "export {…} from"}); the package is re-exported by no file, the gateway included`);
+      }
       if (st.type === "ExportNamedDeclaration") {
         if (st.declaration && st.declaration.type === "VariableDeclaration") {
           for (const d of st.declaration.declarations) {
@@ -473,15 +512,20 @@ export function runInventory({ root, retiredEver = [] }) {
         return;
       }
 
-      // Route builders (A5) and route/function-name literals.
+      // Route builders (A5, R1) and route/function-name literals.
       if (node.type === "TemplateLiteral" && node.expressions.length > 0) {
-        if (node.quasis.some((q) => String(q.value.cooked).includes(ROUTE_PREFIX))) site(node.loc.start.line, "route-builder", "template");
+        const qs = node.quasis.map((q) => String(q.value.cooked ?? ""));
+        if (qs.some((q) => ROUTE_SHAPE.test(q))) {
+          const dispatcher = qs.length === 2 && qs[0] === ROUTE_PREFIX && qs[1] === "";
+          if (dispatcher) site(node.loc.start.line, "route-builder", "template");
+          else errors.push(`${file}:${node.loc.start.line}: route template \`${qs.join("${…}")}\` is not the dispatcher form \`${ROUTE_PREFIX}\${name}\`; routes are not built from fragments`);
+        }
         return;
       }
       if ((node.type === "Literal" && typeof node.value === "string") || (node.type === "TemplateLiteral" && node.expressions.length === 0)) {
         const v = node.type === "Literal" ? node.value : node.quasis.map((q) => q.value.cooked).join("");
         const line = node.loc.start.line;
-        if (/\.netlify/i.test(v)) {
+        if (ROUTE_SHAPE.test(v)) {
           const m = /^\/\.netlify\/functions\/([a-z0-9-]+)$/.exec(v);
           if (!m) errors.push(`${file}:${line}: route piece ${JSON.stringify(v)} is not a full ${ROUTE_PREFIX}<name> literal; routes are not built piecewise — use a full literal or the allowlisted dispatcher`);
           else if (!fnNames.has(m[1])) errors.push(`${file}:${line}: route literal names "${m[1]}", which is not a function in netlify/functions/`);

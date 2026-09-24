@@ -442,3 +442,61 @@ test("MUT-33 Codex lifecycle note: a stage-0 apply with the REAL snapshot refres
   });
   assert.deepEqual(r.gate, [], "\n  " + r.gate.join("\n  "));
 });
+
+// ── review of ff677d6: INV-R1..R3 ─────────────────────────────────────────────
+// Reproductions written by this session from the review's descriptions (the
+// review file itself was not available); each is judged by the COMPOSED gate on
+// the REAL snapshot and allowlist, and each passed the ff677d6 scanner.
+
+test("MUT-34 (R1) route templates built from fragments fail — in a NEW file and inside an allowlisted dispatcher; a suffix after the dispatcher fails", () => {
+  const re = /route template .* is not the dispatcher form/;
+  assert.match(mutateReal((root) => write(root, "src/r1.js", "export const f = (n) => fetch(`/.netlify/${\"functions\"}/${n}`);\n")).gateJoined, re);
+  assert.match(mutateReal((root) => write(root, "src/r1.js", "export const f = (n) => fetch(`/.netlify${\"/functions/\"}${n}`);\n")).gateJoined, re);
+  assert.match(mutateReal((root) => edit(root, "src/components/PrintQueue.jsx",
+    "const FN = (name) => `/.netlify/functions/${name}`;", "const FN = (name) => `/.netlify/${\"functions\"}/${name}`;")).gateJoined, re);
+  assert.match(mutateReal((root) => edit(root, "src/components/PrintQueue.jsx",
+    "const FN = (name) => `/.netlify/functions/${name}`;", "const FN = (name) => `/.netlify/functions/${name}/x`;")).gateJoined, re,
+    "same site count — only the form check can see it");
+  assert.match(mutateReal((root) => write(root, "src/r1.js", "export const f = (n) => fetch(\"/.net\" + \"lify/functions/\" + n);\n")).gateJoined,
+    /route piece "lify\/functions\/" is not a full/);
+});
+
+test("MUT-35 (R1 controls) the dispatcher form is a route-builder site, not an error; the word Netlify in prose is not a route", () => {
+  const r = mutateReal((root) => write(root, "src/r1.js", "export const f = (name) => fetch(`/.netlify/functions/${name}`);\nexport const m = \"not a Netlify build\";\n"));
+  assert.deepEqual(r.errors, [], "the scanner accepts the dispatcher form and the prose");
+  assert.deepEqual(r.siteIn("src/r1.js").map((s) => `${s.kind}|${s.name}`), ["route-builder|template"]);
+  assert.match(r.gateJoined, /NOT ALLOWLISTED: src\/r1\.js\|route-builder\|template/, "a NEW dispatcher is still refused by the allowlist");
+});
+
+test("MUT-36 (R2) re-exporting the package fails in every form, the gateway included", () => {
+  const re = /re-exports @supabase\/supabase-js/;
+  for (const src of [
+    "export { createClient } from \"@supabase/supabase-js\";\n",
+    "export * from \"@supabase/supabase-js\";\n",
+    "export * as sb from \"@supabase/supabase-js\";\n",
+    "export { createClient as cc } from \"@supabase/supabase-js\";\n",
+  ]) assert.match(mutateReal((root) => write(root, "src/r2.js", src)).gateJoined, re, src);
+  assert.match(mutateReal((root) => {
+    const p = join(root, "src", "lib", "supabase.js");
+    writeFileSync(p, readFileSync(p, "utf8") + "\nexport { createClient as makeClient } from \"@supabase/supabase-js\";\n");
+  }).gateJoined, /src\/lib\/supabase\.js:\d+: re-exports @supabase\/supabase-js/);
+});
+
+test("MUT-37 (R3) a var anywhere in the using function shadows the constant — nested block, for-head — in the allowlisted downloadJobFile", () => {
+  const SIG = "export const downloadJobFile = async (path) => {";
+  const re = /identifier JOB_FILES_BUCKET is shadowed here by a var hoisted to the enclosing function/;
+  assert.match(mutateReal((root) => edit(root, "src/lib/supabase.js", SIG, SIG + "\n  if (path) { var JOB_FILES_BUCKET = \"customer-uploads\"; }")).gateJoined, re);
+  assert.match(mutateReal((root) => edit(root, "src/lib/supabase.js", SIG, SIG + "\n  for (var JOB_FILES_BUCKET = \"customer-uploads\"; false;) {}")).gateJoined, re);
+  assert.match(mutateReal((root) => edit(root, "src/lib/supabase.js", SIG, SIG + "\n  { { var { JOB_FILES_BUCKET } = { JOB_FILES_BUCKET: \"customer-uploads\" }; } }")).gateJoined, re, "destructuring var, two blocks deep");
+});
+
+test("MUT-38 (R3 controls) a var of the same name in a SEPARATE function, or in a function NESTED inside the using one, does not shadow", () => {
+  const SIG = "export const downloadJobFile = async (path) => {";
+  const sep = mutateReal((root) => {
+    const p = join(root, "src", "lib", "supabase.js");
+    writeFileSync(p, readFileSync(p, "utf8") + "\nexport const unrelated = () => { var JOB_FILES_BUCKET = \"x\"; return JOB_FILES_BUCKET; };\n");
+  });
+  assert.deepEqual(sep.gate, [], "separate function: " + sep.gateJoined);
+  const nested = mutateReal((root) => edit(root, "src/lib/supabase.js", SIG, SIG + "\n  const helper = () => { var JOB_FILES_BUCKET = \"x\"; return JOB_FILES_BUCKET; }; void helper;"));
+  assert.deepEqual(nested.gate, [], "nested function: " + nested.gateJoined);
+});

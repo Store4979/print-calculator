@@ -123,9 +123,14 @@ it. **Cause, recorded 2026-09-23:** Ryan cleared `SUPABASE_SERVICE_ROLE_KEY`
 from the production site's **Deploy Previews** context that day, before #48
 built. Every preview built before that change captured the key and keeps it
 (the table above); every preview built after it does not. This is plan §4.2
-step 3's "future previews lack the key" — done, and observed. (#25–#28
-answered 500 with an older handler's wording and are listed under "neither"
-as `unknown (500)`; they predate the key being set at all.)
+step 3's "future previews lack the key" — done, and observed.
+
+**WITHDRAWN 2026-09-24:** this section said #25–#28 "predate the key being set
+at all". Wrong. Their 500s are `Supabase URL not configured` (#25) and a Node 20
+client-init failure (#26–#28); every handler version checks the KEY FIRST, so
+reaching either message means the key IS in those bundles. #24's two are 502
+module-scope crashes: unknown, not absent. See "Retained previews carried into
+the classification" below.
 
 ### Neither (no functions, or crashing) — 22 deployments
 
@@ -415,12 +420,33 @@ deploy of any of those PRs serves. (The two errored builds, #43 `6aa31078` and
 The published production deploy is still `6ab020c50a788b0008d430c9`
 (re-read from the API after the probes).
 
-The key-bearing-preview class on the production site is **closed**: every
-member is deleted and verified. What remains of the "older deployments" class
-is historical PRODUCTION permalinks (`<deploy-id>--printcalculator2.netlify.app`
-for past production deploys), which were never previews and are outside both
-the key scoping and this list — plan §4.2 step 3's credential rotation is the
-only control that reaches those.
+**Scope of this record, narrowed 2026-09-24:** the 56 listed previews are
+deleted and verified. That does NOT close the key-bearing preview class — six
+older previews (#24–#28) were misclassified and remain (four hold the key, two
+unknown; below). Retained deployments that may hold the production key are
+therefore: those six previews, the 28 production deploys proposed for deletion,
+and the four production deploys deliberately kept. Any of them can be retired by
+deletion or by a verified access restriction; credential rotation is the
+mechanism for the four kept on purpose (it retires their key without removing
+them) and the backstop for anything this inventory has missed.
+
+## Retained previews carried into the classification (2026-09-24)
+
+Previously listed under "neither" as harmless. Probed again write-free
+(`POST {}` to `start-upload`, site root GET):
+
+| deploy id | PR | commit | root | `start-upload` `{}` | key |
+|---|---|---|---|---|---|
+| `6a42b788c1f1b100087b57e0` | #24 | `574b964d` | 200 | 502 `supabaseUrl is required` (module-scope crash) | **UNKNOWN** |
+| `6a42b71cec4580000819f132` | #24 | `5bd2b668` | 200 | 502 `supabaseUrl is required` (module-scope crash) | **UNKNOWN** |
+| `6a42c8fb300b08000832da74` | #25 | `095ea8c5` | 200 | 500 `Supabase URL not configured` | **PRESENT** (no working client) |
+| `6a42d40ffc7e2f0008473eac` | #26 | `ea84ed94` | 200 | 500 Node 20 client-init failure | **PRESENT** (no working client) |
+| `6a455d60436d82000807ff9a` | #27 | `e28925c4` | 200 | 500 Node 20 client-init failure | **PRESENT** (no working client) |
+| `6a5fa9f509d2e20008af92f7` | #28 | `ae7de2c3` | 200 | 500 Node 20 client-init failure | **PRESENT** (no working client) |
+
+All lack both fixes (June–July). **Proposed: delete all six**, as an addition
+to the preview list. That needs your approval and a reviewed change to the
+`DELETE-LIST` block, which is left exactly as executed. **Nothing deleted.**
 
 ## Production-context deploys — classification and proposed deletion (2026-09-24T15:25:07Z)
 
