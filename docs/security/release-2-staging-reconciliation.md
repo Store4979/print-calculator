@@ -1,6 +1,6 @@
 # Release 2 — staging ledger reconciliation (01, 02, 03)
 
-**Status: PROPOSED. Nothing in §3 has been run.** Written 2026-09-24. The
+**Status: R1 PASSED (rolled back) 2026-09-24. R2–R5 not run; R2 awaits a separate go.** Written 2026-09-24. The
 stage-0 production plan waits on this.
 
 ## 1. What is wrong, exactly
@@ -78,6 +78,40 @@ subject, session create/rotate/cross-store, revoke with cascade and the P5b
 non-owner refusals before and after, prune) → `ROLLBACK`. The assembler prints
 each included file's md5 so the rehearsal is shown to contain the committed
 bytes. Afterwards, a read-only check that R0's state is unchanged.
+
+**R1 RESULT — PASS, 2026-09-24 (approved by Ryan; rolled back).** Run as one
+`begin … rollback` on staging. To make "verbatim" something the database
+proves rather than something I assert, each committed file went in as a
+dollar-quoted literal inside a `DO` block that checked `md5()` against the
+committed blob BEFORE `EXECUTE` — a single wrong byte would have aborted the
+transaction. Every one matched:
+
+| check | result |
+|---|---|
+| M0 reset file | md5 `c4ca9c0b…` = committed; executed → 0 tables / 0 functions / 0 constraint |
+| M1–M5 committed 01–05 | `e97a5fd7…`, `734e0db7…`, `302e05c6…`, `2dcb03eb…`, `22b5010b…` = committed; executed |
+| M6 proofs file | `5665557d…` = committed; executed |
+| R0 committed 03 before 04 | `[42702] column reference "store_id" is ambiguous` — the defect 04 repairs, reproduced |
+| A1 function ACLs (6) | `{postgres=X/postgres,service_role=X/postgres}`; `release2_clear_lockout` also `authenticated=X`; no PUBLIC, no anon; all `secdef=true`, `search_path=public` |
+| A2 tables (6) | `rls=true ; policies=0 ; acl={postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres}` — no client-role grant |
+| A3 | `UNIQUE (id, store_id)` on `employees` |
+| B1 redeem | enrollment created, store `…0a1` |
+| B2 replay / B3 expired | `[28000] ticket not redeemable` / same |
+| B4 limiter, quota 2 | `true/1 true/2 false/3` |
+| B5 clear_lockout as T1 owner | `1` |
+| B6 claiming T2 / B7 unknown subject | `[42501] not authorised` / same |
+| B8 create + rotate | new id, role `staff`, live=1, reason `rotated: new sign-in on this device` |
+| B9 cross-store employee | `[28000] employee not usable for this enrollment` |
+| B10 T2 owner revokes T1 device | `[42501] not authorised` |
+| B11 owner revoke | `revoked=1`, reason `device revoked: reconciliation probe` |
+| B12 T2 owner / T1 manager on already-revoked | `[42501]` / `[42501]` (P5b) |
+| B13 prune | old row deleted, live lock kept |
+
+After the rollback, read-only: 6 functions, `employees_id_store_uniq` present,
+rows 2/3/6/11 as at R0, no probe rows, ledger unchanged (5 `release2_` rows, max
+`20260916225132`). `md5(prosrc)` of the CURRENT (compact-body) functions recorded
+for comparison after R2: `redeem_enrollment_ticket` `f850bfdd…`,
+`release2_record_attempt` `52407443…`. **Stopped here; R2 needs a separate go.**
 
 **R2 — apply for real, one migration at a time.**
 1. `apply_migration` with the reset file's bytes (name
