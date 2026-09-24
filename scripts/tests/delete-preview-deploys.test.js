@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  run, readDeleteList, parseArgs, permalink,
+  run, readDeleteList, readProductionLists, parseArgs, permalink, checkRow,
   PRODUCTION_SITE_ID, INVENTORY,
 } from "../manual/delete-preview-deploys.mjs";
 
@@ -131,7 +131,7 @@ test("DL-8 --tier selects rows; order is tier 1 first; an already-deleted deploy
   const md = MD([ROW(C, 46, "abcdef3", 3), ROW(A, 29, "abcdef1", 1), ROW(B, 45, "abcdef2", 2)]);
   const r1 = await go({ argv: ["--tier", "1"], env: {}, fetchImpl: api.fetchImpl, markdown: md });
   assert.match(r1.text, /1 of 3 listed deploys, tier 1/);
-  assert.match(r1.text, /GONE: the API has no such deploy/);
+  assert.match(r1.text, /GONE: the API reports this deploy deleted/);
   assert.equal(r1.code, 0);
   const rAll = await go({ argv: [], env: {}, fetchImpl: api.fetchImpl, markdown: md });
   const order = [A, B, C].map((id) => rAll.text.indexOf(id));
@@ -150,4 +150,84 @@ test("DL-9 the token never appears in output, and is sent only as the Authorizat
   const lines = [];
   await run({ argv: ["--tier", "9"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl, out: (l) => lines.push(l), markdown: MD([ROW(A, 29, "abcdef1", 1)]) });
   assert.ok(!lines.join("\n").includes(TOKEN));
+});
+
+// ── --list production: old production-context deploys ──────────────────────
+
+const PMD = (rows, keep) => `x\n<!-- PRODUCTION-KEEP:BEGIN -->\n\`\`\`production-keep\n${keep.join("\n")}\n\`\`\`\n<!-- PRODUCTION-KEEP:END -->\n` +
+  `<!-- PRODUCTION-DELETE-LIST:BEGIN -->\n\`\`\`production-delete-list\n${rows.join("\n")}\n\`\`\`\n<!-- PRODUCTION-DELETE-LIST:END -->\n`;
+const PROW = (id, commit, tier) => `${id} | ${commit} | ${tier}`;
+const KROW = (id, commit, why) => `${id} | ${commit} | ${why}`;
+const prodDep = (commit) => ({ site_id: PRODUCTION_SITE_ID, context: "production", review_id: null, commit_ref: commit + "0".repeat(40 - commit.length) });
+const K = "dddddddddddddddddddddddd";
+const KEEP = [KROW(PUBLISHED, "7ec5af4", "published"), KROW(K, "9937728", "rollback-target")];
+
+test("DL-10 the committed production lists: 28 to delete, 4 kept, disjoint, the published deploy kept", () => {
+  const { rows, keep } = readProductionLists(readFileSync(INVENTORY, "utf8"));
+  assert.equal(rows.length, 28);
+  assert.equal(keep.size, 4);
+  assert.equal(keep.get(PUBLISHED), "published");
+  assert.ok(!rows.some((r) => keep.has(r.id)));
+  assert.equal(new Set(rows.map((r) => r.id)).size, 28);
+});
+
+test("DL-11 production mode: a production deploy on the list is deletable; dry run sends no DELETE", async () => {
+  const api = fakeApi({ deploys: { [A]: prodDep("abcdef1") } });
+  const r = await go({ argv: ["--list", "production"], env: {}, fetchImpl: api.fetchImpl, markdown: PMD([PROW(A, "abcdef1", 1)], KEEP) });
+  assert.equal(r.code, 0);
+  assert.match(r.text, /list production: 1 of 1 listed deploys/);
+  assert.match(r.text, /would delete: old production deploy/);
+  assert.equal(api.calls.filter((c) => c.method === "DELETE").length, 0);
+});
+
+test("DL-12 production mode refuses a deploy-preview; preview mode refuses a production deploy", async () => {
+  const a = fakeApi({ deploys: { [A]: preview(29, "abcdef1") } });
+  const r1 = await go({ argv: ["--list", "production", "--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: a.fetchImpl, markdown: PMD([PROW(A, "abcdef1", 1)], KEEP) });
+  assert.match(r1.text, /context is "deploy-preview", not production/);
+  const b = fakeApi({ deploys: { [A]: prodDep("abcdef1") } });
+  const r2 = await go({ argv: ["--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: b.fetchImpl, markdown: MD([ROW(A, 29, "abcdef1", 1)]) });
+  assert.match(r2.text, /context is "production", not deploy-preview/);
+  assert.equal([...a.calls, ...b.calls].filter((c) => c.method === "DELETE").length, 0);
+});
+
+test("DL-13 a kept id is refused even when listed; a list overlapping the keep block is refused whole before any request", async () => {
+  assert.throws(() => readProductionLists(PMD([PROW(K, "9937728", 1)], KEEP)), /in BOTH the production delete list and the keep list/);
+  const api = fakeApi({ deploys: { [K]: prodDep("9937728") } });
+  const r = await go({ argv: ["--list", "production", "--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl, markdown: PMD([PROW(A, "abcdef1", 1), PROW(K, "9937728", 1)], KEEP) });
+  assert.equal(r.code, 1);
+  assert.equal(api.calls.length, 0, "refused at parse, nothing sent");
+  assert.throws(() => readProductionLists(PMD([PROW(A, "abcdef1", 1)], [])), /PRODUCTION-KEEP block is empty/);
+});
+
+test("DL-14 production mode: the published deploy is re-read before EACH delete and refused when it matches", async () => {
+  const api = fakeApi({ deploys: { [A]: prodDep("abcdef1"), [B]: prodDep("abcdef2") }, publishedSeq: [PUBLISHED, B] });
+  const r = await go({ argv: ["--list", "production", "--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl,
+    markdown: PMD([PROW(A, "abcdef1", 1), PROW(B, "abcdef2", 1)], KEEP) });
+  assert.match(r.text, /CURRENTLY PUBLISHED deploy/);
+  const deletes = api.calls.filter((c) => c.method === "DELETE");
+  assert.equal(deletes.length, 1);
+  assert.ok(deletes[0].url.endsWith(A));
+});
+
+test("DL-15 an API record with state \"deleted\" is gone, not a candidate — and the read-back accepts it", async () => {
+  const api = fakeApi({ deploys: { [A]: { ...prodDep("abcdef1"), state: "deleted" } } });
+  const r = await go({ argv: ["--list", "production", "--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl, markdown: PMD([PROW(A, "abcdef1", 1)], KEEP) });
+  assert.match(r.text, /GONE: the API reports this deploy deleted/);
+  assert.equal(api.calls.filter((c) => c.method === "DELETE").length, 0);
+});
+
+test("DL-16 --list takes only preview or production; the production parser refuses malformed rows", () => {
+  assert.throws(() => parseArgs(["--list", "branch"]), /--list takes preview or production/);
+  assert.throws(() => readProductionLists(PMD([`${A} | abcdef1`], KEEP)), /malformed row/);
+  assert.throws(() => readProductionLists(PMD([PROW(A, "abcdef1", 1), PROW(A, "abcdef1", 1)], KEEP)), /duplicate id/);
+  assert.throws(() => readProductionLists("no blocks"), /no PRODUCTION-KEEP/);
+});
+
+test("DL-17 defence in depth: checkRow refuses a kept id before sending any request (the parse-time overlap check is the first line)", async () => {
+  const api = fakeApi({ deploys: { [K]: prodDep("9937728") } });
+  const http = async (method, path) => { const res = await api.fetchImpl(`https://x${path}`, { method, headers: {} }); return { status: res.status, body: await res.json().catch(() => null) }; };
+  const v = await checkRow({ id: K, pr: null, commit: "9937728", tier: 1 }, http, { list: "production", keep: new Map([[K, "rollback-target"]]) });
+  assert.equal(v.verdict, "refuse");
+  assert.match(v.reason, /PRODUCTION-KEEP list \(rollback-target\)/);
+  assert.equal(api.calls.length, 0);
 });

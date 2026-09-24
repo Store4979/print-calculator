@@ -422,6 +422,157 @@ for past production deploys), which were never previews and are outside both
 the key scoping and this list — plan §4.2 step 3's credential rotation is the
 only control that reaches those.
 
+## Production-context deploys — classification and proposed deletion (2026-09-24T15:25:07Z)
+
+Every deploy on the production site with context `production`, all states
+(71: 62 ready, 9 errored). These were never previews, so the
+Deploy Previews key scoping never reached them: each ready one carries the
+environment of the production context at its build.
+
+**Method.** Ancestry only, as for the previews: cleanup-stale-jobs fix
+`9c99bbf` / `7f89876`, PR #43 recipient fix `1ce7849` / `10235f2`, by
+`git merge-base --is-ancestor`. **Nothing was called** that deletes or sends —
+no `cleanup-stale-jobs`, no `send-print-job`. Key presence by the same
+write-free probe (`POST {}` to `start-upload`); every historical version of
+that handler (three blobs, 06-29 to today) returns `400 fileName required`
+before any storage call, and `createClient` makes no request, so the probe
+touches no database or storage on any bundle. The response wording is
+classified precisely: the key guard runs FIRST, so `Supabase URL not
+configured` and a Node-20 client-init failure both mean **the key is present**
+in that bundle even though no working client can be built today.
+
+**Kept (4), and why.** The published deploy `6ab020c50a788b0008d430c9`, re-read from the API, and
+the three most recent ready deploys carrying both fixes, as rollback targets.
+All four hold the production key with live legacy writers; that exposure ends
+only with credential rotation (stage 0 production half), after which a
+rollback is a fresh build of the old commit, never a republish.
+
+**Proposed for deletion: 28** — every non-kept deploy whose bundle holds
+the key or whose key state is unknown (a 502 crash says nothing about the key;
+unknown is not absent). All are tier 1 (missing the cleanup-stale-jobs fix).
+**Not proposed: 39** deploys with no functions (static-only or errored builds): no
+server-side writer exists in them. **Nothing deleted.**
+
+<!-- PRODUCTION-KEEP:BEGIN — the script refuses every id here even if it is also listed for deletion; one row: id | commit | reason -->
+```production-keep
+6ab020c50a788b0008d430c9 | 7ec5af48666e | published
+6aad56a391c0cf0008d215fd | 993772878de1 | rollback-target
+6aa994d535444e0008272512 | 89de03e59b66 | rollback-target
+6aa59114f573770008fb8dd5 | 7f898762a958 | rollback-target
+```
+<!-- PRODUCTION-KEEP:END -->
+
+<!-- PRODUCTION-DELETE-LIST:BEGIN — machine-read by scripts/manual/delete-preview-deploys.mjs --list production; one row per deploy: id | commit | tier -->
+```production-delete-list
+6a42b7af51f12900086b01c0 | 425fbaa54cbb | 1
+6a42ba25aaa964cde8bb6fd8 | 425fbaa54cbb | 1
+6a42bb4f95e09b00c346c3fc | 425fbaa54cbb | 1
+6a42c425aaebbd039d736cce | 425fbaa54cbb | 1
+6a42cae0bf86150008cb36b4 | 8335021b28b4 | 1
+6a42ccc4e91dd82d98ec8018 | 8335021b28b4 | 1
+6a42d450ca36420008de3940 | ba0420c496eb | 1
+6a455d9bcc330d0008b7fdb4 | 6a8cbf23bd72 | 1
+6a5f98b2917ca300082af0fa | 978aa6b22002 | 1
+6a5f9c98458e6b00080b7bdc | 0544ae25afc7 | 1
+6a5fa0bee7857000085539af | 57a984e92a09 | 1
+6a5fa2ce9815480008a94637 | faf88afd8826 | 1
+6a5faa2868a64b000851bd97 | cacaafcabd2f | 1
+6a5fb28ec14bc4000740a26b | 0246b385e0ff | 1
+6a609aa8e4d2e80008e46bf1 | 2e1ae104610a | 1
+6a60e3d1c0843b000897a8e8 | 6f2b84e1acbe | 1
+6a615b2b14582d00082af10b | ed19f818ee04 | 1
+6a63504d37f78c000852fe53 | 348f0b44974a | 1
+6a68f0141e03f20008ee523b | 26a96fa32cf4 | 1
+6a6a19c52a46b700086d87b9 | efc9437878a8 | 1
+6aa0abcd0e533100082027aa | 5355b72aead1 | 1
+6aa18b8254579d0008d97355 | 8671abea45ad | 1
+6aa1d54707143100081a9628 | ccfbc536f9e3 | 1
+6aa2b91d4d43680008e2b639 | 23d30e706745 | 1
+6aa2ba97369bba0008edf3bc | 30a0aa666b89 | 1
+6aa2bd5fde9af700082b6ffa | 61862a690e15 | 1
+6aa428f787d412000849dbaf | 10235f21c881 | 1
+6aa58ff7fa3838616077bdf7 | 10235f21c881 | 1
+```
+<!-- PRODUCTION-DELETE-LIST:END -->
+
+<details><summary>All 71 production-context deploys (newest first)</summary>
+
+| deploy id | commit | built (UTC) | state | cleanup fix | recipient fix | key (write-free probe) | disposition |
+|---|---|---|---|---|---|---|---|
+| `6ab020c50a788b0008d430c9` | `7ec5af48` | 2026-09-20T18:07 | ready | **yes** | **yes** | PRESENT, writer live | KEEP — the PUBLISHED deploy |
+| `6aad56a391c0cf0008d215fd` | `99377287` | 2026-09-18T15:20 | ready | **yes** | **yes** | PRESENT, writer live | KEEP — rollback target (one of the three most recent ready deploys carrying both fixes) |
+| `6aa994d535444e0008272512` | `89de03e5` | 2026-09-15T18:56 | ready | **yes** | **yes** | PRESENT, writer live | KEEP — rollback target (one of the three most recent ready deploys carrying both fixes) |
+| `6aa59114f573770008fb8dd5` | `7f898762` | 2026-09-12T17:51 | ready | **yes** | **yes** | PRESENT, writer live | KEEP — rollback target (one of the three most recent ready deploys carrying both fixes) |
+| `6aa58ff7fa3838616077bdf7` | `10235f21` | 2026-09-12T17:46 | ready | no | **yes** | PRESENT, writer live | **delete** (tier 1) |
+| `6aa428f787d412000849dbaf` | `10235f21` | 2026-09-11T16:14 | ready | no | **yes** | PRESENT, writer live | **delete** (tier 1) |
+| `6aa2bd5fde9af700082b6ffa` | `61862a69` | 2026-09-10T14:23 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6aa2ba97369bba0008edf3bc` | `30a0aa66` | 2026-09-10T14:11 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6aa2b91d4d43680008e2b639` | `23d30e70` | 2026-09-10T14:05 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6aa1d54707143100081a9628` | `ccfbc536` | 2026-09-09T21:53 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6aa18b8254579d0008d97355` | `8671abea` | 2026-09-09T16:38 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6aa0abcd0e533100082027aa` | `5355b72a` | 2026-09-09T00:43 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a6a19c52a46b700086d87b9` | `efc94378` | 2026-07-29T15:18 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a68f0141e03f20008ee523b` | `26a96fa3` | 2026-07-28T18:08 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a63504d37f78c000852fe53` | `348f0b44` | 2026-07-24T11:45 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a615b2b14582d00082af10b` | `ed19f818` | 2026-07-23T00:07 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a60e3d1c0843b000897a8e8` | `6f2b84e1` | 2026-07-22T15:37 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a609aa8e4d2e80008e46bf1` | `2e1ae104` | 2026-07-22T10:25 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a5fb28ec14bc4000740a26b` | `0246b385` | 2026-07-21T17:55 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a5faa2868a64b000851bd97` | `cacaafca` | 2026-07-21T17:19 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a5fa2ce9815480008a94637` | `faf88afd` | 2026-07-21T16:48 | ready | no | no | PRESENT, writer live | **delete** (tier 1) |
+| `6a5fa0bee7857000085539af` | `57a984e9` | 2026-07-21T16:39 | ready | no | no | PRESENT (client init fails on Node 20) | **delete** (tier 1) |
+| `6a5f9c98458e6b00080b7bdc` | `0544ae25` | 2026-07-21T16:21 | ready | no | no | PRESENT (client init fails on Node 20) | **delete** (tier 1) |
+| `6a5f98b2917ca300082af0fa` | `978aa6b2` | 2026-07-21T16:05 | ready | no | no | PRESENT (client init fails on Node 20) | **delete** (tier 1) |
+| `6a455d9bcc330d0008b7fdb4` | `6a8cbf23` | 2026-07-01T18:34 | ready | no | no | PRESENT (client init fails on Node 20) | **delete** (tier 1) |
+| `6a42d450ca36420008de3940` | `ba0420c4` | 2026-06-29T20:23 | ready | no | no | PRESENT (client init fails on Node 20) | **delete** (tier 1) |
+| `6a42ccc4e91dd82d98ec8018` | `8335021b` | 2026-06-29T19:51 | ready | no | no | UNKNOWN (502 crash: Node 20 WebSocket) | **delete** (tier 1) |
+| `6a42cae0bf86150008cb36b4` | `8335021b` | 2026-06-29T19:43 | ready | no | no | PRESENT (URL absent; no working client) | **delete** (tier 1) |
+| `6a42c425aaebbd039d736cce` | `425fbaa5` | 2026-06-29T19:14 | ready | no | no | UNKNOWN (502 crash: supabaseUrl is required) | **delete** (tier 1) |
+| `6a42bb4f95e09b00c346c3fc` | `425fbaa5` | 2026-06-29T18:37 | ready | no | no | UNKNOWN (502 crash: supabaseUrl is required) | **delete** (tier 1) |
+| `6a42ba25aaa964cde8bb6fd8` | `425fbaa5` | 2026-06-29T18:32 | ready | no | no | UNKNOWN (502 crash: supabaseUrl is required) | **delete** (tier 1) |
+| `6a42b7af51f12900086b01c0` | `425fbaa5` | 2026-06-29T18:21 | ready | no | no | UNKNOWN (502 crash: supabaseUrl is required) | **delete** (tier 1) |
+| `6a3186871b78390008bc6769` | `f5c1287b` | 2026-06-16T17:23 | ready | no | no | no functions | not proposed (no functions) |
+| `6a185f5f4ea61b00089dbd24` | `8e94f58a` | 2026-05-28T15:29 | ready | no | no | no functions | not proposed (no functions) |
+| `6a185e3a9454ad3908173c59` | `32e3311e` | 2026-05-28T15:24 | ready | no | no | no functions | not proposed (no functions) |
+| `69fb76a1ed26cb0008cf35f6` | `17e3812c` | 2026-05-06T17:13 | ready | no | no | no functions | not proposed (no functions) |
+| `69fa1be4edf1e30008441400` | `0c1179de` | 2026-05-05T16:33 | ready | no | no | no functions | not proposed (no functions) |
+| `69fa0b4a68636e0008d4c737` | `1b352edc` | 2026-05-05T15:22 | ready | no | no | no functions | not proposed (no functions) |
+| `69fa0ad99c9e0d00085e127e` | `6e499757` | 2026-05-05T15:20 | ready | no | no | no functions | not proposed (no functions) |
+| `69f4c3e411d0ab0008f2bf06` | `99f96074` | 2026-05-01T15:16 | ready | no | no | no functions | not proposed (no functions) |
+| `69f38269259b900008acf551` | `0683428d` | 2026-04-30T16:25 | ready | no | no | no functions | not proposed (no functions) |
+| `69f3807a7b6dab0008ba11b0` | `c76c05a5` | 2026-04-30T16:16 | ready | no | no | no functions | not proposed (no functions) |
+| `69f369ebdc0e0b0008f80a3c` | `d8c7ddd1` | 2026-04-30T14:40 | ready | no | no | no functions | not proposed (no functions) |
+| `69f22d7881e2640008efa7d9` | `44725df8` | 2026-04-29T16:10 | ready | no | no | no functions | not proposed (no functions) |
+| `69f22a441f1e470008c2035f` | `05c31f42` | 2026-04-29T15:56 | ready | no | no | no functions | not proposed (no functions) |
+| `69f224adedf71d0008d9e594` | `646c5050` | 2026-04-29T15:33 | ready | no | no | no functions | not proposed (no functions) |
+| `69f22000a432d10009e94ae1` | `83a388e5` | 2026-04-29T15:13 | ready | no | no | no functions | not proposed (no functions) |
+| `69f14065910c4b0008582fab` | `bfab350b` | 2026-04-28T23:19 | ready | no | no | no functions | not proposed (no functions) |
+| `69f11eb4e3abcc0008c5cbd0` | `780b63c0` | 2026-04-28T20:55 | ready | no | no | no functions | not proposed (no functions) |
+| `69efa0b08ea1ab000890255c` | `235b4f6f` | 2026-04-27T17:45 | ready | no | no | no functions | not proposed (no functions) |
+| `69ea36aeb2dda00008e70a72` | `daabfd80` | 2026-04-23T15:11 | ready | no | no | no functions | not proposed (no functions) |
+| `69e6536d7b02de000824ae43` | `e33b9b27` | 2026-04-20T16:25 | ready | no | no | no functions | not proposed (no functions) |
+| `69e6520f6159c30007ba6b36` | `f2baa5db` | 2026-04-20T16:19 | ready | no | no | no functions | not proposed (no functions) |
+| `69e650e7e079d80009425b45` | `0e29ae53` | 2026-04-20T16:14 | ready | no | no | no functions | not proposed (no functions) |
+| `69e64f040b7f8300089fa0bf` | `b017062e` | 2026-04-20T16:06 | ready | no | no | no functions | not proposed (no functions) |
+| `69e64dfa39d3bb0008010262` | `578708f3` | 2026-04-20T16:02 | ready | no | no | no functions | not proposed (no functions) |
+| `69e64c05c1c063000825700f` | `88f31d9f` | 2026-04-20T15:53 | ready | no | no | no functions | not proposed (no functions) |
+| `69cab0a9cfbad00008128a4d` | `a2a8ed19` | 2026-03-30T17:19 | ready | no | no | no functions | not proposed (no functions) |
+| `69caae5146f24d000830080b` | `ae703568` | 2026-03-30T17:09 | ready | no | no | no functions | not proposed (no functions) |
+| `69c6c1671a9e6f000891e745` | `87812bc8` | 2026-03-27T17:41 | ready | no | no | no functions | not proposed (no functions) |
+| `69c6b4d439268d0008bc94b7` | `a08643d9` | 2026-03-27T16:48 | ready | no | no | no functions | not proposed (no functions) |
+| `69c6b480e4663f0007358bb6` | `dae35957` | 2026-03-27T16:46 | ready | no | no | no functions | not proposed (no functions) |
+| `69c573c01a6eb9152a1e0e05` | `8b2161af` | 2026-03-26T17:58 | error | no | no | no functions | not proposed (no functions) |
+| `69c5734f1e03310008689787` | `8b2161af` | 2026-03-26T17:56 | error | no | no | no functions | not proposed (no functions) |
+| `69c569ee8754e500090821b7` | `5e321192` | 2026-03-26T17:16 | error | no | no | no functions | not proposed (no functions) |
+| `69c569d84bf26d00081f4a2f` | `04944ff7` | 2026-03-26T17:16 | error | no | no | no functions | not proposed (no functions) |
+| `69c56530b3100d1602a74815` | `7aba99f9` | 2026-03-26T16:56 | error | no | no | no functions | not proposed (no functions) |
+| `69c5627ff2336c0aa76e1c82` | `7aba99f9` | 2026-03-26T16:44 | error | no | no | no functions | not proposed (no functions) |
+| `69c561f0fc880f0009e2689c` | `7aba99f9` | 2026-03-26T16:42 | error | no | no | no functions | not proposed (no functions) |
+| `69c561d114d0b10008682845` | `100874de` | 2026-03-26T16:41 | error | no | no | no functions | not proposed (no functions) |
+| `69c41cd74c2bc80007f8564c` | `ec0db90e` | 2026-03-25T17:35 | error | no | no | no functions | not proposed (no functions) |
+
+</details>
+
 ## Staging site `printcalculator2-staging`
 
 **Update 2026-09-24:** after branch deploys were enabled, the push of `513b622` built branch deploy `6ab53d545ba8250008cd98c1` and PR #48 preview `6ab53d569ac3b20008d444e8` on the staging site; both hold the STAGING key by design and refuse Release 2 by context (0b-staging, probe doc). History of the earlier attempts: no **branch deploy** of `security/release-2-stage-0` was built at first: pushes at 17:37:42Z (`fcb5da6`) and 17:42:29Z (`8821573`) each rebuilt PR #48's production-site preview within seconds and the staging site's own production branch, but produced no staging branch deploy (polled to 17:48:45Z) — the staging site is not building that branch. No deploy preview was built for PR #48 either (polled 15:16–15:40Z; the site's only
