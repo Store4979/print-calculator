@@ -184,6 +184,41 @@ they prove nothing about the context condition. Write-free key probe
 preview has **no service-role key**; the 56 older preview permalinks that do
 are listed in `docs/security/deploy-inventory.md`.
 
+**0b-staging — PASS (2026-09-24 15:14Z, commit `513b622`).** Staging branch
+deploys enabled for `security/release-2-stage-0`; dashboard state reported by
+Ryan: `RELEASE2_ENABLED` covers all contexts, `RELEASE2_CONTEXTS` not set. The
+push of `513b622` built BOTH a branch deploy and a PR #48 deploy preview on the
+staging site; both were probed. This is the context-denial evidence proper:
+the staging project ref, so the production-ref refusal is not in the way, and
+the flag present — the context condition is the only thing that can refuse.
+
+*Branch deploy* — `https://security-release-2-stage-0--printcalculator2-staging.netlify.app`,
+deploy `6ab53d545ba8250008cd98c1`, permalink `6ab53d545ba8250008cd98c1--printcalculator2-staging.netlify.app`
+(same body from the permalink). `GET deploy-context` → `200 application/json`, `Cache-Control: no-store`:
+
+```json
+{"ok":true,"reason":null,"source":"LAMBDA_TASK_ROOT","triedWithoutFinding":[],
+ "context":"branch-deploy","siteId":"3106189d-9053-46a3-bfc7-22ba6b52511a","siteName":"printcalculator2-staging",
+ "deployId":"6ab53d545ba8250008cd98c1","commitRef":"513b62260e309988390b9aa0443cfe9a37d21deb",
+ "builtAt":"2026-09-24T15:10:38.449Z","validContexts":["production","deploy-preview","branch-deploy","dev"],
+ "allowedContexts":["production"],"contextAllowed":false,"flagPresent":true,"note":"…"}
+```
+
+`GET csrf-bootstrap` — no Origin → `{"ok":false,"error":"Not Found"}` `404 application/json`;
+`Origin: https://printcalculator2-staging.netlify.app` → same `404`; its own Origin → same `404`.
+
+*Deploy preview* — `https://deploy-preview-48--printcalculator2-staging.netlify.app`,
+deploy `6ab53d569ac3b20008d444e8` (permalink agrees). `deploy-context`: identical
+except `"context":"deploy-preview"`, `"deployId":"6ab53d569ac3b20008d444e8"`,
+`"builtAt":"2026-09-24T15:13:05.095Z"`; `contextAllowed:false`, `flagPresent:true`.
+`csrf-bootstrap` with no Origin, the staging Origin and its own Origin: `404` ×3, JSON.
+
+*Control, same moment:* the identical no-Origin `csrf-bootstrap` on plain staging
+(context `production`) → `{"ok":false,"error":"Unauthorized"}` `401` — the gate
+admits it and the handler refuses for want of a credential. Same project, same
+flag, same code (`513b622`): only the bundled context differs, and it alone
+turns 401 into 404.
+
 **0b-staging — MISSING (second attempt, branch deploy, 2026-09-23 17:37–17:48Z).** Pushes of `fcb5da6` and `8821573` to `security/release-2-stage-0` produced no branch deploy on the staging site; `https://security-release-2-stage-0--printcalculator2-staging.netlify.app` was not probed because no deploy exists behind it.
 
 **0b-staging — the staging site's preview: MISSING (first attempt).** The staging site built

@@ -424,7 +424,7 @@ only control that reaches those.
 
 ## Staging site `printcalculator2-staging`
 
-No **branch deploy** of `security/release-2-stage-0` was built either: pushes at 17:37:42Z (`fcb5da6`) and 17:42:29Z (`8821573`) each rebuilt PR #48's production-site preview within seconds and the staging site's own production branch, but produced no staging branch deploy (polled to 17:48:45Z) — the staging site is not building that branch. No deploy preview was built for PR #48 either (polled 15:16–15:40Z; the site's only
+**Update 2026-09-24:** after branch deploys were enabled, the push of `513b622` built branch deploy `6ab53d545ba8250008cd98c1` and PR #48 preview `6ab53d569ac3b20008d444e8` on the staging site; both hold the STAGING key by design and refuse Release 2 by context (0b-staging, probe doc). History of the earlier attempts: no **branch deploy** of `security/release-2-stage-0` was built at first: pushes at 17:37:42Z (`fcb5da6`) and 17:42:29Z (`8821573`) each rebuilt PR #48's production-site preview within seconds and the staging site's own production branch, but produced no staging branch deploy (polled to 17:48:45Z) — the staging site is not building that branch. No deploy preview was built for PR #48 either (polled 15:16–15:40Z; the site's only
 previews ever are PR #45's, 2026-09-14/15). **Recorded as missing.** The
 staging-preview half of 0b — `deploy-context` reporting `deploy-preview` under
 the staging site name, and `csrf-bootstrap` 404 with and without an Origin
