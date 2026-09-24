@@ -291,6 +291,137 @@ retirement mechanisms; after each deletion the permalink is probed and the
 result recorded here per URL (§4.2 step 3). Deletion of a preview does not
 touch production's published deploy or its database.
 
+## Retirement record — deletion, verified independently (2026-09-24T14:49:26Z)
+
+**Action:** Ryan ran `scripts/manual/delete-preview-deploys.mjs --apply` over all
+56 listed deploys on 2026-09-24 (reported: 0 refused, script read-back 404 on
+each, published deploy `6ab020c5` checked before every delete and untouched,
+token revoked afterwards). **That report is not the evidence below.**
+
+**Probe (this session, write-free):** `GET /` on each permalink — the site
+root only, no function route — plus the public API record for each id. A
+permalink is **verified retired** only when all three hold: HTTP 404, the body
+is Netlify's own `Not Found - Request ID` page (not the app shell), and the
+public API reports `state: "deleted"`. A never-existing deploy id on the same
+site gives the same 404 (control). None of the 56 ids is in the site's deploy
+list any more.
+
+Note on the API: the unauthenticated `GET /api/v1/deploys/<id>` still answers
+**200** for a deleted deploy, with `state: "deleted"`; the operator's
+authenticated read-back saw 404. The two are consistent (a soft-deleted
+record); `state` is what is recorded here.
+
+**Result: 56 of 56 permalinks verified retired.**
+
+| deploy id | PR | tier | `GET /` | body | API `state` | verdict |
+|---|---|---|---|---|---|---|
+| `6a5fb25be785700008594817` | #29 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a601121c7f43600080ace91` | #30 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a609d9b6e2b010008e4701d` | #31 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a60df7c72b06b00095706c9` | #31 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a612672813cd600081bb9bb` | #32 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a615ce014582d00082b8fc9` | #33 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a6670dd935a640009132e26` | #34 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a694837be66d2000814c691` | #35 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a6951343b4b0100093a4aad` | #35 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a69521ae77b8e0008cab8b9` | #35 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a69535a83be0b0009bf8453` | #35 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a6a147d13108b0008d28634` | #35 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a6a55bd4aa3d200086629b6` | #36 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a6a55d651b30500085a2ad5` | #37 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6a6a99aa7965770008feab95` | #37 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa2ba6c4723f800096e2b82` | #37 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa05237dde06400074428ac` | #38 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa184fc3061e80007eb907d` | #39 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa1873eee13c70008d2aba7` | #39 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa18ebcc0615a000840cdef` | #40 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa1efb8817b7c0008ef56df` | #41 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa2b806bd19220008cd2350` | #41 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa2ba87034ae30009eb7e5b` | #42 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa2d85fe22b1f000826f8a5` | #43 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa31186185cb4000850775a` | #43 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa418133948e70008fb1e40` | #43 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa41eb8cae4590008947e65` | #43 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa41f5b5b99fc0009345539` | #43 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa42b3c60fee800089edb4c` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa4897e6cc424000833a95b` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa48b888b63af0008c2be72` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa49a680044aa000871e75a` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa49f8e89ac8a00081a2f44` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa4a1c3122c5c0007ba84c6` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa4a6e773d1830009f60e59` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa5503a9922850008784086` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa55539a321d0000894f9b6` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa555a46d1d0c0008be7650` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa5594dff6f6f00086665c0` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa5845cb3e9800008232379` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa587d57345c3000893fea4` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa588e86320810008f82544` | #44 | 1 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa58d3cc9d46f000897cae2` | #44 | 2 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa5bf17ff6f6f000874b0fa` | #45 | 2 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa802021f0c9f00085e4466` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa80ed4ce8bfb00080b9b91` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa80f6f16ae3c0008f47628` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa8177f0933cc00077e5b76` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa827595766b400089ca6ec` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa8292e7fad050007292c3d` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa94ce90ab9280008e1c5d3` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa94db75638680009babccc` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa963505b88680008939395` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aa994ab65368c000995736a` | #45 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6aad54ddafc4080008f11279` | #46 | 3 | 404 | netlify-not-found | deleted | **retired** |
+| `6ab01d907071af0008909199` | #47 | 3 | 404 | netlify-not-found | deleted | **retired** |
+
+**PR aliases.** An alias `deploy-preview-N--printcalculator2.netlify.app` falls
+back to an older deploy of its PR if any survived, so each was probed too:
+**19 of 19 aliases (#29–#47) answer Netlify's 404** — no surviving
+deploy of any of those PRs serves. (The two errored builds, #43 `6aa31078` and
+#47 `6ab01833`, were never on the list; they had no functions and serve nothing.)
+
+| alias | `GET /` | body |
+|---|---|---|
+| `deploy-preview-29` | 404 | netlify-not-found |
+| `deploy-preview-30` | 404 | netlify-not-found |
+| `deploy-preview-31` | 404 | netlify-not-found |
+| `deploy-preview-32` | 404 | netlify-not-found |
+| `deploy-preview-33` | 404 | netlify-not-found |
+| `deploy-preview-34` | 404 | netlify-not-found |
+| `deploy-preview-35` | 404 | netlify-not-found |
+| `deploy-preview-36` | 404 | netlify-not-found |
+| `deploy-preview-37` | 404 | netlify-not-found |
+| `deploy-preview-38` | 404 | netlify-not-found |
+| `deploy-preview-39` | 404 | netlify-not-found |
+| `deploy-preview-40` | 404 | netlify-not-found |
+| `deploy-preview-41` | 404 | netlify-not-found |
+| `deploy-preview-42` | 404 | netlify-not-found |
+| `deploy-preview-43` | 404 | netlify-not-found |
+| `deploy-preview-44` | 404 | netlify-not-found |
+| `deploy-preview-45` | 404 | netlify-not-found |
+| `deploy-preview-46` | 404 | netlify-not-found |
+| `deploy-preview-47` | 404 | netlify-not-found |
+
+**Controls — must still answer normally:**
+
+| URL | `GET /` | body |
+|---|---|---|
+| production — `printcalculator2.netlify.app` | 200 | APP SHELL |
+| production published permalink — `6ab020c50a788b0008d430c9--printcalculator2.netlify.app` | 200 | APP SHELL |
+| #48 alias — `deploy-preview-48--printcalculator2.netlify.app` | 200 | APP SHELL |
+| #48 b294791 — `6ab3efa301777b0008a746f1--printcalculator2.netlify.app` | 200 | APP SHELL |
+| #48 47551b4 — `6ab3f40c055a620008aec356--printcalculator2.netlify.app` | 200 | APP SHELL |
+| #48 fcb5da6 — `6ab40e674e6ec500087de9bc--printcalculator2.netlify.app` | 200 | APP SHELL |
+| #48 8821573 — `6ab40f88d8322c00084cf8d9--printcalculator2.netlify.app` | 200 | APP SHELL |
+
+The published production deploy is still `6ab020c50a788b0008d430c9`
+(re-read from the API after the probes).
+
+The key-bearing-preview class on the production site is **closed**: every
+member is deleted and verified. What remains of the "older deployments" class
+is historical PRODUCTION permalinks (`<deploy-id>--printcalculator2.netlify.app`
+for past production deploys), which were never previews and are outside both
+the key scoping and this list — plan §4.2 step 3's credential rotation is the
+only control that reaches those.
+
 ## Staging site `printcalculator2-staging`
 
 No **branch deploy** of `security/release-2-stage-0` was built either: pushes at 17:37:42Z (`fcb5da6`) and 17:42:29Z (`8821573`) each rebuilt PR #48's production-site preview within seconds and the staging site's own production branch, but produced no staging branch deploy (polled to 17:48:45Z) — the staging site is not building that branch. No deploy preview was built for PR #48 either (polled 15:16–15:40Z; the site's only

@@ -373,3 +373,72 @@ test("MUT-27 (INV-6) Release 2 table presence follows applied state: apply + ref
   const prohibitionStillHolds = mutate((root) => { applyAll(root); write(root, "supabase/tables.json", refreshed); write(root, "src/mutant.js", IMPORT + "export const f = () => supabase.from(\"staff_sessions\").select(\"*\");\n"); });
   assert.match(prohibitionStillHolds.gateJoined, /names the Release 2 table "staff_sessions"/, "independent of applied state and of the snapshot");
 });
+
+// ── Codex review of b294791: its EXACT reproductions, verbatim ──────────────
+// MUT-21..27 cover the same defects in shapes chosen before the review file
+// was available. These are the reviewer's own mutations, run against the
+// REAL committed snapshot and the real allowlist, so the regression is pinned
+// to the evidence that found it.
+
+function mutateReal(apply, opts = {}) {
+  return mutate((root) => {
+    cpSync(join(ROOT, "supabase", "tables.json"), join(root, "supabase", "tables.json"));
+    apply(root);
+  }, opts);
+}
+
+test("MUT-28 Codex I1a exact: escape appended INSIDE the gateway fails", () => {
+  const r = mutateReal((root) => {
+    const p = join(root, "src", "lib", "supabase.js");
+    writeFileSync(p, readFileSync(p, "utf8") + '\nexport const escaped = supabase || null;\nexport const hiddenReach = () => escaped.from("orders").select("*");\n');
+  });
+  assert.match(r.gateJoined, /src\/lib\/supabase\.js:\d+: the client escapes as a value through a logical expression/);
+});
+
+test("MUT-29 Codex I1b and I1c exact: destructured dynamic package import; concatenated route", () => {
+  assert.match(mutateReal((root) => write(root, "src/hidden.js",
+    'export async function hiddenReach(url, key) {\n  const { createClient } = await import("@supabase/supabase-js");\n  return createClient(url, key).from("orders").select("*");\n}\n')).gateJoined,
+    /dynamic import\(\) of @supabase\/supabase-js/);
+  assert.match(mutateReal((root) => write(root, "src/hidden.js",
+    'export const hiddenRoute = name =>\n  fetch("/.netlify/" + "functions/" + name);\n')).gateJoined,
+    /route piece "\/\.netlify\/" is not a full/);
+});
+
+test("MUT-30 Codex I2 exact: a DEFAULTED parameter shadows the bucket constant in downloadJobFile", () => {
+  const r = mutateReal((root) => edit(root, "src/lib/supabase.js",
+    "export const downloadJobFile = async (path) => {",
+    'export const downloadJobFile = async (\n  path, JOB_FILES_BUCKET = "customer-uploads"\n) => {'));
+  assert.match(r.gateJoined, /identifier JOB_FILES_BUCKET is shadowed here by a parameter/);
+});
+
+test("MUT-31 Codex I3 exact: a 200 handler with a 410 comment, listed in BOTH retirement records", () => {
+  const r = mutateReal((root) => {
+    write(root, "netlify/functions/_retired.json", { retired: ["old-route"] });
+    write(root, "netlify/functions/old-route.js", '// Previously returned 410\nexport const TOMBSTONE = true;\nexport const handler = async () => ({ statusCode: 200, body: "still live" });\n');
+  }, { retiredEver: [...RETIRED_EVER, "old-route"] });
+  assert.match(r.gateJoined, /statusCode is 200, not the literal 410/);
+});
+
+test("MUT-32 Codex I4 exact: the real snapshot with capturedAt, capturedBy and database removed fails", () => {
+  const r = mutateReal((root) => {
+    const p = join(root, "supabase", "tables.json");
+    const j = JSON.parse(readFileSync(p, "utf8"));
+    delete j.capturedAt; delete j.capturedBy; delete j.database;
+    writeFileSync(p, JSON.stringify(j, null, 2));
+  });
+  assert.match(r.gateJoined, /capturedAt is missing/);
+});
+
+test("MUT-33 Codex lifecycle note: a stage-0 apply with the REAL snapshot refreshed passes the composed gate", () => {
+  const R2 = ["auth_attempts", "device_enrollments", "enrollment_tickets", "staff_sessions", "upload_capabilities", "upload_capability_files"];
+  const r = mutateReal((root) => {
+    const pending = join(root, "supabase", "migrations", "pending"), applied = join(root, "supabase", "migrations");
+    for (const f of readdirSync(pending)) if (/^release2_/.test(f)) renameSync(join(pending, f), join(applied, `20261001000000_${f}`));
+    const p = join(root, "supabase", "tables.json");
+    const j = JSON.parse(readFileSync(p, "utf8"));
+    j.ledgerVersion = "20261001000000";
+    j.tables = [...j.tables, ...R2].sort();
+    writeFileSync(p, JSON.stringify(j, null, 2));
+  });
+  assert.deepEqual(r.gate, [], "\n  " + r.gate.join("\n  "));
+});
