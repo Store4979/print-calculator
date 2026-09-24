@@ -126,6 +126,94 @@ token.
 
 ---
 
+## Phase 0 — stage 0: the deployment context (2026-09-23, deploy `6ab3be3c…` of `6c47eb6`)
+
+`release2Allowed()` now has a third condition: `netlify/lib/deploy-context.json`,
+written at build and shipped inside every function bundle, must carry a
+`context` in `RELEASE2_CONTEXTS`. The production-ref refusal is still in place.
+`GET /.netlify/functions/deploy-context` is a read-only diagnostic outside the
+gate; it reports the context condition only, never the gate's verdict.
+
+### 0a — the plain staging site reports itself
+
+`curl https://printcalculator2-staging.netlify.app/.netlify/functions/deploy-context`
+
+Status: **PASS** — `200 application/json`, `Cache-Control: no-store`. Recorded:
+
+| field | value |
+|---|---|
+| `ok` | `true` |
+| `source` | **`LAMBDA_TASK_ROOT`** — `included_files` shipped the file; the module-relative candidate missed (the bundler inlines the lib, so `import.meta.url` is the function's own path) and the second candidate found it at `<task root>/netlify/lib/deploy-context.json`. This was the one assumption the local build could not verify. |
+| `context` | `production` |
+| `siteName` / `siteId` | `printcalculator2-staging` / `3106189d-9053-46a3-bfc7-22ba6b52511a` |
+| `deployId` | `6ab3be3c58ae100008e98f37` — equals the Netlify deploy id that served it |
+| `commitRef` | `6c47eb6e05df21816f326ea6f35e8e4096db0edd` |
+| `builtAt` | `2026-09-23T11:56:01.768Z` |
+| `allowedContexts` / `contextAllowed` | `["production"]` / `true` |
+| `flagPresent` | `true` |
+
+This is §4.1's evidence **(c)**: staging reports `production` under its own site name.
+
+### 0b — a deploy preview reports `deploy-preview`; its Release 2 endpoints 404
+
+Run 2026-09-23 against PR #48's previews (draft, `security/release-2-stage-0` → main, head `b294791`).
+
+**0b-prod — the production site's preview.** `deploy-preview-48--printcalculator2.netlify.app`,
+deploy `6ab3efa301777b0008a746f1`, permalink `6ab3efa301777b0008a746f1--printcalculator2.netlify.app`.
+
+`GET /.netlify/functions/deploy-context` → `200 application/json`, `Cache-Control: no-store`:
+
+```json
+{"ok":true,"reason":null,"source":"LAMBDA_TASK_ROOT","triedWithoutFinding":[],
+ "context":"deploy-preview","siteId":"03ff880d-eb73-4035-8b71-3588b22a0b20","siteName":"printcalculator2",
+ "deployId":"6ab3efa301777b0008a746f1","commitRef":"b294791db2451f84239af1994478af6d7afbee4c",
+ "builtAt":"2026-09-23T15:26:54.897Z","validContexts":["production","deploy-preview","branch-deploy","dev"],
+ "allowedContexts":["production"],"contextAllowed":false,"flagPresent":false,
+ "note":"Context condition only. This route does not evaluate the Release 2 gate, which also reads the project URL and the flag's value."}
+```
+
+`GET csrf-bootstrap` — no Origin: `{"ok":false,"error":"Not Found"}` → `404 application/json`;
+with `Origin: https://printcalculator2-staging.netlify.app`: `404`; with its own Origin: `404`.
+
+Status: **PASS as evidence (b) and the flag-absence half of (d) ONLY.** The
+bundle reports `deploy-preview` under the production site's name, and the
+Functions-scoped flag is absent in the preview. The 404s are **masked**: on
+this site the production-ref refusal fires before the context condition, so
+they prove nothing about the context condition. Write-free key probe
+(`POST {}` to `start-upload`): `500 Service role key not configured` — this
+preview has **no service-role key**; the 56 older preview permalinks that do
+are listed in `docs/security/deploy-inventory.md`.
+
+**0b-staging — MISSING (second attempt, branch deploy, 2026-09-23 17:37–17:48Z).** Pushes of `fcb5da6` and `8821573` to `security/release-2-stage-0` produced no branch deploy on the staging site; `https://security-release-2-stage-0--printcalculator2-staging.netlify.app` was not probed because no deploy exists behind it.
+
+**0b-staging — the staging site's preview: MISSING (first attempt).** The staging site built
+no preview for PR #48 (polled 15:16–15:40Z; its only previews ever are PR
+#45's, immutable, pre-stage-0). The context-denial evidence proper —
+`csrf-bootstrap` 404 with and without an Origin header on a bundle where the
+ref refusal is NOT in the way — is therefore **not yet observed**. The old #45
+artefact was not used as a substitute (it answers 401: live endpoints, the F2
+hazard). To obtain it: enable deploy previews on the staging site for PR
+#48, or branch-deploy `security/release-2-stage-0` there (context
+`branch-deploy`, also outside the allow-list → must 404).
+
+### 0c — Phase 1 re-run on plain staging, curl, no cookie, no Origin
+
+Status: **PASS** — the context condition admits the real site; the four
+credential-free calls are still refused uniformly:
+
+```
+POST staff-login            {"ok":false,"error":"Unauthorized"} -> 401 application/json
+POST enroll-redeem          {"ok":false,"error":"Unauthorized"} -> 401 application/json
+POST enroll-ticket-create   {"ok":false,"error":"Unauthorized"} -> 401 application/json
+GET  csrf-bootstrap         {"ok":false,"error":"Unauthorized"} -> 401 application/json
+```
+
+401, not 404: the gate passed all three conditions and the handler refused
+for want of a credential — which is the point. A 404 here would have meant
+the context file did not ship.
+
+---
+
 ## Phase 1 — unauthenticated routing smoke tests
 
 Status: **PASSED** — `401` on all four.
@@ -314,6 +402,156 @@ both results.
 
 ---
 
+### 3g — logout (slice 3)
+
+Device A, holding the staff csrf from 3f-ii (the manager session).
+
+```js
+const CSRF_STAFF_A = 'PASTE_csrf_FROM_3f-ii';
+await call('staff-logout', J(CSRF_STAFF_A, {}));
+```
+
+Expect `200` with `{ok:true, kind:"device", csrf}` where `csrf` equals
+`CSRF_DEV_A`, and a `Set-Cookie` that expires `__Host-pc_staff` (`Max-Age=0`).
+The database check is the acceptance evidence: the 3f-ii session row now has
+`revoked_reason = 'logout'`, and no other session on the enrollment changed.
+
+### 3h — bootstrap falls back to the device
+
+```js
+await call('csrf-bootstrap');
+```
+
+Expect `200` with `kind:"device"` and the csrf from 3a. This is the state a
+reloaded tab lands in after logout.
+
+### 3i — the 3f gap, closed
+
+```js
+await call('staff-login', J(CSRF_DEV_A, { pin: '1102' }));
+```
+
+Expect `200` with `role:"staff"`. A tab that held only a staff token (3f-i)
+can now log out, recover the device token in the same response, and sign in
+the next employee.
+
+### 3j — reuse after logout
+
+```js
+await call('staff-logout', J(CSRF_STAFF_A, {}));
+```
+
+Expect `401` — the revoked session no longer resolves (plan row 15). Note that
+after 3i the browser holds a NEW staff cookie, so run 3j immediately after 3g
+and before 3i, or read it as "old csrf against the new session", which is
+also 401.
+
+### 3k — kiosk entry revokes every live session on the device (slice 3)
+
+Same device as 3i, which holds a live staff session. Note what "every" can
+mean on one enrollment: rotation (F-4) guarantees at most ONE live session
+per device at any moment, so from the server's view the set of live rows on
+an enrollment has size 0 or 1. The probe therefore asserts what the endpoint
+promises: every row that IS live is revoked with the kiosk reason, rows
+already revoked keep their own reason, and other enrollments are untouched.
+Rotate once more first so the enrollment carries three reasons to compare:
+
+```js
+const CSRF_STAFF_1 = 'PASTE_csrf_FROM_3i';
+await call('staff-login', J(CSRF_DEV_A, { pin: '1101' }));   // 3i's row -> 'rotated…', new manager row live
+await call('staff-session-revoke-all', J(CSRF_DEV_A, {}));
+```
+
+Expect `200` with `{ok:true, revoked:1}` and a `Set-Cookie` that expires
+`__Host-pc_staff`. Database: on this enrollment the manager row now reads
+`revoked_reason='kiosk entry'`, the rotated and logout rows keep their
+reasons, and sessions on other enrollments are unchanged.
+
+### 3l — both staff tokens are dead, the device is not
+
+```js
+await call('staff-login', J(CSRF_STAFF_1, { pin: '1102' }));   // staff csrf of a revoked session
+await call('csrf-bootstrap');                                     // device cookie still resolves
+await call('staff-session-revoke-all', J(CSRF_DEV_A, {}));       // nothing live
+```
+
+Expect `401`, then `200 kind:"device"`, then `200 {revoked:0}`.
+
+**Scope of this substitution.** 3k/3l prove revoke-all's SERVER semantics on
+one device: every live session revoked, count returned, cookie cleared. They
+do NOT cover plan row 19 (two tabs, same browser: tab A enters kiosk, tab B
+acts as staff). Row 19 is about tab B DISCOVERING the revocation on its next
+request — a client concern for step 4 — and is not exercised here. Nor does a
+`200` mean the tab is customer-safe: an owner's Supabase Auth session in the
+same browser is a different credential class this endpoint never sees;
+clearing it is the client's job at kiosk entry (step 4).
+
+### 5a — owner revokes the device it is standing at (slice 3)
+
+Device A holds a live staff session. Signed in as `owner-t1` in the normal
+window; the revoke is sent FROM device A's own window so the request carries
+the device's own cookies (an owner who finds a shared tablet revokes it from
+that tablet). Get `ENR_A` from 3a's `enrollmentId`.
+
+```js
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A, reason: 'probe: shared tablet' }, token()));
+```
+
+Expect `200` with `{ok:true, enrollmentId, storeId:"…0a1", sessionsRevoked:1}`.
+Database: `device_enrollments` row has `revoked_by` = owner-t1 and the reason;
+the live session row reads `revoked_reason = 'device revoked: probe: shared
+tablet'`; earlier rows keep their own reasons.
+
+### 5b — the device is dead
+
+```js
+await call('csrf-bootstrap');                                   // 401
+await call('staff-login', J(CSRF_DEV_A, { pin: '1102' }));      // 401
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A }, token()));   // 200, sessionsRevoked:0 (idempotent)
+```
+
+### 5c — wrong tenant and unknown id answer identically, and change nothing
+
+With `window.T2_OWNER` set (2c):
+
+```js
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A }, window.T2_OWNER));            // 401
+await call('enroll-revoke', J(null, { enrollmentId: crypto.randomUUID() }, token()));      // 401
+```
+
+Both `401`, same body. ENR_A's row is unchanged (still revoked by owner-t1 at
+the 5a timestamp). The first call is the P5b property from the rehearsal: a
+non-owner on an already-revoked enrollment is refused exactly as on a live
+one, so revoked-vs-live in another tenant is not enumerable by status.
+
+### 5d — the reason is bounded
+
+```js
+await call('enroll-revoke', J(null, { enrollmentId: ENR_A, reason: 'x'.repeat(201) }, token()));   // 400
+```
+
+### 5e — list: tenant-scoped, no secrets
+
+```js
+const L = await call('enroll-list');                             // owner-t1: 200, T1 devices incl. revoked with reason, liveSessions counts
+/[0-9a-f]{64}|\x[0-9a-f]+|token|secret|created_by|revoked_by/i.test(L.body)   // false
+await fetch(FN + 'enroll-list?storeId=' + T1, { headers: { authorization: 'Bearer ' + window.T2_OWNER } }).then(r => r.status)   // 401
+```
+
+`call('enroll-list')` needs the owner token: use
+`fetch(FN + 'enroll-list', { headers: { authorization: 'Bearer ' + token() } })`.
+
+---
+
+**Client contract for a logout `401`:** treat it as "already in device state —
+bootstrap again", not as an error. Refusals are uniform, so a tab cannot tell
+already-logged-out from wrong-CSRF from expired, and the correct recovery is
+the same for all three: call `csrf-bootstrap` and use whatever token class it
+returns. A logout that "fails" has left nothing live that the caller could
+have used.
+
+---
+
 ## Phase 4 — negatives
 
 ### 4a — missing CSRF header
@@ -473,7 +711,7 @@ rehearsal never did.
 | 1 (x4) | 401 | PASS |
 | 2a | 200 + ticket | PASS (re-run 2026-09-15 14:15Z, ticket 7962dddd…, redeemed by 3a) |
 | 2b | 401 | PASS |
-| 2c | 401 for T1 **and** 200 for T2, same token | NOT RUN 2026-09-15 — no T2 owner token was provided to the session |
+| 2c | 401 for T1 **and** 200 for T2, same token | PASS 2026-09-16 — the same owner-t2 token (minted by the owner, placed in `window.T2_OWNER`) got `401` naming T1 and `200` naming T2 (ticket `d129c87d…`, storeId `…0a2`). The endpoint binds the store to the caller's membership, not to the body. DB: exactly one new ticket, store …0a2, created_by owner-t2; nothing for T1 |
 | 2c-ui | admin panel refuses owner-t2 (client gate, not a substitute) | PASS |
 | 3a | 200 + `__Host-pc_device` | PASS — 200, enrollment b79410ed… (DB row present); cookie invisible to document.cookie as expected, attributes not inspected |
 | 3b | 401 | PASS |
@@ -482,6 +720,17 @@ rehearsal never did.
 | 3e | 200, kind=staff | PASS — 200, kind=staff, csrf identical to 3d (first run returned kind=device as a consequence of the 3d failure) |
 | 3f-i | 401 predicted (gap) | 401 — the predicted gap, confirmed with a live staff session: a reloaded tab holding only the staff csrf cannot switch employee |
 | 3f-ii | 200, role=manager | PASS — 200, employee `T1 Manager` role=manager; DB shows the 3d staff session revoked with reason `rotated: new sign-in on this device` and exactly one live session (first run FAILED 401, same 42702 as 3d) |
+| 3g | 200, kind=device, csrf = device csrf, staff cookie cleared; DB `revoked_reason='logout'` | PASS 2026-09-16 — 200, kind=device, csrf identical to the enrollment's; the manager session row reads `revoked_reason='logout'` (see DB note below) |
+| 3h | 200, kind=device | PASS — 200, kind=device, csrf identical to 3a's |
+| 3i | 200, role=staff (3f gap closed) | PASS — 200, `T1 Staff` role=staff using the csrf returned by 3g; bootstrap afterwards reads kind=staff |
+| 3j | 401 | PASS — 401 on the revoked session's csrf, run immediately after 3g |
+| 3k | 200 `{revoked:1}`, staff cookie cleared; DB live row -> `'kiosk entry'`, other reasons intact | PASS 2026-09-16 — `{"ok":true,"revoked":1}`; DB on Counter C: rotated, logout, rotated, **kiosk entry** — each row keeps its own reason (see DB note) |
+| 3l | 401, then 200 kind=device, then 200 `{revoked:0}` | PASS — 401 for the 3i staff csrf AND for the just-revoked manager csrf; bootstrap 200 kind=device with the enrollment's csrf; second revoke-all 200 `{revoked:0}` |
+| 5a | 200 `{sessionsRevoked:1}` from the revoked device itself; DB `revoked_by`=owner-t1, cascade reason names the device | PASS 2026-09-16 — run from the owner's own window enrolled as `Counter D`, so the request carried the revoked device's cookies plus the owner JWT: 200 `{sessionsRevoked:1}`. DB: `revoked_by` owner-t1, reason `probe: shared tablet`, the session reads `device revoked: probe: shared tablet`; Counter C untouched (live 1) |
+| 5b | 401, 401, then 200 `{sessionsRevoked:0}` | PASS — bootstrap 401, staff-login 401 with the device csrf AND with the staff csrf, second revoke 200 `{sessionsRevoked:0}` |
+| 5c | 401 both, identical body, row unchanged | PASS 2026-09-17 — owner-t1 naming an unknown id: 401. Fresh owner-t2 token (positive control: its own-store list returned 200 immediately before AND after): 401 on the revoked Counter D and 401 on the live Counter C, identical bodies — revoked-vs-live not enumerable. DB: both rows unchanged, Counter D still revoked by owner-t1 at the 5a timestamp, Counter C still live. (First attempt on 09-16 used a token that had expired; discarded) |
+| 5d | 400 | PASS — 201 chars and a newline both 400 `reason must be at most 200 printable characters` |
+| 5e | 200 with reasons and live counts, no secrets; T2 owner naming T1 -> 401 | PASS — owner-t1: 200, `Counter D` revoked with reason and 0 live, `Counter C` live 1; body keys exactly id/label/createdAt/lastSeenAt/revokedAt/revokedReason/liveSessions, no hex64/bytea/hash/csrf/created_by/revoked_by. owner-t2 (fresh token): own store 200 with storeId …0a2 and 0 devices; naming T1 -> 401 |
 | 4a | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4b | 401 | PASS (device cookie present; no attempt charged) — re-run after 04, same |
 | 4c | 403 | PASS — `{"ok":false,"error":"Forbidden"}` |

@@ -58,6 +58,26 @@ with t as (select id from public.stores where slug in ('staging-t1-store','stagi
 delete from public.sheet_prices  where store_id in (select id from t);
 with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
 delete from public.paper_types   where store_id in (select id from t);
+-- Release 2 identity rows (pending/release2_01). All but auth_attempts would
+-- cascade from the stores delete below; they are deleted explicitly so the
+-- reset states what it removes. auth_attempts has NO foreign key — its
+-- subjects are text ('enr:<uuid>', 'store:<uuid>', 'tkt:<hash>', 'src:<ip>')
+-- and the tkt:/src: rows cannot be attributed to a store at all — so it is
+-- emptied outright. That is wider than "rows belonging to the two stores" and
+-- is acceptable ONLY because staging holds no other tenant; the production
+-- guard above is what makes it safe to write this way.
+with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
+delete from public.staff_sessions          where store_id in (select id from t);
+with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
+delete from public.enrollment_tickets      where store_id in (select id from t);
+with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
+delete from public.upload_capability_files where capability_id in
+  (select id from public.upload_capabilities where store_id in (select id from t));
+with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
+delete from public.upload_capabilities     where store_id in (select id from t);
+with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
+delete from public.device_enrollments      where store_id in (select id from t);
+delete from public.auth_attempts;
 with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
 delete from public.employees     where store_id in (select id from t);
 with t as (select id from public.stores where slug in ('staging-t1-store','staging-t2-store'))
@@ -214,7 +234,10 @@ select s.slug,
   (select count(*) from public.sheet_prices x where x.store_id = s.id) as prices,
   (select count(*) from public.orders       x where x.store_id = s.id) as orders,
   (select count(*) from public.pending_jobs x where x.store_id = s.id) as queue,
-  (select count(*) from public.print_jobs   x where x.store_id = s.id) as jobs
+  (select count(*) from public.print_jobs   x where x.store_id = s.id) as jobs,
+  (select count(*) from public.device_enrollments x where x.store_id = s.id) as enrollments,
+  (select count(*) from public.staff_sessions x where x.store_id = s.id) as sessions,
+  (select count(*) from public.auth_attempts) as attempts_total
 from public.stores s
 where s.slug in ('staging-t1-store','staging-t2-store')
 order by s.slug;

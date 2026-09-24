@@ -109,7 +109,7 @@ export const BUILD_MODE = "production";
 // trips it and forces a decision rather than being interpreted.
 export const EXPECTED_PACKAGE_BUILD_SCRIPT = "vite build";
 export const EXPECTED_TOML_BUILD_COMMAND =
-  "yarn install && yarn test && node scripts/check-build-env.mjs && yarn build && node scripts/inject-sw-manifest.mjs";
+  "yarn install && yarn test && node scripts/check-build-env.mjs && node scripts/write-deploy-context.mjs && yarn build && node scripts/inject-sw-manifest.mjs";
 
 // Pure, so the mutations can be tested rather than only the current files.
 export function modeInvariantErrors({ tomlCommand, packageBuildScript, buildMode = BUILD_MODE }) {

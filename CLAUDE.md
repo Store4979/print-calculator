@@ -54,8 +54,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   increase model. Writes the same App.jsx state the old price tables did.
 - src/lib/margin.js — PURE cost & margin engine (no React/Supabase). Every
   margin number on every surface comes from here. Unit-tested by `yarn test`.
-- scripts/tests/*.test.js — `yarn test` (node --test, zero deps). The kiosk
-  leak guard lives here; keep it green before any PR.
+- scripts/tests/*.test.js — `yarn test` (node --test). The kiosk leak guard
+  lives here; keep it green before any PR. Two devDependencies and no more,
+  both PINNED EXACTLY (no lockfile is committed — the supabase-js lesson):
+  `acorn` + `acorn-jsx`, used only by scripts/tests/inventory-check.mjs, the
+  Release 2 reach inventory (release2-inventory.test.js + its mutation
+  companion). It PARSES src/ and classifies every table/bucket/rpc/channel/
+  function the client names against supabase/tables.json (captured by
+  scripts/manual/tables-snapshot.sql — never edit by hand) and
+  netlify/functions/*.js + _retired.json; a new reach site fails until it is
+  allowlisted with its slice tag, and a `.from` on a variable, an alias, a
+  destructure, computed access or a second importer of the raw client fails
+  outright. The Release 2 table names FORBIDDEN in src/ come from
+  supabase/migrations/pending/release2_*.sql, not from the snapshot.
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
 - src/lib/orderQueue.js — offline order queue. localStorage key is still
   "pendingTransactions" on purpose (renaming it orphans queued orders); rows
@@ -282,6 +293,14 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    release2_04). A `returns table (...)` OUT column name that matches any table
    column in the body is a collision waiting to happen: alias every table and
    qualify every column.
+   SOURCE-STRING ASSERTIONS STRIP COMMENTS FIRST — `stripComments` from
+   scripts/tests/source-util.mjs, applied at the read, never to one assertion.
+   Three times (2026-09) a test matched text that merely QUOTED the thing it
+   asserted about: a doesNotMatch on the old function signature, the sw.js
+   `startsWith` comment, and enroll-list's header quoting `select("*")` while
+   forbidding it. A comment that explains why a pattern is forbidden contains
+   the pattern. The helper also normalises CRLF, without which `//.*$` never
+   reaches `$` on a Windows checkout and the comment survives.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

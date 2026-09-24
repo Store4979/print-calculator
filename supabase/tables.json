@@ -1,0 +1,30 @@
+{
+  "project": "gmxyisjjaxtpycsmmzef",
+  "capturedBy": "Claude Code session dfd2fde4 via Supabase MCP execute_sql, authorized by Ryan 2026-09-23; read-only",
+  "query": "scripts/manual/tables-snapshot.sql",
+  "capturedAt": "2026-09-23T14:59:46Z",
+  "database": "postgres",
+  "role": "postgres",
+  "ledgerVersion": "20260909232836",
+  "tables": [
+    "_archive_commission_columns",
+    "addons",
+    "discounts",
+    "employees",
+    "memberships",
+    "orders",
+    "organizations",
+    "outsourced_products",
+    "paper_types",
+    "pending_jobs",
+    "print_jobs",
+    "settings",
+    "sheet_prices",
+    "stores"
+  ],
+  "views": [],
+  "buckets": [
+    "customer-uploads",
+    "job-files"
+  ]
+}

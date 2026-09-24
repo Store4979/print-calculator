@@ -8,6 +8,11 @@ dist/
 .env.local
 .env.*.local
 
+# Written by scripts/write-deploy-context.mjs during the build and shipped into
+# the function bundles by netlify.toml's included_files. Generated per build —
+# tracking it would let a stale commit ref describe a fresh deploy.
+netlify/lib/deploy-context.json
+
 # OS noise
 .DS_Store
 Thumbs.db
