@@ -11,6 +11,14 @@
 // ledger version == the copied tree's applied baseline), so the control run
 // proves the validation is reachable, not skipped.
 //
+// RESIDUAL, stated for the reviewer to rule on (INV-R1): route detection is
+// lexical on three shapes — ".netlify", "netlify/" and "/functions/". A route
+// assembled at runtime from pieces NONE of which contains one of those shapes
+// (for example "/.net" + "lify" + "/fun" + "ctions/" + name) is NOT detected by
+// this scan. Closing it lexically would mean flagging ordinary words; the
+// structural closure is the Release 2 end state, where the client has no route
+// to a legacy function left to reach and each legacy route is a 410 tombstone.
+//
 // Not here, by design: the "client-controlled server costing" mutant (C5).
 // That is a behavioural test against orders-save — the server must compute
 // cost from the price book and ignore client figures — and orders-save does
@@ -499,4 +507,28 @@ test("MUT-38 (R3 controls) a var of the same name in a SEPARATE function, or in 
   assert.deepEqual(sep.gate, [], "separate function: " + sep.gateJoined);
   const nested = mutateReal((root) => edit(root, "src/lib/supabase.js", SIG, SIG + "\n  const helper = () => { var JOB_FILES_BUCKET = \"x\"; return JOB_FILES_BUCKET; }; void helper;"));
   assert.deepEqual(nested.gate, [], "nested function: " + nested.gateJoined);
+});
+
+// ── Codex review of ff677d6: its EXACT reproductions, verbatim ──────────────
+
+test("MUT-39 Codex INV-R1 exact: hiddenRoute built from template fragments", () => {
+  const r = mutateReal((root) => write(root, "src/review-hidden-route.js",
+    'export const hiddenRoute = name => fetch(`/.netlify/${"functions"}/${name}`);\n'));
+  assert.match(r.gateJoined, /src\/review-hidden-route\.js:1: route template .* is not the dispatcher form/);
+});
+
+test("MUT-40 Codex INV-R2 exact: a package re-export in one file, the client built from it in another", () => {
+  const r = mutateReal((root) => {
+    write(root, "src/review-client-factory.js", 'export { createClient } from "@supabase/supabase-js";\n');
+    write(root, "src/review-hidden-client.js",
+      'import { createClient } from "./review-client-factory.js"; export const hiddenReach = (url, key) => createClient(url, key).from("orders").select("*");\n');
+  });
+  assert.match(r.gateJoined, /src\/review-client-factory\.js:1: re-exports @supabase\/supabase-js/);
+});
+
+test("MUT-41 Codex INV-R3 exact: `if (true) { var JOB_FILES_BUCKET = … }` at the start of downloadJobFile", () => {
+  const r = mutateReal((root) => edit(root, "src/lib/supabase.js",
+    "export const downloadJobFile = async (path) => {",
+    'export const downloadJobFile = async (path) => {\n  if (true) { var JOB_FILES_BUCKET = "customer-uploads"; }'));
+  assert.match(r.gateJoined, /identifier JOB_FILES_BUCKET is shadowed here by a var hoisted to the enclosing function/);
 });
