@@ -13,7 +13,11 @@ import {
 const TOKEN = "nfp_MARKER_TOKEN_0123456789abcdef";
 const PUBLISHED = "6ab020c50a788b0008d430c9";
 const ROW = (id, pr, commit, tier) => `${id} | ${pr} | ${commit} | ${tier}`;
-const MD = (rows) => `x\n<!-- DELETE-LIST:BEGIN -->\n\`\`\`delete-list\n${rows.join("\n")}\n\`\`\`\n<!-- DELETE-LIST:END -->\n`;
+// Every mode reads the keep list, so every fixture carries one (the published deploy).
+const KEEP_BLOCK = (rows = ["6ab020c50a788b0008d430c9 | 7ec5af4 | published"]) =>
+  `<!-- PRODUCTION-KEEP:BEGIN -->\n\`\`\`production-keep\n${rows.join("\n")}\n\`\`\`\n<!-- PRODUCTION-KEEP:END -->\n`;
+const MD = (rows, keep) => `x\n${KEEP_BLOCK(keep)}<!-- DELETE-LIST:BEGIN -->\n\`\`\`delete-list\n${rows.join("\n")}\n\`\`\`\n<!-- DELETE-LIST:END -->\n`;
+const AMD = (rows, keep) => `x\n${KEEP_BLOCK(keep)}<!-- PREVIEW-ADDENDUM-DELETE-LIST:BEGIN -->\n\`\`\`preview-addendum-delete-list\n${rows.join("\n")}\n\`\`\`\n<!-- PREVIEW-ADDENDUM-DELETE-LIST:END -->\n`;
 const A = "aaaaaaaaaaaaaaaaaaaaaaaa", B = "bbbbbbbbbbbbbbbbbbbbbbbb", C = "cccccccccccccccccccccccc";
 
 /** Fake API: deploys by id, a published id (optionally changing), a request log. */
@@ -217,7 +221,7 @@ test("DL-15 an API record with state \"deleted\" is gone, not a candidate — an
 });
 
 test("DL-16 --list takes only preview or production; the production parser refuses malformed rows", () => {
-  assert.throws(() => parseArgs(["--list", "branch"]), /--list takes preview or production/);
+  assert.throws(() => parseArgs(["--list", "branch"]), /--list takes preview, preview-addendum or production/);
   assert.throws(() => readProductionLists(PMD([`${A} | abcdef1`], KEEP)), /malformed row/);
   assert.throws(() => readProductionLists(PMD([PROW(A, "abcdef1", 1), PROW(A, "abcdef1", 1)], KEEP)), /duplicate id/);
   assert.throws(() => readProductionLists("no blocks"), /no PRODUCTION-KEEP/);
@@ -230,4 +234,64 @@ test("DL-17 defence in depth: checkRow refuses a kept id before sending any requ
   assert.equal(v.verdict, "refuse");
   assert.match(v.reason, /PRODUCTION-KEEP list \(rollback-target\)/);
   assert.equal(api.calls.length, 0);
+});
+
+// ── --list preview-addendum: the six #24–#28 previews ────────────────────────
+
+test("DL-18 the committed addendum list: 6 ids, PRs 24–28, disjoint from the executed list, the production list and the keep list", () => {
+  const md = readFileSync(INVENTORY, "utf8");
+  const add = readDeleteList(md, { name: "PREVIEW-ADDENDUM-DELETE-LIST", fence: "preview-addendum-delete-list" });
+  assert.equal(add.length, 6);
+  assert.deepEqual([...new Set(add.map((r) => r.pr))].sort(), [24, 25, 26, 27, 28]);
+  const executed = new Set(readDeleteList(md).map((r) => r.id));
+  const { rows: prod, keep } = readProductionLists(md);
+  const prodIds = new Set(prod.map((r) => r.id));
+  for (const r of add) {
+    assert.ok(!executed.has(r.id) && !prodIds.has(r.id) && !keep.has(r.id), r.id);
+  }
+  assert.equal(readDeleteList(md).length, 56, "the executed list is unchanged");
+});
+
+test("DL-19 addendum mode: a listed preview is deletable (dry run sends no DELETE); a production deploy on it is refused", async () => {
+  const api = fakeApi({ deploys: { [A]: preview(24, "abcdef1"), [B]: prodDep("abcdef2") } });
+  const r = await go({ argv: ["--list", "preview-addendum"], env: {}, fetchImpl: api.fetchImpl,
+    markdown: AMD([ROW(A, 24, "abcdef1", 1), ROW(B, 25, "abcdef2", 1)]) });
+  assert.match(r.text, /list preview-addendum: 2 of 2 listed deploys/);
+  assert.match(r.text, /would delete: preview of PR #24/);
+  assert.match(r.text, /context is "production", not deploy-preview/);
+  assert.equal(api.calls.filter((c) => c.method === "DELETE").length, 0);
+});
+
+test("DL-20 every mode enforces the keep list: a preview list naming a kept id is refused whole, and a missing keep block refuses", async () => {
+  const api = fakeApi({ deploys: { [A]: preview(24, "abcdef1") } });
+  for (const [argv, md] of [
+    [["--list", "preview-addendum", "--apply"], AMD([ROW(A, 24, "abcdef1", 1), ROW(PUBLISHED, 99, "7ec5af4", 1)])],
+    [["--apply"], MD([ROW(A, 24, "abcdef1", 1), ROW(PUBLISHED, 99, "7ec5af4", 1)])],
+  ]) {
+    const r = await go({ argv, env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl, markdown: md });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /is on the PRODUCTION-KEEP list; refusing the whole/);
+  }
+  assert.equal(api.calls.length, 0, "refused before any request");
+  const noKeep = await go({ argv: ["--list", "preview-addendum"], env: {}, fetchImpl: api.fetchImpl,
+    markdown: `<!-- PREVIEW-ADDENDUM-DELETE-LIST:BEGIN -->\n\`\`\`preview-addendum-delete-list\n${ROW(A, 24, "abcdef1", 1)}\n\`\`\`\n<!-- PREVIEW-ADDENDUM-DELETE-LIST:END -->\n` });
+  assert.equal(noKeep.code, 1);
+  assert.match(noKeep.text, /no PRODUCTION-KEEP/);
+});
+
+test("DL-21 addendum mode re-reads the published deploy before each delete", async () => {
+  const api = fakeApi({ deploys: { [A]: preview(24, "abcdef1"), [B]: preview(25, "abcdef2") }, publishedSeq: [PUBLISHED, B] });
+  const r = await go({ argv: ["--list", "preview-addendum", "--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl,
+    markdown: AMD([ROW(A, 24, "abcdef1", 1), ROW(B, 25, "abcdef2", 1)]) });
+  assert.match(r.text, /CURRENTLY PUBLISHED deploy/);
+  assert.deepEqual(api.calls.filter((c) => c.method === "DELETE").map((c) => c.url.slice(-24)), [A]);
+});
+
+test("DL-22 addendum mode checks the PR number and the commit against the row", async () => {
+  const api = fakeApi({ deploys: { [A]: preview(25, "abcdef1"), [B]: preview(24, "1234567") } });
+  const r = await go({ argv: ["--list", "preview-addendum", "--apply"], env: { NETLIFY_AUTH_TOKEN: TOKEN }, fetchImpl: api.fetchImpl,
+    markdown: AMD([ROW(A, 24, "abcdef1", 1), ROW(B, 24, "abcdef2", 1)]) });
+  assert.match(r.text, /review_id 25 != listed PR 24/);
+  assert.match(r.text, /!= listed abcdef2/);
+  assert.equal(api.calls.filter((c) => c.method === "DELETE").length, 0);
 });

@@ -3,13 +3,16 @@
 // the PRODUCTION site by deleting them through the Netlify API. Run by the
 // operator, never by CI or a session.
 //
-// Two lists, chosen with --list, both in docs/security/deploy-inventory.md:
-//   --list preview     (default) the DELETE-LIST block: deploy previews.
-//                      Approved and executed 2026-09-24 (56 deleted, verified).
-//   --list production  the PRODUCTION-DELETE-LIST block: old production-context
-//                      deploys. Paired with a PRODUCTION-KEEP block (the
-//                      published deploy and three rollback targets) that is
-//                      refused even if an id also appears in the delete list.
+// Three lists, chosen with --list, all in docs/security/deploy-inventory.md:
+//   --list preview           (default) the DELETE-LIST block: deploy previews.
+//                            Approved and executed 2026-09-24 (56 deleted, verified).
+//   --list preview-addendum  the PREVIEW-ADDENDUM-DELETE-LIST block: six older
+//                            previews (#24–#28) misclassified in the first pass.
+//   --list production        the PRODUCTION-DELETE-LIST block: old
+//                            production-context deploys.
+// In EVERY mode the PRODUCTION-KEEP block (the published deploy and three
+// rollback targets) is read and enforced: a list naming a kept id is refused
+// whole before any request, and a kept id is refused again per row.
 //
 // WHY: every Netlify deploy is an immutable bundle carrying the environment
 // it captured at build. Old deploys keep the service-role key their context
@@ -64,11 +67,26 @@ function block(markdown, name, fence) {
   return m[1].split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 }
 
-/** Parse the preview DELETE-LIST block (id | PR | commit | tier). Throws on anything malformed. */
-export function readDeleteList(markdown) {
+/** Parse the PRODUCTION-KEEP block (id | commit | reason). Required in every mode. */
+export function readKeepList(markdown) {
+  const keep = new Map();
+  for (const line of block(markdown, "PRODUCTION-KEEP", "production-keep")) {
+    const cells = line.split("|").map((c) => c.trim());
+    if (cells.length !== 3 || !ID_RE.test(cells[0])) throw new Error(`malformed keep row (need id | commit | reason): ${line}`);
+    keep.set(cells[0], cells[2]);
+  }
+  if (keep.size === 0) throw new Error("the PRODUCTION-KEEP block is empty; the published deploy must be listed there");
+  return keep;
+}
+
+/**
+ * Parse a preview list block (id | PR | commit | tier): DELETE-LIST by default,
+ * or PREVIEW-ADDENDUM-DELETE-LIST. Throws on anything malformed.
+ */
+export function readDeleteList(markdown, { name = "DELETE-LIST", fence = "delete-list" } = {}) {
   const rows = [];
   const seen = new Set();
-  for (const line of block(markdown, "DELETE-LIST", "delete-list")) {
+  for (const line of block(markdown, name, fence)) {
     const cells = line.split("|").map((c) => c.trim());
     if (cells.length !== 4) throw new Error(`malformed row (need id | PR | commit | tier): ${line}`);
     const [id, pr, commit, tier] = cells;
@@ -80,7 +98,7 @@ export function readDeleteList(markdown) {
     seen.add(id);
     rows.push({ id, pr: Number(pr), commit, tier: Number(tier) });
   }
-  if (rows.length === 0) throw new Error("the DELETE-LIST block is empty");
+  if (rows.length === 0) throw new Error(`the ${name} block is empty`);
   return rows;
 }
 
@@ -90,13 +108,7 @@ export function readDeleteList(markdown) {
  * is also kept.
  */
 export function readProductionLists(markdown) {
-  const keep = new Map();
-  for (const line of block(markdown, "PRODUCTION-KEEP", "production-keep")) {
-    const cells = line.split("|").map((c) => c.trim());
-    if (cells.length !== 3 || !ID_RE.test(cells[0])) throw new Error(`malformed keep row (need id | commit | reason): ${line}`);
-    keep.set(cells[0], cells[2]);
-  }
-  if (keep.size === 0) throw new Error("the PRODUCTION-KEEP block is empty; the published deploy must be listed there");
+  const keep = readKeepList(markdown);
   const rows = [];
   const seen = new Set();
   for (const line of block(markdown, "PRODUCTION-DELETE-LIST", "production-delete-list")) {
@@ -130,7 +142,7 @@ export function parseArgs(argv) {
     }
     if (a === "--list") {
       const v = argv[++i];
-      if (!["preview", "production"].includes(v)) throw new Error(`--list takes preview or production (got ${v})`);
+      if (!["preview", "preview-addendum", "production"].includes(v)) throw new Error(`--list takes preview, preview-addendum or production (got ${v})`);
       out.list = v;
       continue;
     }
@@ -151,7 +163,7 @@ export async function checkRow(row, http, { list = "preview", keep = new Map() }
   const wantContext = list === "production" ? "production" : "deploy-preview";
   if (dep.site_id !== PRODUCTION_SITE_ID) return { verdict: "refuse", reason: `site_id ${dep.site_id} is not the production site` };
   if (dep.context !== wantContext) return { verdict: "refuse", reason: `context is ${JSON.stringify(dep.context)}, not ${wantContext}` };
-  if (list === "preview" && Number(dep.review_id) !== row.pr) return { verdict: "refuse", reason: `review_id ${dep.review_id} != listed PR ${row.pr}` };
+  if (list !== "production" && Number(dep.review_id) !== row.pr) return { verdict: "refuse", reason: `review_id ${dep.review_id} != listed PR ${row.pr}` };
   if (!String(dep.commit_ref || "").startsWith(row.commit)) return { verdict: "refuse", reason: `commit ${String(dep.commit_ref).slice(0, 12)} != listed ${row.commit}` };
   // Re-read the published deploy NOW, immediately before any delete.
   const s = await http("GET", `/sites/${PRODUCTION_SITE_ID}`);
@@ -159,7 +171,7 @@ export async function checkRow(row, http, { list = "preview", keep = new Map() }
   const published = s.body?.published_deploy?.id;
   if (!published) return { verdict: "refuse", reason: "the site reports no published deploy; refusing rather than guessing" };
   if (published === row.id) return { verdict: "refuse", reason: "this is the site's CURRENTLY PUBLISHED deploy" };
-  return { verdict: "delete", reason: `${list === "preview" ? `preview of PR #${row.pr}` : "old production deploy"}; published deploy is ${published}` };
+  return { verdict: "delete", reason: `${list === "production" ? "old production deploy" : `preview of PR #${row.pr}`}; published deploy is ${published}` };
 }
 
 export async function run({ argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch, out = console.log, markdown = null } = {}) {
@@ -171,7 +183,14 @@ export async function run({ argv = process.argv.slice(2), env = process.env, fet
     args = parseArgs(argv);
     const md = markdown ?? readFileSync(INVENTORY, "utf8");
     if (args.list === "production") ({ rows, keep } = readProductionLists(md));
-    else rows = readDeleteList(md);
+    else {
+      keep = readKeepList(md);
+      rows = args.list === "preview-addendum"
+        ? readDeleteList(md, { name: "PREVIEW-ADDENDUM-DELETE-LIST", fence: "preview-addendum-delete-list" })
+        : readDeleteList(md);
+      const kept = rows.filter((r) => keep.has(r.id));
+      if (kept.length) throw new Error(`${kept.map((r) => r.id).join(", ")} is on the PRODUCTION-KEEP list; refusing the whole ${args.list} list`);
+    }
   } catch (e) {
     say(`REFUSED: ${e.message}`);
     return { code: 1, results: [] };
@@ -193,7 +212,7 @@ export async function run({ argv = process.argv.slice(2), env = process.env, fet
   const selected = rows
     .filter((r) => args.tier === "all" || r.tier === Number(args.tier))
     .sort((a, b) => a.tier - b.tier);
-  say(`${args.apply ? "APPLY" : "DRY RUN (no DELETE will be sent; add --apply)"} — list ${args.list}: ${selected.length} of ${rows.length} listed deploys, tier ${args.tier}${args.list === "production" ? `; ${keep.size} kept ids refused` : ""}`);
+  say(`${args.apply ? "APPLY" : "DRY RUN (no DELETE will be sent; add --apply)"} — list ${args.list}: ${selected.length} of ${rows.length} listed deploys, tier ${args.tier}; ${keep.size} kept ids refused`);
 
   const results = [];
   let refused = 0;

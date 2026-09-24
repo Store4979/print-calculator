@@ -444,9 +444,21 @@ Previously listed under "neither" as harmless. Probed again write-free
 | `6a455d60436d82000807ff9a` | #27 | `e28925c4` | 200 | 500 Node 20 client-init failure | **PRESENT** (no working client) |
 | `6a5fa9f509d2e20008af92f7` | #28 | `ae7de2c3` | 200 | 500 Node 20 client-init failure | **PRESENT** (no working client) |
 
-All lack both fixes (June–July). **Proposed: delete all six**, as an addition
-to the preview list. That needs your approval and a reviewed change to the
-`DELETE-LIST` block, which is left exactly as executed. **Nothing deleted.**
+All lack both fixes (June–July). **Approved for deletion by Ryan, 2026-09-24**,
+as a SEPARATE list — the executed `DELETE-LIST` block above is left exactly as
+it was run. `scripts/manual/delete-preview-deploys.mjs --list preview-addendum`
+reads only this block.
+
+<!-- PREVIEW-ADDENDUM-DELETE-LIST:BEGIN — machine-read by scripts/manual/delete-preview-deploys.mjs --list preview-addendum; one row per deploy: id | PR | commit | tier -->
+```preview-addendum-delete-list
+6a42b788c1f1b100087b57e0 | 24 | 574b964dd0e2 | 1
+6a42b71cec4580000819f132 | 24 | 5bd2b6682027 | 1
+6a42c8fb300b08000832da74 | 25 | 095ea8c5dac5 | 1
+6a42d40ffc7e2f0008473eac | 26 | ea84ed944150 | 1
+6a455d60436d82000807ff9a | 27 | e28925c49578 | 1
+6a5fa9f509d2e20008af92f7 | 28 | ae7de2c31dcf | 1
+```
+<!-- PREVIEW-ADDENDUM-DELETE-LIST:END -->
 
 ## Production-context deploys — classification and proposed deletion (2026-09-24T15:25:07Z)
 
@@ -473,7 +485,7 @@ All four hold the production key with live legacy writers; that exposure ends
 only with credential rotation (stage 0 production half), after which a
 rollback is a fresh build of the old commit, never a republish.
 
-**Proposed for deletion: 28** — every non-kept deploy whose bundle holds
+**Approved for deletion by Ryan, 2026-09-24: 28** — every non-kept deploy whose bundle holds
 the key or whose key state is unknown (a 502 crash says nothing about the key;
 unknown is not absent). All are tier 1 (missing the cleanup-stale-jobs fix).
 **Not proposed: 39** deploys with no functions (static-only or errored builds): no
