@@ -1,6 +1,6 @@
 # Release 2 — staging ledger reconciliation (01, 02, 03)
 
-**Status: R1–R3 PASSED; R4 PARTIAL (Phase 1 + 0a done, probes 2a–5e await an owner sign-in); R5 recorded. 2026-09-28.** Written 2026-09-24. The
+**Status: COMPLETE 2026-09-28 — R1–R4 PASSED, R5 recorded. The committed 01–05 files are the tested code on staging.** Written 2026-09-24. The
 stage-0 production plan waits on this.
 
 ## 1. What is wrong, exactly
@@ -165,14 +165,56 @@ the git blob — all six EQUAL). This is the reference production must reproduce
 | `release2_create_staff_session` | 04 | `d30da6d0…` |
 | `release2_revoke_enrollment` | 05 | `a464a43c…` |
 
-**R4 RESULT — PARTIAL.** Phase 1 on plain staging, curl, no cookie, no Origin
-(16:09:52Z): `staff-login`, `enroll-redeem`, `enroll-ticket-create`,
-`csrf-bootstrap` → `401 {"ok":false,"error":"Unauthorized"}` ×4. 0a unaffected:
-`context production`, `siteName printcalculator2-staging`, `flagPresent true`,
-`contextAllowed true`, deploy `6aba9057…` of `95c1c43`. **Probes 2a–5e not run:**
-they need an owner-t1 (and for 2c/5c/5e an owner-t2) sign-in in a browser, which
-this session does not perform. The reset removed the old device fixtures, so
-2a (mint) and 3a (redeem) re-create them.
+**R4 RESULT — PASS, 2026-09-28 16:47–16:57Z** (plain staging, deploy `6aba9057…`
+of `95c1c43`; Chrome, owner-t1 signed in by Ryan; T2 and manager tokens placed
+by Ryan as page variables and discarded with the tab afterwards). Every token
+was checked before any 401 from it was trusted: `jwtInfo()` for subject, email
+and seconds to expiry, AND a live `GET /auth/v1/user` → `200` with the right
+email. owner-t1 `ce5f92f9…` (≥2 973 s left), owner-t2 `f82d617e…` (3 544 s),
+manager-t1 `139bf934…` (3 544 s). No unexpected 401 occurred, so no retry was
+needed.
+
+| probe | result |
+|---|---|
+| Phase 1 (16:09Z) | four uniform `401 {"ok":false,"error":"Unauthorized"}` |
+| 2a owner-t1 mints for T1 | `200` ticket `d0faab78…`, store `…0a1`, expires +15 min |
+| 2b manager-t1 mints for T1 | `401` (token live: `/auth/v1/user` 200) |
+| 2c **control** owner-t2 mints for T2 | `200`, store `…0a2`, ticket issued |
+| 2c owner-t2 mints for T1 | `401` — same token, own store 200, other store 401 |
+| 3a redeem | `200` enrollment `a463b98c…` ("Counter A"), csrf returned. Cookie attributes not re-observed (page JS cannot read `Set-Cookie`); stand as recorded 09-15, code unchanged |
+| 3b replay | `401` |
+| 3c bootstrap | `200 kind:"device"`, csrf identical to 3a |
+| 3d login PIN 1102 | `200` T1 Staff, role `staff`, new csrf, expires +12 h |
+| 3e bootstrap | `200 kind:"staff"`, csrf = 3d's |
+| 3f-i staff token, PIN 1101 | `401` — the predicted gap, reproduced |
+| 3f-ii device token, PIN 1101 | `200` T1 Manager, role `manager` |
+| 3g logout | `200 kind:"device"`, csrf = device A's |
+| 3j logout again (run right after 3g) | `401` |
+| 3h bootstrap | `200 kind:"device"`, csrf = 3a's |
+| 3i login PIN 1102 | `200` T1 Staff |
+| 3k rotate to manager, revoke-all | `200`, then `200 {revoked:1}` |
+| 3l revoked staff token / bootstrap / revoke-all | `401` / `200 kind:"device"` / `200 {revoked:0}` |
+| 5a owner-t1 revokes ENR_A (after one live sign-in) | `200` store `…0a1`, sessionsRevoked 1 |
+| 5b bootstrap / login / revoke again | `401` / `401` / `200`, sessionsRevoked 0 |
+| 5c owner-t2 on the revoked ENR_A; owner-t1 on a random id | `401` / `401`, **identical body** |
+| 5d 201-char reason | `400 reason must be at most 200 printable characters` |
+| 5e owner-t1 list | `200`: Counter A only, revoked with reason, liveSessions 0; keys `id,label,createdAt,lastSeenAt,revokedAt,revokedReason,liveSessions`; forbidden-content pattern: no match |
+| 5e **control** owner-t2 lists T2 | `200`, store `…0a2`, 0 devices |
+| 5e owner-t2 lists T1 | `401` |
+
+**Database read-back (read-only, no hashes or secrets selected):** ticket
+`d0faab78…` redeemed into `a463b98c…`; the enrollment's session rows in order —
+`rotated: new sign-in on this device` (T1 Staff), `logout` (T1 Manager, 3g),
+`rotated…` (T1 Staff), `kiosk entry` (T1 Manager, 3k),
+`device revoked: probe: shared tablet` (T1 Staff, 5a); 0 live; no other
+enrollment touched. ENR_A `revoked_by` = owner-t1, reason `probe: shared
+tablet`, and unchanged after 5c. T1 has exactly one ticket (minted by
+owner-t1): 2b and 2c minted nothing. T2 has one ticket — 2c's positive control,
+unredeemed, expiring.
+
+**Conclusion.** Staging's Release 2 functions now come from the committed bytes
+(R2), are proven by direct calls (R3) and by every HTTP probe of the slice 2/3
+sequence (R4). The committed files ARE the tested code.
 
 **Obsolete after R2:** `supabase/rehearsals/release2_04_rehearsal.sql` and
 `release2_05_rehearsal.sql` open with `create function` / expect the

@@ -491,6 +491,14 @@ unknown is not absent). All are tier 1 (missing the cleanup-stale-jobs fix).
 **Not proposed: 39** deploys with no functions (static-only or errored builds): no
 server-side writer exists in them. **Nothing deleted.**
 
+**CORRECTION 2026-09-28:** five of those 39 were not "no functions" — they were
+already DELETED in March–May 2026 (API `state: deleted`: `69c6b480…`, `69c6b4d4…`,
+`69f11eb4…`, `69f369eb…`, `69f4c3e4…`). A deleted deploy answers the write-free
+probe with the same 404 as a deploy without functions; the classifier did not
+distinguish them. Nothing depended on it (neither class holds a key), but the
+true count of production deploys with no functions was 34, not 39. The retained
+table in the stage-0 production plan distinguishes the two.
+
 <!-- PRODUCTION-KEEP:BEGIN — the script refuses every id here even if it is also listed for deletion; one row: id | commit | reason -->
 ```production-keep
 6ab020c50a788b0008d430c9 | 7ec5af48666e | published

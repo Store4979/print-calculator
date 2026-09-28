@@ -249,6 +249,16 @@ the context file did not ship.
 
 ---
 
+## Re-run 2026-09-28 after the ledger reconciliation (R4)
+
+Phase 1 and 2a–5e re-run against functions created from the COMMITTED
+migration bytes (staging ledger `20260928160606`–`…847`). All as specified,
+with 2b/2c/5c/5e T2 tokens checked live before any 401 was trusted and 2c/5e
+positive controls. Per-probe results and the database read-back:
+`docs/security/release-2-staging-reconciliation.md`, "R4 RESULT".
+
+---
+
 ## Phase 1 — unauthenticated routing smoke tests
 
 Status: **PASSED** — `401` on all four.
