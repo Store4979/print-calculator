@@ -197,6 +197,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   - send-print-job silently falls back to the compiled-in address when the
     service key fails. A delivered email proves nothing about the key; only
     the `recipientSource: "store:<slug>"` log line does.
+  - Every SQL text stage 0 runs on production is EMITTED by
+    scripts/manual/assemble-stage0.mjs from git blobs and pinned (md5) in
+    docs/security/stage0-production-manifest.json. Never hand-edit or retype
+    one. The rollbacks are .rollback.sql companions in pending/. INV-6 counts a
+    DROP of a Release 2 table only from an applied file byte-identical to one
+    (scripts/tests/release2-inventory.rollback.test.js).
+    scripts/manual/stage0-local-pglite.mjs runs all of it in a local PG 17
+    (PGlite is installed OUTSIDE the repo). It proves the SQL executes, not
+    how production behaves.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only

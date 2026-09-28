@@ -1,0 +1,398 @@
+#!/usr/bin/env node
+// Assemble every SQL text that stage 0 runs against PRODUCTION — P0, P1, the
+// five P2 wrappers and the four rollback operations
+// (docs/security/release-2-stage-0-production-plan.md §E1–§E4, §A6).
+//
+// WHY ASSEMBLED, AND WHY PINNED: the reviewed bytes must be the executed bytes.
+// Every input is read from git (`git show <rev>:<path>`), never from the working
+// tree, so a Windows checkout's CRLF cannot change a byte. The output is
+// deterministic (no clock, no environment), and the md5 of each output is
+// pinned in docs/security/stage0-production-manifest.json;
+// scripts/tests/stage0-manifest.test.js re-assembles and compares. The
+// reconciliation assembler this replaces was unpinned (plan §G).
+//
+// WHAT THE WRAPPER DOES (plan §E1), per step, inside ONE transaction:
+//   set_config(…, true) for lock_timeout / statement_timeout /
+//   idle_in_transaction_session_timeout (and transaction_timeout on PG >= 17),
+//   then ONE `DO` statement that asserts those settings are in force, checks
+//   positive production identity, md5-checks each embedded file, asserts the
+//   state before, EXECUTEs the file, asserts the state after, writes the
+//   ledger row from the md5-checked literal, and checks the deadline. Any
+//   failure raises, and the transaction rolls back. Whether a step committed is
+//   decided by reading the ledger back, never by this script.
+//
+//   node scripts/manual/assemble-stage0.mjs --list          names + md5
+//   node scripts/manual/assemble-stage0.mjs P2-01           one text to stdout
+//   node scripts/manual/assemble-stage0.mjs --rev <rev> P1  from another commit
+//
+// It never connects to a database.
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+export const md5 = (s) => createHash("md5").update(typeof s === "string" ? Buffer.from(s, "utf8") : s).digest("hex");
+
+const PEND = "supabase/migrations/pending/";
+export const PROOFS = "supabase/rehearsals/release2_stage0_production_proofs.sql";
+
+// A1 — the forward migrations, in apply order.
+export const MIGRATIONS = [
+  { n: "01", name: "release2_01_identity_schema", md5: "e97a5fd7c346a3b0a39bc6180dcfde46", bytes: 13720 },
+  { n: "02", name: "release2_02_auth_attempts_fn", md5: "734e0db7312b79081a769ca366c5b99a", bytes: 6406 },
+  { n: "03", name: "release2_03_bind_and_atomicity", md5: "302e05c6a4939eb8021234cbc7325473", bytes: 13062 },
+  { n: "04", name: "release2_04_staff_session_qualify_columns", md5: "2dcb03eb36e47c8404a29500151e8394", bytes: 5858 },
+  { n: "05", name: "release2_05_revoke_enrollment", md5: "22b5010b9a3b20f5a3aaba4d212fd46c", bytes: 5622 },
+];
+
+// A1a — the Release 2 function set after each migration: catalog signature,
+// md5(prosrc), effective EXECUTE grantees.
+const OWN = "postgres=EXECUTE,service_role=EXECUTE";
+const OWN_AUTH = "authenticated=EXECUTE,postgres=EXECUTE,service_role=EXECUTE";
+const CSS = "release2_create_staff_session(uuid, uuid, bytea, bytea, timestamp with time zone, timestamp with time zone)";
+export const FUNCTIONS = {
+  redeem: ["redeem_enrollment_ticket(bytea, bytea, bytea, text)", "c024388886897f01a1154d8d12dc8996", OWN],
+  rec02: ["release2_record_attempt(text, text, integer, integer, integer)", "fa208910f744eead2bdd14445d1d89d8", OWN],
+  clr02: ["release2_clear_lockout(text, text, uuid)", "f06f2b206a8f6675668ec43f1b6ec384", OWN_AUTH],
+  clr03: ["release2_clear_lockout(text, text, uuid, uuid)", "b7f602cde969f2f2622c0d2343b1c249", OWN_AUTH],
+  rec03: ["release2_record_attempt(text, text, integer, integer, integer)", "e67957595afcc7a51d7f8673000d9302", OWN],
+  css03: [CSS, "bd6da6a2f80e13c7b20deab3b2c76e63", OWN],
+  prune: ["release2_prune_auth_attempts(integer)", "ee254949f88474c58284b8a2c1ba3cb0", OWN],
+  css04: [CSS, "d30da6d0c7a4d14e1bcb1b9fcace37d9", OWN],
+  revoke: ["release2_revoke_enrollment(uuid, uuid, text)", "a464a43cc72537bb02b3e4a1d904f655", OWN],
+};
+export const STATE_AFTER = {
+  "00": [],
+  "01": ["redeem"],
+  "02": ["redeem", "rec02", "clr02"],
+  "03": ["redeem", "clr03", "rec03", "css03", "prune"],
+  "04": ["redeem", "clr03", "rec03", "css04", "prune"],
+  "05": ["redeem", "clr03", "rec03", "css04", "prune", "revoke"],
+};
+export const TABLES = ["device_enrollments", "enrollment_tickets", "staff_sessions", "upload_capabilities", "upload_capability_files", "auth_attempts"];
+
+// A6 — the rollback operations. Files run in the listed order in ONE transaction.
+export const ROLLBACK_OPS = [
+  { op: "RB-5", files: ["05"] },
+  { op: "RB-43", files: ["04", "03"], marker: "RB-43" },
+  { op: "RB-2", files: ["02"] },
+  { op: "RB-1", files: ["01"] },
+];
+
+// E2 identity markers.
+export const PRODUCTION_REF = "gmxyisjjaxtpycsmmzef";
+export const STAGING_SEED_STORE = "5ee41000-0000-4000-8000-0000000000a1";
+export const PROBE_SLUG = "r2-probe-nonexistent";
+
+export const git = (rev, path) => execFileSync("git", ["show", `${rev}:${path}`], { maxBuffer: 1 << 26 });
+const gitText = (rev, path) => git(rev, path).toString("utf8");
+export const migrationPath = (m) => `${PEND}${m.name}.sql`;
+export const rollbackPath = (m) => `${PEND}${m.name}.rollback.sql`;
+
+/** The production ledger: the committed top-level files, as (version, name, md5). */
+export function ledgerRows(rev) {
+  const names = execFileSync("git", ["ls-tree", "--name-only", rev, "supabase/migrations/"]).toString("utf8").split("\n");
+  const rows = [];
+  for (const p of names.sort()) {
+    const b = p.split("/").pop();
+    if (!/^\d{14}_.*\.sql$/.test(b) || /\.rollback\.sql$/.test(b)) continue;
+    rows.push({ version: b.slice(0, 14), name: b.slice(15, -4), md5: md5(git(rev, p)) });
+  }
+  return rows;
+}
+
+const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+// ── SQL fragments ────────────────────────────────────────────────────────────
+function identityGuard(rows, tag) {
+  const values = rows.map((r) => `      (${q(r.version)}, ${q(r.name)}, ${q(r.md5)})`).join(",\n");
+  return `  -- Positive production identity (plan §E2): production's ${rows.length} ledger rows with
+  -- their committed md5s; the staging seed store absent; store4979 present.
+  if (select count(*) from (values
+${values}
+      ) as want(version, name, body_md5)
+      where not exists (select 1 from supabase_migrations.schema_migrations m
+                         where m.version = want.version and m.name = want.name
+                           and md5(m.statements[1]) = want.body_md5)) <> 0 then
+    raise exception '${tag}: production''s ledger rows are absent or differ — not production; refusing' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from public.stores s where s.id = ${q(STAGING_SEED_STORE)}) then
+    raise exception '${tag}: the staging seed store exists — this is staging; refusing' using errcode = 'P0001';
+  end if;
+  if not exists (select 1 from public.stores s where s.slug = 'store4979') then
+    raise exception '${tag}: store4979 is absent — not production; refusing' using errcode = 'P0001';
+  end if;
+`;
+}
+
+function fnState(key, tag, label) {
+  const want = STATE_AFTER[key].map((k) => FUNCTIONS[k]);
+  const wantSql = want.length
+    ? `(values\n${want.map(([i, m, a]) => `        (${q(i)}, ${q(m)}, ${q(a)})`).join(",\n")}\n      ) as w(ident, body_md5, acl)`
+    : `(select null::text, null::text, null::text where false) as w(ident, body_md5, acl)`;
+  return `  -- ${label}: the Release 2 functions are EXACTLY plan §A1a's "after ${key}" set.
+  if (with have as (
+        select p.proname || '(' || oidvectortypes(p.proargtypes) || ')' as ident, md5(p.prosrc) as body_md5,
+               (select string_agg(coalesce(r.rolname, 'PUBLIC') || '=' || a.privilege_type, ','
+                                  order by coalesce(r.rolname, 'PUBLIC'), a.privilege_type)
+                  from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  left join pg_roles r on r.oid = a.grantee) as acl
+          from pg_proc p
+         where p.pronamespace = 'public'::regnamespace
+           and (p.proname like 'release2\\_%' or p.proname = 'redeem_enrollment_ticket')),
+      want as (select * from ${wantSql})
+      select count(*) from ((select * from have except select * from want)
+                            union all (select * from want except select * from have)) d) <> 0 then
+    raise exception '${tag}: ${label} — the Release 2 functions differ from plan §A1a "after ${key}"' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from pg_proc p
+              where p.pronamespace = 'public'::regnamespace
+                and (p.proname like 'release2\\_%' or p.proname = 'redeem_enrollment_ticket')
+                and (not p.prosecdef or p.proconfig is distinct from array['search_path=public']
+                     or obj_description(p.oid, 'pg_proc') is null)) then
+    raise exception '${tag}: ${label} — a Release 2 function lacks SECURITY DEFINER, search_path=public or its comment' using errcode = 'P0001';
+  end if;
+`;
+}
+
+function tableState(present, tag, label) {
+  const list = TABLES.map(q).join(", ");
+  if (!present) {
+    return `  if exists (select 1 from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname in (${list}))
+     or exists (select 1 from pg_constraint k where k.conname = 'employees_id_store_uniq') then
+    raise exception '${tag}: ${label} — a Release 2 table or employees_id_store_uniq already exists' using errcode = 'P0001';
+  end if;
+`;
+  }
+  return `  if (select count(*) from pg_class c
+       where c.relnamespace = 'public'::regnamespace and c.relkind = 'r' and c.relname in (${list})
+         and c.relrowsecurity
+         and not exists (select 1 from pg_policy pol where pol.polrelid = c.oid)
+         and (select array_agg(distinct coalesce(r.rolname::text, 'PUBLIC') order by coalesce(r.rolname::text, 'PUBLIC'))
+                from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+                left join pg_roles r on r.oid = a.grantee) = array['postgres', 'service_role']) <> ${TABLES.length}
+     or (select pg_get_constraintdef(k.oid) from pg_constraint k
+          where k.conrelid = 'public.employees'::regclass and k.conname = 'employees_id_store_uniq')
+        is distinct from 'UNIQUE (id, store_id)' then
+    raise exception '${tag}: ${label} — the six tables (RLS on, 0 policies, grantees postgres + service_role) or employees_id_store_uniq are not as 01 leaves them' using errcode = 'P0001';
+  end if;
+`;
+}
+
+const SETTINGS_ASSERT = (tag) => `  if current_setting('lock_timeout') <> '3s'
+     or current_setting('statement_timeout') not in ('45s', '90s')
+     or current_setting('idle_in_transaction_session_timeout') <> '10s'
+     or current_setting('release2.stage0_mode', true) not in ('P1', 'P2', 'RB') then
+    raise exception '${tag}: the stage-0 timeouts are not in force in this transaction' using errcode = 'P0001';
+  end if;
+`;
+
+const DEADLINE = (tag) => `  if clock_timestamp() - transaction_timestamp()
+     > make_interval(secs => current_setting('release2.stage0_deadline_s')::int) then
+    raise exception '${tag}: the transaction deadline was exceeded' using errcode = 'P0001';
+  end if;
+`;
+
+// The ledger row, written from the md5-checked literal. In the rolled-back
+// rehearsal (P1) ten rows are written within a second or two, so a version
+// that is not after the head is bumped; for real (P2, RB) it stops.
+// A second row in the same transaction (RB-43) is stamped one second later.
+const LEDGER_INSERT = (varName, name, tag, offsetSeconds = 0) => `  v_head := (select max(m.version) from supabase_migrations.schema_migrations m);
+  v_version := to_char((clock_timestamp() at time zone 'utc')${offsetSeconds ? ` + interval '${offsetSeconds} second'` : ""}, 'YYYYMMDDHH24MISS');
+  if v_version <= v_head then
+    if current_setting('release2.stage0_mode') = 'P1' then
+      v_version := (v_head::numeric + 1)::text;
+    else
+      raise exception '${tag}: version % is not after the ledger head %; refusing', v_version, v_head using errcode = 'P0001';
+    end if;
+  end if;
+  insert into supabase_migrations.schema_migrations (version, name, statements)
+  values (v_version, ${q(name)}, array[${varName}]);
+`;
+
+function fileLiteral(text, label) {
+  if (text.includes("$stage0_")) throw new Error(`${label} contains the reserved dollar-quote prefix $stage0_`);
+  return `$stage0_file$${text}$stage0_file$`;
+}
+
+function forwardWrapper(rev, m, rows) {
+  const text = gitText(rev, migrationPath(m));
+  if (md5(text) !== m.md5 || Buffer.byteLength(text) !== m.bytes) throw new Error(`${m.name}: git bytes differ from A1`);
+  const tag = `stage0 P2-${m.n}`;
+  const prev = String(Number(m.n) - 1).padStart(2, "0");
+  return `do $stage0_wrap$
+declare
+  f constant text := ${fileLiteral(text, m.name)};
+  v_head text;
+  v_version text;
+begin
+${SETTINGS_ASSERT(tag)}${identityGuard(rows, tag)}  if md5(f) <> ${q(m.md5)} or octet_length(f) <> ${m.bytes} then
+    raise exception '${tag}: the embedded bytes differ from the manifest' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from supabase_migrations.schema_migrations m where m.name = ${q(m.name)}) then
+    raise exception '${tag}: ${m.name} is already in the ledger' using errcode = 'P0001';
+  end if;
+${fnState(prev, tag, "state before")}${tableState(m.n !== "01", tag, "state before")}  execute f;
+${fnState(m.n, tag, "state after")}${tableState(true, tag, "state after")}${LEDGER_INSERT("f", m.name, tag)}${DEADLINE(tag)}end
+$stage0_wrap$;
+`;
+}
+
+function rollbackWrapper(rev, op, rows) {
+  const tag = `stage0 ${op.op}`;
+  const decl = [], body = [];
+  op.files.forEach((n, i) => {
+    const m = MIGRATIONS.find((x) => x.n === n);
+    const text = gitText(rev, rollbackPath(m));
+    decl.push(`  f${i + 1} constant text := ${fileLiteral(text, rollbackPath(m))};`);
+    body.push(`  if md5(f${i + 1}) <> ${q(md5(text))} or octet_length(f${i + 1}) <> ${Buffer.byteLength(text)} then
+    raise exception '${tag}: the embedded bytes of ${m.name}.rollback.sql differ from the manifest' using errcode = 'P0001';
+  end if;
+`);
+  });
+  const run = op.files.map((n, i) => {
+    const m = MIGRATIONS.find((x) => x.n === n);
+    return `  execute f${i + 1};\n${LEDGER_INSERT(`f${i + 1}`, `${m.name}_rollback`, tag, i)}`;
+  }).join("");
+  const marker = op.marker
+    ? [`  perform set_config('release2.rollback_op', ${q(op.marker)}, true);\n`, `  perform set_config('release2.rollback_op', '', true);\n`]
+    : ["", ""];
+  return `do $stage0_wrap$
+declare
+${decl.join("\n")}
+  v_head text;
+  v_version text;
+begin
+${SETTINGS_ASSERT(tag)}${identityGuard(rows, tag)}${body.join("")}${marker[0]}${run}${marker[1]}${DEADLINE(tag)}end
+$stage0_wrap$;
+`;
+}
+
+function settings(name, mode, statementTimeout, deadline, txTimeout) {
+  return `select set_config('application_name', ${q(`release2-stage0-${name}`)}, true),
+       set_config('lock_timeout', '3s', true),
+       set_config('statement_timeout', ${q(statementTimeout)}, true),
+       set_config('idle_in_transaction_session_timeout', '10s', true),
+       set_config('release2.stage0_mode', ${q(mode)}, true),
+       set_config('release2.stage0_deadline_s', ${q(String(deadline))}, true);
+-- transaction_timeout exists from PG 17; on older servers this line sets nothing.
+select set_config('transaction_timeout', ${q(txTimeout)}, true)
+ where current_setting('server_version_num')::int >= 170000;
+`;
+}
+
+/** The proofs file split at its section markers, plus the catalog-rows query. */
+export function proofSections(rev) {
+  const text = gitText(rev, PROOFS);
+  const parts = text.split(/^-- @@stage0-proofs section (\d):.*$/m);
+  const sections = {};
+  for (let i = 1; i < parts.length; i += 2) sections[parts[i]] = parts[i + 1];
+  if (Object.keys(sections).join(",") !== "0,1,2,3,4") throw new Error("proofs: expected sections 0–4 in order");
+  const cat = /^-- @@catalog-rows begin\n([\s\S]*?)^-- @@catalog-rows end$/m.exec(text);
+  if (!cat) throw new Error("proofs: catalog-rows markers not found");
+  return { text, sections, catalogRows: cat[1] };
+}
+
+function p0(rows, catalogRows) {
+  const values = rows.map((r) => `      (${q(r.version)}, ${q(r.name)}, ${q(r.md5)})`).join(",\n");
+  const tables = TABLES.map(q).join(", ");
+  return `-- P0 — read-only preconditions and positive identity (plan §E2). One statement.
+-- Out of band first: the MCP project_id is ${PRODUCTION_REF}, and get_project_url returns
+-- https://${PRODUCTION_REF}.supabase.co.
+select
+  -- P0-S: schema and data (restorable)
+  to_regprocedure('public.has_store_role(uuid,text[])') is not null as has_store_role,
+  to_regclass('public.organizations') is not null as organizations,
+  exists (select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'stores' and column_name = 'org_id') as stores_org_id,
+  (select count(*) from public.stores s where s.org_id is null) as stores_without_org,
+  (select coalesce(array_agg(s.id order by s.id), '{}') from public.stores s where s.org_id is null) as stores_without_org_ids,
+  exists (select 1 from pg_constraint k where k.conname = 'employees_id_store_uniq') as uniq_already_there,
+  (select count(*) from pg_class c where c.relnamespace = 'public'::regnamespace and c.relname in (${tables})) as release2_tables_present,
+  (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace
+      and (p.proname like 'release2\\_%' or p.proname = 'redeem_enrollment_ticket')) as release2_functions_present,
+  (select md5(coalesce(string_agg(c.kind || E'\\t' || c.ident || E'\\t' || c.fact, E'\\n' order by c.kind, c.ident, c.fact), ''))
+     from (
+${catalogRows}     ) c) as catalog_fingerprint,
+  not exists (select 1 from public.stores s where s.slug = ${q(PROBE_SLUG)}) as probe_slug_absent,
+  not exists (select 1 from public.pending_jobs j where j.id = '00000000-0000-0000-0000-000000000000') as nil_job_absent,
+  (select count(*) from pg_trigger t where t.tgrelid = 'auth.users'::regclass and not t.tgisinternal) as auth_users_user_triggers,
+  (select count(*) from generate_series(1000, 9999) g
+    where not exists (select 1 from public.employees e where e.pin = lpad(g::text, 4, '0'))) as free_pins,
+  current_setting('server_version_num')::int as server_version_num,
+  -- P0-L: the ledger (append-only)
+  (select max(m.version) from supabase_migrations.schema_migrations m) as ledger_head,
+  (select count(*) from supabase_migrations.schema_migrations m) as ledger_rows,
+  (select count(*) = 0 from (
+     (select m.version, m.name, md5(m.statements[1]) from supabase_migrations.schema_migrations m
+      except select * from (values
+${values}
+      ) as want(version, name, body_md5))
+     union all
+     (select * from (values
+${values}
+      ) as want(version, name, body_md5)
+      except select m.version, m.name, md5(m.statements[1]) from supabase_migrations.schema_migrations m)) d) as ledger_matches_repo,
+  (select count(*) from supabase_migrations.schema_migrations m where m.name like 'release2\\_%') as release2_in_ledger,
+  (select string_agg(c.column_name || ':' || c.data_type || ':' || c.is_nullable || ':' || coalesce(c.column_default, ''), ', '
+                     order by c.ordinal_position)
+     from information_schema.columns c
+    where c.table_schema = 'supabase_migrations' and c.table_name = 'schema_migrations') as ledger_columns,
+  -- identity markers
+  exists (select 1 from supabase_migrations.schema_migrations m
+           where m.version = '20260909232836' and m.name = 'phase_e_03_order_margin_snapshot'
+             and md5(m.statements[1]) = 'b7a8e54c99432c5e0ddb60be4c46505f') as production_ledger_marker,
+  not exists (select 1 from public.stores s where s.id = ${q(STAGING_SEED_STORE)}) as staging_seed_absent,
+  exists (select 1 from public.stores s where s.slug = 'store4979') as production_store_present;
+`;
+}
+
+/** Every stage-0 SQL text, by name. Deterministic for a given rev. */
+export function assembleAll(rev = "HEAD") {
+  const rows = ledgerRows(rev);
+  if (rows.length !== 20) throw new Error(`expected 20 production ledger files at ${rev}, found ${rows.length}`);
+  const { sections, catalogRows } = proofSections(rev);
+  const W = Object.fromEntries(MIGRATIONS.map((m) => [m.n, forwardWrapper(rev, m, rows)]));
+  const RB = Object.fromEntries(ROLLBACK_OPS.map((op) => [op.op, rollbackWrapper(rev, op, rows)]));
+  const out = {};
+  out.P0 = p0(rows, catalogRows);
+  out.P1 = [
+    "-- P1 — rehearsal of 01–05, proofs and rollbacks on production, ONE transaction, ROLLBACK (plan §E3).\n",
+    "begin isolation level repeatable read;\n",
+    settings("P1", "P1", "90s", 100, "110s"),
+    "\n-- ===== proofs section 0 =====", sections["0"],
+    "\n-- ===== P2-01 body =====\n", W["01"],
+    "\n-- ===== P2-02 body =====\n", W["02"],
+    "\n-- ===== P2-03 body =====\n", W["03"],
+    "\n-- ===== proofs section 1 =====", sections["1"],
+    "\n-- ===== P2-04 body =====\n", W["04"],
+    "\n-- ===== P2-05 body =====\n", W["05"],
+    "\n-- ===== proofs section 2 =====", sections["2"],
+    "\n-- ===== proofs section 3 =====", sections["3"],
+    ...ROLLBACK_OPS.flatMap((op) => [`\n-- ===== ${op.op} =====\n`, RB[op.op]]),
+    "\n-- ===== proofs section 4 =====", sections["4"],
+    "\nrollback;\n",
+  ].join("");
+  for (const m of MIGRATIONS) {
+    out[`P2-${m.n}`] = `-- P2-${m.n} — apply ${m.name} to production (plan §E1, §E4).\nbegin;\n${settings(`P2-${m.n}`, "P2", "45s", 40, "45s")}${W[m.n]}commit;\n`;
+  }
+  for (const op of ROLLBACK_OPS) {
+    out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
+  }
+  return out;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const args = process.argv.slice(2);
+  let rev = "HEAD";
+  const i = args.indexOf("--rev");
+  if (i >= 0) { rev = args[i + 1]; args.splice(i, 2); }
+  const all = assembleAll(rev);
+  if (args[0] === "--list" || !args.length) {
+    for (const [k, v] of Object.entries(all)) process.stdout.write(`${md5(v)}  ${String(Buffer.byteLength(v)).padStart(7)}  ${k}\n`);
+  } else if (all[args[0]] !== undefined) {
+    process.stdout.write(all[args[0]]);
+  } else {
+    process.stderr.write(`unknown output ${args[0]}; one of: ${Object.keys(all).join(", ")}\n`);
+    process.exit(2);
+  }
+}

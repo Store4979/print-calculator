@@ -151,14 +151,16 @@ migration. Each carries:
 - a check that the database is in the exact state the forward migration left
   (A1a).
 
-They run as **four operations**, never as loose files:
+The procedure runs them only as these **four operations**. RB-43's pairing is
+enforced by its marker; the other files are guarded by identity and state, but
+not by an operation marker:
 
 | operation | files, in order, ONE transaction | effect | guard beyond identity |
 |---|---|---|---|
 | RB-5 | 05rb | drop `release2_revoke_enrollment` | A1a "after 05" state |
 | **RB-43** | **04rb then 03rb** | 04rb re-creates 03's `release2_create_staff_session` body (`bd6da6a2…`) with its exact ACL and comment. 03rb then drops it and `release2_prune_auth_attempts`, drops the four-argument `clear_lockout`, and re-creates 02's `clear_lockout(text,text,uuid)` (body `f06f2b20…`, ACL postgres/authenticated/service_role, comment). It also restores 02's `record_attempt` body (`fa208910…`) and comment by `CREATE OR REPLACE`, which keeps its ACL | both files refuse unless the transaction-local marker `release2.rollback_op = 'RB-43'` is set, which only the RB-43 wrapper sets. 03rb also refuses unless the staff-session body is `bd6da6a2…`, i.e. unless 04rb ran first in this transaction |
 | RB-2 | 02rb | drop both 02 functions | A1a "after 02" state |
-| RB-1 | 01rb | drop the redeem function, the six tables, the constraint | **the five identity/capability tables hold zero rows** (§F4, F-7). `auth_attempts` rows are limiter counters and are disposable; the guard records their count |
+| RB-1 | 01rb | drop the redeem function, the six tables, the constraint. **Closes the counter:** dropping the constraint takes ACCESS EXCLUSIVE on `employees`, and dropping the tables locks the tables their foreign keys reference (§E0) | **the five identity/capability tables hold zero rows** (§F4, F-7). `auth_attempts` rows are limiter counters and are disposable; the guard reports their count |
 
 Why RB-43 is one operation (F5 ruling 2): the state between 03 and 04 is the
 42702 defect, so restoring it alone has no use. Two transactions would leave a
@@ -577,7 +579,11 @@ How it bounds and aborts:
 **The ledger row** is written by the wrapper, **in the same transaction as the
 DDL**, so they commit or roll back together:
 - `version` is the UTC timestamp at execution, in `apply_migration`'s own
-  14-digit format, and must be after the ledger head;
+  14-digit format, and must be after the ledger head. In P2 and the RB
+  operations, a version not after the head stops the step. In P1 only, whose
+  ten rows fall within a second or two and are rolled back, it is bumped to
+  head + 1. A second row in one transaction (RB-43) is stamped one second
+  later, so the next step waits for the clock to pass it;
 - `name` is the file's name without `.sql`;
 - `statements` is `array[f]`, so `statements[1]` is **the md5-checked
   literal**, byte for byte.
@@ -618,7 +624,7 @@ rollback):*
 | `probe_slug_absent` | true: no store has slug `r2-probe-nonexistent` (C6 row R) |
 | `nil_job_absent` | true: no `pending_jobs.id` is the nil uuid (C6 row X) |
 | `auth_users_user_triggers` | 0 (the proofs insert synthetic `auth.users` rows; a trigger there would be an unreviewed side effect inside P1) |
-| `free_pins` | ≥ 5 (the proofs need five unused four-digit PINs; `employees_pin_unique` is global). Counted, never listed |
+| `free_pins` | ≥ 3 (the proofs need three unused four-digit PINs; `employees_pin_unique` is global). Counted, never listed |
 | `server_version_num` | recorded (decides `transaction_timeout`) |
 
 *P0-L — the ledger (append-only; it never returns to these values after P2):*
@@ -641,9 +647,17 @@ rollback):*
 - a store with slug `store4979` present.
 
 A staging dataset fails the first three. An unknown dataset fails the
-ledger-set equality. The same markers form the guard in every wrapper and
-every rollback file, so a rollback cannot be pointed at staging, or at a
-restored copy with another ledger, by mistake.
+ledger-set equality.
+
+Every wrapper and every rollback file carries the same markers in guard form:
+- the 20 production rows must be **present**, each with its md5;
+- the seed store must be absent;
+- `store4979` must be present.
+
+The guard checks that the 20 rows are present, not that the ledger equals
+them: the ledger grows after P2, so equality holds at P0 only. A rollback
+therefore cannot be pointed at staging, or at a database with another
+history, by mistake.
 
 Stop on any unexpected value.
 
@@ -674,9 +688,12 @@ Order:
    differing identifiers are named.
 9. `ROLLBACK`.
 
-**The proofs** (`supabase/rehearsals/release2_stage0_production_proofs.sql`)
-are **failing assertions, not a report**. Every check raises `P0001` with its
-id on any deviation, which aborts the transaction:
+**The proofs** (`supabase/rehearsals/release2_stage0_production_proofs.sql`,
+sections 0–4 matching steps 1, 3, 5, 6 and 8 above) are **failing assertions,
+not a report**. Every check raises `P0001` with its id on any deviation, which
+aborts the transaction. Their helpers are `pg_temp` functions, visible only to
+this session and gone at the `ROLLBACK`; the catalog fingerprint covers
+`public` only. The checks:
 - **Principals created inside the transaction** — no real user id is read or
   borrowed:
   - two synthetic organizations and stores, A and B;
@@ -772,6 +789,38 @@ snapshot → inventory in a copy of the repository:
 - Codex's reproduction (applied files, no rollback) fails with the exact
   message it reported.
 
+**E7. Executed so far — locally, not on any Supabase project.** Every
+assembled text was run in a real Postgres 17 (PGlite, WASM), with
+`scripts/manual/stage0-local-pglite.mjs`. The database was built from a
+minimal Supabase shim plus the 20 committed migrations and production-shaped
+rows.
+
+Results, all as designed:
+- **Sequence:** P0; P1 (every proof, 03's 42702, all four RB operations,
+  catalog equality); P0 identical after P1; P2-01…05, each ledger row carrying
+  A1's md5 and bytes; RB-5, RB-43, RB-2, RB-1; P0-S identical to the original,
+  `catalog_fingerprint` included; P0-L = the 20 rows + 5 forward + 5 rollback
+  rows, in order.
+- **Refused as designed:**
+  - P1 and P2-01 on a staging-shaped database;
+  - P2-01 on an unknown ledger;
+  - P2-02 before 01, and P2-05 twice;
+  - RB-2 or RB-43 out of order, and RB-1 over a non-empty table;
+  - 04's rollback run outside RB-43;
+  - P1 with a mutated A2 expectation or a mutated end-to-end expectation.
+- **Real defects this execution found and fixed:**
+  - an `acldefault()` call with a `text` argument;
+  - a `name[]` vs `text[]` comparison;
+  - UNIONs of different row types in the unchanged-row checks;
+  - RB-43 writing two ledger rows with the same version.
+
+**What it cannot show:**
+- lock waits, `lock_timeout` and cancel (PGlite has one connection);
+- Supabase's non-superuser `postgres` and its role memberships;
+- production's server version and rows.
+
+P1 on production is the first run that shows those.
+
 ---
 
 ## F. Acceptance and rollback
@@ -818,7 +867,7 @@ snapshot → inventory in a copy of the repository:
 | step | rollback | precondition | class |
 |---|---|---|---|
 | P1 | none needed — rolled back by construction | — | — |
-| P2/P3, **before P6 only** | the RB operations in reverse (RB-5, RB-43, RB-2, RB-1) through the E1 wrapper, each read back. Then E6: P0-S identical, P0-L = the original rows + the appended rows | **the Release 2 state is empty or disposable** (RB-1's guard enforces zero rows in the five identity/capability tables). **There are no active consumers:** P6 not merged, Phase 1 on the published deploy answering 404 at that time (recorded), and the inventory green (no client names an endpoint) | reversal of a reviewed decision |
+| P2/P3, **before P6 only** | the RB operations in reverse (RB-5, RB-43, RB-2, RB-1) through the E1 wrapper, each read back, in an E0 window (RB-1 closes the counter). Then E6: P0-S identical, P0-L = the original rows + the appended rows | **the Release 2 state is empty or disposable** (RB-1's guard enforces zero rows in the five identity/capability tables). **There are no active consumers:** P6 not merged, Phase 1 on the published deploy answering 404 at that time (recorded), and the inventory green (no client names an endpoint) | reversal of a reviewed decision |
 | P4 | `RELEASE2_ENABLED` removed, then a fresh build of the A3 source | — | not an incident |
 | P5 (C) | C9 — break-glass rules apply | — | depends on branch |
 | **after P6** | `RELEASE2_ENABLED=false`, then a **fresh approved build** → every Release 2 endpoint 404s. **The data is never dropped**: the tables, their rows and the ledger stay. The RB operations are NOT available after P6 | — | an incident if data was written through the endpoints |

@@ -71,6 +71,16 @@
 //    migration state: names from APPLIED release2 files must be present,
 //    names still only in pending/ must be absent. The browser prohibition on
 //    those names is independent of both.
+//  - INV-6, rolled-back state (review of 8913a69, B3): presence is the NET of
+//    the applied release2 files in version order. A table an applied forward
+//    file creates is expected unless a LATER applied file drops it, and a
+//    drop counts only when that file's bytes are identical to a committed
+//    release2 `.rollback.sql` companion (a reviewed rollback, whose md5 the
+//    stage-0 manifest also pins). An unreviewed drop, or a drop of a table no
+//    earlier applied file created (a rollback older than its forward, or of
+//    a migration whose file was deleted from history), fails. SQL comments
+//    are stripped before matching, so a comment that mentions a DROP drops
+//    nothing.
 //
 // Review of ff677d6 (INV-R1..R3):
 //  - R1 a route may be written in exactly two forms: the full literal
@@ -95,6 +105,7 @@
 //    for-head), hoisted to the whole function, shadows the constant; a `var` in a
 //    NESTED function does not.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative, sep, basename } from "node:path";
 import { Parser } from "acorn";
 import jsx from "acorn-jsx";
@@ -289,10 +300,14 @@ export function readTablesSnapshot(path, { root } = {}) {
     if (baseline !== j.ledgerVersion) {
       return { error: `${rel} ledgerVersion ${j.ledgerVersion} != newest applied migration file ${baseline}: the snapshot and the repo describe different schemas — recapture` };
     }
-    // INV-6: Release 2 table presence follows applied migration state.
-    const { applied, pendingOnly } = protectedNamesByState(root);
+    // INV-6: Release 2 table presence follows applied migration state, net of
+    // applied reviewed rollbacks.
+    const { pendingOnly } = protectedNamesByState(root);
+    const net = appliedReleaseState(root);
+    if (net.errors.length) return { error: net.errors[0] };
     const have = new Set(j.tables);
-    for (const t of applied) if (!have.has(t)) return { error: `${rel} lacks "${t}", which an APPLIED release2 migration creates: the snapshot predates the apply — recapture` };
+    for (const t of net.present) if (!have.has(t)) return { error: `${rel} lacks "${t}", which an APPLIED release2 migration creates: the snapshot predates the apply — recapture` };
+    for (const [t, by] of net.dropped) if (have.has(t)) return { error: `${rel} contains "${t}", which the applied reviewed rollback ${by} dropped: the snapshot predates the rollback — recapture` };
     for (const t of pendingOnly) if (have.has(t)) return { error: `${rel} contains "${t}", which no applied migration creates (still in pending/): either the apply is unrecorded or the snapshot is not production's` };
   }
   return { snapshot: j };
@@ -318,6 +333,53 @@ function createdTables(dir) {
   }
   return names;
 }
+const sqlWithoutComments = (sql) => sql.replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+const TABLE_NAME = String.raw`(?:if\s+(?:not\s+)?exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)`;
+const DROP_TABLE = new RegExp(String.raw`drop\s+table\s+` + TABLE_NAME, "gi");
+const CREATE_TABLE = new RegExp(String.raw`create\s+table\s+` + TABLE_NAME, "gi");
+const lfMd5 = (buf) => createHash("md5").update(buf.toString("utf8").replace(/\r\n/g, "\n"), "utf8").digest("hex");
+
+/**
+ * INV-6, net state: walk the APPLIED release2 files in version order. Returns
+ * the tables that must be present, the tables a reviewed rollback dropped
+ * (with the file that dropped them), and any violation.
+ */
+export function appliedReleaseState(root) {
+  const dir = join(root, "supabase", "migrations");
+  const out = { present: new Set(), dropped: new Map(), errors: [] };
+  if (!existsSync(dir)) return out;
+  // Reviewed rollbacks: the committed release2 .rollback.sql companions,
+  // wherever they sit (pending/ before P2, beside the forward file after).
+  const reviewed = new Set();
+  for (const d of [dir, join(dir, "pending")]) {
+    if (!existsSync(d)) continue;
+    for (const f of readdirSync(d)) if (/(^|_)release2_.*\.rollback\.sql$/i.test(f)) reviewed.add(lfMd5(readFileSync(join(d, f))));
+  }
+  const applied = readdirSync(dir)
+    .filter((f) => /^\d{14}_.*\.sql$/.test(f) && !/\.rollback\.sql$/i.test(f) && /(^|_)release2_/i.test(f))
+    .sort();
+  for (const f of applied) {
+    const raw = readFileSync(join(dir, f));
+    const sql = sqlWithoutComments(raw.toString("utf8"));
+    const drops = [...sql.matchAll(DROP_TABLE)].map((m) => m[1].toLowerCase());
+    const creates = [...sql.matchAll(CREATE_TABLE)].map((m) => m[1].toLowerCase());
+    if (drops.length && !reviewed.has(lfMd5(raw))) {
+      out.errors.push(`supabase/migrations/${f} drops ${drops.join(", ")} but is not byte-identical to any committed release2 .rollback.sql companion: an unreviewed drop`);
+      continue;
+    }
+    for (const t of drops) {
+      if (!out.present.has(t)) {
+        out.errors.push(`supabase/migrations/${f} drops "${t}", which no EARLIER applied migration creates: a rollback older than its forward, or of a migration missing from history`);
+        continue;
+      }
+      out.present.delete(t);
+      out.dropped.set(t, f);
+    }
+    for (const t of creates) { out.present.add(t); out.dropped.delete(t); }
+  }
+  return out;
+}
+
 /** Names by lifecycle state: created by an APPLIED file, or only by a pending one. */
 export function protectedNamesByState(root) {
   const applied = createdTables(join(root, "supabase", "migrations"));
