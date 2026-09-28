@@ -1,278 +1,416 @@
 # Release 2 — stage 0, production half
 
-**Status: ON HOLD — do not review yet.** Superseded pending the staging ledger reconciliation (`release-2-staging-reconciliation.md`): its F1 treats the 01–03 mismatch as something to carry into production, which is the wrong order. It will be rewritten against the reconciled staging ledger and Codex's six requirements. Nothing here has been applied.
-Written 2026-09-24 on `security/release-2-slice-2`. Implements §4.2 of
-`release-2-data-path-plan.md` for production after the staging half was
-accepted (0a, 0b on both sites, 0c, preview deletion verified, inventory
-review items covered).
+**Status: PLAN FOR REVIEW. Nothing here has been applied to production.**
+Rewritten 2026-09-28, after the staging ledger reconciliation
+(`release-2-staging-reconciliation.md`, complete): the committed migration files
+01–05 are now the tested code on staging, byte for byte. Organized by the six
+requirements Codex set for this plan — **A** manifest, **B** full retained-deploy
+table, **C** credential transition, **D** evidence (a)/(d) with the refusal
+still present, **E** bounded migration procedure, **F** acceptance and rollback.
+The previous draft (F1 "carry the mismatch into production") is withdrawn.
 
-Stage 0 ends when G0 passes. G0's five conditions and where each stands:
+Order of the production steps, each ending at a stop point for Ryan:
 
-| G0 condition | today | closed by |
-|---|---|---|
-| 1 migrations 01–05 in production's ledger, files named and byte-identical | not applied | P2 |
-| 2 deployment-context check in place, evidence (a)–(d) | (b), (c), half of (d) observed; context-alone denial observed on staging | P4 (a), (d) |
-| 3 Phase 1 probes green on production | 404 baseline observed 09-18 | P7 (after the refusal is removed) |
-| 4 a preview refused with 404 by a curl with no Origin | observed, but masked by the ref refusal on the production site | P7 (unmasked) |
-| 5 inventory proves the client calls no endpoint | **closed** (inventory gate, 285/285) | — |
+| step | what | changes production? | section |
+|---|---|---|---|
+| P0 | read-only preconditions | no (one SELECT) | E |
+| P1 | rehearsal of 01–05 against production data in `begin … rollback` | no (rolled back; brief locks) | E |
+| P2 | apply 01–05, one at a time, byte-checked | **yes — database** | E |
+| P3 | post-apply read-back, snapshot refresh | no | E |
+| P4 | env: `RELEASE2_ENABLED` (Functions, Production), fresh deploy; evidence (a)/(d); dark Phase 1 | **yes — env + deploy** | D |
+| P5 | credential transition (rehearsed on staging first) | **yes — keys** | C |
+| P6 | delete the production-ref refusal — the LAST change | **yes — code** | F |
+| P7 | verification: Phase 1 401s, unmasked preview refusal, positive probes | writes probe rows | F |
 
----
-
-## 1. Facts this plan rests on (established 2026-09-23/24, read-only)
-
-**F1 — The committed migration files for 01, 02 and 03 are NOT byte-identical
-to what staging applied; 04 and 05 are.** Staging's ledger holds compact,
-comment-free bodies for 01–03 (`md5(statements[1])` `ef5d5a38…`, `00a8033a…`,
-`0960ff10…`), not the committed files (`e97a5fd7…`, `734e0db7…`, `302e05c6…`).
-They are **semantically equal**: stripping `--` comments, collapsing whitespace,
-joining adjacent string literals (the files split `COMMENT ON` strings across
-lines; Postgres concatenates them) and removing space around punctuation gives
-the same md5 for all five, computed independently in Python over the committed
-blobs and in Postgres over staging's `statements[1]` (01 `da4699a6…`, 02
-`7f1710aa…`, 03 `d26630f6…`, 04 `e023fd12…`, 05 `614f1572…`). 04 and 05 match
-byte for byte (`2dcb03eb…`, `22b5010b…`).
-*Consequence:* production applies the **committed file bytes**, so production's
-ledger will hold the file (CLAUDE.md rule 4 holds from the first apply), and
-staging's ledger stays as the one documented exception. Equality of the
-*result* is then proven at the catalog level, not by text (P1, P3).
-
-**F2 — 01 alters a live production table.** `alter table public.employees add
-constraint employees_id_store_uniq unique (id, store_id)`. `id` is the primary
-key, so the constraint cannot fail on data; building it takes a brief lock on
-`employees` that blocks writes (PIN verification reads are not blocked). Every
-other object in 01–05 is new. 01 references `public.stores`,
-`public.organizations`, `auth.users`; 02/03 call `public.has_store_role`.
-
-**F3 — 03, as committed, contains the 42702 defect that 04 repairs**
-(`release2_create_staff_session` with unqualified columns). Between applying 03
-and 04 the function exists and cannot run. Nothing can call it in that window:
-every Release 2 endpoint is refused on production by the ref check, and the
-function is `service_role` only.
-
-**F4 — Rehearsal files exist only for 04 and 05**
-(`supabase/rehearsals/release2_04_rehearsal.sql`, `…_05_…`). 01–03 were
-rehearsed on staging before rule 4 required an end-to-end call.
-
-**F5 — No production client bundle uses a legacy JWT key.** Every ready
-production deploy that carries a Supabase client embeds an `sb_publishable_…`
-key and no `eyJhbGciOi…` JWT (public GET of each permalink's JS, 2026-09-24).
-The single `sb_secret_` string in today's bundle is supabase-js's own prefix
-test (`t.startsWith("sb_publishable_")||t.startsWith("sb_secret_")`), not a key.
-*Consequence:* disabling legacy JWT-based API keys breaks no browser, including
-counter devices running an old cached bundle.
-
-**F6 — What `SUPABASE_SERVICE_ROLE_KEY` holds on production is unknown to this
-session and must stay so** — established by the operator from the prefix
-shown in the dashboard (`eyJ…` legacy `service_role` JWT, or `sb_secret_…`),
-never pasted into a session.
-
-**F7 — Retained production deploys hold the key.** 71 production-context
-deploys: the published one and three rollback targets kept; 28 key-bearing or
-key-unknown deploys proposed for deletion (`deploy-inventory.md`,
-`PRODUCTION-DELETE-LIST`); 39 have no functions. Deletion reaches permalinks
-nobody should use; the kept four are kept on purpose, so rotation is the mechanism that retires their key without removing them. (Six older previews #24–#28 also remain: four hold the key, two unknown.)
+G0 passes when P0–P7 are recorded against the acceptance list in F.
 
 ---
 
-## 2. Sequence
+## A. Manifest — exactly what reaches production
 
-Each step ends at a stop point for the owner's confirmation. Every SQL
-statement is shown before it runs. Every probe records status, content type and
-body.
+Everything that will change on production, fixed in advance by hash, so that
+"what was applied" can be compared with "what was reviewed" mechanically.
 
-### P0 — read-only preconditions (production)
+**A1. Migrations** (applied in this order; blobs at `7e3ad2d`, unchanged since
+their first commits):
 
-One read-only statement, shown for approval before it runs:
+| # | file (today in `supabase/migrations/pending/`) | blob md5 | bytes | staging ledger (reconciled) |
+|---|---|---|---|---|
+| 1 | `release2_01_identity_schema.sql` | `e97a5fd7c346a3b0a39bc6180dcfde46` | 13 720 | `20260928160657` |
+| 2 | `release2_02_auth_attempts_fn.sql` | `734e0db7312b79081a769ca366c5b99a` | 6 406 | `20260928160722` |
+| 3 | `release2_03_bind_and_atomicity.sql` | `302e05c6a4939eb8021234cbc7325473` | 13 062 | `20260928160802` |
+| 4 | `release2_04_staff_session_qualify_columns.sql` | `2dcb03eb36e47c8404a29500151e8394` | 5 858 | `20260928160825` |
+| 5 | `release2_05_revoke_enrollment.sql` | `22b5010b9a3b20f5a3aaba4d212fd46c` | 5 622 | `20260928160847` |
+
+**A2. Resulting objects** — what the database must contain after P2 and
+nothing more (taken from the reconciled staging catalog, R3):
+
+- Tables (6): `device_enrollments`, `enrollment_tickets`, `staff_sessions`,
+  `upload_capabilities`, `upload_capability_files`, `auth_attempts` — each
+  `relrowsecurity = true`, **0 policies**, `relacl =
+  {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres}`.
+- One constraint on an existing table: `employees_id_store_uniq UNIQUE (id, store_id)`.
+- Functions (6), each `SECURITY DEFINER`, `search_path=public`, `proacl =
+  {postgres=X/postgres,service_role=X/postgres}` except
+  `release2_clear_lockout` which adds `authenticated=X/postgres`; no PUBLIC
+  entry, no `anon`. `md5(prosrc)` must equal:
+
+  | function | defined by | `md5(prosrc)` |
+  |---|---|---|
+  | `redeem_enrollment_ticket(bytea,bytea,bytea,text)` | 01 | `c024388886897f01a1154d8d12dc8996` |
+  | `release2_record_attempt(text,text,int,int,int)` | 03 | `e67957595afcc7a51d7f8673000d9302` |
+  | `release2_clear_lockout(text,text,uuid,uuid)` | 03 | `b7f602cde969f2f2622c0d2343b1c249` |
+  | `release2_prune_auth_attempts(int)` | 03 | `ee254949f88474c58284b8a2c1ba3cb0` |
+  | `release2_create_staff_session(uuid,uuid,bytea,bytea,timestamptz,timestamptz)` | 04 | `d30da6d0c7a4d14e1bcb1b9fcace37d9` |
+  | `release2_revoke_enrollment(uuid,uuid,text)` | 05 | `a464a43cc72537bb02b3e4a1d904f655` |
+
+  These were derived two ways and agree: from staging's `pg_proc` after R2, and
+  from the committed files' `$fn$` bodies by a script over the git blobs.
+
+**A3. Code** — the `security/release-2-stage-0` content merged to `main` in ONE
+reviewed PR before P4 (the deployment-context transport, the `deploy-context`
+route, the three-condition gate with the ref refusal STILL PRESENT, the
+inventory gate). The refusal deletion (P6) is a SEPARATE, later PR touching
+only `netlify/lib/release2.js`, its header comment, and the two tests that pin
+the refusal (`release2-guard.test.js`, DC-13).
+
+**A4. Environment** (production site `printcalculator2`, Netlify dashboard, by
+Ryan): `RELEASE2_ENABLED=true` — scope **Functions**, context **Production**
+only; `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app` —
+Functions, Production; `RELEASE2_CONTEXTS` — **not set** (default
+`production`); `SUPABASE_SERVICE_ROLE_KEY` — replaced in P5 by a new key (value
+never in the repo, a session or this plan).
+
+**A5. Repository moves** in the P2/P3 commits: each file `git mv`'d from
+`pending/` to `supabase/migrations/<production version>_<name>.sql`; a
+`.rollback.sql` companion for each (A6); `supabase/tables.json` recaptured;
+`deploy-inventory.md` retained-deploy table refreshed after P5.
+
+**A6. Rollback files, written and reviewed BEFORE P1** (and rehearsed inside
+P1): one per migration, inverse order. 05: drop `release2_revoke_enrollment`.
+04: re-create 03's `release2_create_staff_session` body (the pre-04 state is
+the 42702 defect — rolling back 04 alone is pointless, so 04's rollback is
+documented as "roll back 03 as well"). 03: restore 02's `clear_lockout`
+signature and `record_attempt` body, drop `create_staff_session` and
+`prune_auth_attempts`. 02: drop both functions. 01: drop the six tables, the
+function, and `employees_id_store_uniq`. Each carries a guard that refuses to
+run where the staging seed store exists (the inverse of the reconciliation
+reset's guard) — a production rollback must not be pointable at staging by
+mistake, and vice versa.
+
+**A7. Making the manifest mechanical.** Proposed: commit A1/A2 as
+`docs/security/stage0-production-manifest.json` with a test that (i) recomputes
+each blob's md5 and fails on drift, and (ii) re-derives each `md5(prosrc)` from
+the `$fn$` bodies of the committed files and fails on drift. P2 and P3 compare
+against that file, not against this prose.
+
+---
+
+## B. Full retained-deploy table
+
+Every deploy still listed on the production site, probed write-free
+2026-09-28T16:12:14Z: key presence by `POST {}` to `start-upload` (every
+historical version answers `400 fileName required` before any storage call; the
+key guard runs first, so `Supabase URL not configured` and a Node-20 init
+failure mean the key IS present), fixes by `git merge-base --is-ancestor`
+against `9c99bbf`/`7f89876` (cleanup-stale-jobs) and `1ce7849`/`10235f2` (#43
+recipient). Published deploy re-read: `6ab020c50a788b0008d430c9`.
+
+**Summary: 57 deploys listed. Exactly four hold the production service-role
+key — the four kept on purpose. No deploy's key state is unknown.**
+
+| class | count |
+|---|---|
+| production, key PRESENT, writer live — **kept** (published + 3 rollback targets) | 4 |
+| production, no functions | 25 |
+| production, errored build (not served) | 9 |
+| deploy-preview, key absent (PR #48 builds after the preview key was cleared) | 5 |
+| deploy-preview, no functions | 11 |
+| deploy-preview, errored build (not served) | 3 |
+
+Everything else classified key-present or key-unknown has been deleted and
+verified (56 previews on 2026-09-24; 28 production deploys and 6 older previews
+on 2026-09-28; `deploy-inventory.md`). Five production deploys once counted as
+"no functions" were in fact deleted in March–May; they no longer appear here.
+
+The table is re-taken (i) immediately before P5, so the rotation's target set is
+current, and (ii) after P5, when the four kept deploys must show the OLD key
+refused. The full table is the appendix at the end of this plan.
+
+---
+
+## C. Credential transition
+
+**C1. Facts it rests on.** No production client bundle has ever carried a
+legacy JWT key — every ready production deploy with a client embeds
+`sb_publishable_…`; the one `sb_secret_` string in today's bundle is
+supabase-js's prefix test (read 2026-09-24). What
+`SUPABASE_SERVICE_ROLE_KEY` holds on production is unknown to every session and
+must stay so.
+
+**C2. Consumers of the service key**, from the repository: every legacy
+function (`start-upload`, `register-job`, `fetch-link-job`, `get-download-url`,
+`complete-job`, `send-print-job`), the **scheduled** `cleanup-stale-jobs`, and
+the Release 2 functions via `netlify/lib/release2-auth.js`. All read it from the
+Netlify Functions environment of the production context. Outside the
+repository, Ryan lists any other holder (operator `.env.local` files, scripts,
+integrations) before step C5; the list is part of the record.
+
+**C3. Rehearsed on staging first**, end to end, with staging's own keys, each
+step recorded — including whether re-enabling legacy JWT keys (if that branch
+applies) restores the SAME keys.
+
+**C4. Steps on production** (by Ryan in the dashboards; this session never sees
+a key):
+1. **Establish the key type** from the prefix shown in the Netlify dashboard:
+   `eyJ…` = the legacy `service_role` JWT; `sb_secret_…` = a secret API key.
+   Record only the type.
+2. **Create a new secret API key** in the production Supabase project.
+3. **Move every consumer** (C2) to it: `SUPABASE_SERVICE_ROLE_KEY` for
+   Functions in the Production context.
+4. **Fresh build** of the current `main` (a build, not a republish — a
+   republish reuses the bundle's captured environment). It becomes the
+   published deploy.
+5. **Prove the new key works, write-free, on the new deploy**: `POST {}` to
+   `start-upload` → `400 fileName required` (key present), and one
+   authenticated read that Supabase must accept — chosen and verified in C3
+   (candidate: `get-download-url` on a path that does not exist, expecting
+   Storage's object-not-found rather than an authentication error; if the
+   handler cannot distinguish them, a read-only diagnostic is reviewed and added
+   first). Counter check by Ryan: a real order save and the queue tab.
+6. **Revoke the old key** — only after step 5: a secret key is deleted; the
+   legacy `service_role` JWT is retired by disabling JWT-based API keys (which
+   also disables the legacy `anon` JWT — C1 shows no bundle uses it).
+7. **Probe the retained deploys** (B): the three rollback targets and the
+   previous published deploy must now refuse for the key (`start-upload` no
+   longer reaches `fileName required`), recorded per URL.
+
+**C5. Timing:** after P4 (the flag and the context check are live, the ref
+refusal still blocks) and **before P6**, so no retained bundle holds a working
+key when the Release 2 endpoints go live.
+
+**C6. Rollback of C:** before step 6 — restore the old value, fresh build. After
+step 6 with a deleted secret key — it cannot return; create another new key and
+repeat 3–5. After disabling legacy JWT keys — re-enable them (C3 records
+whether that restores the same keys; if not, this branch is "create new keys").
+**After C, every rollback of the site is a fresh build of the old commit, never
+a republish**: the kept rollback targets' functions hold the revoked key.
+
+---
+
+## D. Evidence (a) and (d) with the refusal still present (P4)
+
+The production-ref refusal stays in the code throughout P4, so production's
+Release 2 endpoints keep answering 404; nothing here opens them.
+
+1. Ryan sets A4's `RELEASE2_*` variables; a fresh production deploy of `main`
+   (which now contains A3).
+2. **(a)** `GET https://printcalculator2.netlify.app/.netlify/functions/deploy-context`
+   → `200`, `context:"production"`, `siteName:"printcalculator2"`,
+   `deployId` = the new published deploy, `flagPresent:true`,
+   `contextAllowed:true`, `source` recorded.
+3. **(d), both halves**: (a)'s `flagPresent:true` is the production half; a
+   **fresh** production-site deploy preview built after the env change →
+   `context:"deploy-preview"`, `flagPresent:false` is the preview half.
+4. **Dark baseline**: Phase 1's four calls on production → four JSON `404`.
+   With (a) showing both the context and the flag satisfied, the ref refusal is
+   the only condition left that can produce them — which is the claim P6 relies
+   on. The context condition refusing ON ITS OWN is already proven on staging
+   (0b-staging, 2026-09-24: same project, same flag, `branch-deploy` and
+   `deploy-preview` → 404 while `production` → 401).
+5. Counter unchanged: a real order save and the queue tab (legacy paths).
+
+---
+## E. Bounded migration procedure (P0–P3)
+
+**E0. Bounds.** One operator window, owner present, outside counter hours (the
+01 constraint takes a brief lock on `employees` that blocks WRITES to it — PIN
+verification reads are not blocked — and P1 takes the same lock inside its
+transaction). Every step has a stop condition; a stop means stop, record, and
+return to review — never retry-in-place, never edit a file to make a check pass.
+Any gap of more than a day between P1 and P2 means P0 and P1 are re-run.
+
+**E1. P0 — read-only preconditions.** One statement, shown to Ryan before it
+runs:
 
 ```sql
 select
-  (select max(version) from supabase_migrations.schema_migrations)            as ledger_version,   -- expect 20260909232836
+  (select max(version) from supabase_migrations.schema_migrations)             as ledger_version,        -- expect 20260909232836
   (select count(*) from supabase_migrations.schema_migrations
-    where name like 'release2_%')                                              as release2_in_ledger, -- expect 0
-  to_regprocedure('public.has_store_role(uuid,text[])') is not null            as has_store_role,   -- expect true
-  to_regclass('public.organizations') is not null                              as organizations,    -- expect true
+    where name like 'release2_%')                                               as release2_in_ledger,    -- expect 0
+  to_regprocedure('public.has_store_role(uuid,text[])') is not null             as has_store_role,        -- expect true
+  to_regclass('public.organizations') is not null                               as organizations,         -- expect true
   exists (select 1 from information_schema.columns
-           where table_schema='public' and table_name='stores' and column_name='org_id') as stores_org_id,
-  (select count(*) from public.stores where org_id is null)                    as stores_without_org, -- redeem raises 23502 for these
-  exists (select 1 from pg_constraint where conname='employees_id_store_uniq') as uniq_already_there, -- expect false
+           where table_schema='public' and table_name='stores' and column_name='org_id') as stores_org_id, -- expect true
+  (select count(*) from public.stores where org_id is null)                     as stores_without_org,    -- redeem raises 23502 for these
+  exists (select 1 from pg_constraint where conname='employees_id_store_uniq')  as uniq_already_there,    -- expect false
   (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
     where n.nspname='public' and c.relname in ('device_enrollments','enrollment_tickets','staff_sessions',
-          'upload_capabilities','upload_capability_files','auth_attempts'))   as release2_tables_present; -- expect 0
+          'upload_capabilities','upload_capability_files','auth_attempts'))    as release2_tables_present, -- expect 0
+  (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and (p.proname like 'release2\_%' or p.proname='redeem_enrollment_ticket')) as release2_functions_present; -- expect 0
 ```
 
-Any unexpected value stops the stage.
+Stop on any unexpected value.
 
-### P1 — rehearsal against production data, `begin … rollback`
+**E2. P1 — rehearsal on production, `begin … rollback`.** The R1 method, which
+worked on staging: each committed file enters the transaction as a
+dollar-quoted literal inside a `DO` block that checks `md5()` against A1 BEFORE
+`EXECUTE`, so the database proves it ran the reviewed bytes. Order: 01, 02, 03
+→ a real call that must raise **42702** (03's defect, proving the rehearsal
+exercises what 04 repairs) → 04, 05 → proofs → the five rollback files (A6),
+each md5-gated → an assertion that the catalog equals P0's → `ROLLBACK`.
 
-New file `supabase/rehearsals/release2_stage0_production_rehearsal.sql`, run
-on production in ONE transaction ending in `ROLLBACK`:
+The proofs are a NEW file, `supabase/rehearsals/release2_stage0_production_proofs.sql`,
+reviewed before P1: the reconciliation proofs depend on the staging seed store,
+which production does not have. It creates its fixtures INSIDE the
+transaction — a synthetic organization and store, a staff and a manager
+employee, owner and manager memberships pointing at an existing auth user id
+read (not modified) from `memberships`, tickets — and runs A1–A3, the A2
+`md5(prosrc)` comparison, and the same end-to-end calls as B1–B13. No real
+row is read into a result or modified; everything is rolled back. After the
+rollback, P0 is re-run and must return exactly the P0 values.
 
-1. The five committed files **verbatim, in order** 01, 02, 03, 04, 05.
-2. **ACL proofs** — `proacl` of all six functions equals
-   `{postgres=X/postgres,service_role=X/postgres}` (plus `authenticated` for
-   `release2_clear_lockout`), with no leading `=X` (PUBLIC); `prosecdef` and
-   `proconfig` as staging.
-3. **Table proofs** — the six tables: RLS on, **zero** policies, table grants
-   exactly `service_role` (anon/authenticated hold nothing — they currently hold
-   everything on public tables, so this is checked, not assumed).
-4. **End-to-end calls with synthetic rows created inside the transaction**
-   (a synthetic org and store, an owner membership, a staff and a manager
-   employee, a ticket), so no real row is read into a result or touched:
-   `redeem_enrollment_ticket` (redeem, replay → 28000, expired → 28000);
-   `release2_record_attempt` (quota and cooldown, window rollover);
-   `release2_clear_lockout` (owner OK, wrong store → 42501, unknown subject →
-   42501); `release2_create_staff_session` (create, rotate, cross-store → 28000);
-   `release2_revoke_enrollment` (incl. P5b: non-owners on an already-revoked
-   enrollment → identical 42501); `release2_prune_auth_attempts`.
-   P0 of the 04 rehearsal is kept: after 03 and **before** 04, a call reproduces
-   42702, proving the rehearsal exercises the defect 04 repairs.
-5. **Catalog fingerprint** — for every object 01–05 creates:
-   `md5(pg_get_functiondef(oid))`, column lists with types/defaults/nullability,
-   constraint definitions, index definitions, `proacl`, `relacl`, RLS flags. The
-   same query runs on staging (read-only). **The two fingerprints must be equal**
-   — this is the proof F1 needs, that the committed bytes produce what staging
-   has.
-6. `ROLLBACK`. A read after the rollback shows zero Release 2 objects and an
-   unchanged `employees` constraint list.
+Stop on: any md5 mismatch, any proof deviating from its expectation, the
+post-rollback P0 differing, or the transaction exceeding its window.
 
-### P2 — apply 01–05 to production, one at a time
+**E3. P2 — apply, one migration at a time.** `apply_migration` with each file's
+exact committed bytes, in A1's order, 03 and 04 back to back (between them the
+staff-session function exists and cannot run; nothing can call it — every
+Release 2 endpoint is refused on production by the ref check, and the function
+is `service_role` only). After EACH apply, before the next:
+- read back the new ledger row: `version`, `md5(statements[1])`,
+  `octet_length`, final newline;
+- accept only A1's md5 and byte count (staging's R2 stored all five with the
+  final newline intact; the older "trailing newline stripped" transport case is
+  checked, not assumed) — anything else stops P2;
+- after 01, 03, 04, 05: the functions each defined, `md5(prosrc)` against A2.
 
-For each file in order, with the owner watching:
-1. `apply_migration` with the **committed file's bytes**.
-2. Read back from `supabase_migrations.schema_migrations`: version, name,
-   `md5(statements[1])`, `right(statements[1],1) = E'\n'`.
-3. Compare to the file: equal, or equal to the file minus its final newline
-   (the documented transport difference, `staging.md` §2) — anything else stops.
-4. `git mv supabase/migrations/pending/release2_0N_….sql
-   supabase/migrations/<version>_release2_0N_….sql` in the same commit as the
-   ledger read-back record.
+The `git mv` of each file to its production-version name happens in the same
+commit as that ledger read-back.
 
-03 and 04 are applied back to back (F3). No commit is pushed to `main` during
-P2 — the file moves ride the stage-0 branch.
-
-**Rollback of P2:** each migration's objects are additive except F2's
-constraint. A `.rollback.sql` per file is written and reviewed **before** P2
-(drop functions, drop tables, `alter table employees drop constraint
-employees_id_store_uniq`), and rehearsed in P1's transaction after the forward
-files (apply → rollback file → assert the catalog equals P0's).
-
-### P3 — post-apply read-back and snapshot refresh
-
-The P1 catalog proofs repeated outside a transaction, recorded. Then
-`scripts/manual/tables-snapshot.sql` re-run (read-only) and `supabase/tables.json`
-refreshed: its `ledgerVersion` becomes 05's version and the six tables appear,
-which INV-6 now **requires** (applied state) while the browser prohibition on
-those names stays independent. The inventory suite must be green on that commit.
-
-### P4 — production environment, the flag, and evidence (a) and (d)
-
-Owner, in the Netlify dashboard for `printcalculator2`:
-- `RELEASE2_ENABLED=true` — **scope: Functions, context: Production only.**
-- `RELEASE2_ALLOWED_ORIGINS=https://printcalculator2.netlify.app` — Functions,
-  Production.
-- `RELEASE2_CONTEXTS` — **not set** (default `production`).
-- A fresh production deploy of the current `main` (env changes do not reach a
-  running deploy).
-
-The production-ref refusal is still in the code, so every Release 2 endpoint
-still answers 404 on production. Probes:
-- **(a)** `GET https://printcalculator2.netlify.app/.netlify/functions/deploy-context`
-  → `context:"production"`, `siteName:"printcalculator2"`, `flagPresent:true`,
-  `contextAllowed:true`, `deployId` = the new published deploy.
-- **(d)** the same route on a **fresh** production-site preview built after the
-  env change → `flagPresent:false`; the production half of (d) is (a)'s
-  `flagPresent:true`.
-- **Dark baseline:** Phase 1's four calls on production → four JSON 404. With
-  (a) showing context and flag both satisfied, the ref refusal is shown to be
-  the only thing refusing.
-- Legacy counter paths unchanged: a real order save and the queue tab, by the
-  owner at the counter.
-
-### P5 — key rotation (its own stop point; rehearsed on staging first)
-
-1. **Establish the key type (F6)** — the owner reads the prefix of production's
-   `SUPABASE_SERVICE_ROLE_KEY` in the dashboard and records only the type.
-2. **Rehearse the whole procedure on staging** with staging's own keys, and
-   record each step's result, before touching production.
-3. **Create the new key**: a new secret API key (`sb_secret_…`) in the
-   production project's API Keys page.
-4. **Move every server consumer to it** — `SUPABASE_SERVICE_ROLE_KEY` for
-   Functions in the Production context (this also covers the scheduled
-   `cleanup-stale-jobs`). Any other holder (operator `.env.local` files,
-   scripts, integrations) is listed and moved; the list is part of the record.
-   Browsers need nothing (F5: they use the publishable key).
-5. **Fresh build** of the current commit — not a republish — and probes on the
-   new deploy: write-free key presence (`POST {}` to `start-upload` → `400
-   fileName required`), plus one **authenticated, write-free** call proving the
-   new key is accepted by Supabase. Which call is verified on staging in step 2
-   (candidate: `get-download-url` for a path that does not exist, expecting the
-   storage "object not found" answer rather than an authentication error; if
-   that handler cannot distinguish them, a read-only diagnostic is added and
-   reviewed first).
-6. **Revoke the old key** — only after step 5 passes:
-   - if it was a secret key: delete it;
-   - if it was the legacy `service_role` JWT: disable JWT-based API keys for the
-     project. This also disables the legacy `anon` JWT, which F5 shows no
-     production bundle uses.
-7. **Probe every retained production permalink** (the kept four and any
-   not yet deleted) write-free: `start-upload` now fails for the key, recorded
-   per URL in `deploy-inventory.md`.
-
-**Rollback of P5:** before step 6 — set the env back to the old key and do a
-fresh build. After step 6 with a deleted secret key — the old key cannot
-return; create another new key and repeat 4–5. After disabling legacy JWT keys
-— re-enable them in the dashboard (whether re-enabling restores the SAME keys
-is verified in the staging rehearsal and recorded; if not, this rollback is
-"create new keys"). **After rotation every rollback is a fresh build of the old
-commit, never a republish**: the kept rollback targets' functions hold the
-revoked key. Part 7's rollback contract gains that line.
-
-### P6 — delete the production-ref refusal (the last change)
-
-One code change on the stage-0 branch, reviewed: `release2Allowed()` loses
-condition 2 (`ref === PRODUCTION_REF`), its header comment is rewritten to two
-conditions (flag, verified context), `release2-guard.test.js` and DC-13 lose
-"refused on the production ref" and gain "production context + flag + any ref
-→ allowed; preview context on the production ref → 404". Merged to `main` only
-with all of P0–P5 recorded. The kill switch `RELEASE2_ENABLED=false` +
-redeploy remains the rollback.
-
-### P7 — verification on production (no further change)
-
-- **Phase 1 on production** → four uniform `401 {"ok":false,"error":"Unauthorized"}`.
-- **Preview refusal, now unmasked:** a fresh production-site preview —
-  `deploy-context` `deploy-preview`/`flagPresent:false`; `csrf-bootstrap` with
-  no Origin, the production Origin and its own Origin → JSON 404.
-- **Positive probes with real rows** (owner): mint and redeem a ticket on a
-  scratch device, sign in a real PIN, log out, revoke the device; each step read
-  back from the database. The scratch enrollment stays in the audit trail,
-  revoked.
-- Counter unchanged: a real order save, the queue tab, a PIN sign-in through the
-  **legacy** path (no client calls Release 2 until slice 4).
-
-G0 passes when P0–P7 are recorded.
+**E4. P3 — post-apply read-back.** A2 in full, outside a transaction: six
+tables (RLS, 0 policies, grants), the constraint, six functions (ACL, secdef,
+search_path, `md5(prosrc)`). Then `scripts/manual/tables-snapshot.sql`
+(read-only) and `supabase/tables.json` refreshed: `ledgerVersion` becomes 05's
+production version and the six tables appear — which the inventory gate (INV-6)
+then REQUIRES from applied state, while the browser prohibition on those names
+stays independent. The inventory suite must be green on that commit.
 
 ---
 
-## 3. Decisions for the reviewer
+## F. Acceptance and rollback
 
-1. **Apply the committed bytes, not staging's compact bodies (F1).** Proposed.
-   The alternative (replaying staging's text) would make production's ledger
-   match staging's but not the repository, breaking rule 4 on production.
-2. **Order of P5 relative to P2–P4.** Proposed as written: migrations and the
-   flag first (reversible, additive), rotation before the refusal is lifted (so
-   no retained bundle holds a working key when the endpoints go live).
-3. **Delete the 28 old production deploys before P5.** Proposed: yes. Rotation
-   makes their functions inert, but deletion also removes 28 permalinks serving
-   old client code, and it needs no key change.
-4. **`deploy-context` route after G0: keep or tombstone.** Open, as recorded in
-   the staging half. It reveals `flagPresent` per deployment.
-5. **The 42702 window between 03 and 04 (F3).** Proposed: accept (nothing can
-   call the function), apply back to back. Alternative: apply a combined 03+04
-   — rejected, because it would create a file that matches neither ledger.
+**F1. P6 — delete the production-ref refusal (the last change).** A separate
+PR: `release2Allowed()` loses condition 2 (`ref === PRODUCTION_REF`); its
+header is rewritten to two conditions (flag; verified context);
+`release2-guard.test.js` and DC-13 lose "refused on the production ref" and
+gain "production context + flag → allowed on any ref; preview context on the
+production ref → 404". Merged only with P0–P5 recorded.
 
-## 4. Not in this plan
+**F2. P7 — verification on production (no further change).**
+- Phase 1 → four uniform `401 {"ok":false,"error":"Unauthorized"}`.
+- A **fresh** production-site preview: `deploy-context` → `deploy-preview`,
+  `flagPresent:false`; `csrf-bootstrap` with no Origin, the production Origin,
+  and its own Origin → JSON `404` ×3 — now unmasked by any ref refusal.
+- Positive probes with real rows, Ryan signed in: mint and redeem a ticket on a
+  scratch device, sign in a real PIN, log out, revoke the device; each step read
+  back from the database. The scratch enrollment stays in the audit trail,
+  revoked.
+- The counter unchanged: an order save, the queue tab, a PIN sign-in through the
+  **legacy** path (no client calls Release 2 until slice 4).
 
-Client slices (4–9); any grant closure (stage E of each slice); the pending
-`phase_b_b2_pending_jobs_queue_unique` migration; historical deploys of the
-**staging** site (they hold the staging key only).
+**F3. Acceptance — G0 passes when every line is recorded:**
+
+| G0 condition | evidence required |
+|---|---|
+| 1 migrations 01–05 in production's ledger, files named and byte-identical | E3 read-backs = A1; files renamed to production versions; A2 catalog incl. `md5(prosrc)`; tables.json refreshed and INV-6 green |
+| 2 deployment-context check in place, (a)–(d) | (a) and (d) from P4; (b) and (c) already recorded (0b-prod 2026-09-23, 0a 2026-09-23); context-alone denial (0b-staging 2026-09-24) |
+| 3 Phase 1 green on production | F2: four uniform 401s after P6 |
+| 4 a preview refused with 404 by a curl with no Origin | F2: fresh production-site preview, three Origin variants, after P6 |
+| 5 the inventory proves the client calls no endpoint | inventory gate green on the merged `main` (already closed; re-confirmed on the P3 commit) |
+| plus: credential transition | C4 steps 1–7 recorded; B re-taken after C showing the kept deploys refused for the key |
+
+**F4. Rollback, per step:**
+
+| step | rollback | class |
+|---|---|---|
+| P1 | none needed — rolled back by construction | — |
+| P2 / P3 | the A6 rollback files, in reverse order, each byte-checked after apply, then P0 must return its original values; the ledger keeps the forward rows (never edited) plus the rollback rows | reversal of a reviewed decision |
+| P4 | `RELEASE2_ENABLED` removed + fresh deploy (endpoints were never open: the ref refusal was in place) | not an incident |
+| P5 (C) | C6 | depends on branch |
+| P6 | `RELEASE2_ENABLED=false` + fresh deploy → every Release 2 endpoint 404s; or revert the P6 PR and fresh build | incident if data was written through the endpoints |
+| any | fresh build of the prior commit — **never a republish** after C | — |
+
+**F5. Decisions for the reviewer.**
+1. A7 — commit the manifest as JSON with a drift test (proposed: yes).
+2. A6 — 04's rollback is documented as "roll back 03 as well" (proposed: yes;
+   restoring the 42702 state alone has no use).
+3. C5 — credential transition after P4 and before P6 (proposed as written).
+4. The `deploy-context` route after G0 — keep or tombstone (open since the
+   staging half; it reveals `flagPresent` per deployment).
+5. E0 — an owner-present window outside counter hours for P1–P3.
+
+---
+
+## Appendix — retained deploys on the production site (2026-09-28T16:12:14Z)
+
+| # | deploy id | context | state | PR | commit | built (UTC) | fixes (cleanup, recipient) | service-role key | role |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | `6aa59114f573770008fb8dd5` | production | ready | — | `7f898762` | 2026-09-12T17:51 | cleanup yes, recipient yes | PRESENT, writer live | rollback target |
+| 2 | `6aa994d535444e0008272512` | production | ready | — | `89de03e5` | 2026-09-15T18:56 | cleanup yes, recipient yes | PRESENT, writer live | rollback target |
+| 3 | `6aad56a391c0cf0008d215fd` | production | ready | — | `99377287` | 2026-09-18T15:20 | cleanup yes, recipient yes | PRESENT, writer live | rollback target |
+| 4 | `6ab020c50a788b0008d430c9` | production | ready | — | `7ec5af48` | 2026-09-20T18:07 | cleanup yes, recipient yes | PRESENT, writer live | published |
+| 5 | `69ea366eb345cb0008d4de89` | deploy-preview | ready | #2 | `1e909012` | 2026-04-23T15:10 | cleanup no, recipient no | no functions | — |
+| 6 | `69efa06d0258150009c4415a` | deploy-preview | ready | #3 | `35642ccc` | 2026-04-27T17:44 | cleanup no, recipient no | no functions | — |
+| 7 | `69f1405fb03e030008ea5b28` | deploy-preview | ready | #5 | `686202cf` | 2026-04-28T23:18 | cleanup no, recipient no | no functions | — |
+| 8 | `69f21ff79dceb3000872bbb3` | deploy-preview | ready | #6 | `6e70f803` | 2026-04-29T15:12 | cleanup no, recipient no | no functions | — |
+| 9 | `69f224a66e778d00095dbdf0` | deploy-preview | ready | #7 | `ee39103c` | 2026-04-29T15:32 | cleanup no, recipient no | no functions | — |
+| 10 | `69f22a286a5db200082f0034` | deploy-preview | ready | #8 | `396136d1` | 2026-04-29T15:56 | cleanup no, recipient no | no functions | — |
+| 11 | `69f22d71db945f0008a8eebf` | deploy-preview | ready | #9 | `4b88e229` | 2026-04-29T16:10 | cleanup no, recipient no | no functions | — |
+| 12 | `69fa1b469fbd70000868cee0` | deploy-preview | ready | #18 | `3aa6ada3` | 2026-05-05T16:31 | cleanup no, recipient no | no functions | — |
+| 13 | `69fb769ac450950007f5b98d` | deploy-preview | ready | #20 | `0ae0878c` | 2026-05-06T17:12 | cleanup no, recipient no | no functions | — |
+| 14 | `6a185ed1be36c9000881c63d` | deploy-preview | ready | #22 | `16bea086` | 2026-05-28T15:27 | cleanup no, recipient no | no functions | — |
+| 15 | `6a318658f5c12a00089f5503` | deploy-preview | ready | #23 | `71c6b236` | 2026-06-16T17:22 | cleanup no, recipient no | no functions | — |
+| 16 | `6a455b30299f480008ad8966` | deploy-preview | error | #27 | `55cb34ea` | 2026-07-01T18:23 | cleanup no, recipient no | not served (errored build) | — |
+| 17 | `6aa31078e880ab0008667901` | deploy-preview | error | #43 | `7a7ac412` | 2026-09-10T20:18 | n/a | not served (errored build) | — |
+| 18 | `6ab018331b0a1500089d0930` | deploy-preview | error | #47 | `d7fdbc9a` | 2026-09-20T17:30 | cleanup yes, recipient yes | not served (errored build) | — |
+| 19 | `6ab3efa301777b0008a746f1` | deploy-preview | ready | #48 | `b294791d` | 2026-09-23T15:26 | cleanup yes, recipient yes | absent | — |
+| 20 | `6ab3f40c055a620008aec356` | deploy-preview | ready | #48 | `47551b4c` | 2026-09-23T15:45 | cleanup yes, recipient yes | absent | — |
+| 21 | `6ab40e674e6ec500087de9bc` | deploy-preview | ready | #48 | `fcb5da6e` | 2026-09-23T17:37 | cleanup yes, recipient yes | absent | — |
+| 22 | `6ab40f88d8322c00084cf8d9` | deploy-preview | ready | #48 | `8821573a` | 2026-09-23T17:42 | cleanup yes, recipient yes | absent | — |
+| 23 | `6ab53d56cb552000097ff85e` | deploy-preview | ready | #48 | `513b6226` | 2026-09-24T15:10 | cleanup yes, recipient yes | absent | — |
+| 24 | `69c41cd74c2bc80007f8564c` | production | error | — | `ec0db90e` | 2026-03-25T17:35 | cleanup no, recipient no | not served (errored build) | — |
+| 25 | `69c561d114d0b10008682845` | production | error | — | `100874de` | 2026-03-26T16:41 | cleanup no, recipient no | not served (errored build) | — |
+| 26 | `69c561f0fc880f0009e2689c` | production | error | — | `7aba99f9` | 2026-03-26T16:42 | cleanup no, recipient no | not served (errored build) | — |
+| 27 | `69c5627ff2336c0aa76e1c82` | production | error | — | `7aba99f9` | 2026-03-26T16:44 | cleanup no, recipient no | not served (errored build) | — |
+| 28 | `69c56530b3100d1602a74815` | production | error | — | `7aba99f9` | 2026-03-26T16:56 | cleanup no, recipient no | not served (errored build) | — |
+| 29 | `69c569ee8754e500090821b7` | production | error | — | `5e321192` | 2026-03-26T17:16 | cleanup no, recipient no | not served (errored build) | — |
+| 30 | `69c569d84bf26d00081f4a2f` | production | error | — | `04944ff7` | 2026-03-26T17:16 | cleanup no, recipient no | not served (errored build) | — |
+| 31 | `69c5734f1e03310008689787` | production | error | — | `8b2161af` | 2026-03-26T17:56 | cleanup no, recipient no | not served (errored build) | — |
+| 32 | `69c573c01a6eb9152a1e0e05` | production | error | — | `8b2161af` | 2026-03-26T17:58 | cleanup no, recipient no | not served (errored build) | — |
+| 33 | `69c6c1671a9e6f000891e745` | production | ready | — | `87812bc8` | 2026-03-27T17:41 | cleanup no, recipient no | no functions | — |
+| 34 | `69caae5146f24d000830080b` | production | ready | — | `ae703568` | 2026-03-30T17:09 | cleanup no, recipient no | no functions | — |
+| 35 | `69cab0a9cfbad00008128a4d` | production | ready | — | `a2a8ed19` | 2026-03-30T17:19 | cleanup no, recipient no | no functions | — |
+| 36 | `69e64c05c1c063000825700f` | production | ready | — | `88f31d9f` | 2026-04-20T15:53 | cleanup no, recipient no | no functions | — |
+| 37 | `69e64dfa39d3bb0008010262` | production | ready | — | `578708f3` | 2026-04-20T16:02 | cleanup no, recipient no | no functions | — |
+| 38 | `69e64f040b7f8300089fa0bf` | production | ready | — | `b017062e` | 2026-04-20T16:06 | cleanup no, recipient no | no functions | — |
+| 39 | `69e650e7e079d80009425b45` | production | ready | — | `0e29ae53` | 2026-04-20T16:14 | cleanup no, recipient no | no functions | — |
+| 40 | `69e6520f6159c30007ba6b36` | production | ready | — | `f2baa5db` | 2026-04-20T16:19 | cleanup no, recipient no | no functions | — |
+| 41 | `69e6536d7b02de000824ae43` | production | ready | — | `e33b9b27` | 2026-04-20T16:25 | cleanup no, recipient no | no functions | — |
+| 42 | `69ea36aeb2dda00008e70a72` | production | ready | — | `daabfd80` | 2026-04-23T15:11 | cleanup no, recipient no | no functions | — |
+| 43 | `69efa0b08ea1ab000890255c` | production | ready | — | `235b4f6f` | 2026-04-27T17:45 | cleanup no, recipient no | no functions | — |
+| 44 | `69f14065910c4b0008582fab` | production | ready | — | `bfab350b` | 2026-04-28T23:19 | cleanup no, recipient no | no functions | — |
+| 45 | `69f22000a432d10009e94ae1` | production | ready | — | `83a388e5` | 2026-04-29T15:13 | cleanup no, recipient no | no functions | — |
+| 46 | `69f224adedf71d0008d9e594` | production | ready | — | `646c5050` | 2026-04-29T15:33 | cleanup no, recipient no | no functions | — |
+| 47 | `69f22a441f1e470008c2035f` | production | ready | — | `05c31f42` | 2026-04-29T15:56 | cleanup no, recipient no | no functions | — |
+| 48 | `69f22d7881e2640008efa7d9` | production | ready | — | `44725df8` | 2026-04-29T16:10 | cleanup no, recipient no | no functions | — |
+| 49 | `69f3807a7b6dab0008ba11b0` | production | ready | — | `c76c05a5` | 2026-04-30T16:16 | cleanup no, recipient no | no functions | — |
+| 50 | `69f38269259b900008acf551` | production | ready | — | `0683428d` | 2026-04-30T16:25 | cleanup no, recipient no | no functions | — |
+| 51 | `69fa0ad99c9e0d00085e127e` | production | ready | — | `6e499757` | 2026-05-05T15:20 | cleanup no, recipient no | no functions | — |
+| 52 | `69fa0b4a68636e0008d4c737` | production | ready | — | `1b352edc` | 2026-05-05T15:22 | cleanup no, recipient no | no functions | — |
+| 53 | `69fa1be4edf1e30008441400` | production | ready | — | `0c1179de` | 2026-05-05T16:33 | cleanup no, recipient no | no functions | — |
+| 54 | `69fb76a1ed26cb0008cf35f6` | production | ready | — | `17e3812c` | 2026-05-06T17:13 | cleanup no, recipient no | no functions | — |
+| 55 | `6a185e3a9454ad3908173c59` | production | ready | — | `32e3311e` | 2026-05-28T15:24 | cleanup no, recipient no | no functions | — |
+| 56 | `6a185f5f4ea61b00089dbd24` | production | ready | — | `8e94f58a` | 2026-05-28T15:29 | cleanup no, recipient no | no functions | — |
+| 57 | `6a3186871b78390008bc6769` | production | ready | — | `f5c1287b` | 2026-06-16T17:23 | cleanup no, recipient no | no functions | — |
