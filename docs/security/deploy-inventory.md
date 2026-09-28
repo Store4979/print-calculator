@@ -611,6 +611,76 @@ server-side writer exists in them. **Nothing deleted.**
 
 </details>
 
+## Retirement record, round 2 — 34 deploys, verified independently (2026-09-28T16:04:57Z)
+
+**Action:** Ryan ran `delete-preview-deploys.mjs` from `b6febc5`:
+`--list production --apply` (28) and `--list preview-addendum --apply` (6),
+reported 0 refused or failed and read-back 404 on all 34. An earlier attempt the
+same day carried no valid token and deleted nothing (all 401). Both tokens
+revoked afterwards. **That report is not the evidence below.**
+
+**Probe (this session, write-free):** `GET /` on each permalink, the public API
+record, and the site's deploy list. Verified retired = 404 with Netlify's own
+`Not Found - Request ID` page, API `state: "deleted"`, and absent from the
+site's deploy list (57 deploys listed now).
+
+**Result: 34 of 34 verified retired.**
+
+| deploy id | list | PR | commit | `GET /` | body | API `state` | in deploy list | verdict |
+|---|---|---|---|---|---|---|---|---|
+| `6a42b7af51f12900086b01c0` | production | — | `425fbaa5` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42ba25aaa964cde8bb6fd8` | production | — | `425fbaa5` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42bb4f95e09b00c346c3fc` | production | — | `425fbaa5` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42c425aaebbd039d736cce` | production | — | `425fbaa5` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42cae0bf86150008cb36b4` | production | — | `8335021b` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42ccc4e91dd82d98ec8018` | production | — | `8335021b` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42d450ca36420008de3940` | production | — | `ba0420c4` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a455d9bcc330d0008b7fdb4` | production | — | `6a8cbf23` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5f98b2917ca300082af0fa` | production | — | `978aa6b2` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5f9c98458e6b00080b7bdc` | production | — | `0544ae25` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5fa0bee7857000085539af` | production | — | `57a984e9` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5fa2ce9815480008a94637` | production | — | `faf88afd` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5faa2868a64b000851bd97` | production | — | `cacaafca` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5fb28ec14bc4000740a26b` | production | — | `0246b385` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a609aa8e4d2e80008e46bf1` | production | — | `2e1ae104` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a60e3d1c0843b000897a8e8` | production | — | `6f2b84e1` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a615b2b14582d00082af10b` | production | — | `ed19f818` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a63504d37f78c000852fe53` | production | — | `348f0b44` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a68f0141e03f20008ee523b` | production | — | `26a96fa3` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a6a19c52a46b700086d87b9` | production | — | `efc94378` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa0abcd0e533100082027aa` | production | — | `5355b72a` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa18b8254579d0008d97355` | production | — | `8671abea` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa1d54707143100081a9628` | production | — | `ccfbc536` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa2b91d4d43680008e2b639` | production | — | `23d30e70` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa2ba97369bba0008edf3bc` | production | — | `30a0aa66` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa2bd5fde9af700082b6ffa` | production | — | `61862a69` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa428f787d412000849dbaf` | production | — | `10235f21` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6aa58ff7fa3838616077bdf7` | production | — | `10235f21` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42b788c1f1b100087b57e0` | preview-addendum | #24 | `574b964d` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42b71cec4580000819f132` | preview-addendum | #24 | `5bd2b668` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42c8fb300b08000832da74` | preview-addendum | #25 | `095ea8c5` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a42d40ffc7e2f0008473eac` | preview-addendum | #26 | `ea84ed94` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a455d60436d82000807ff9a` | preview-addendum | #27 | `e28925c4` | 404 | netlify-not-found | deleted | no | **retired** |
+| `6a5fa9f509d2e20008af92f7` | preview-addendum | #28 | `ae7de2c3` | 404 | netlify-not-found | deleted | no | **retired** |
+
+**Controls — must still serve:**
+
+| URL | `GET /` | body |
+|---|---|---|
+| production — `printcalculator2.netlify.app` | 200 | APP SHELL |
+| kept published 6ab020c5 — `6ab020c50a788b0008d430c9--printcalculator2.netlify.app` | 200 | APP SHELL |
+| kept rollback-target 6aad56a3 — `6aad56a391c0cf0008d215fd--printcalculator2.netlify.app` | 200 | APP SHELL |
+| kept rollback-target 6aa994d5 — `6aa994d535444e0008272512--printcalculator2.netlify.app` | 200 | APP SHELL |
+| kept rollback-target 6aa59114 — `6aa59114f573770008fb8dd5--printcalculator2.netlify.app` | 200 | APP SHELL |
+
+Published deploy re-read after the probes: `6ab020c50a788b0008d430c9` (unchanged).
+
+**What may still hold the production service-role key after this round:** the
+four deploys kept on purpose (published + three rollback targets). Every other
+deployment this inventory classified as key-present or key-unknown is deleted
+and verified. The kept four are retired by credential rotation (stage 0
+production half), which also backstops anything this inventory missed.
+
 ## Staging site `printcalculator2-staging`
 
 **Update 2026-09-24:** after branch deploys were enabled, the push of `513b622` built branch deploy `6ab53d545ba8250008cd98c1` and PR #48 preview `6ab53d569ac3b20008d444e8` on the staging site; both hold the STAGING key by design and refuse Release 2 by context (0b-staging, probe doc). History of the earlier attempts: no **branch deploy** of `security/release-2-stage-0` was built at first: pushes at 17:37:42Z (`fcb5da6`) and 17:42:29Z (`8821573`) each rebuilt PR #48's production-site preview within seconds and the staging site's own production branch, but produced no staging branch deploy (polled to 17:48:45Z) — the staging site is not building that branch. No deploy preview was built for PR #48 either (polled 15:16–15:40Z; the site's only
