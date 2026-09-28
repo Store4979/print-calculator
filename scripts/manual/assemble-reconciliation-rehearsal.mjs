@@ -1,4 +1,17 @@
 #!/usr/bin/env node
+// SUPERSEDED 2026-09-28 — NOT APPROVED FOR REUSE (release-2-stage-0-production-
+// plan.md §G). This script is kept as the record of how the staging R1
+// rehearsal was built. It is UNPINNED: it reads whatever HEAD is, and nothing
+// recorded the md5 of its output (the md5 gate in R1 was added by hand around
+// it). Its reset step's only guard is the staging seed store's existence. The
+// stage-0 replacement is scripts/manual/assemble-stage0.mjs, whose every output
+// is pinned in docs/security/stage0-production-manifest.json. This script
+// refuses to run unless RECONCILIATION_REPLAY_HISTORY=1 is set, which states
+// that the caller is replaying history, not preparing a new run.
+if (process.env.RECONCILIATION_REPLAY_HISTORY !== "1") {
+  process.stderr.write("assemble-reconciliation-rehearsal.mjs is SUPERSEDED (production plan §G); set RECONCILIATION_REPLAY_HISTORY=1 only to replay the 2026-09-24 record.\n");
+  process.exit(2);
+}
 // Assemble the STAGING Release 2 reconciliation rehearsal: one transaction that
 // resets the Release 2 objects, applies the five COMMITTED migration files
 // verbatim, proves 03's 42702 before 04 repairs it, runs every end-to-end call,

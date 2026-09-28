@@ -3,6 +3,20 @@
 **Status: COMPLETE 2026-09-28 — R1–R4 PASSED, R5 recorded. The committed 01–05 files are the tested code on staging.** Written 2026-09-24. The
 stage-0 production plan waits on this.
 
+> **Qualification, 2026-09-28 (Codex review of `8913a69`).** The results below
+> stand. Three things this document relied on are **SUPERSEDED, not approved
+> for reuse** (production plan §G):
+> - the reset file's seed-store guard, which is negative-only — the file is not
+>   edited, because its bytes are staging's ledger `statements[1]` for
+>   `20260928160606`;
+> - the unpinned `assemble-reconciliation-rehearsal.mjs`;
+> - §3's closing claim that the exact previous state is "always recoverable …
+>   byte for byte" from the ledger. The ledger holds statement text, not state.
+>
+> The stage-0 production work uses positive identity markers, a pinned
+> assembler (`scripts/manual/assemble-stage0.mjs`) and catalog-fingerprint
+> equality instead.
+
 ## 1. What is wrong, exactly
 
 Staging's ledger (`supabase_migrations.schema_migrations`, project
@@ -241,7 +255,9 @@ staging's ledger is not production's.
 staging has no Release 2 objects until the failing file is fixed and applied.
 Only staging is affected, and production is unaffected. The exact previous state
 is always recoverable: the old bodies are still in the ledger's `statements[1]`
-and can be re-applied byte for byte.
+and can be re-applied byte for byte. *[SUPERSEDED 2026-09-28: this overstated
+it — re-applying statement text does not restore state. See the qualification
+at the top and production plan §G.]*
 
 ## 4. Not in this proposal
 

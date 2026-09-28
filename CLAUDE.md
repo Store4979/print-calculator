@@ -182,6 +182,21 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   getJobFileSignedUrl, deleteJobFiles; the last has no caller and still moves
   or gets deleted). Isolated staging (separate DB, storage, auth, mail) is a
   prerequisite — Netlify previews currently hit PRODUCTION Supabase.
+- STAGE-0 PRODUCTION FACTS (Codex review of 8913a69, 2026-09-28; plan
+  docs/security/release-2-stage-0-production-plan.md):
+  - `ALTER TABLE … ADD CONSTRAINT … UNIQUE` takes ACCESS EXCLUSIVE, which
+    blocks READS too (verify_employee_pin, order saves), until the
+    transaction ends. The FKs a new table declares take SHARE ROW EXCLUSIVE
+    on the referenced tables — auth.users included.
+  - apply_migration runs each call in its own session, so a SET LOCAL sent
+    in another call bounds nothing. Stage 0 uses a pinned execute_sql
+    wrapper that sets the timeouts, md5-gates the bytes and writes the
+    ledger row itself (plan §E1).
+  - Netlify SECRET env values are write-only: nobody can read a key's type
+    back from the dashboard.
+  - send-print-job silently falls back to the compiled-in address when the
+    service key fails. A delivered email proves nothing about the key; only
+    the `recipientSource: "store:<slug>"` log line does.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only
