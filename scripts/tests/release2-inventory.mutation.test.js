@@ -11,13 +11,13 @@
 // ledger version == the copied tree's applied baseline), so the control run
 // proves the validation is reachable, not skipped.
 //
-// RESIDUAL, stated for the reviewer to rule on (INV-R1): route detection is
-// lexical on three shapes — ".netlify", "netlify/" and "/functions/". A route
-// assembled at runtime from pieces NONE of which contains one of those shapes
-// (for example "/.net" + "lify" + "/fun" + "ctions/" + name) is NOT detected by
-// this scan. Closing it lexically would mean flagging ordinary words; the
-// structural closure is the Release 2 end state, where the client has no route
-// to a legacy function left to reach and each legacy route is a 410 tombstone.
+// The lexical route check (INV-R1) is bounded: a route assembled from pieces
+// none of which contains ".netlify", "netlify/" or "/functions/" is not seen by
+// it. That residual was REJECTED as sufficient for G0 (reviews of the fcb5da6
+// round and of 8913a69). It is closed by the request/dispatcher boundary
+// (MUT-42..48): every raw request API is a site whatever its URL looks like,
+// only allowlisted sites may exist, and dispatchers accept only statically
+// approved route-name literals. No further lexical substring is added.
 //
 // Not here, by design: the "client-controlled server costing" mutant (C5).
 // That is a behavioural test against orders-save — the server must compute
@@ -170,7 +170,8 @@ test("MUT-10 optional chaining on the client, and .schema()", () => {
 test("MUT-11 dynamic route construction in a new file is a route-builder site the allowlist refuses; a malformed route literal fails outright", () => {
   const r = mutate((root) => write(root, "src/mutant.js", "export const call = (n) => fetch(`/.netlify/functions/${n}`);\n"));
   assert.deepEqual(r.errors, []);
-  assert.deepEqual(r.siteIn("src/mutant.js").map((s) => `${s.kind}|${s.name}`), ["route-builder|template"]);
+  assert.deepEqual(r.siteIn("src/mutant.js").map((s) => `${s.kind}|${s.name}`).sort(), ["request|call:fetch:dynamic", "route-builder|template"],
+    "both the route builder and the raw request are sites (Part 1 of the 8913a69 review)");
   const problems = compareToAllowlist(r.sites, {});   // an empty allowlist: everything is a problem
   assert.ok(problems.some((p) => p.includes("src/mutant.js|route-builder|template")), "the allowlist sees the new builder");
   assert.match(mutate((root) => write(root, "src/mutant.js", "export const u = \"/.netlify/functions/../admin\";\n")).joined, /route piece .* is not a full/);
@@ -472,7 +473,7 @@ test("MUT-34 (R1) route templates built from fragments fail — in a NEW file an
 test("MUT-35 (R1 controls) the dispatcher form is a route-builder site, not an error; the word Netlify in prose is not a route", () => {
   const r = mutateReal((root) => write(root, "src/r1.js", "export const f = (name) => fetch(`/.netlify/functions/${name}`);\nexport const m = \"not a Netlify build\";\n"));
   assert.deepEqual(r.errors, [], "the scanner accepts the dispatcher form and the prose");
-  assert.deepEqual(r.siteIn("src/r1.js").map((s) => `${s.kind}|${s.name}`), ["route-builder|template"]);
+  assert.deepEqual(r.siteIn("src/r1.js").map((s) => `${s.kind}|${s.name}`).sort(), ["request|f:fetch:dynamic", "route-builder|template"]);
   assert.match(r.gateJoined, /NOT ALLOWLISTED: src\/r1\.js\|route-builder\|template/, "a NEW dispatcher is still refused by the allowlist");
 });
 
@@ -531,4 +532,73 @@ test("MUT-41 Codex INV-R3 exact: `if (true) { var JOB_FILES_BUCKET = … }` at t
     "export const downloadJobFile = async (path) => {",
     'export const downloadJobFile = async (path) => {\n  if (true) { var JOB_FILES_BUCKET = "customer-uploads"; }'));
   assert.match(r.gateJoined, /identifier JOB_FILES_BUCKET is shadowed here by a var hoisted to the enclosing function/);
+});
+
+// ── Review of 8913a69, Part 1: the request/dispatcher boundary ──────────────
+// Detection is by request API and by dispatcher call, never by how a URL is
+// spelled: the residual stated above for the lexical route check is closed by
+// this boundary, not by more substrings.
+
+test("MUT-42 Codex exact: a fetch whose URL is joined from pieces (\".net\" + \"lify\") is a NEW request site the gate refuses", () => {
+  const r = mutateReal((root) => write(root, "src/review-hidden-route.js",
+    'export const hiddenRoute = name =>\n  fetch(["", ".net" + "lify", "functions", name].join("/"));\n'));
+  assert.match(r.gateJoined, /NOT ALLOWLISTED: src\/review-hidden-route\.js\|request\|hiddenRoute:fetch:dynamic/);
+});
+
+test("MUT-43 Codex exact: reviewHiddenCaller = name => callQueueFn(name, {}) in App.jsx fails the dispatcher rule", () => {
+  const r = mutateReal((root) => {
+    const p = join(root, "src", "App.jsx");
+    writeFileSync(p, readFileSync(p, "utf8") + "\nexport const reviewHiddenCaller = name => callQueueFn(name, {});\n");
+  });
+  assert.match(r.gateJoined, /dispatcher callQueueFn called from reviewHiddenCaller with a non-literal route name/);
+});
+
+test("MUT-44 variants: template literal, URL object, alias of fetch, window.fetch, globalThis.fetch — all refused", () => {
+  const cases = [
+    ["template", "export const f1 = (n) => fetch(`/.net${\"lify\"}/functions/${n}`);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|f1:fetch:dynamic/],
+    ["URL object", "export const f2 = (n) => fetch(new URL(\"/x/\" + n, location.origin));\n", /NOT ALLOWLISTED: src\/v\.js\|request\|f2:fetch:dynamic/],
+    ["alias", "const go = fetch;\nexport const f3 = (u) => go(u);\n", /the request API fetch is referenced as a value/],
+    ["window.fetch", "export const f4 = (u) => window.fetch(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|f4:fetch:dynamic/],
+    ["globalThis.fetch alias", "const g = globalThis.fetch;\nexport const f5 = (u) => g(u);\n", /globalThis\.fetch is referenced without being called/],
+    ["computed window", "export const f6 = (u) => window[\"fe\" + \"tch\"](u);\n", /computed access on window can reach a request API/],
+    ["fetch.call", "export const f7 = (u) => fetch.call(null, u);\n", /the request API fetch is referenced as a value/],
+  ];
+  for (const [label, src, re] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, re, label);
+});
+
+test("MUT-45 variants: a dispatcher re-exported, aliased, or passed as a value; a literal naming no function", () => {
+  const app = (tail) => (root) => { const p = join(root, "src", "App.jsx"); writeFileSync(p, readFileSync(p, "utf8") + tail); };
+  assert.match(mutateReal(app("\nexport { callQueueFn as reviewedTransport };\n")).gateJoined, /dispatcher callQueueFn is re-exported as reviewedTransport/);
+  assert.match(mutateReal(app("\nexport const q = callQueueFn;\n")).gateJoined, /dispatcher callQueueFn is referenced as a value \(VariableDeclarator\)/);
+  assert.match(mutateReal(app("\nexport const r = [\"start-upload\"].map(callQueueFn);\n")).gateJoined, /dispatcher callQueueFn is referenced as a value \(CallExpression\)/);
+  assert.match(mutateReal(app("\nexport const s = () => callQueueFn(\"no-such-route\", {});\n")).gateJoined, /callQueueFn\("no-such-route"\) names no function/);
+  assert.match(mutateReal((root) => edit(root, "src/components/PrintQueue.jsx",
+    "const FN = (name) => `/.netlify/functions/${name}`;", "const FN = (name) => `/.netlify/functions/${name}`;\nexport const leak = (n) => FN(n);")).gateJoined,
+    /dispatcher FN called from leak with a non-literal route name/, "FN outside its reviewed forwarding caller");
+});
+
+test("MUT-46 every other raw request API: XMLHttpRequest, sendBeacon, EventSource, WebSocket, axios, a remote dynamic import", () => {
+  const cases = [
+    ["xhr", "export const a = () => new XMLHttpRequest();\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:XMLHttpRequest:none/],
+    ["beacon", "export const b = (u) => navigator.sendBeacon(u, \"x\");\n", /NOT ALLOWLISTED: src\/v\.js\|request\|b:sendBeacon:dynamic/],
+    ["eventsource", "export const c = (u) => new EventSource(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|c:EventSource:dynamic/],
+    ["websocket", "export const d = (u) => new WebSocket(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|d:WebSocket:dynamic/],
+    ["axios", "import axios from \"axios\";\nexport const e = (u) => axios.get(u);\n", /imports the request library "axios"/],
+    ["remote import", "export const f = () => import(\"https://example.com/x.js\");\n", /dynamic import\(\) of a remote URL/],
+  ];
+  for (const [label, src, re] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, re, label);
+});
+
+test("MUT-47 an allowlisted site whose reviewed literal is changed, and a second request inside a reviewed dispatcher, both fail", () => {
+  const a = mutateReal((root) => edit(root, "src/App.jsx", 'fetch("/.netlify/functions/send-print-job"', 'fetch("/pricing.json?x"'));
+  assert.match(a.gateJoined, /STALE: src\/App\.jsx\|request\|sendOrderEmail:fetch:lit=\/\.netlify\/functions\/send-print-job/);
+  const b = mutateReal((root) => edit(root, "src/components/PrintQueue.jsx", "const res = await fetch(FN(name), {", "await fetch(\"/extra\"); const res = await fetch(FN(name), {"));
+  assert.match(b.gateJoined, /NOT ALLOWLISTED: src\/components\/PrintQueue\.jsx\|request\|callFn:fetch:lit=\/extra/);
+});
+
+test("MUT-48 CONTROLS: the real dispatcher calls with literal route names, and a .fetch method on an ordinary object, are not violations", () => {
+  const r = mutateReal((root) => write(root, "src/v.js", "const api = { fetch: (x) => x };\nexport const ok = () => api.fetch(\"anything\");\n"));
+  assert.deepEqual(r.errors, [], "api.fetch is not a request API");
+  assert.deepEqual(r.siteIn("src/v.js").filter((s) => s.kind === "request"), []);
+  assert.deepEqual(mutateReal(() => {}).gate, [], "the real tree's literal dispatcher calls and reviewed forwarding pass");
 });

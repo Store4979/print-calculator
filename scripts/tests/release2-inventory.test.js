@@ -38,8 +38,8 @@ test("INV-2 the sites found are exactly the allowlist, per occurrence — nothin
 });
 
 test("INV-3 every allowlist entry carries a slice tag from the plan, a positive count, and a known kind", () => {
-  const valid = new Set(["4", "5", "6", "7", "8", "9", "auth-jwt"]);
-  const kinds = new Set(["table", "view", "bucket", "rpc", "channel", "fn", "route-builder", "holds-client"]);
+  const valid = new Set(["4", "5", "6", "7", "8", "9", "auth-jwt", "asset"]);
+  const kinds = new Set(["table", "view", "bucket", "rpc", "channel", "fn", "route-builder", "holds-client", "request"]);
   for (const [k, v] of Object.entries(ALLOWLIST)) {
     assert.ok(valid.has(v.slice), `${k}: slice ${JSON.stringify(v.slice)}`);
     assert.ok(Number.isInteger(v.count) && v.count > 0, `${k}: count`);
@@ -86,4 +86,16 @@ test("INV-6 the snapshot is the production capture at the repo's applied baselin
   assert.ok(applied.size + pendingOnly.size > 0, "a protected set exists");
   for (const tname of applied) assert.ok(snap.tables.includes(tname), `${tname}: applied on production, so the snapshot must list it`);
   for (const tname of pendingOnly) assert.ok(!snap.tables.includes(tname), `${tname}: still pending, so the snapshot must not list it`);
+});
+
+test("INV-7 the request boundary: every raw request site is allowlisted, and each dispatcher is module-private with reviewed forwarding only", async () => {
+  const { DISPATCHERS, INTERNAL_FORWARDING } = await import("./inventory-allowlist.mjs");
+  const sites = run().sites.filter((s) => s.kind === "request");
+  assert.equal(sites.length, 8, "eight request sites today: three dispatchers, one direct route call, one signed download, three assets");
+  for (const s of sites) assert.ok(ALLOWLIST[`${s.file}|request|${s.name}`], `${s.file} ${s.name}`);
+  for (const f of Object.keys(DISPATCHERS)) {
+    const src = readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
+    for (const d of DISPATCHERS[f]) assert.match(src, new RegExp(`(function ${d}\\b|const ${d} =)`), `${f} defines ${d}`);
+  }
+  for (const fw of INTERNAL_FORWARDING) assert.equal(fw.split("|").length, 3, fw);
 });

@@ -51,5 +51,31 @@ export const ALLOWLIST = Object.freeze({
   "src/lib/supabase.js|rpc|verify_employee_pin": { count: 1, slice: "4" },  // path 15, S1
   "src/lib/supabase.js|table|employees":        { count: 3, slice: "auth-jwt" },
   "src/lib/supabase.js|table|stores":           { count: 1, slice: "auth-jwt" },
+  // ── raw request sites: <enclosing function>:<api>:<first-argument shape> ──
+  // Every network request the bundle makes starts at one of these. Transport
+  // sites carry a slice tag (the slice whose stage D removes or replaces them);
+  // "asset" marks the narrow, reviewed, permanent GET exceptions.
+  "src/App.jsx|request|callQueueFn:fetch:dynamic":            { count: 1, slice: "8" },   // dispatcher (kiosk upload)
+  "src/App.jsx|request|sendOrderEmail:fetch:lit=/.netlify/functions/send-print-job": { count: 1, slice: "6" },
+  "src/App.jsx|request|PriceCalculatorApp:fetch:lit=/pricing.json": { count: 1, slice: "asset" },
+  "src/App.jsx|request|ensureLogoPdfDataUrl:fetch:dynamic":   { count: 1, slice: "asset" },   // store-profile logo image (admin-set URL), GET
+  "src/components/PrintQueue.jsx|request|callFn:fetch:dynamic":           { count: 1, slice: "5" },   // dispatcher
+  "src/components/PrintQueue.jsx|request|sendToCalculator:fetch:dynamic": { count: 1, slice: "5" },   // download of a signed URL from get-download-url
+  "src/UploadApp.jsx|request|callFn:fetch:dynamic":           { count: 1, slice: "8" },   // dispatcher
+  "src/utils/tradeOrderPDF.js|request|ensureLogo:fetch:const=LOGO_URL": { count: 1, slice: "asset" },
 });
 
+
+// ── Request boundary (review of 8913a69, Part 1) ─────────────────────────────
+// Dispatchers: the reviewed functions that turn a route NAME into a request.
+// Module-private; every call must pass a statically approved route-name literal
+// unless the call is listed in INTERNAL_FORWARDING (file|caller|dispatcher).
+export const DISPATCHERS = Object.freeze({
+  "src/App.jsx": ["callQueueFn"],
+  "src/components/PrintQueue.jsx": ["callFn", "FN"],
+  "src/UploadApp.jsx": ["callFn", "FN"],
+});
+export const INTERNAL_FORWARDING = Object.freeze([
+  "src/components/PrintQueue.jsx|callFn|FN",   // callFn(name) builds its own URL
+  "src/UploadApp.jsx|callFn|FN",
+]);

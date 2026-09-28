@@ -65,7 +65,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   netlify/functions/*.js + _retired.json; a new reach site fails until it is
   allowlisted with its slice tag, and a `.from` on a variable, an alias, a
   destructure, computed access or a second importer of the raw client fails
-  outright. The Release 2 table names FORBIDDEN in src/ come from
+  outright. It is also the REQUEST BOUNDARY: every raw request API (fetch,
+  XMLHttpRequest, sendBeacon, EventSource, WebSocket, request libraries,
+  remote import()) is a site keyed by file + enclosing function + API +
+  first-argument shape and must be allowlisted; dispatchers (callQueueFn,
+  callFn, FN — DISPATCHERS in scripts/tests/inventory-allowlist.mjs) take only
+  a literal approved route name. A new fetch anywhere fails until reviewed. The Release 2 table names FORBIDDEN in src/ come from
   supabase/migrations/pending/release2_*.sql, not from the snapshot.
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
 - src/lib/orderQueue.js — offline order queue. localStorage key is still

@@ -328,7 +328,7 @@ production ref → 404". Merged only with P0–P5 recorded.
 | 2 deployment-context check in place, (a)–(d) | (a) and (d) from P4; (b) and (c) already recorded (0b-prod 2026-09-23, 0a 2026-09-23); context-alone denial (0b-staging 2026-09-24) |
 | 3 Phase 1 green on production | F2: four uniform 401s after P6 |
 | 4 a preview refused with 404 by a curl with no Origin | F2: fresh production-site preview, three Origin variants, after P6 |
-| 5 the inventory proves the client calls no endpoint | inventory gate green on the merged `main` (already closed; re-confirmed on the P3 commit) |
+| 5 the inventory proves the client calls no endpoint | inventory gate — INCLUDING the request/dispatcher boundary (8913a69 review, Part 1) — green on the merged `main` and on the P3 commit, and accepted by review. Not closed until then |
 | plus: credential transition | C4 steps 1–7 recorded; B re-taken after C showing the kept deploys refused for the key |
 
 **F4. Rollback, per step:**

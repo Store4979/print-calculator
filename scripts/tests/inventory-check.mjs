@@ -81,6 +81,14 @@
 //    stated: detection is lexical on those three shapes; a route assembled from
 //    pieces none of which contains one of them (e.g. "/.net" + "lify" + "/fun" +
 //    "ctions/" + name) is not detected.
+//    CLOSED at the boundary (review of 8913a69): the lexical check keeps that
+//    bound, but it is no longer the gate. Every raw request API (fetch,
+//    XMLHttpRequest, navigator.sendBeacon, EventSource, WebSocket, request
+//    libraries, remote dynamic import) is a SITE identified by file, enclosing
+//    named function, API and first-argument shape, and only allowlisted sites
+//    may exist; dispatchers (DISPATCHERS in inventory-allowlist.mjs) may be
+//    called only with a statically approved route-name literal or from
+//    reviewed internal forwarding, and never referenced as a value.
 //  - R2 re-exporting the package in any form — `export {…} from`, `export * from`,
 //    `export * as x from`, aliases — fails in every file, the gateway included.
 //  - R3 a `var` anywhere in an enclosing function body (any nested block, a
@@ -90,6 +98,7 @@ import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep, basename } from "node:path";
 import { Parser } from "acorn";
 import jsx from "acorn-jsx";
+import { DISPATCHERS, INTERNAL_FORWARDING } from "./inventory-allowlist.mjs";
 
 const JSXParser = Parser.extend(jsx());
 
@@ -320,6 +329,64 @@ export function protectedNamesFromMigrations(root) {
   return protectedNamesByState(root).all;
 }
 
+// ── Request boundary helpers (review of 8913a69, Part 1) ─────────────────────
+// The raw request APIs a browser bundle can use to reach the network. Detection
+// is by API, never by the URL's spelling: a route assembled at runtime from any
+// pieces is still a call to one of these, and every such call must be an
+// allowlisted site.
+const REQUEST_GLOBALS = new Set(["fetch", "XMLHttpRequest", "EventSource", "WebSocket"]);
+const GLOBAL_OBJECTS = new Set(["window", "globalThis", "self", "navigator"]);
+const REQUEST_LIBRARIES = new Set(["axios", "ky", "ky-universal", "superagent", "node-fetch", "cross-fetch", "isomorphic-fetch", "undici", "got"]);
+
+function requestApiOf(callee) {
+  if (callee.type === "Identifier" && REQUEST_GLOBALS.has(callee.name)) return callee.name;
+  if (callee.type === "MemberExpression" && !callee.computed && callee.object.type === "Identifier" && GLOBAL_OBJECTS.has(callee.object.name)) {
+    const p = callee.property.name;
+    if (REQUEST_GLOBALS.has(p)) return p;
+    if (callee.object.name === "navigator" && p === "sendBeacon") return "sendBeacon";
+  }
+  return null;
+}
+
+// Is this identifier a reference to a binding (as opposed to a property name,
+// an import/export specifier, a JSX name or a label)?
+function isValueReference(node, parent) {
+  if (!parent) return true;
+  if (parent.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
+  if ((parent.type === "Property" || parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") && parent.key === node && !parent.computed && parent.value !== node) return false;
+  if (/^(ImportSpecifier|ImportDefaultSpecifier|ImportNamespaceSpecifier|ExportSpecifier|LabeledStatement|BreakStatement|ContinueStatement)$/.test(parent.type)) return false;
+  if (parent.type.startsWith("JSX")) return false;
+  return true;
+}
+
+// The nearest NAMED enclosing function: a declaration's id, or the binding a
+// function expression is assigned to. Anonymous callbacks climb to their
+// named container. "<module>" at top level.
+function enclosingName(node, parentOf) {
+  for (let cur = parentOf(node); cur; cur = parentOf(cur)) {
+    if (cur.type === "FunctionDeclaration" && cur.id) return cur.id.name;
+    if (cur.type === "FunctionExpression" || cur.type === "ArrowFunctionExpression") {
+      if (cur.id) return cur.id.name;
+      const p = parentOf(cur);
+      if (p && p.type === "VariableDeclarator" && p.id.type === "Identifier") return p.id.name;
+      if (p && (p.type === "Property" || p.type === "MethodDefinition") && !p.computed && p.key.type === "Identifier") return p.key.name;
+      if (p && p.type === "AssignmentExpression" && p.left.type === "Identifier") return p.left.name;
+    }
+  }
+  return "<module>";
+}
+
+// The static shape of a request's first argument: a literal, a same-file
+// top-level const, or "dynamic". Part of the site's identity, so changing a
+// reviewed literal's target changes the site.
+function argShape(arg, consts, parentOf) {
+  if (!arg) return "none";
+  if (arg.type === "Literal" && typeof arg.value === "string") return "lit=" + arg.value;
+  if (arg.type === "TemplateLiteral" && arg.expressions.length === 0) return "lit=" + arg.quasis.map((q) => q.value.cooked).join("");
+  if (arg.type === "Identifier" && consts.has(arg.name) && !shadowedBy(arg.name, arg, parentOf)) return "const=" + arg.name;
+  return "dynamic";
+}
+
 /**
  * I3: is this source a tombstone, in the one form allowed?
  *   export const TOMBSTONE = true;
@@ -391,7 +458,7 @@ export function compareToAllowlist(sites, allow) {
  * @param {string[]} [o.retiredEver] reviewed list of routes that were ever retired (A2)
  * @returns {{errors: string[], sites: Array<{file:string,line:number,kind:string,name:string}>}}
  */
-export function runInventory({ root, retiredEver = [] }) {
+export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCHERS, forwarding = INTERNAL_FORWARDING }) {
   const errors = [];
   const sites = [];
   const srcDir = join(root, "src");
@@ -502,6 +569,60 @@ export function runInventory({ root, retiredEver = [] }) {
     }
 
     walk(ast, (node, parent) => {
+      // ── Request boundary (review of 8913a69, Part 1) ──────────────────────
+      // Every raw request API is a SITE, whatever its URL looks like. A site is
+      // identified by file, enclosing named function, API and the static shape
+      // of its first argument; only allowlisted sites may exist. Dispatchers
+      // (the reviewed functions that turn a route NAME into a request) may be
+      // called only with a statically approved route-name literal, or from a
+      // reviewed internal-forwarding site, and may never be referenced as a
+      // value (alias, re-export, argument).
+      if (node.type === "ImportDeclaration" && REQUEST_LIBRARIES.has(String(node.source.value))) {
+        errors.push(`${file}:${node.loc.start.line}: imports the request library "${node.source.value}"; requests go only through reviewed transport sites`);
+      }
+      if (node.type === "CallExpression" || node.type === "NewExpression") {
+        const api = requestApiOf(node.callee, node.type);
+        if (api) {
+          site(node.loc.start.line, "request", `${enclosingName(node, parentOf)}:${api}:${argShape(node.arguments[0], consts, parentOf)}`);
+        }
+      }
+      if (node.type === "Identifier" && REQUEST_GLOBALS.has(node.name) && isValueReference(node, parent)) {
+        const asCallee = parent && (parent.type === "CallExpression" || parent.type === "NewExpression") && parent.callee === node;
+        if (!asCallee) errors.push(`${file}:${node.loc.start.line}: the request API ${node.name} is referenced as a value (alias, argument or member use); only a direct call is a reviewable site`);
+      }
+      if (node.type === "MemberExpression" && node.object.type === "Identifier" && GLOBAL_OBJECTS.has(node.object.name)) {
+        const prop = node.computed ? (node.property.type === "Literal" ? String(node.property.value) : null) : node.property.name;
+        if (node.computed && (prop === null || REQUEST_GLOBALS.has(prop) || prop === "sendBeacon")) {
+          errors.push(`${file}:${node.loc.start.line}: computed access on ${node.object.name} can reach a request API; not allowed`);
+        } else if (prop !== null && (REQUEST_GLOBALS.has(prop) || (node.object.name === "navigator" && prop === "sendBeacon"))) {
+          const p = parentOf(node);
+          const asCallee = p && (p.type === "CallExpression" || p.type === "NewExpression") && p.callee === node;
+          if (!asCallee) errors.push(`${file}:${node.loc.start.line}: ${node.object.name}.${prop} is referenced without being called; only a direct call is a reviewable site`);
+        }
+      }
+      const dispatchers = dispatchersFor[file];
+      if (dispatchers && node.type === "Identifier" && dispatchers.includes(node.name) && isValueReference(node, parent)) {
+        const isDecl = parent && ((parent.type === "FunctionDeclaration" && parent.id === node) || (parent.type === "VariableDeclarator" && parent.id === node));
+        if (!isDecl) {
+          const isCall = parent && parent.type === "CallExpression" && parent.callee === node;
+          if (!isCall) {
+            errors.push(`${file}:${node.loc.start.line}: dispatcher ${node.name} is referenced as a value (${parent ? parent.type : "top level"}); a dispatcher may only be called with an approved route name`);
+          } else {
+            const arg = staticString(parent.arguments[0], consts, parentOf);
+            const caller = enclosingName(node, parentOf);
+            if (arg.ok) {
+              if (!fnNames.has(arg.value)) errors.push(`${file}:${node.loc.start.line}: ${node.name}("${arg.value}") names no function in netlify/functions/`);
+              else if (retired.has(arg.value) || retiredEver.includes(arg.value)) errors.push(`${file}:${node.loc.start.line}: ${node.name}("${arg.value}") names a retired route`);
+            } else if (!forwarding.includes(`${file}|${caller}|${node.name}`)) {
+              errors.push(`${file}:${node.loc.start.line}: dispatcher ${node.name} called from ${caller} with a non-literal route name (${arg.why}); only a statically approved route-name literal, or reviewed internal forwarding, may reach a dispatcher`);
+            }
+          }
+        }
+      }
+      if (node.type === "ExportSpecifier" && dispatchers && dispatchers.includes(node.local.name)) {
+        errors.push(`${file}:${node.loc.start.line}: dispatcher ${node.local.name} is re-exported${node.exported.name !== node.local.name ? " as " + node.exported.name : ""}; dispatchers stay module-private`);
+      }
+
       // A5: dynamic import of the gateway module.
       if (node.type === "ImportExpression") {
         const s = node.source;
@@ -509,6 +630,8 @@ export function runInventory({ root, retiredEver = [] }) {
         if (staticSrc === null) errors.push(`${file}:${node.loc.start.line}: dynamic import() with a non-literal specifier; the scan cannot see what it loads`);
         else if (isClientImportSource(staticSrc)) errors.push(`${file}:${node.loc.start.line}: dynamic import() of the gateway module hides the client from the scan`);
         else if (staticSrc === "@supabase/supabase-js" && file !== CLIENT_INIT) errors.push(`${file}:${node.loc.start.line}: dynamic import() of @supabase/supabase-js; only ${CLIENT_INIT} may import the package`);
+        else if (/^(https?:)?\/\//i.test(staticSrc)) errors.push(`${file}:${node.loc.start.line}: dynamic import() of a remote URL is a network request; not allowed`);
+        else if (REQUEST_LIBRARIES.has(staticSrc)) errors.push(`${file}:${node.loc.start.line}: dynamic import() of the request library "${staticSrc}"`);
         return;
       }
 
