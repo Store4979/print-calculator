@@ -117,6 +117,11 @@ points the deploy's `commit_ref` is resolved and each pinned path is compared
 with `git rev-parse <commit_ref>:<path>`**; any difference stops the step. The
 ref refusal is still present in A3.
 
+The pinned commit is `5ee7ec4`. While the manifest's `a3.enforceAtHead` is
+true, the manifest test also requires HEAD to match. A change to
+production-bound code before P4 therefore fails the suite until it is
+re-pinned, in review.
+
 The refusal deletion (P6) is a separate, later PR touching only
 `netlify/lib/release2.js`, its header comment, and the tests that pin the
 refusal (`release2-guard.test.js`, DC-13). The manifest gains a `p6` block

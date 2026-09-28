@@ -1,0 +1,421 @@
+{
+  "schema": "stage0-production-manifest/1",
+  "authority": "docs/security/release-2-stage-0-production-plan.md defers to this file. scripts/tests/stage0-manifest.test.js checks it against git blob bytes. Every md5 is of the LF git blob, never a Windows working-tree copy.",
+  "productionRef": "gmxyisjjaxtpycsmmzef",
+  "ledgerBaseline": {
+    "head": "20260909232836",
+    "rows": 20,
+    "marker": {
+      "version": "20260909232836",
+      "name": "phase_e_03_order_margin_snapshot",
+      "md5": "b7a8e54c99432c5e0ddb60be4c46505f"
+    }
+  },
+  "identity": {
+    "stagingSeedStore": "5ee41000-0000-4000-8000-0000000000a1",
+    "productionStoreSlug": "store4979",
+    "probeSlug": "r2-probe-nonexistent",
+    "nilJobId": "00000000-0000-0000-0000-000000000000"
+  },
+  "migrations": [
+    {
+      "n": "01",
+      "name": "release2_01_identity_schema",
+      "path": "supabase/migrations/pending/release2_01_identity_schema.sql",
+      "blob": "3ea8abb32838a74129e52cfed5abc7b0a9aed33b",
+      "md5": "e97a5fd7c346a3b0a39bc6180dcfde46",
+      "bytes": 13720,
+      "introducedIn": "7f898762a958fdcbf2e6036033ea363c45f903fe",
+      "productionVersion": null
+    },
+    {
+      "n": "02",
+      "name": "release2_02_auth_attempts_fn",
+      "path": "supabase/migrations/pending/release2_02_auth_attempts_fn.sql",
+      "blob": "f8d9a9975a54cd77ad6d504e8590558cffb4cc75",
+      "md5": "734e0db7312b79081a769ca366c5b99a",
+      "bytes": 6406,
+      "introducedIn": "89de03e59b66df0ae2097c11ae746bb1146fad83",
+      "productionVersion": null
+    },
+    {
+      "n": "03",
+      "name": "release2_03_bind_and_atomicity",
+      "path": "supabase/migrations/pending/release2_03_bind_and_atomicity.sql",
+      "blob": "3666b53990bf98e5de80a690f343f6bc0006d095",
+      "md5": "302e05c6a4939eb8021234cbc7325473",
+      "bytes": 13062,
+      "introducedIn": "89de03e59b66df0ae2097c11ae746bb1146fad83",
+      "productionVersion": null
+    },
+    {
+      "n": "04",
+      "name": "release2_04_staff_session_qualify_columns",
+      "path": "supabase/migrations/pending/release2_04_staff_session_qualify_columns.sql",
+      "blob": "df1a5da05b2ef91b6dde5b2397142e62ef0ef4da",
+      "md5": "2dcb03eb36e47c8404a29500151e8394",
+      "bytes": 5858,
+      "introducedIn": "89de03e59b66df0ae2097c11ae746bb1146fad83",
+      "productionVersion": null
+    },
+    {
+      "n": "05",
+      "name": "release2_05_revoke_enrollment",
+      "path": "supabase/migrations/pending/release2_05_revoke_enrollment.sql",
+      "blob": "ca2e83eab03c2edcb1eb24b0c3c4773c496edafc",
+      "md5": "22b5010b9a3b20f5a3aaba4d212fd46c",
+      "bytes": 5622,
+      "introducedIn": "4289e110c2d69ba28e18cba7d5d528d0231ae42a",
+      "productionVersion": null
+    }
+  ],
+  "functions": {
+    "redeem": {
+      "signature": "redeem_enrollment_ticket(bytea, bytea, bytea, text)",
+      "prosrcMd5": "c024388886897f01a1154d8d12dc8996",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "rec02": {
+      "signature": "release2_record_attempt(text, text, integer, integer, integer)",
+      "prosrcMd5": "fa208910f744eead2bdd14445d1d89d8",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "clr02": {
+      "signature": "release2_clear_lockout(text, text, uuid)",
+      "prosrcMd5": "f06f2b206a8f6675668ec43f1b6ec384",
+      "execute": [
+        "authenticated=EXECUTE",
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "clr03": {
+      "signature": "release2_clear_lockout(text, text, uuid, uuid)",
+      "prosrcMd5": "b7f602cde969f2f2622c0d2343b1c249",
+      "execute": [
+        "authenticated=EXECUTE",
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "rec03": {
+      "signature": "release2_record_attempt(text, text, integer, integer, integer)",
+      "prosrcMd5": "e67957595afcc7a51d7f8673000d9302",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "css03": {
+      "signature": "release2_create_staff_session(uuid, uuid, bytea, bytea, timestamp with time zone, timestamp with time zone)",
+      "prosrcMd5": "bd6da6a2f80e13c7b20deab3b2c76e63",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "prune": {
+      "signature": "release2_prune_auth_attempts(integer)",
+      "prosrcMd5": "ee254949f88474c58284b8a2c1ba3cb0",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "css04": {
+      "signature": "release2_create_staff_session(uuid, uuid, bytea, bytea, timestamp with time zone, timestamp with time zone)",
+      "prosrcMd5": "d30da6d0c7a4d14e1bcb1b9fcace37d9",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    },
+    "revoke": {
+      "signature": "release2_revoke_enrollment(uuid, uuid, text)",
+      "prosrcMd5": "a464a43cc72537bb02b3e4a1d904f655",
+      "execute": [
+        "postgres=EXECUTE",
+        "service_role=EXECUTE"
+      ]
+    }
+  },
+  "stateAfter": {
+    "00": [],
+    "01": [
+      "redeem"
+    ],
+    "02": [
+      "redeem",
+      "rec02",
+      "clr02"
+    ],
+    "03": [
+      "redeem",
+      "clr03",
+      "rec03",
+      "css03",
+      "prune"
+    ],
+    "04": [
+      "redeem",
+      "clr03",
+      "rec03",
+      "css04",
+      "prune"
+    ],
+    "05": [
+      "redeem",
+      "clr03",
+      "rec03",
+      "css04",
+      "prune",
+      "revoke"
+    ]
+  },
+  "bodies": [
+    {
+      "file": "01",
+      "functions": {
+        "redeem_enrollment_ticket": "c024388886897f01a1154d8d12dc8996"
+      }
+    },
+    {
+      "file": "02",
+      "functions": {
+        "release2_record_attempt": "fa208910f744eead2bdd14445d1d89d8",
+        "release2_clear_lockout": "f06f2b206a8f6675668ec43f1b6ec384"
+      }
+    },
+    {
+      "file": "03",
+      "functions": {
+        "release2_clear_lockout": "b7f602cde969f2f2622c0d2343b1c249",
+        "release2_record_attempt": "e67957595afcc7a51d7f8673000d9302",
+        "release2_create_staff_session": "bd6da6a2f80e13c7b20deab3b2c76e63",
+        "release2_prune_auth_attempts": "ee254949f88474c58284b8a2c1ba3cb0"
+      }
+    },
+    {
+      "file": "04",
+      "functions": {
+        "release2_create_staff_session": "d30da6d0c7a4d14e1bcb1b9fcace37d9"
+      }
+    },
+    {
+      "file": "05",
+      "functions": {
+        "release2_revoke_enrollment": "a464a43cc72537bb02b3e4a1d904f655"
+      }
+    },
+    {
+      "file": "04rb",
+      "functions": {
+        "release2_create_staff_session": "bd6da6a2f80e13c7b20deab3b2c76e63"
+      }
+    },
+    {
+      "file": "03rb",
+      "functions": {
+        "release2_clear_lockout": "f06f2b206a8f6675668ec43f1b6ec384",
+        "release2_record_attempt": "fa208910f744eead2bdd14445d1d89d8"
+      }
+    },
+    {
+      "file": "05rb",
+      "functions": {}
+    },
+    {
+      "file": "02rb",
+      "functions": {}
+    },
+    {
+      "file": "01rb",
+      "functions": {}
+    }
+  ],
+  "tables": {
+    "names": [
+      "device_enrollments",
+      "enrollment_tickets",
+      "staff_sessions",
+      "upload_capabilities",
+      "upload_capability_files",
+      "auth_attempts"
+    ],
+    "rowSecurity": true,
+    "policies": 0,
+    "grantees": [
+      "postgres",
+      "service_role"
+    ],
+    "privileges": "the server's full table set (acldefault('r', relowner))"
+  },
+  "constraint": {
+    "table": "employees",
+    "name": "employees_id_store_uniq",
+    "definition": "UNIQUE (id, store_id)"
+  },
+  "rollbacks": [
+    {
+      "n": "01",
+      "path": "supabase/migrations/pending/release2_01_identity_schema.rollback.sql",
+      "blob": "88fe6677d221404efe455e70f67ac90e50c95f0b",
+      "md5": "9c81c9ba7fb4a0942d3d2dd5be68eb7a",
+      "bytes": 11459,
+      "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "02",
+      "path": "supabase/migrations/pending/release2_02_auth_attempts_fn.rollback.sql",
+      "blob": "336b39647a8082df102f486c3d7cfaac08ee3a75",
+      "md5": "d53dd43170b7cd2a266c4b7c88ed8326",
+      "bytes": 9214,
+      "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "03",
+      "path": "supabase/migrations/pending/release2_03_bind_and_atomicity.rollback.sql",
+      "blob": "9011d32bb982b9474d174f03f31da00a0e747b83",
+      "md5": "c2a8e5dd9b6029a2f7ccbf3d73b0bc68",
+      "bytes": 14624,
+      "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "04",
+      "path": "supabase/migrations/pending/release2_04_staff_session_qualify_columns.rollback.sql",
+      "blob": "4051924fb75dce04017359aa2e72728decec03f3",
+      "md5": "072fd70b8ef8fbdc654044f0a233d015",
+      "bytes": 13324,
+      "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "05",
+      "path": "supabase/migrations/pending/release2_05_revoke_enrollment.rollback.sql",
+      "blob": "8c91dff412a40c69622d758f481e7ec0c80b4308",
+      "md5": "9aa5d60657103f4d1925ebf20f2fcb3c",
+      "bytes": 10316,
+      "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    }
+  ],
+  "rollbackOperations": [
+    {
+      "op": "RB-5",
+      "files": [
+        "05"
+      ]
+    },
+    {
+      "op": "RB-43",
+      "files": [
+        "04",
+        "03"
+      ],
+      "marker": "RB-43"
+    },
+    {
+      "op": "RB-2",
+      "files": [
+        "02"
+      ]
+    },
+    {
+      "op": "RB-1",
+      "files": [
+        "01"
+      ]
+    }
+  ],
+  "proofs": {
+    "path": "supabase/rehearsals/release2_stage0_production_proofs.sql",
+    "blob": "8043ab71f961b48c2a8f0dd1de74897f269d080e",
+    "md5": "92d623df7b257d068ee0d7bb9c402ec2",
+    "bytes": 37551,
+    "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+  },
+  "assembler": {
+    "path": "scripts/manual/assemble-stage0.mjs",
+    "blob": "932f09f21fe62f97768ce0358e283595bc8daf7d",
+    "md5": "b8af7409274a05abe49bd60e3c5a71b8",
+    "bytes": 22439,
+    "introducedIn": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+  },
+  "outputs": {
+    "P0": {
+      "md5": "9f642e8ae29aa458593169c3cffea765",
+      "bytes": 10628
+    },
+    "P1": {
+      "md5": "a3655e5fe26550e2362814d039841a6d",
+      "bytes": 215047
+    },
+    "P2-01": {
+      "md5": "2c9e5b7796c9a8645946c05c44db0a78",
+      "bytes": 24190
+    },
+    "P2-02": {
+      "md5": "e3ad1aa4d152997ebcd1b7960aa4e208",
+      "bytes": 17916
+    },
+    "P2-03": {
+      "md5": "335c4ba72138467e9f7d91a461db483e",
+      "bytes": 25219
+    },
+    "P2-04": {
+      "md5": "a3011d1b8089bc1f7fa1ad7c44677347",
+      "bytes": 18390
+    },
+    "P2-05": {
+      "md5": "9f1d113058b0c1fa8adfb6d6db215a53",
+      "bytes": 18241
+    },
+    "RB-5": {
+      "md5": "e64d999e72b8e165703ee67e9e5e887f",
+      "bytes": 15535
+    },
+    "RB-43": {
+      "md5": "6c94eb003738c81c5fd8ecad480dd724",
+      "bytes": 34273
+    },
+    "RB-2": {
+      "md5": "0c012b77690d49f3eaef4e2f9b077a86",
+      "bytes": 14430
+    },
+    "RB-1": {
+      "md5": "8eddbd782f9a23a6c939112f01cf879b",
+      "bytes": 16674
+    }
+  },
+  "a3": {
+    "commit": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c",
+    "enforceAtHead": true,
+    "note": "The production build of P4/P5 must reproduce these objects; each stop point compares git rev-parse <commit_ref>:<path>. While enforceAtHead is true, HEAD must match too: a change to production-bound code re-pins here, in review.",
+    "trees": {
+      "netlify": "7dc5c303dc0748202e6ceed0c59e1584254d92a4",
+      "src": "6eaff47d4a3b51d8d4bb7921ff05e9e316d9fd6a",
+      "public": "b1b872189d0203219fb68a8af2d664bd0cf8189b"
+    },
+    "blobs": {
+      "netlify.toml": "ea90c08da56e6a9c1515cfcdbd58ff48760a3b77",
+      "package.json": "2ca11175d2458fe07c36ecf6f3c00c452ed0fb34",
+      "vite.config.js": "1957aef968f66361701eb66c955401bc988ccdbf",
+      "index.html": "170a649ed43540f6c187dd37f04b78ad7cef9e5a",
+      "upload.html": "6adc341d230d6d482d67171244439175f2faabaf",
+      "scripts/write-deploy-context.mjs": "6f29742d966a63533a65e77791196248de73222d",
+      "scripts/inject-sw-manifest.mjs": "7b63b613eb336ab8966fc9aa8b782a8492af3f26",
+      "scripts/tests/inventory-check.mjs": "099c6dd45e6b1eb093dc5234a16a1d99383d508f",
+      "scripts/tests/inventory-allowlist.mjs": "980fcebcfddca9217ce5a71e04eff7c954bc34d7"
+    }
+  },
+  "p6": null,
+  "deploys": {
+    "P4": null,
+    "P5": null,
+    "P6": null
+  }
+}
