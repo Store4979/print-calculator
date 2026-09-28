@@ -1,6 +1,6 @@
 # Release 2 — staging ledger reconciliation (01, 02, 03)
 
-**Status: R1 PASSED (rolled back) 2026-09-24. R2–R5 not run; R2 awaits a separate go.** Written 2026-09-24. The
+**Status: R1–R3 PASSED; R4 PARTIAL (Phase 1 + 0a done, probes 2a–5e await an owner sign-in); R5 recorded. 2026-09-28.** Written 2026-09-24. The
 stage-0 production plan waits on this.
 
 ## 1. What is wrong, exactly
@@ -123,6 +123,61 @@ for comparison after R2: `redeem_enrollment_ticket` `f850bfdd…`,
    else stops R2.
 3. The five old ledger rows stay untouched as history. The ledger then reads:
    old 01–05, the reset, new 01–05.
+
+**R2 RESULT — APPLIED 2026-09-28 (approved by Ryan).** `apply_migration` with each
+committed file's exact bytes, the ledger read back after every apply, before the
+next:
+
+| migration | staging version | ledger md5 | bytes | final `
+` | vs committed |
+|---|---|---|---|---|---|
+| `release2_00_reconciliation_reset` | `20260928160606` | `c4ca9c0b…` | 2 498 | yes | **identical** |
+| `release2_01_identity_schema` | `20260928160657` | `e97a5fd7…` | 13 720 | yes | **identical** |
+| `release2_02_auth_attempts_fn` | `20260928160722` | `734e0db7…` | 6 406 | yes | **identical** |
+| `release2_03_bind_and_atomicity` | `20260928160802` | `302e05c6…` | 13 062 | yes | **identical** |
+| `release2_04_staff_session_qualify_columns` | `20260928160825` | `2dcb03eb…` | 5 858 | yes | **identical** |
+| `release2_05_revoke_enrollment` | `20260928160847` | `22b5010b…` | 5 622 | yes | **identical** |
+
+The five original rows (`20260912171058` … `20260916225132`) are untouched and
+still hold the old bodies. 03 and 04 were applied 23 s apart. The reset removed
+every Release 2 row on staging (the old enrollments, tickets, sessions and
+attempts were probe fixtures).
+
+**R3 RESULT — PASS 2026-09-28**, `begin … rollback`, proofs file md5-gated again
+(`5665557d…`): A1 six ACLs exactly as R1 (no PUBLIC, no anon; `authenticated`
+only on `release2_clear_lockout`); A2 six tables RLS on, 0 policies,
+postgres + service_role only; A3 `UNIQUE (id, store_id)`; B1–B13 identical to R1
+(redeem; replay and expiry 28000; limiter `true/1 true/2 false/3`; clear_lockout
+1 / 42501 / 42501; create + rotate live=1; cross-store 28000; revoke 42501 before,
+cascade `device revoked: reconciliation probe`, 42501 after for T2 owner and T1
+manager; prune).
+
+**Function bodies are now the committed bytes.** `md5(prosrc)` on staging, each
+also derived independently from the committed file's `$fn$` body (Python over
+the git blob — all six EQUAL). This is the reference production must reproduce:
+
+| function | defined by | `md5(prosrc)` |
+|---|---|---|
+| `redeem_enrollment_ticket` | 01 | `c0243888…` (was `f850bfdd…` from the compact body) |
+| `release2_record_attempt` | 03 | `e6795759…` (was `52407443…`) |
+| `release2_clear_lockout` | 03 | `b7f602cd…` |
+| `release2_prune_auth_attempts` | 03 | `ee254949…` |
+| `release2_create_staff_session` | 04 | `d30da6d0…` |
+| `release2_revoke_enrollment` | 05 | `a464a43c…` |
+
+**R4 RESULT — PARTIAL.** Phase 1 on plain staging, curl, no cookie, no Origin
+(16:09:52Z): `staff-login`, `enroll-redeem`, `enroll-ticket-create`,
+`csrf-bootstrap` → `401 {"ok":false,"error":"Unauthorized"}` ×4. 0a unaffected:
+`context production`, `siteName printcalculator2-staging`, `flagPresent true`,
+`contextAllowed true`, deploy `6aba9057…` of `95c1c43`. **Probes 2a–5e not run:**
+they need an owner-t1 (and for 2c/5c/5e an owner-t2) sign-in in a browser, which
+this session does not perform. The reset removed the old device fixtures, so
+2a (mint) and 3a (redeem) re-create them.
+
+**Obsolete after R2:** `supabase/rehearsals/release2_04_rehearsal.sql` and
+`release2_05_rehearsal.sql` open with `create function` / expect the
+pre-04 42702 on the LIVE function; both are superseded by
+`release2_reconciliation_proofs.sql` for any re-run.
 
 **R3 — proofs-only rehearsal on the applied objects** (`begin` + the proofs
 file + `rollback`): A1–A3 and B1–B13 again, now against persistent objects
