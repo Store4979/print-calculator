@@ -37,6 +37,18 @@ export const VALID_CONTEXTS = Object.freeze(["production", "deploy-preview", "br
 /** Path inside the repo AND inside a function bundle (included_files keeps it). */
 export const CONTEXT_FILE = "netlify/lib/deploy-context.json";
 
+/**
+ * THE Release 2 flag predicate — condition 1 of release2Allowed() in
+ * ./release2.js, which imports it from here: the value of RELEASE2_ENABLED,
+ * trimmed, is exactly "true". The diagnostic route reports the same call as
+ * `flagEnabled`, so the gate and the route evaluate one definition
+ * (scripts/tests/release2-deploy-context.test.js DC-24 checks both agree on a
+ * table of values). It returns a boolean; the value never leaves this function.
+ */
+export function release2FlagEnabled(env = process.env) {
+  return String(env.RELEASE2_ENABLED || "").trim() === "true";
+}
+
 /** Every key the writer emits. A file missing any of them is malformed. */
 export const REQUIRED_KEYS = Object.freeze([
   "context", "siteId", "siteName", "deployId", "commitRef", "builtAt",

@@ -18,19 +18,23 @@
 //  - it does not report the Release 2 gate's overall verdict. Computing that
 //    means reading SUPABASE_URL, which this route is forbidden to touch. It
 //    reports the context condition only, and says so.
-//  - it reports RELEASE2_ENABLED as a BOOLEAN presence, never its value.
+//  - it reports RELEASE2_ENABLED as two BOOLEANS, never its value:
+//    `flagPresent` (the platform put a non-empty value in this runtime —
+//    scoping evidence) and `flagEnabled` (the gate's condition 1 holds, via
+//    release2FlagEnabled(), the one predicate release2Allowed() also calls).
 //
-// IT IS A PROBING AID, STATED PLAINLY: `flagPresent` tells an anonymous caller
-// which deployments carry the flag, and the metadata names the site and commit.
-// None of it is secret (the commit is already compiled into the client bundle
-// by src/lib/buildStamp.js), but it is information, and it is here because the
-// evidence for deleting a security control has to be observable. Whether this
-// route stays after G0 or becomes a 410 tombstone is a decision recorded for
-// the stage 0 production review, not one made here.
+// IT IS A PROBING AID, STATED PLAINLY: the two flag booleans tell an anonymous
+// caller which deployments carry and enable the flag, and the metadata names
+// the site and commit. None of it is secret (the commit is already compiled
+// into the client bundle by src/lib/buildStamp.js), but it is information, and
+// it is here because the evidence for deleting a security control has to be
+// observable. The stage 0 production review ruled to KEEP it after G0, GET-only
+// and non-secret (docs/security/release-2-stage-0-production-plan.md, F5).
 //
-// The ONLY import is the single shared reader; a second reader would be a
-// second policy (scripts/tests/release2-deploy-context.test.js asserts this).
-import { readDeployContext, allowedContexts, VALID_CONTEXTS } from "../lib/deploy-context.js";
+// The ONLY import is the single shared module; a second reader or a second
+// flag predicate would be a second policy
+// (scripts/tests/release2-deploy-context.test.js asserts this).
+import { readDeployContext, allowedContexts, release2FlagEnabled, VALID_CONTEXTS } from "../lib/deploy-context.js";
 
 const HEADERS = Object.freeze({
   "content-type": "application/json",
@@ -49,8 +53,11 @@ export const handler = async (event) => {
 
   // Presence, not value. `!== ""` rather than `=== "true"`: the question this
   // answers is "did the platform put the variable in this runtime", which is
-  // what evidence (d) needs; whether its value passes is the gate's business.
+  // what evidence (d) needs. Whether its value passes is `flagEnabled` below.
   const flagPresent = String(process.env.RELEASE2_ENABLED ?? "").trim() !== "";
+  // Enabled, by the gate's own predicate (plan D4, review B5): presence alone
+  // does not show that condition 1 holds.
+  const flagEnabled = release2FlagEnabled(process.env);
 
   return reply(200, {
     ok: dc.ok,
@@ -63,11 +70,12 @@ export const handler = async (event) => {
     allowedContexts: allowed,
     contextAllowed: Boolean(dc.ok && allowed.includes(dc.context)),
     flagPresent,
+    flagEnabled,
     // Deliberately does not name the project-URL variable: the test asserts
     // that token appears nowhere in this file, which is the strongest and
     // simplest form the assertion can take.
     note:
-      "Context condition only. This route does not evaluate the Release 2 gate, " +
-      "which also reads the project URL and the flag's value.",
+      "Context condition and flag predicate only. This route does not evaluate the " +
+      "whole Release 2 gate, which also reads the project URL.",
   });
 };

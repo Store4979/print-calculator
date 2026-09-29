@@ -194,6 +194,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     ledger row itself (plan §E1).
   - Netlify SECRET env values are write-only: nobody can read a key's type
     back from the dashboard.
+  - netlify/functions/deploy-context.js reports `flagPresent` (scoping) AND
+    `flagEnabled`. `flagEnabled` is release2FlagEnabled() from
+    netlify/lib/deploy-context.js, the SAME function release2Allowed() calls
+    for condition 1 (DC-24). Never add a second flag comparison anywhere.
   - send-print-job silently falls back to the compiled-in address when the
     service key fails. A delivered email proves nothing about the key; only
     the `recipientSource: "store:<slug>"` log line does.

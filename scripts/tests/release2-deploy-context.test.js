@@ -26,6 +26,7 @@ import {
   VALID_CONTEXTS,
   REQUIRED_KEYS,
   CONTEXT_FILE,
+  release2FlagEnabled,
 } from "../../netlify/lib/deploy-context.js";
 import { release2Allowed, gate, PRODUCTION_REF } from "../../netlify/lib/release2.js";
 
@@ -358,6 +359,7 @@ test("DC-20 the route: GET only, no-store, one reader, and no Supabase anything"
       assert.deepEqual(body.allowedContexts, ["production"]);
       assert.equal(body.contextAllowed, false, "a preview is reported as not allowed to run Release 2");
       assert.equal(body.flagPresent, true, "presence is reported");
+      assert.equal(body.flagEnabled, true, "the predicate is reported alongside presence");
       assert.doesNotMatch(res.body, /MARKER-SERVICE-ROLE-KEY/, "no env value reaches the body");
       assert.equal(typeof body.source, "string");
     } finally {
@@ -373,6 +375,43 @@ test("DC-20 the route: GET only, no-store, one reader, and no Supabase anything"
     assert.equal(body.ok, false);
     assert.equal(body.context, null);
     assert.match(body.reason, /deploy-context\.json/);
+  });
+});
+
+test("DC-24 flagEnabled: the route and release2Allowed() evaluate ONE predicate, and only a boolean leaves", async () => {
+  // One definition. The gate imports it and has no flag comparison of its own;
+  // the route calls it and has no second comparison either.
+  const GATE = stripComments(read("../../netlify/lib/release2.js"));
+  assert.match(GATE, /import\s*\{[^}]*\brelease2FlagEnabled\b[^}]*\}\s*from\s*"\.\/deploy-context\.js"/);
+  assert.match(GATE, /!release2FlagEnabled\(env\)/, "condition 1 is the shared predicate");
+  assert.doesNotMatch(GATE, /env\.RELEASE2_ENABLED/, "the gate reads the flag nowhere else");
+  const ROUTE = stripComments(read("../../netlify/functions/deploy-context.js"));
+  assert.match(ROUTE, /flagEnabled\s*=\s*release2FlagEnabled\(process\.env\)/);
+  assert.doesNotMatch(ROUTE, /===\s*"true"/, "no second predicate in the route");
+
+  const mod = await import("../../netlify/functions/deploy-context.js");
+  const VALUES = [undefined, "", "   ", "true", " true ", "true\n", "\ttrue", "TRUE", "True", "1", "yes", "on",
+                  "false", "true1", "t rue", "true-MARKER"];
+  await withRepoDeployContext(validContext({ context: "production" }), async () => {
+    const saved = process.env.RELEASE2_ENABLED;
+    try {
+      for (const v of VALUES) {
+        const label = JSON.stringify(v);
+        if (v === undefined) delete process.env.RELEASE2_ENABLED; else process.env.RELEASE2_ENABLED = v;
+        const expected = String(v ?? "").trim() === "true";
+        assert.equal(release2FlagEnabled({ RELEASE2_ENABLED: v }), expected, `predicate for ${label}`);
+        const gateOk = release2Allowed({ RELEASE2_ENABLED: v, SUPABASE_URL: STAGING_URL }, { deployContext: OK_CTX }).ok;
+        assert.equal(gateOk, expected, `release2Allowed (staging ref, production context) for ${label}`);
+        const res = await mod.handler({ httpMethod: "GET", headers: {} });
+        const body = JSON.parse(res.body);
+        assert.equal(body.flagEnabled, expected, `route flagEnabled for ${label}`);
+        assert.equal(typeof body.flagEnabled, "boolean");
+        assert.equal(body.flagPresent, String(v ?? "").trim() !== "", `route flagPresent for ${label} is kept, and separate`);
+        assert.doesNotMatch(res.body, /MARKER/, "the value never reaches the body");
+      }
+    } finally {
+      if (saved === undefined) delete process.env.RELEASE2_ENABLED; else process.env.RELEASE2_ENABLED = saved;
+    }
   });
 });
 

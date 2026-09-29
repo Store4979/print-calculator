@@ -42,7 +42,7 @@
 // and a staging-only refusal would be a lie. Until then it is load-bearing.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { readDeployContext, allowedContexts } from "./deploy-context.js";
+import { readDeployContext, allowedContexts, release2FlagEnabled } from "./deploy-context.js";
 
 export const PRODUCTION_REF = "gmxyisjjaxtpycsmmzef";
 
@@ -61,7 +61,6 @@ export function projectRefFromUrl(url) {
  * it, so on a real deployment the value always comes from the bundled file.
  */
 export function release2Allowed(env = process.env, { deployContext = null } = {}) {
-  const flag = String(env.RELEASE2_ENABLED || "").trim();
   const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL || "";
   const ref = projectRefFromUrl(url);
 
@@ -98,7 +97,8 @@ export function release2Allowed(env = process.env, { deployContext = null } = {}
         `RELEASE2_CONTEXTS (${contexts.join(", ")}).`,
     };
   }
-  if (flag !== "true") {
+  // Condition 1, the one predicate the deploy-context route also reports.
+  if (!release2FlagEnabled(env)) {
     return {
       ok: false,
       status: 404,
