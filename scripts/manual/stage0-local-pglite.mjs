@@ -25,10 +25,17 @@
 // P1 on production is what shows those.
 //
 // PGlite is NOT a dependency of this repository (CLAUDE.md: two
-// devDependencies and no more). Install it outside the repo and point at it:
-//   npm install --prefix <scratch dir> @electric-sql/pglite@0.3
+// devDependencies and no more). Install it outside the repo, at the version
+// the reviewed runs used, and point at it:
+//   npm install --prefix <scratch dir> @electric-sql/pglite@0.4.6
 //   PGLITE_DIR=<scratch dir>/node_modules/@electric-sql/pglite node scripts/manual/stage0-local-pglite.mjs [rev]
-import { execFileSync } from "node:child_process";
+// 0.4.6 reports PostgreSQL 17.5, and the review of d01b74a ran it at that
+// version. 0.3.16 also runs it; 0.3.14 does not, because it lacks
+// dist/contrib/pgcrypto.js.
+//
+// Inputs come from the manifest committed at [rev] (default HEAD): the
+// assembled texts and the 20 baseline migrations, both by blob id, as the
+// assembler reads them.
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
@@ -40,10 +47,11 @@ if (!process.env.PGLITE_DIR) {
 }
 const { PGlite } = await import(pathToFileURL(join(process.env.PGLITE_DIR, "dist", "index.js")).href);
 const { pgcrypto } = await import(pathToFileURL(join(process.env.PGLITE_DIR, "dist", "contrib", "pgcrypto.js")).href);
-const { assembleAll } = await import(pathToFileURL(join(REPO, "scripts", "manual", "assemble-stage0.mjs")).href);
-const git = (p) => execFileSync("git", ["show", `${REV}:${p}`], { cwd: REPO, maxBuffer: 1 << 26 }).toString("utf8");
+const { assembleAll, manifestAt, gitBlob } = await import(pathToFileURL(join(REPO, "scripts", "manual", "assemble-stage0.mjs")).href);
 process.chdir(REPO);
-const OUT = assembleAll(REV);
+const MANIFEST = manifestAt(REV, REPO);
+const blob = (id) => gitBlob(id, REPO).toString("utf8");
+const OUT = assembleAll(MANIFEST, { cwd: REPO });
 
 const SHIM = `
 create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
@@ -81,15 +89,13 @@ async function freshDb({ staging = false } = {}) {
   await db.exec(`insert into auth.users (instance_id, id, aud, role, email) values
     ('00000000-0000-0000-0000-000000000000', '11111111-1111-4111-8111-111111111111', 'authenticated', 'authenticated', 'owner@example.invalid'),
     ('00000000-0000-0000-0000-000000000000', '22222222-2222-4222-8222-222222222222', 'authenticated', 'authenticated', 'store4979@theupsstore.com');`);
-  const files = execFileSync("git", ["ls-tree", "--name-only", REV, "supabase/migrations/"], { cwd: REPO }).toString().split("\n")
-    .filter((p) => /\/\d{14}_.*\.sql$/.test(p) && !/\.rollback\.sql$/.test(p)).sort();
-  for (const p of files) {
-    const b = p.split("/").pop();
-    const sql = git(p);
+  for (const row of MANIFEST.baselineLedger) {
+    const b = `${row.version}_${row.name}.sql`;
+    const sql = blob(row.blob);
     try { await db.exec(sql); } catch (e) { throw new Error(`migration ${b}: ${e.message}`); }
     await db.query("insert into supabase_migrations.schema_migrations (version, name, statements) values ($1, $2, array[$3])",
-      [b.slice(0, 14), b.slice(15, -4), sql]);
-    if (b.startsWith("20260722003606")) {
+      [row.version, row.name, sql]);
+    if (row.version === "20260722003606") {
       // production data that predates phase_b_02: the store, its owner, staff.
       await db.exec(`insert into public.stores (slug, name) values ('store4979', 'The UPS Store #4979');
         insert into public.memberships (store_id, user_id, role) select id, '11111111-1111-4111-8111-111111111111', 'owner' from public.stores where slug = 'store4979';
@@ -189,7 +195,7 @@ catch (e) { expect("a wrong A2 expectation fails P1", /STAGE0 PROOF S2\.1 FAILED
 const db4 = await freshDb();
 for (const n of ["01", "02", "03", "04", "05"]) { r = await run(db4, `P2-${n}`); if (!r.ok) throw new Error(r.error); }
 for (const [f, re] of [["release2_05_revoke_enrollment", null], ["release2_04_staff_session_qualify_columns", /only inside operation RB-43/]]) {
-  const text = git(`supabase/migrations/pending/${f}.rollback.sql`);
+  const text = blob(MANIFEST.rollbacks.find((x) => f.startsWith(`release2_${x.n}_`)).blob);
   if (!re) { await db4.exec("begin"); await db4.exec(text); await db4.exec("rollback"); expect(`${f}.rollback.sql runs standalone inside begin…rollback`, true); continue; }
   try { await db4.exec("begin"); await db4.exec(text); expect(`${f}.rollback.sql outside RB-43 is refused`, false); }
   catch (e) { expect(`${f}.rollback.sql outside RB-43 is refused`, re.test(e.message), e.message.slice(0, 140)); }

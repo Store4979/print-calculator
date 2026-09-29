@@ -1,0 +1,249 @@
+// scripts/tests/stage0-manifest-check.mjs — THE checks behind
+// docs/security/stage0-production-manifest.json, as one function over a
+// repository directory (review of d01b74a, N3). stage0-manifest.test.js runs
+// it on this repository; stage0-manifest.lifecycle.test.js runs the SAME
+// function on a scratch clone walked through every repository state stage 0
+// produces: pending, after each apply, fully applied, committed rollback.
+//
+// Byte checking stays strict in every state. Each pinned input is identified
+// by its git blob id, and in every state the file must exist, at the path that
+// state puts it, with exactly that blob. What changes between states is only
+// WHERE a file must be, and that is derived from the manifest's recorded state
+// (migrations[].productionVersion, rollbackRecords), never guessed from the
+// directory.
+//
+// Returns { "M-1": [problems…], … }; an empty array means that check passed.
+import { execFileSync } from "node:child_process";
+import { readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import * as A from "../manual/assemble-stage0.mjs";
+
+export const MANIFEST_PATH = "docs/security/stage0-production-manifest.json";
+const md5 = (b) => createHash("md5").update(b).digest("hex");
+
+export function gitIn(repo) {
+  const out = (...args) => execFileSync("git", args, { cwd: repo, maxBuffer: 1 << 26 });
+  const txt = (...args) => out(...args).toString("utf8").trim();
+  const tryTxt = (...args) => { try { return txt(...args); } catch { return null; } };
+  // One `ls-tree -r -t` per revision, cached: path → object id (blobs and trees).
+  const trees = new Map();
+  const treeOf = (rev) => {
+    if (!trees.has(rev)) {
+      const m = new Map();
+      const raw = tryTxt("ls-tree", "-r", "-t", "--full-tree", rev) || "";
+      for (const line of raw.split("\n")) {
+        const t = line.indexOf("\t");
+        if (t < 0) continue;
+        const [, type, id] = line.slice(0, t).split(" ");
+        m.set(line.slice(t + 1), { type, id });
+      }
+      trees.set(rev, m);
+    }
+    return trees.get(rev);
+  };
+  return {
+    out, txt, tryTxt,
+    hasCommit: (rev) => { try { out("cat-file", "-e", `${rev}^{commit}`); return true; } catch { return false; } },
+    shallow: () => txt("rev-parse", "--is-shallow-repository") === "true",
+    lastChange: (p) => txt("log", "-1", "--format=%H", "--", p),
+    objAt: (rev, p) => treeOf(rev).get(p)?.id ?? null,
+    blob: (id) => out("cat-file", "blob", id),
+    lsTree: (rev, dir) => [...treeOf(rev)].filter(([p, o]) => o.type === "blob" && p.startsWith(dir + "/")).map(([p]) => p),
+  };
+}
+
+// ── where each file must be in the recorded state ────────────────────────────
+const MIG = "supabase/migrations";
+export const forwardPath = (m) => (m.productionVersion ? `${MIG}/${m.productionVersion}_${m.name}.sql` : m.pendingPath);
+export const companionPath = (m, r) => (m.productionVersion ? `${MIG}/${m.productionVersion}_${m.name}.rollback.sql` : r.pendingPath);
+export const recordPath = (m, rec) => `${MIG}/${rec.version}_${m.name}_rollback.sql`;
+
+/** Every pinned file with the path the recorded state puts it at. */
+export function pinnedFiles(M) {
+  const files = [];
+  for (const m of M.migrations) files.push({ label: m.name, entry: m, path: forwardPath(m), frozenPath: m.pendingPath });
+  for (const r of M.rollbacks) {
+    const m = M.migrations.find((x) => x.n === r.n);
+    files.push({ label: `${m.name}.rollback.sql`, entry: r, path: companionPath(m, r), frozenPath: r.pendingPath });
+  }
+  for (const rec of M.rollbackRecords) {
+    const m = M.migrations.find((x) => x.n === rec.n);
+    const r = M.rollbacks.find((x) => x.n === rec.n);
+    files.push({ label: `applied rollback ${m.name} @${rec.version}`, entry: { ...r, pinnedAt: null }, path: recordPath(m, rec), frozenPath: null });
+  }
+  files.push({ label: "proofs", entry: M.proofs, path: M.proofs.path, frozenPath: M.proofs.path });
+  files.push({ label: "assembler", entry: M.assembler, path: M.assembler.path, frozenPath: M.assembler.path });
+  return files;
+}
+
+export function checkManifest(repo, M) {
+  const g = gitIn(repo);
+  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [] };
+  const say = (k, s) => P[k].push(s);
+  if (g.tryTxt("rev-parse", "--is-inside-work-tree") !== "true") { say("M-0", `${repo} is not a git checkout`); return P; }
+  const manifestCommit = g.lastChange(MANIFEST_PATH);
+  if (!manifestCommit) say("M-0", `${MANIFEST_PATH} has no commit`);
+  const resolve = (pin) => (pin === "manifest-commit" ? manifestCommit : pin);
+  const files = pinnedFiles(M);
+
+  // M-1 the blob at the state's path, at HEAD: id, md5, bytes, no CR.
+  for (const f of files) {
+    const id = g.objAt("HEAD", f.path);
+    if (id !== f.entry.blob) { say("M-1", `${f.label}: HEAD:${f.path} is ${id ?? "absent"}, pinned ${f.entry.blob}`); continue; }
+    const b = g.blob(id);
+    if (md5(b) !== f.entry.md5) say("M-1", `${f.label}: md5 ${md5(b)} != ${f.entry.md5}`);
+    if (b.length !== f.entry.bytes) say("M-1", `${f.label}: ${b.length} bytes != ${f.entry.bytes}`);
+    if (b.includes(0x0d)) say("M-1", `${f.label}: the blob holds a CR`);
+  }
+
+  // M-2 no uncommitted edit (line endings aside).
+  for (const f of files) {
+    const p = join(repo, f.path);
+    if (!existsSync(p)) { say("M-2", `${f.label}: ${f.path} is missing from the working tree`); continue; }
+    const wt = Buffer.from(readFileSync(p).toString("utf8").replace(/\r\n/g, "\n"), "utf8");
+    if (md5(wt) !== f.entry.md5) say("M-2", `${f.label}: the working tree differs from the pinned bytes beyond line endings`);
+  }
+
+  // M-3 each pin resolves: a SHA holds the blob at its frozen path; "manifest-commit"
+  // (a file changed in the same commit as the manifest, which cannot name its
+  // own SHA) resolves to the commit that last changed the manifest, which must
+  // hold the blob at the state's path. A record-only manifest update keeps
+  // that true, because it changes the manifest and not the file.
+  for (const f of files) {
+    const pin = f.entry.pinnedAt;
+    if (pin === null) continue; // an applied rollback record: its bytes are the companion's (M-1)
+    if (pin !== "manifest-commit" && !/^[0-9a-f]{40}$/.test(pin)) { say("M-3", `${f.label}: pinnedAt ${JSON.stringify(pin)} is neither a full SHA nor "manifest-commit"`); continue; }
+    const commit = resolve(pin);
+    const at = pin === "manifest-commit" ? f.path : f.frozenPath;
+    if (!g.hasCommit(commit)) { if (!g.shallow()) say("M-3", `${f.label}: commit ${commit} is missing and the clone is not shallow`); continue; }
+    const id = g.objAt(commit, at);
+    if (id !== f.entry.blob) say("M-3", `${f.label}: ${commit.slice(0, 7)}:${at} is ${id ?? "absent"}, pinned ${f.entry.blob}`);
+  }
+
+  // M-4 md5(prosrc) re-derived from the committed forward and rollback bodies, by blob.
+  const BODY = /create\s+(?:or\s+replace\s+)?function\s+public\.(\w+)\s*\([\s\S]*?\bas\s+\$fn\$([\s\S]*?)\$fn\$/gi;
+  for (const { file, functions } of M.bodies) {
+    const rb = file.endsWith("rb");
+    const e = (rb ? M.rollbacks : M.migrations).find((x) => x.n === file.slice(0, 2));
+    let text;
+    try { text = g.blob(e.blob).toString("utf8"); } catch { say("M-4", `${file}: blob ${e.blob} unreadable`); continue; }
+    const got = {};
+    for (const m of text.matchAll(BODY)) got[m[1]] = createHash("md5").update(m[2], "utf8").digest("hex");
+    if (JSON.stringify(Object.entries(got).sort()) !== JSON.stringify(Object.entries(functions).sort())) say("M-4", `${file}: bodies ${JSON.stringify(got)} != ${JSON.stringify(functions)}`);
+  }
+  const produced = new Set(M.bodies.flatMap((b) => Object.values(b.functions)));
+  for (const [k, f] of Object.entries(M.functions)) if (!produced.has(f.prosrcMd5)) say("M-4", `${k}: ${f.prosrcMd5} is derived from no committed body`);
+
+  // M-5 the assembler's constants are the manifest's.
+  const same = (a, b, what) => { if (JSON.stringify(a) !== JSON.stringify(b)) say("M-5", `${what} differ`); };
+  same(A.MIGRATIONS.map((x) => [x.n, x.name, x.md5, x.bytes]), M.migrations.map((x) => [x.n, x.name, x.md5, x.bytes]), "migrations");
+  same(Object.fromEntries(Object.entries(A.FUNCTIONS).map(([k, [s, h, acl]]) => [k, { signature: s, prosrcMd5: h, execute: acl.split(",") }])), M.functions, "functions");
+  same(A.STATE_AFTER, M.stateAfter, "stateAfter");
+  same(A.TABLES, M.tables.names, "tables");
+  same(A.ROLLBACK_OPS, M.rollbackOperations, "rollbackOperations");
+  same([A.PRODUCTION_REF, A.STAGING_SEED_STORE, A.PROBE_SLUG], [M.productionRef, M.identity.stagingSeedStore, M.identity.probeSlug], "identity markers");
+  for (const m of M.migrations) if (m.pendingPath !== A.migrationPath(m)) say("M-5", `${m.name}: frozen path ${m.pendingPath}`);
+
+  // M-6 every output re-assembled from the frozen inputs has its pinned md5.
+  let out = null;
+  try { out = A.assembleAll(M, { cwd: repo }); } catch (e) { say("M-6", `assembly failed: ${e.message}`); }
+  if (out) {
+    const keys = Object.keys(out).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(Object.keys(M.outputs).sort())) say("M-6", `outputs ${keys} != pinned ${Object.keys(M.outputs).sort()}`);
+    for (const [k, v] of Object.entries(out)) {
+      if (!M.outputs[k]) continue;
+      if (A.md5(v) !== M.outputs[k].md5) say("M-6", `${k}: md5 ${A.md5(v)} != ${M.outputs[k].md5}`);
+      if (Buffer.byteLength(v) !== M.outputs[k].bytes) say("M-6", `${k}: bytes`);
+    }
+    for (const m of M.migrations) {
+      const w = out[`P2-${m.n}`] || "";
+      if (!w.includes(`$stage0_file$${g.blob(m.blob).toString("utf8")}$stage0_file$`)) say("M-6", `P2-${m.n} does not embed the pinned blob verbatim`);
+      if (!w.includes(`if md5(f) <> '${m.md5}' or octet_length(f) <> ${m.bytes} then`)) say("M-6", `P2-${m.n} lacks the md5/bytes gate before EXECUTE`);
+      if (!/array\[f\]\);/.test(w)) say("M-6", `P2-${m.n} does not write statements[1] from the checked literal`);
+    }
+    if (!/^begin isolation level repeatable read;$/m.test(out.P1 || "") || !/\nrollback;\n$/.test(out.P1 || "") || /^commit;$/m.test(out.P1 || "")) say("M-6", "P1 must begin repeatable read, end in ROLLBACK and never commit");
+    // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.
+    const probe = out["SIZE-PROBE"] || "";
+    if (!(Buffer.byteLength(probe) > Buffer.byteLength(out.P1)) || Buffer.byteLength(probe) - Buffer.byteLength(out.P1) !== M.sizeProbe.exceedsP1By) say("M-6b", "SIZE-PROBE size");
+    if (!probe.startsWith(A.SIZE_PROBE_HEAD) || !probe.endsWith(A.SIZE_PROBE_TAIL)) say("M-6b", "SIZE-PROBE shape");
+    else {
+      const literal = probe.slice(A.SIZE_PROBE_HEAD.length, probe.length - A.SIZE_PROBE_TAIL.length);
+      if (!A.SIZE_PROBE_LINE.repeat(Math.ceil(literal.length / A.SIZE_PROBE_LINE.length)).startsWith(literal) || literal.includes("$probe$")) say("M-6b", "SIZE-PROBE literal is not filler only");
+      const outside = (A.SIZE_PROBE_HEAD + A.SIZE_PROBE_TAIL).replace(/^--.*$/gm, "");
+      if ((outside.match(/;/g) || []).length !== 1 || /\b(insert|update|delete|create|drop|alter|grant|revoke|truncate|begin|commit|call|do)\b/i.test(outside)) say("M-6b", "SIZE-PROBE is not one read-only statement");
+      if (JSON.stringify({ probe_bytes: Buffer.byteLength(literal), probe_md5: A.md5(literal) }) !== JSON.stringify(M.sizeProbe.expect)) say("M-6b", "SIZE-PROBE expected answer");
+    }
+  }
+
+  // M-7 A3: the pinned commit (or the manifest's own commit) holds the pinned
+  // trees and blobs; so does HEAD while enforced.
+  const revs = [resolve(M.a3.commit)];
+  if (M.a3.enforceAtHead) revs.push("HEAD");
+  for (const rev of revs) {
+    if (rev !== "HEAD" && !g.hasCommit(rev)) { if (!g.shallow()) say("M-7", `A3 commit ${rev} is missing and the clone is not shallow`); continue; }
+    for (const [p, id] of [...Object.entries(M.a3.trees), ...Object.entries(M.a3.blobs)]) {
+      const got = g.objAt(rev, p);
+      if (got !== id) say("M-7", `A3 drift at ${rev === "HEAD" ? "HEAD" : rev.slice(0, 7)}: ${p} is ${got}, pinned ${id} — re-pin in the manifest (a reviewed change) or revert`);
+    }
+  }
+  // M-7b the build-input binding: every script the build command runs is pinned,
+  // and the tracked .env holds exactly the two public values.
+  const toml = g.tryTxt("show", "HEAD:netlify.toml") || "";
+  const cmd = (/^\s*command\s*=\s*"([^"]*)"/m.exec(toml) || [])[1] || "";
+  const ran = [...cmd.matchAll(/node\s+(\S+\.m?js)/g)].map((x) => x[1]);
+  if (!ran.length) say("M-7b", "no build command scripts found in netlify.toml");
+  for (const s of ran) if (!(s in M.a3.blobs)) say("M-7b", `the build runs ${s}, which A3 does not pin`);
+  for (const p of ["netlify.toml", "package.json", ".npmrc", ".nvmrc", ".env", "vite.config.js", "postcss.config.js", "tailwind.config.js", "index.html", "upload.html"]) {
+    if (!(p in M.a3.blobs)) say("M-7b", `build input ${p} is not pinned`);
+  }
+  for (const t of ["netlify", "src", "public"]) if (!(t in M.a3.trees)) say("M-7b", `tree ${t} is not pinned`);
+  const env = (g.tryTxt("show", "HEAD:.env") || "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  const keys = env.map((l) => l.split("=")[0]);
+  if (JSON.stringify(keys) !== JSON.stringify(["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"])) say("M-7b", `.env keys ${JSON.stringify(keys)}: only VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY may be tracked`);
+  const val = (k) => (env.find((l) => l.startsWith(k + "=")) || "").slice(k.length + 1);
+  if (val("VITE_SUPABASE_URL") !== `https://${M.productionRef}.supabase.co`) say("M-7b", ".env URL is not the production project");
+  if (!/^sb_publishable_[A-Za-z0-9_-]+$/.test(val("VITE_SUPABASE_ANON_KEY"))) say("M-7b", ".env key is not a publishable key");
+
+  // M-8 the repository state the manifest records.
+  const L = M.baselineLedger || [];
+  if (L.length !== M.ledgerBaseline.rows || L.length !== 20) say("M-8", `baseline ledger has ${L.length} rows; the manifest says ${M.ledgerBaseline.rows}`);
+  if (L.length && L[L.length - 1].version !== M.ledgerBaseline.head) say("M-8", "baseline head");
+  const mk = L.find((r) => r.version === M.ledgerBaseline.marker.version);
+  if (!mk || mk.name !== M.ledgerBaseline.marker.name || mk.md5 !== M.ledgerBaseline.marker.md5) say("M-8", "the production ledger marker is not in the baseline");
+  for (const r of L) {
+    const p = `${MIG}/${r.version}_${r.name}.sql`;
+    if (g.objAt("HEAD", p) !== r.blob) say("M-8", `baseline ${p} is not the pinned blob at HEAD`);
+  }
+  // forwards apply in order, each after the one before and after the baseline
+  let prev = M.ledgerBaseline.head, gap = false;
+  for (const m of M.migrations) {
+    if (!m.productionVersion) { gap = true; continue; }
+    if (gap) say("M-8", `${m.name} is recorded applied after an unapplied predecessor`);
+    if (!/^\d{14}$/.test(m.productionVersion) || !(m.productionVersion > prev)) say("M-8", `${m.name}: version ${m.productionVersion} is not after ${prev}`);
+    prev = m.productionVersion;
+  }
+  // rollback records follow the RB order over what was applied, each after the last forward
+  const applied = M.migrations.filter((m) => m.productionVersion).map((m) => m.n);
+  const rbOrder = M.rollbackOperations.flatMap((o) => o.files).filter((n) => applied.includes(n));
+  M.rollbackRecords.forEach((rec, i) => {
+    if (rec.n !== rbOrder[i]) say("M-8", `rollback record ${i + 1} is ${rec.n}; the RB order over the applied set expects ${rbOrder[i]}`);
+    if (!/^\d{14}$/.test(rec.version) || !(rec.version > prev)) say("M-8", `rollback record ${rec.n}: version ${rec.version} is not after ${prev}`);
+    prev = rec.version;
+  });
+  // exactly the top-level migration files this state implies — no more, no fewer
+  const top = g.lsTree("HEAD", MIG).filter((p) => !p.includes("/pending/") && /^supabase\/migrations\/\d{14}_.*\.sql$/.test(p) && !/\.rollback\.sql$/.test(p));
+  const expect = new Set([
+    ...L.map((r) => `${MIG}/${r.version}_${r.name}.sql`),
+    ...M.migrations.filter((m) => m.productionVersion).map((m) => forwardPath(m)),
+    ...M.rollbackRecords.map((rec) => recordPath(M.migrations.find((x) => x.n === rec.n), rec)),
+  ]);
+  for (const p of top) if (!expect.has(p)) say("M-8", `unexpected applied migration file ${p}`);
+  for (const p of expect) if (!top.includes(p)) say("M-8", `missing applied migration file ${p}`);
+  // every release2 file sits exactly where the state puts it
+  const r2 = g.lsTree("HEAD", MIG).filter((p) => /release2_0[1-5]_/.test(p));
+  const expectR2 = new Set(files.filter((f) => /release2_0[1-5]_/.test(f.path)).map((f) => f.path));
+  for (const p of r2) if (!expectR2.has(p)) say("M-8", `release2 file ${p} is not where the recorded state puts it`);
+  for (const p of expectR2) if (!r2.includes(p)) say("M-8", `release2 file ${p} is missing`);
+  return P;
+}

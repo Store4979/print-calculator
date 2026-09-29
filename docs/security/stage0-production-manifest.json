@@ -1,5 +1,5 @@
 {
-  "schema": "stage0-production-manifest/1",
+  "schema": "stage0-production-manifest/2",
   "authority": "docs/security/release-2-stage-0-production-plan.md defers to this file. scripts/tests/stage0-manifest.test.js checks it against git blob bytes. Every md5 is of the LF git blob, never a Windows working-tree copy. pinnedAt is a commit at which the path has the pinned blob; \"manifest-commit\" means the commit that last changed this manifest.",
   "productionRef": "gmxyisjjaxtpycsmmzef",
   "ledgerBaseline": {
@@ -11,6 +11,128 @@
       "md5": "b7a8e54c99432c5e0ddb60be4c46505f"
     }
   },
+  "baselineLedger": [
+    {
+      "version": "20260427173246",
+      "name": "create_print_jobs",
+      "blob": "4e0d2e206f55203f3de8c284b3a726e2c613ca4a",
+      "md5": "6e95fdfcc19ed4609dceb5cb7a1b70b4"
+    },
+    {
+      "version": "20260429150059",
+      "name": "commission_tracking_phase1",
+      "blob": "9d8045d0874e1e4ccd0cb2b13fd898c9c1726b52",
+      "md5": "32a4007b31ab9017d9a2295aeb1e1fad"
+    },
+    {
+      "version": "20260506182251",
+      "name": "add_file_urls_to_print_jobs",
+      "blob": "99c631082187fd5ac7541eb705e199f7db12587c",
+      "md5": "dd68267d571f0fa83e84bd98e34aaef0"
+    },
+    {
+      "version": "20260506182304",
+      "name": "create_job_files_bucket",
+      "blob": "77348d0a810aa8da535424c0471bbb330892fed1",
+      "md5": "09778bf9538ac1006c2de22d071351fd"
+    },
+    {
+      "version": "20260506182318",
+      "name": "add_job_files_storage_policies",
+      "blob": "95c2e6b47a70c942e5ec96b606f4e116f588cd7c",
+      "md5": "98eb0e6feefae1565c520481efebcaab"
+    },
+    {
+      "version": "20260629173251",
+      "name": "customer_self_serve_uploads_pending_jobs",
+      "blob": "0fb76bee7dd6d314188e3786bccf5f4286475884",
+      "md5": "e1831d7d341311a6a9e8411f0c275218"
+    },
+    {
+      "version": "20260722003606",
+      "name": "phase_a_store_config_tables",
+      "blob": "62546310fb2f6b416c868f9e5f27c608f4e155d2",
+      "md5": "3467ab4b647fa6d26d1c7d488d04d116"
+    },
+    {
+      "version": "20260728181654",
+      "name": "phase_b_01_org_tenant_columns",
+      "blob": "49d9bdfb9a3a55e2dc0793629a8082ea0cd2df3c",
+      "md5": "226c89fb10f237ce5c57872d3c787238"
+    },
+    {
+      "version": "20260728181739",
+      "name": "phase_b_02_backfill_ups_org",
+      "blob": "053cb1eb3b3cf1181eb1f1e7c8de846631b6a951",
+      "md5": "30c30dcad55e0446f5ccd97b96e1aba5"
+    },
+    {
+      "version": "20260729001046",
+      "name": "phase_b_03a_verify_employee_pin_rpc",
+      "blob": "84c0a7648fbc4428b05bb3335375670c9cf3d628",
+      "md5": "c4d02a90c77f26fd22703f32ecc89996"
+    },
+    {
+      "version": "20260729010209",
+      "name": "phase_b_03c_rotate_bootstrap_secret",
+      "blob": "9aa4f67170f4d411e27c5454d135c741eb2bd77d",
+      "md5": "6d254552ca95ea4ca96f366e05ad6351"
+    },
+    {
+      "version": "20260729171101",
+      "name": "phase_b_03b_employees_lockdown",
+      "blob": "6eb93a51cf8771b827155f60322bc393cc0f23a6",
+      "md5": "c07c369aa93bdbc71827a9258245d546"
+    },
+    {
+      "version": "20260831161900",
+      "name": "revoke_anon_pin_verification",
+      "blob": "53cc738db1811f9012bd8728eebb2a54b0969ba8",
+      "md5": "bca0a8920296f73a28651560e8f1f75b"
+    },
+    {
+      "version": "20260908180945",
+      "name": "phase_d1a_orders_compat",
+      "blob": "e3ff5bbe7fc0cba887705034e88f06b2edff6312",
+      "md5": "f2dabab07458a179f113a5216069481c"
+    },
+    {
+      "version": "20260909160307",
+      "name": "restore_pin_rpc_execute_for_app_roles",
+      "blob": "ff3e0bbac720404536f4ea9de7fa53a035d26ca0",
+      "md5": "032c06a8bd6a6e561a1492f7edce40c0"
+    },
+    {
+      "version": "20260909160312",
+      "name": "store_mailbox_manager_membership",
+      "blob": "a9c97b20fb30bf2dc0d6e8f2aaf27fd2d855feb2",
+      "md5": "a7fe4fc45038bdb34c12cb794ed42c2e"
+    },
+    {
+      "version": "20260909164923",
+      "name": "phase_d1b_decommission",
+      "blob": "38fe807751cd72dcfafc03ca8a288c223a2e9da7",
+      "md5": "bf0de438ff5b570169a63dccc654df46"
+    },
+    {
+      "version": "20260909224658",
+      "name": "phase_e_01_employee_roles",
+      "blob": "692da115ad53dcf4c311e7479622d8c85e3fe87f",
+      "md5": "068d409a57f632246892ee8d6e3f370f"
+    },
+    {
+      "version": "20260909225652",
+      "name": "phase_e_02_cost_model",
+      "blob": "7d641f050fce3fcf1f396d7b65dfb7fdd652a16f",
+      "md5": "83c1094e151208d3a28b54deba4e2f4a"
+    },
+    {
+      "version": "20260909232836",
+      "name": "phase_e_03_order_margin_snapshot",
+      "blob": "0119e1a2929d07ba8224f559298e42818d2177c4",
+      "md5": "b7a8e54c99432c5e0ddb60be4c46505f"
+    }
+  ],
   "identity": {
     "stagingSeedStore": "5ee41000-0000-4000-8000-0000000000a1",
     "productionStoreSlug": "store4979",
@@ -21,54 +143,111 @@
     {
       "n": "01",
       "name": "release2_01_identity_schema",
-      "path": "supabase/migrations/pending/release2_01_identity_schema.sql",
+      "pendingPath": "supabase/migrations/pending/release2_01_identity_schema.sql",
+      "productionVersion": null,
       "blob": "3ea8abb32838a74129e52cfed5abc7b0a9aed33b",
       "md5": "e97a5fd7c346a3b0a39bc6180dcfde46",
       "bytes": 13720,
-      "pinnedAt": "7f898762a958fdcbf2e6036033ea363c45f903fe",
-      "productionVersion": null
+      "pinnedAt": "7f898762a958fdcbf2e6036033ea363c45f903fe"
     },
     {
       "n": "02",
       "name": "release2_02_auth_attempts_fn",
-      "path": "supabase/migrations/pending/release2_02_auth_attempts_fn.sql",
+      "pendingPath": "supabase/migrations/pending/release2_02_auth_attempts_fn.sql",
+      "productionVersion": null,
       "blob": "f8d9a9975a54cd77ad6d504e8590558cffb4cc75",
       "md5": "734e0db7312b79081a769ca366c5b99a",
       "bytes": 6406,
-      "pinnedAt": "89de03e59b66df0ae2097c11ae746bb1146fad83",
-      "productionVersion": null
+      "pinnedAt": "89de03e59b66df0ae2097c11ae746bb1146fad83"
     },
     {
       "n": "03",
       "name": "release2_03_bind_and_atomicity",
-      "path": "supabase/migrations/pending/release2_03_bind_and_atomicity.sql",
+      "pendingPath": "supabase/migrations/pending/release2_03_bind_and_atomicity.sql",
+      "productionVersion": null,
       "blob": "3666b53990bf98e5de80a690f343f6bc0006d095",
       "md5": "302e05c6a4939eb8021234cbc7325473",
       "bytes": 13062,
-      "pinnedAt": "89de03e59b66df0ae2097c11ae746bb1146fad83",
-      "productionVersion": null
+      "pinnedAt": "89de03e59b66df0ae2097c11ae746bb1146fad83"
     },
     {
       "n": "04",
       "name": "release2_04_staff_session_qualify_columns",
-      "path": "supabase/migrations/pending/release2_04_staff_session_qualify_columns.sql",
+      "pendingPath": "supabase/migrations/pending/release2_04_staff_session_qualify_columns.sql",
+      "productionVersion": null,
       "blob": "df1a5da05b2ef91b6dde5b2397142e62ef0ef4da",
       "md5": "2dcb03eb36e47c8404a29500151e8394",
       "bytes": 5858,
-      "pinnedAt": "89de03e59b66df0ae2097c11ae746bb1146fad83",
-      "productionVersion": null
+      "pinnedAt": "89de03e59b66df0ae2097c11ae746bb1146fad83"
     },
     {
       "n": "05",
       "name": "release2_05_revoke_enrollment",
-      "path": "supabase/migrations/pending/release2_05_revoke_enrollment.sql",
+      "pendingPath": "supabase/migrations/pending/release2_05_revoke_enrollment.sql",
+      "productionVersion": null,
       "blob": "ca2e83eab03c2edcb1eb24b0c3c4773c496edafc",
       "md5": "22b5010b9a3b20f5a3aaba4d212fd46c",
       "bytes": 5622,
-      "pinnedAt": "4289e110c2d69ba28e18cba7d5d528d0231ae42a",
-      "productionVersion": null
+      "pinnedAt": "4289e110c2d69ba28e18cba7d5d528d0231ae42a"
     }
   ],
+  "rollbacks": [
+    {
+      "n": "01",
+      "pendingPath": "supabase/migrations/pending/release2_01_identity_schema.rollback.sql",
+      "blob": "88fe6677d221404efe455e70f67ac90e50c95f0b",
+      "md5": "9c81c9ba7fb4a0942d3d2dd5be68eb7a",
+      "bytes": 11459,
+      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "02",
+      "pendingPath": "supabase/migrations/pending/release2_02_auth_attempts_fn.rollback.sql",
+      "blob": "336b39647a8082df102f486c3d7cfaac08ee3a75",
+      "md5": "d53dd43170b7cd2a266c4b7c88ed8326",
+      "bytes": 9214,
+      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "03",
+      "pendingPath": "supabase/migrations/pending/release2_03_bind_and_atomicity.rollback.sql",
+      "blob": "9011d32bb982b9474d174f03f31da00a0e747b83",
+      "md5": "c2a8e5dd9b6029a2f7ccbf3d73b0bc68",
+      "bytes": 14624,
+      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "04",
+      "pendingPath": "supabase/migrations/pending/release2_04_staff_session_qualify_columns.rollback.sql",
+      "blob": "4051924fb75dce04017359aa2e72728decec03f3",
+      "md5": "072fd70b8ef8fbdc654044f0a233d015",
+      "bytes": 13324,
+      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    },
+    {
+      "n": "05",
+      "pendingPath": "supabase/migrations/pending/release2_05_revoke_enrollment.rollback.sql",
+      "blob": "8c91dff412a40c69622d758f481e7ec0c80b4308",
+      "md5": "9aa5d60657103f4d1925ebf20f2fcb3c",
+      "bytes": 10316,
+      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+    }
+  ],
+  "rollbackRecords": [],
+  "proofs": {
+    "path": "supabase/rehearsals/release2_stage0_production_proofs.sql",
+    "blob": "8043ab71f961b48c2a8f0dd1de74897f269d080e",
+    "md5": "92d623df7b257d068ee0d7bb9c402ec2",
+    "bytes": 37551,
+    "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
+  },
+  "assembler": {
+    "path": "scripts/manual/assemble-stage0.mjs",
+    "blob": "e513f020298887e3cad9bdbba2e8dab0327e6654",
+    "md5": "668a50cee517e45d054d6b7041fc1383",
+    "bytes": 25322,
+    "pinnedAt": "manifest-commit"
+  },
   "functions": {
     "redeem": {
       "signature": "redeem_enrollment_ticket(bytea, bytea, bytea, text)",
@@ -261,48 +440,6 @@
     "name": "employees_id_store_uniq",
     "definition": "UNIQUE (id, store_id)"
   },
-  "rollbacks": [
-    {
-      "n": "01",
-      "path": "supabase/migrations/pending/release2_01_identity_schema.rollback.sql",
-      "blob": "88fe6677d221404efe455e70f67ac90e50c95f0b",
-      "md5": "9c81c9ba7fb4a0942d3d2dd5be68eb7a",
-      "bytes": 11459,
-      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
-    },
-    {
-      "n": "02",
-      "path": "supabase/migrations/pending/release2_02_auth_attempts_fn.rollback.sql",
-      "blob": "336b39647a8082df102f486c3d7cfaac08ee3a75",
-      "md5": "d53dd43170b7cd2a266c4b7c88ed8326",
-      "bytes": 9214,
-      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
-    },
-    {
-      "n": "03",
-      "path": "supabase/migrations/pending/release2_03_bind_and_atomicity.rollback.sql",
-      "blob": "9011d32bb982b9474d174f03f31da00a0e747b83",
-      "md5": "c2a8e5dd9b6029a2f7ccbf3d73b0bc68",
-      "bytes": 14624,
-      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
-    },
-    {
-      "n": "04",
-      "path": "supabase/migrations/pending/release2_04_staff_session_qualify_columns.rollback.sql",
-      "blob": "4051924fb75dce04017359aa2e72728decec03f3",
-      "md5": "072fd70b8ef8fbdc654044f0a233d015",
-      "bytes": 13324,
-      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
-    },
-    {
-      "n": "05",
-      "path": "supabase/migrations/pending/release2_05_revoke_enrollment.rollback.sql",
-      "blob": "8c91dff412a40c69622d758f481e7ec0c80b4308",
-      "md5": "9aa5d60657103f4d1925ebf20f2fcb3c",
-      "bytes": 10316,
-      "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
-    }
-  ],
   "rollbackOperations": [
     {
       "op": "RB-5",
@@ -331,20 +468,6 @@
       ]
     }
   ],
-  "proofs": {
-    "path": "supabase/rehearsals/release2_stage0_production_proofs.sql",
-    "blob": "8043ab71f961b48c2a8f0dd1de74897f269d080e",
-    "md5": "92d623df7b257d068ee0d7bb9c402ec2",
-    "bytes": 37551,
-    "pinnedAt": "5ee7ec4e4235c28fdda8d6159d5003f31a093d4c"
-  },
-  "assembler": {
-    "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "dd71472dd7f4a0e85aa3dae449ef1826afe90af6",
-    "md5": "ef78c66717138d53bf90530db376a4eb",
-    "bytes": 23585,
-    "pinnedAt": "manifest-commit"
-  },
   "outputs": {
     "P0": {
       "md5": "9f642e8ae29aa458593169c3cffea765",
@@ -404,7 +527,7 @@
     "exceedsP1By": 1024
   },
   "a3": {
-    "commit": "64730fe79f7a2f6ea2e70848726113d0c9094153",
+    "commit": "manifest-commit",
     "enforceAtHead": true,
     "note": "The production build of P4/P5 must reproduce these objects; each stop point compares git rev-parse <commit_ref>:<path>. While enforceAtHead is true, HEAD must match too: a change to production-bound code re-pins here, in review.",
     "trees": {
@@ -415,9 +538,15 @@
     "blobs": {
       "netlify.toml": "ea90c08da56e6a9c1515cfcdbd58ff48760a3b77",
       "package.json": "2ca11175d2458fe07c36ecf6f3c00c452ed0fb34",
+      ".npmrc": "214c29d1395919ce175f26d140526368127981ba",
+      ".nvmrc": "2bd5a0a98a36cc08ada88b804d3be047e6aa5b8a",
+      ".env": "34b50c4c363cfe1f3646fdf7871454c09410e7bd",
       "vite.config.js": "1957aef968f66361701eb66c955401bc988ccdbf",
+      "postcss.config.js": "2e7af2b7f1a6f391da1631d93968a9d487ba977d",
+      "tailwind.config.js": "5aa842c27d6756f3a261a5c529b907ce722ccf08",
       "index.html": "170a649ed43540f6c187dd37f04b78ad7cef9e5a",
       "upload.html": "6adc341d230d6d482d67171244439175f2faabaf",
+      "scripts/check-build-env.mjs": "3484b0394de4fd3f213d22e426dc5cb8f53245c8",
       "scripts/write-deploy-context.mjs": "6f29742d966a63533a65e77791196248de73222d",
       "scripts/inject-sw-manifest.mjs": "7b63b613eb336ab8966fc9aa8b782a8492af3f26",
       "scripts/tests/inventory-check.mjs": "099c6dd45e6b1eb093dc5234a16a1d99383d508f",

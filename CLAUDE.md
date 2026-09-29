@@ -208,8 +208,16 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     DROP of a Release 2 table only from an applied file byte-identical to one
     (scripts/tests/release2-inventory.rollback.test.js).
     scripts/manual/stage0-local-pglite.mjs runs all of it in a local PG 17
-    (PGlite is installed OUTSIDE the repo). It proves the SQL executes, not
-    how production behaves.
+    (PGlite 0.4.6, installed OUTSIDE the repo). It proves the SQL executes,
+    not how production behaves.
+  - The manifest pins stage-0 inputs by git BLOB ID. The assembler reads them
+    by blob, never by path or HEAD, so the P2 git-mv's change no output. The
+    checks are state-aware (productionVersion, rollbackRecords decide where
+    each file must be) and live in scripts/tests/stage0-manifest-check.mjs.
+    The lifecycle test replays pending → applies → rollback in a scratch
+    clone. Regenerate with scripts/manual/stage0-manifest-generate.mjs AFTER
+    staging the change (A3 pins come from the index); "manifest-commit" pins
+    resolve to the commit that last changed the manifest.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only

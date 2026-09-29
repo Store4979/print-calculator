@@ -4,12 +4,24 @@
 // (docs/security/release-2-stage-0-production-plan.md §E1–§E4, §A6).
 //
 // WHY ASSEMBLED, AND WHY PINNED: the reviewed bytes must be the executed bytes.
-// Every input is read from git (`git show <rev>:<path>`), never from the working
-// tree, so a Windows checkout's CRLF cannot change a byte. The output is
-// deterministic (no clock, no environment), and the md5 of each output is
-// pinned in docs/security/stage0-production-manifest.json;
-// scripts/tests/stage0-manifest.test.js re-assembles and compares. The
+// The md5 of each output is pinned in docs/security/stage0-production-manifest.json,
+// and scripts/tests/stage0-manifest.test.js re-assembles and compares. The
 // reconciliation assembler this replaces was unpinned (plan §G).
+//
+// INPUTS ARE FROZEN BY CONTENT (review of d01b74a, N3). Every input is read by
+// its git BLOB ID, taken from the manifest's `inputs` section: the five
+// migrations, their five rollback companions, the proofs file and the 20-row
+// production baseline ledger. It is never read by path, by HEAD or from the
+// working tree. So:
+//   - a Windows checkout's CRLF cannot change a byte;
+//   - stage 0's own repository moves (pending/ to <version>_<name>.sql at P2,
+//     rollback records appended after a rollback) change no output. A git mv
+//     keeps the blob id, and the baseline is the manifest's, not whatever the
+//     directory holds today;
+//   - a shallow clone still assembles: the blobs are reachable from HEAD
+//     wherever the files now live.
+// Each blob read is checked against the manifest's md5 and byte count before
+// it is used. The output is deterministic: no clock, no environment.
 //
 // WHAT THE WRAPPER DOES (plan §E1), per step, inside ONE transaction:
 //   set_config(…, true) for lock_timeout / statement_timeout /
@@ -21,13 +33,14 @@
 //   failure raises, and the transaction rolls back. Whether a step committed is
 //   decided by reading the ledger back, never by this script.
 //
-//   node scripts/manual/assemble-stage0.mjs --list          names + md5
-//   node scripts/manual/assemble-stage0.mjs P2-01           one text to stdout
-//   node scripts/manual/assemble-stage0.mjs --rev <rev> P1  from another commit
+//   node scripts/manual/assemble-stage0.mjs --list     names + md5 (manifest at HEAD)
+//   node scripts/manual/assemble-stage0.mjs P2-01      one text to stdout
+//   node scripts/manual/assemble-stage0.mjs --manifest <file> --list   another manifest
 //
 // It never connects to a database.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const md5 = (s) => createHash("md5").update(typeof s === "string" ? Buffer.from(s, "utf8") : s).digest("hex");
@@ -83,21 +96,36 @@ export const PRODUCTION_REF = "gmxyisjjaxtpycsmmzef";
 export const STAGING_SEED_STORE = "5ee41000-0000-4000-8000-0000000000a1";
 export const PROBE_SLUG = "r2-probe-nonexistent";
 
-export const git = (rev, path) => execFileSync("git", ["show", `${rev}:${path}`], { maxBuffer: 1 << 26 });
-const gitText = (rev, path) => git(rev, path).toString("utf8");
+export const git = (rev, path, cwd) => execFileSync("git", ["show", `${rev}:${path}`], { maxBuffer: 1 << 26, cwd });
+/** A blob's bytes by its id. */
+export const gitBlob = (id, cwd) => execFileSync("git", ["cat-file", "blob", id], { maxBuffer: 1 << 26, cwd });
+// Where the inputs lived when they were frozen (before any stage-0 move).
 export const migrationPath = (m) => `${PEND}${m.name}.sql`;
 export const rollbackPath = (m) => `${PEND}${m.name}.rollback.sql`;
 
-/** The production ledger: the committed top-level files, as (version, name, md5). */
-export function ledgerRows(rev) {
-  const names = execFileSync("git", ["ls-tree", "--name-only", rev, "supabase/migrations/"]).toString("utf8").split("\n");
-  const rows = [];
-  for (const p of names.sort()) {
-    const b = p.split("/").pop();
-    if (!/^\d{14}_.*\.sql$/.test(b) || /\.rollback\.sql$/.test(b)) continue;
-    rows.push({ version: b.slice(0, 14), name: b.slice(15, -4), md5: md5(git(rev, p)) });
-  }
-  return rows;
+/**
+ * The frozen inputs, read by blob id from the manifest and checked against its
+ * md5 and byte count. `readBlob(id)` defaults to `git cat-file blob` in `cwd`.
+ */
+export function sourceFromManifest(manifest, { cwd, readBlob = (id) => gitBlob(id, cwd) } = {}) {
+  const get = (entry, label) => {
+    const b = readBlob(entry.blob);
+    if (md5(b) !== entry.md5 || b.length !== entry.bytes) throw new Error(`${label}: blob ${entry.blob} differs from the manifest's md5/bytes`);
+    return b.toString("utf8");
+  };
+  const byN = (list, n) => { const e = list.find((x) => x.n === n); if (!e) throw new Error(`no manifest entry ${n}`); return e; };
+  const ledger = manifest.baselineLedger.map((r) => ({ version: r.version, name: r.name, md5: r.md5 }));
+  return {
+    migration: (m) => get(byN(manifest.migrations, m.n), m.name),
+    rollback: (m) => get(byN(manifest.rollbacks, m.n), `${m.name}.rollback.sql`),
+    proofs: () => get(manifest.proofs, PROOFS),
+    ledger: () => ledger,
+  };
+}
+
+/** The manifest as committed at `rev` (default HEAD). */
+export function manifestAt(rev = "HEAD", cwd) {
+  return JSON.parse(git(rev, "docs/security/stage0-production-manifest.json", cwd).toString("utf8"));
 }
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -214,8 +242,8 @@ function fileLiteral(text, label) {
   return `$stage0_file$${text}$stage0_file$`;
 }
 
-function forwardWrapper(rev, m, rows) {
-  const text = gitText(rev, migrationPath(m));
+function forwardWrapper(src, m, rows) {
+  const text = src.migration(m);
   if (md5(text) !== m.md5 || Buffer.byteLength(text) !== m.bytes) throw new Error(`${m.name}: git bytes differ from A1`);
   const tag = `stage0 P2-${m.n}`;
   const prev = String(Number(m.n) - 1).padStart(2, "0");
@@ -237,12 +265,12 @@ $stage0_wrap$;
 `;
 }
 
-function rollbackWrapper(rev, op, rows) {
+function rollbackWrapper(src, op, rows) {
   const tag = `stage0 ${op.op}`;
   const decl = [], body = [];
   op.files.forEach((n, i) => {
     const m = MIGRATIONS.find((x) => x.n === n);
-    const text = gitText(rev, rollbackPath(m));
+    const text = src.rollback(m);
     decl.push(`  f${i + 1} constant text := ${fileLiteral(text, rollbackPath(m))};`);
     body.push(`  if md5(f${i + 1}) <> ${q(md5(text))} or octet_length(f${i + 1}) <> ${Buffer.byteLength(text)} then
     raise exception '${tag}: the embedded bytes of ${m.name}.rollback.sql differ from the manifest' using errcode = 'P0001';
@@ -281,8 +309,8 @@ select set_config('transaction_timeout', ${q(txTimeout)}, true)
 }
 
 /** The proofs file split at its section markers, plus the catalog-rows query. */
-export function proofSections(rev) {
-  const text = gitText(rev, PROOFS);
+export function proofSections(src) {
+  const text = src.proofs();
   const parts = text.split(/^-- @@stage0-proofs section (\d):.*$/m);
   const sections = {};
   for (let i = 1; i < parts.length; i += 2) sections[parts[i]] = parts[i + 1];
@@ -363,13 +391,17 @@ export function sizeProbe(p1Bytes) {
   return { text: SIZE_PROBE_HEAD + filler + SIZE_PROBE_TAIL, literal: filler };
 }
 
-/** Every stage-0 SQL text, by name. Deterministic for a given rev. */
-export function assembleAll(rev = "HEAD") {
-  const rows = ledgerRows(rev);
-  if (rows.length !== 20) throw new Error(`expected 20 production ledger files at ${rev}, found ${rows.length}`);
-  const { sections, catalogRows } = proofSections(rev);
-  const W = Object.fromEntries(MIGRATIONS.map((m) => [m.n, forwardWrapper(rev, m, rows)]));
-  const RB = Object.fromEntries(ROLLBACK_OPS.map((op) => [op.op, rollbackWrapper(rev, op, rows)]));
+/**
+ * Every stage-0 SQL text, by name, from the manifest's frozen inputs.
+ * Deterministic: the same manifest inputs give the same bytes, wherever the
+ * files live in the repository at the time.
+ */
+export function assembleAll(manifest, opts = {}) {
+  const src = sourceFromManifest(manifest, opts);
+  const rows = src.ledger();
+  const { sections, catalogRows } = proofSections(src);
+  const W = Object.fromEntries(MIGRATIONS.map((m) => [m.n, forwardWrapper(src, m, rows)]));
+  const RB = Object.fromEntries(ROLLBACK_OPS.map((op) => [op.op, rollbackWrapper(src, op, rows)]));
   const out = {};
   out.P0 = p0(rows, catalogRows);
   out.P1 = [
@@ -401,10 +433,11 @@ export function assembleAll(rev = "HEAD") {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  let rev = "HEAD";
-  const i = args.indexOf("--rev");
-  if (i >= 0) { rev = args[i + 1]; args.splice(i, 2); }
-  const all = assembleAll(rev);
+  let manifest;
+  const i = args.indexOf("--manifest");
+  if (i >= 0) { manifest = JSON.parse(readFileSync(args[i + 1], "utf8")); args.splice(i, 2); }
+  else manifest = manifestAt("HEAD");
+  const all = assembleAll(manifest);
   if (args[0] === "--list" || !args.length) {
     for (const [k, v] of Object.entries(all)) process.stdout.write(`${md5(v)}  ${String(Buffer.byteLength(v)).padStart(7)}  ${k}\n`);
   } else if (all[args[0]] !== undefined) {
