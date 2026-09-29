@@ -15,15 +15,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripComments } from "./source-util.mjs";
 import {
-  runInventory, compareToAllowlist, appliedBaselineVersion, protectedNamesByState,
+  runInventory, compareToAllowlist, appliedBaselineVersion, protectedNamesByState, appliedReleaseState,
   GATEWAY, CLIENT_INIT, APPROVED_RPC, SNAPSHOT_PROJECT,
 } from "./inventory-check.mjs";
 import { ALLOWLIST, RETIRED_EVER } from "./inventory-allowlist.mjs";
 
-const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+// INVENTORY_ROOT points these SAME assertions at another tree. Unset, it is
+// this repository. release2-inventory.rollback.test.js sets it to run this
+// file, unchanged, against the rolled-back lifecycle fixture (review of
+// d01b74a, N2).
+const ROOT = process.env.INVENTORY_ROOT ? resolve(process.env.INVENTORY_ROOT) : fileURLToPath(new URL("../..", import.meta.url));
 
 const run = () => runInventory({ root: ROOT, retiredEver: RETIRED_EVER });
 
@@ -73,19 +78,26 @@ test("INV-5 the protected Release 2 names come from the migration files in both 
 });
 
 test("INV-6 the snapshot is the production capture at the repo's applied baseline, and its Release 2 table presence follows applied migration state", () => {
-  const snap = JSON.parse(readFileSync(new URL("../../supabase/tables.json", import.meta.url), "utf8"));
+  const snap = JSON.parse(readFileSync(join(ROOT, "supabase", "tables.json"), "utf8"));
   assert.equal(snap.project, SNAPSHOT_PROJECT);
   assert.equal(snap.query, "scripts/manual/tables-snapshot.sql");
   assert.equal(snap.ledgerVersion, appliedBaselineVersion(ROOT), "ledger version at capture == newest applied migration file");
   assert.doesNotMatch(JSON.stringify(snap), /RECORDED BY HAND/);
-  // Presence is decided by where each release2 migration lives, not by a
-  // fixed expectation: a legitimate stage-0 apply plus a snapshot refresh
-  // passes; either half alone fails (MUT-26). The browser prohibition on
-  // these names (MUT-18) is independent of both.
+  // Presence is decided by the NET applied state — the scanner's own
+  // appliedReleaseState(), not a second rule (review of d01b74a, N2): a table
+  // an applied forward file creates must be listed unless a LATER applied
+  // reviewed rollback dropped it, in which case it must not be. A table only
+  // in pending/ must not be listed. A legitimate apply plus a snapshot
+  // refresh passes; either half alone fails (MUT-26). The browser prohibition
+  // on these names (MUT-18) is independent of all of it.
   const { applied, pendingOnly } = protectedNamesByState(ROOT);
   assert.ok(applied.size + pendingOnly.size > 0, "a protected set exists");
-  for (const tname of applied) assert.ok(snap.tables.includes(tname), `${tname}: applied on production, so the snapshot must list it`);
+  const net = appliedReleaseState(ROOT);
+  assert.deepEqual(net.errors, [], "the applied history is coherent (reviewed rollbacks only, each after its forward)");
+  for (const tname of net.present) assert.ok(snap.tables.includes(tname), `${tname}: applied on production, so the snapshot must list it`);
+  for (const [tname, by] of net.dropped) assert.ok(!snap.tables.includes(tname), `${tname}: dropped by the applied reviewed rollback ${by}, so the snapshot must not list it`);
   for (const tname of pendingOnly) assert.ok(!snap.tables.includes(tname), `${tname}: still pending, so the snapshot must not list it`);
+  for (const tname of applied) assert.ok(net.present.has(tname) || net.dropped.has(tname), `${tname}: created by an applied file, so it is either present or dropped by a reviewed rollback`);
 });
 
 test("INV-7 the request boundary: every raw request site is allowlisted, and each dispatcher is module-private with reviewed forwarding only", async () => {
@@ -100,7 +112,7 @@ test("INV-7 the request boundary: every raw request site is allowlisted, and eac
     .map((fn) => `${ASSET_TRANSPORT.file}|request|${fn}:fetch:const=${ASSET_TRANSPORT.sites[fn][0]}`).sort());
   for (const s of sites) if (s.file !== ASSET_TRANSPORT.file) assert.notEqual(ALLOWLIST[`${s.file}|request|${s.name}`].slice, "asset");
   for (const f of Object.keys(DISPATCHERS)) {
-    const src = readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
+    const src = readFileSync(join(ROOT, f), "utf8");
     for (const d of DISPATCHERS[f]) assert.match(src, new RegExp(`(function ${d}\\b|const ${d} =)`), `${f} defines ${d}`);
   }
   for (const fw of INTERNAL_FORWARDING) assert.equal(fw.split("|").length, 3, fw);

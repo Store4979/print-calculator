@@ -887,6 +887,24 @@ snapshot → inventory in a copy of the repository:
 - Codex's reproduction (applied files, no rollback) fails with the exact
   message it reported.
 
+**The whole gate, not only the scanner (N2).** The review of `d01b74a` found
+the scanner accepting that state while `release2-inventory.test.js` still
+required every historically created table. Its INV-6 now asserts the
+scanner's own net state (`appliedReleaseState`):
+- tables present, where a table is present unless dropped by a later reviewed
+  rollback;
+- tables dropped, which must be absent;
+- pending-only tables, which must be absent;
+- a coherent applied history.
+
+RB-INV-9 runs that REAL test file, unchanged, in a child `node --test`
+pointed at Codex's fixture (`INVENTORY_ROOT`). The fixture has the five
+forwards moved with history kept, the five rollback records appended, and the
+snapshot without the six tables. The file passes 7/7. RB-INV-10 shows the
+same file failing Codex's original reproduction, and a rollback whose
+snapshot keeps the dropped tables. RB-INV-9 fails against the previous INV-6
+with the message Codex reported.
+
 **E7. Executed so far — locally, not on any Supabase project.** Every
 assembled text was run in a real Postgres 17 (PGlite 0.3.16 here; the review
 of d01b74a re-ran it on PGlite 0.4.6, PostgreSQL 17.5, which is now the pinned

@@ -19,6 +19,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, cpSync, writeFileSync, rmSync, readFileSync, renameSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -166,5 +167,51 @@ test("RB-INV-8 controls: the committed tree passes, and applied-without-rollback
     apply(root);
     snapshot(root, FWD(4), [...CAPTURE.tables, ...SIX].sort());
     assert.equal(snap(root).error, undefined, "applied state with the six tables present");
+  });
+});
+
+// ── Review of d01b74a, N2: the REAL test file, not just the scanner ──────────
+// runInventory() accepting a tree is not the whole gate: release2-inventory.test.js
+// makes its own assertions (INV-6 among them). These tests run that file,
+// unchanged, as a child `node --test` with INVENTORY_ROOT pointed at the
+// fixture, and read its verdict.
+const INV_TEST = join(ROOT, "scripts", "tests", "release2-inventory.test.js");
+function realInventoryFile(fixtureRoot) {
+  const env = { ...process.env, INVENTORY_ROOT: fixtureRoot };
+  delete env.NODE_TEST_CONTEXT; // a child of the test runner would otherwise report in its binary format
+  const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", INV_TEST], { env, encoding: "utf8", maxBuffer: 1 << 26 });
+  return { code: r.status, out: `${r.stdout}\n${r.stderr}` };
+}
+
+test("RB-INV-9 Codex's lifecycle fixture — five forwards moved with history kept, five rollback records appended, the snapshot without the six tables — passes the REAL release2-inventory.test.js", () => {
+  withTree((root) => {
+    apply(root);
+    rollBack(root);
+    snapshot(root, RBV(4));
+    const written = JSON.parse(readFileSync(join(root, "supabase", "tables.json"), "utf8"));
+    for (const t of SIX) assert.ok(!written.tables.includes(t), `${t} stays out of the snapshot`);
+    assert.equal(readdirSync(MIG(root)).filter((f) => /^\d{14}_release2_0\d_[a-z_]+\.sql$/.test(f) && !f.endsWith("_rollback.sql")).length, 5, "history kept");
+    const r = realInventoryFile(root);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /^# pass 7$/m);
+    assert.match(r.out, /^# fail 0$/m);
+  });
+});
+
+test("RB-INV-10 the REAL file still fails Codex's original reproduction (applied, not rolled back, tables absent) and a rollback whose snapshot keeps the dropped tables", () => {
+  withTree((root) => {
+    apply(root);
+    snapshot(root, FWD(4));
+    const r = realInventoryFile(root);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /device_enrollments: applied on production, so the snapshot must list it|lacks "device_enrollments", which an APPLIED release2 migration creates/);
+  });
+  withTree((root) => {
+    apply(root);
+    rollBack(root);
+    snapshot(root, RBV(4), [...CAPTURE.tables, ...SIX].sort());
+    const r = realInventoryFile(root);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /dropped by the applied reviewed rollback|which the applied reviewed rollback \d{14}_release2_\w+_rollback\.sql dropped/);
   });
 });
