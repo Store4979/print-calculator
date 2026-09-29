@@ -346,6 +346,23 @@ ${values}
 `;
 }
 
+// SIZE-PROBE (plan §C3, Ryan's decision 2): ONE harmless read-only SELECT,
+// 1 KiB larger than P1, sent through the same SQL tool on staging to confirm
+// the tool accepts a text of P1's size before P1 is ever sent. It reads no
+// table and changes nothing: it returns the byte length and md5 of its own
+// literal, which the manifest pins as the expected answer.
+export const SIZE_PROBE_HEAD =
+  "-- SIZE-PROBE: harmless, read-only (plan C3). One SELECT larger than P1; it reads no table.\n" +
+  "select octet_length(s.x) as probe_bytes, md5(s.x) as probe_md5 from (select $probe$";
+export const SIZE_PROBE_TAIL = "$probe$::text as x) s;\n";
+export const SIZE_PROBE_LINE = "stage0 size probe: reads nothing, changes nothing.\n";
+export function sizeProbe(p1Bytes) {
+  const target = p1Bytes + 1024;
+  const room = target - Buffer.byteLength(SIZE_PROBE_HEAD) - Buffer.byteLength(SIZE_PROBE_TAIL);
+  const filler = SIZE_PROBE_LINE.repeat(Math.ceil(room / SIZE_PROBE_LINE.length)).slice(0, room);
+  return { text: SIZE_PROBE_HEAD + filler + SIZE_PROBE_TAIL, literal: filler };
+}
+
 /** Every stage-0 SQL text, by name. Deterministic for a given rev. */
 export function assembleAll(rev = "HEAD") {
   const rows = ledgerRows(rev);
@@ -372,6 +389,7 @@ export function assembleAll(rev = "HEAD") {
     "\n-- ===== proofs section 4 =====", sections["4"],
     "\nrollback;\n",
   ].join("");
+  out["SIZE-PROBE"] = sizeProbe(Buffer.byteLength(out.P1)).text;
   for (const m of MIGRATIONS) {
     out[`P2-${m.n}`] = `-- P2-${m.n} — apply ${m.name} to production (plan §E1, §E4).\nbegin;\n${settings(`P2-${m.n}`, "P2", "45s", 40, "45s")}${W[m.n]}commit;\n`;
   }

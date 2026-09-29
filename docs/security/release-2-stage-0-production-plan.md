@@ -7,7 +7,13 @@ Revision 2 answers Codex's review of `8913a69`, which returned AMEND. That
 review accepted the staging reconciliation and the deploy deletions. The
 revision resolves the review's items F-1…F-8, B1…B6 and the five F5 rulings,
 and qualifies three staging artifacts as superseded (§G). Section H maps
-each item to where it is resolved.
+each item to where it is resolved. Ryan's decisions on §I, dated 2026-09-29,
+are folded in:
+- D4 implemented;
+- C3 gated on Codex's acceptance of this revision;
+- the canary subject;
+- cleanup recorded as paused;
+- no type-only route.
 
 The artifacts this plan names are committed beside it and pinned by hash in
 `docs/security/stage0-production-manifest.json` (§A7), which
@@ -117,7 +123,8 @@ points the deploy's `commit_ref` is resolved and each pinned path is compared
 with `git rev-parse <commit_ref>:<path>`**; any difference stops the step. The
 ref refusal is still present in A3.
 
-The pinned commit is `5ee7ec4`. While the manifest's `a3.enforceAtHead` is
+The pinned commit is `64730fe` (re-pinned after D4's `flagEnabled` change;
+the first pin was `5ee7ec4`). While the manifest's `a3.enforceAtHead` is
 true, the manifest test also requires HEAD to match. A change to
 production-bound code before P4 therefore fails the suite until it is
 re-pinned, in review.
@@ -183,7 +190,8 @@ default.
 - A3 (commit + trees);
 - A6 (the five rollback files' blob ids, md5, bytes, and the four operations);
 - the proofs file's blob id and md5;
-- the assembler's blob id and the md5 of **every SQL text it emits** (§E1).
+- the assembler's blob id and the md5 of **every SQL text it emits** (§E1),
+  including the read-only SIZE-PROBE (C3.7) and its expected answer.
 
 `scripts/tests/stage0-manifest.test.js` reads **git blob bytes** (`git show
 <rev>:<path>`, so CRLF on a Windows checkout cannot change an md5). It checks:
@@ -269,7 +277,8 @@ re-probe is the C6 matrix, recorded per URL with its date.
   (operator `.env.local` files, scripts, integrations) before C4.7. The list
   is part of the record.
 
-**C3. Rehearsal on staging first — PROPOSED, awaiting approval, not run.** It
+**C3. Rehearsal on staging first — APPROVED by Ryan 2026-09-29 to run ONLY
+after Codex accepts revision 2. Not run.** It
 is the whole of C4 on staging, with staging's keys, and must also demonstrate:
 1. **The distinguishing authenticated read (C6 row R).** Staging uses a
    nonexistent slug like production. The read must return **accepted**
@@ -299,6 +308,17 @@ is the whole of C4 on staging, with staging's keys, and must also demonstrate:
    API logs for the probe timestamps show whether an entry carries anything
    that identifies the key (a key name or prefix) or only a status. Whatever
    they carry is what C6's provider-side column may rely on in production.
+7. **The SQL tool accepts P1's size** (Ryan's decision 2). The assembled
+   `SIZE-PROBE` is sent through the same `execute_sql` tool that will carry
+   P1:
+   - it is ONE read-only `SELECT` over its own literal, reads no table, and
+     changes nothing;
+   - it is 216 071 bytes, 1 KiB larger than P1's 215 047;
+   - it must return `probe_bytes = 215873` and
+     `probe_md5 = d04703dc93e1880a935d6893341b906a` (manifest `sizeProbe`).
+
+   Any other answer, a truncation or a transport error stops the C3 record.
+   P1 is then not sent until the transport is solved.
 
 **C4. Binding the captured credential's type (F-4).** The old credential is
 either the legacy `service_role` JWT or one of the project's secret API keys.
@@ -311,7 +331,8 @@ Evidence, in order:
      project**, the captured value can only be the legacy JWT.
 2. **A reviewed private type-only check — rejected as a route.** Every
    function on Netlify is a public URL, so a route that classifies the key
-   would be a new unauthenticated surface. Not proposed.
+   would be a new unauthenticated surface. Not proposed; Ryan agreed
+   2026-09-29.
 3. **Otherwise the type is UNKNOWN, and the retirement set is every
    possibility:**
    - disable legacy JWT-based keys (only after C8 passes);
@@ -387,24 +408,33 @@ record says so.
   and a delivered email looks the same either way. **Delivery alone proves
   nothing about the key.** The proof is an **operator-authorized, identified
   canary**:
-  - Ryan sends one order through the app, subject `R2-CANARY-<date>`, from
-    the counter;
-  - the Netlify function log line `send-print-job recipient resolved` for
-    that request shows `recipientSource: "store:store4979"`;
-  - the canary is delivered to the store mailbox.
+  - **Subject (Ryan's decision 3):** `STAGE 0 CANARY - no action needed`.
+    The app builds its own subject (`Print Order – <customer> – <id>`), so
+    the canary is sent directly to `send-print-job` on the new deploy. Ryan
+    runs it at C5.5, after the deploy's A3 comparison:
+
+    ```bash
+    curl -s -X POST https://printcalculator2.netlify.app/.netlify/functions/send-print-job -H 'content-type: application/json' -d '{"subject":"STAGE 0 CANARY - no action needed","details":{"jobId":"STAGE0-CANARY","user":{"name":"STAGE 0 CANARY - no action needed"}}}'
+    ```
+
+    The recipient is resolved server-side; the body cannot choose it.
+  - **Ryan confirms delivery** of that subject in the store inbox.
+  - **Ryan reads the send-print-job function log** for that request. The line
+    `send-print-job recipient resolved` must show
+    `recipientSource: "store:store4979"`.
 
   Both are recorded, the log line and the delivery. **Any `fallback:*` fails
   C5.5.**
-- **Cleanup.** The scheduled invocation cannot send `x-cleanup-key`, so on
-  production cleanup is **paused unless something authenticated calls it**.
-  Before P5 is approved, Ryan answers: is `CLEANUP_SECRET` set on production,
-  and does any caller (pg_cron + pg_net, a GitHub Action, a person) send it?
-  - **If a real authenticated scheduler exists:** it is identified by name,
-    and its next run after C5.4 must succeed (its log line). The authorized
-    dry run (row C) is also recorded on the new deploy.
-  - **If none exists:** cleanup is **recorded as paused**. The dry run is
-    still run once if the secret is set, as a second distinguishing read.
-    Re-arming the schedule is a separate decision, not part of G0.
+- **Cleanup — RECORDED 2026-09-29 (Ryan's decision 4): `CLEANUP_SECRET` is
+  SET on production, and there is NO external caller.** The scheduled
+  invocation cannot send `x-cleanup-key`, so **cleanup on production is
+  PAUSED**: abandoned uploads stay in the private bucket past 24 h.
+  - No scheduler is named, and none is part of G0.
+  - Because the secret is set, the authorized dry run (row C) is run once at
+    C5.5 on the new deploy, by Ryan (he holds the secret), as a second
+    distinguishing read. It returns counts and deletes nothing.
+  - Re-arming the schedule (pg_cron + pg_net, a GitHub Action, or manual
+    runs) is a separate decision, not part of G0.
 
 **C8. The Functions anon key (F-5).** Before any legacy key is disabled:
 - Ryan reads the production Functions `VITE_SUPABASE_ANON_KEY` value in the
@@ -457,29 +487,35 @@ Release 2 endpoints keep answering 404.
    A3 tree comparison.
 2. **(a)** `GET …/.netlify/functions/deploy-context` → `200`,
    `context:"production"`, `siteName:"printcalculator2"`, `deployId` = the P4
-   deploy, `flagPresent:true`, `contextAllowed:true`, `source` recorded.
+   deploy, `flagPresent:true`, **`flagEnabled:true`**, `contextAllowed:true`,
+   `source` recorded.
 3. **(d)** The production half is (a)'s `flagPresent:true`. The preview half is a
    **fresh** production-site deploy preview built after the env change,
-   showing `context:"deploy-preview"` and `flagPresent:false`.
+   showing `context:"deploy-preview"`, `flagPresent:false` and
+   `flagEnabled:false`.
 4. **Runtime-ENABLED evidence (B5), separate from presence.** `flagPresent` is
    scoping evidence: it proves the variable reached the runtime, not that the
    gate's predicate (`RELEASE2_ENABLED === "true"`) holds. One of the
    following, recorded before P6:
-   - **(i) Proposed: a reviewed boolean diagnostic.**
-     - `deploy-context` gains `flagEnabled`, computed by a predicate exported
-       from `netlify/lib/deploy-context.js`, which the gate's condition 1
-       also imports. The two can then never disagree.
-     - It reports the boolean only, never the value. The route stays GET-only,
-       imports only the shared reader, and reads no `SUPABASE_*` value.
-     - It is a code change. It changes A3's `netlify/` tree, and the manifest
-       is updated in the same reviewed PR. **Not implemented in this round;
-       awaiting approval.**
-   - **(ii) If (i) is declined: operator-bound evidence.**
-     - Ryan records the variable's value (`true` is not a secret), its scope
-       and context, and its last-updated time.
-     - That time must precede the P4 deploy's created time, bound by deploy id.
+   - **(i) IMPLEMENTED (`64730fe`, Ryan's decision 1): a reviewed boolean
+     diagnostic.**
+     - `deploy-context` reports `flagEnabled`, computed by
+       `release2FlagEnabled()` from `netlify/lib/deploy-context.js`
+       (`String(RELEASE2_ENABLED || "").trim() === "true"`).
+       `release2Allowed()` imports the same function for condition 1 and reads
+       the flag nowhere else.
+     - DC-24 checks that the predicate, the gate and the route agree on
+       sixteen values, and that no value reaches the body. It has been seen
+       to fail on two mutants.
+     - `flagPresent` is kept, and separate.
+     - The route stays GET-only, imports only the shared module, and reads no
+       `SUPABASE_*` value.
+     - A3 and the manifest were re-pinned to `64730fe`.
+   - The evidence recorded before P6 is (a)'s `flagEnabled:true`, on the P4
+     deploy, bound by deploy id and `commit_ref`. (ii), the operator-bound
+     record, is not needed.
    - After P6 the gate itself evaluates the predicate, and Phase 1's 401s are
-     the runtime proof. (i) or (ii) is what makes it known **before** the
+     the runtime proof. `flagEnabled` is what makes it known **before** the
      refusal is deleted.
 5. **Dark baseline:** Phase 1 → four JSON `404`. The context-alone refusal is
    already proven on staging (0b-staging, 2026-09-24).
@@ -860,7 +896,7 @@ P1 on production is the first run that shows those.
 | G0 condition | evidence required |
 |---|---|
 | 1 migrations 01–05 in production's ledger, files named and byte-identical | E4 read-backs = A1 and A1a per step; files renamed to production versions; A2 in full (E5); `tables.json` refreshed and INV-6 green; manifest updated and green |
-| 2 deployment-context check in place, (a)–(d) | (a) and (d) from P4; (b) and (c) already recorded (0b-prod and 0a, both 2026-09-23); the context-alone denial (0b-staging, 2026-09-24); **plus the D4 runtime-enabled evidence** |
+| 2 deployment-context check in place, (a)–(d) | (a) and (d) from P4; (b) and (c) already recorded (0b-prod and 0a, both 2026-09-23); the context-alone denial (0b-staging, 2026-09-24); **plus `flagEnabled:true` on the P4 deploy (D4)** |
 | 3 Phase 1 green on production | F2: four uniform 401s after P6 |
 | 4 a preview refused with 404 by a curl with no Origin | F2: a fresh production-site preview, three Origin variants, after P6 |
 | 5 the inventory proves the client calls no endpoint | inventory gate — INCLUDING the request/dispatcher boundary (`bbbd637`) — green on the A3 source and on the P3 commit, and accepted by review. Not closed until then |
@@ -920,25 +956,30 @@ section.
 | B2 per-migration intermediate expectations | A1a, E4 |
 | B3 schema/data vs append-only ledger; reviewed rolled-back state accepted by the inventory | E2 (P0-S / P0-L), E6, the INV-6 net-state change and its regression test |
 | B4 break-glass re-enable; named rollback targets; re-probe; old-key set after P4 | B1–B3, C9 |
-| B5 runtime-enabled evidence separate from `flagPresent`; `deploy-context` kept | D4, D (final paragraph) |
+| B5 runtime-enabled evidence separate from `flagPresent`; `deploy-context` kept | D4 — `flagEnabled` implemented in `64730fe` (DC-24); D (final paragraph) |
 | B6 A3/C pinned; deploy ids bound to source | A3, C5.4, D1, F1, F3 |
 | F5 rulings 1–5 | F5 |
 | staging qualifications | G |
 | inventory residual (R1, request boundary) | G0 condition 5 (F3); closed at the boundary in `bbbd637`, pending review |
 
-## I. Proposed steps awaiting approval (none run)
+## I. Decisions and what remains (nothing run)
 
-1. **C3 on staging** — the full credential rehearsal, the invalid-key control,
-   and the six demonstrations. Staging keys and staging deploys only.
-2. **D4(i)** — the `flagEnabled` diagnostic as a reviewed code change, or
-   Ryan's choice of D4(ii).
-3. **The canary mail (C7)** — its timing (during C5.5), subject, and who
-   reads the function log.
-4. **The cleanup question (C7)** — is `CLEANUP_SECRET` set on production, and
-   what (if anything) calls cleanup with it? Ryan's answer decides "scheduler
-   named" or "paused".
-5. **P0** — read-only, against production, once this revision is accepted.
-6. P1 onward, each at its own stop point.
+**Ryan's decisions, 2026-09-29:**
+1. **D4:** `flagEnabled` added with the gate's exact predicate, with tests;
+   `flagPresent` kept; A3 and the manifest re-pinned (`64730fe`).
+2. **C3:** approved to run **only after Codex accepts revision 2**, including
+   the SIZE-PROBE (C3.7).
+3. **Canary:** subject `STAGE 0 CANARY - no action needed`. Ryan confirms
+   delivery in the store inbox and reads the send-print-job function log
+   (C7).
+4. **Cleanup:** `CLEANUP_SECRET` set, no external caller. Recorded as PAUSED
+   (C7).
+5. **No private type-only check route** (C4.2).
+
+**Remaining, each at its own stop point, none started:**
+1. Codex's review of revision 2.
+2. C3 on staging, including C3.7.
+3. P0 (read-only), then P1 onward.
 
 ---
 

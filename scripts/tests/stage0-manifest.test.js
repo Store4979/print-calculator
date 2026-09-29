@@ -7,8 +7,11 @@
 //       (core.autocrlf=true) holds CRLF copies whose md5 is not the blob's.
 //   M-2 the working-tree copy of each pinned file differs from its HEAD blob by
 //       line endings at most (an uncommitted edit fails here, not at P2).
-//   M-3 each file's introducing commit still resolves the pinned blob. Absent
-//       commits are tolerated only in a shallow clone, which is detected.
+//   M-3 each file's pinnedAt commit resolves the pinned blob. Absent commits
+//       are tolerated only in a shallow clone, which is detected. The marker
+//       "manifest-commit" (a file changed in the same commit as the manifest,
+//       which cannot name its own SHA) is checked, not trusted: the file's
+//       last change must BE the manifest's last change.
 //   M-4 every md5(prosrc) re-derived from the `$fn$` bodies of the committed
 //       forward AND rollback files, file by file (A1a, A2, A6).
 //   M-5 the assembler's constants are the manifest's.
@@ -58,13 +61,21 @@ test("M-2 no pinned file has an uncommitted edit (line endings aside)", () => {
   }
 });
 
-test("M-3 each introducing commit resolves the pinned blob", () => {
+test("M-3 each pinnedAt commit resolves the pinned blob", () => {
+  const MANIFEST = "docs/security/stage0-production-manifest.json";
+  const lastChange = (p) => git("log", "-1", "--format=%H", "--", p);
   for (const f of PINNED) {
-    if (!hasObject(f.introducedIn)) {
-      assert.ok(shallow(), `${f.path}: commit ${f.introducedIn} is missing and the clone is not shallow`);
+    if (f.pinnedAt === "manifest-commit") {
+      assert.equal(lastChange(f.path), lastChange(MANIFEST),
+        `${f.path}: marked "manifest-commit" but its last change is not the manifest's last change — re-pin with the real SHA`);
       continue;
     }
-    assert.equal(git("rev-parse", `${f.introducedIn}:${f.path}`), f.blob, `${f.path} at ${f.introducedIn.slice(0, 7)}`);
+    assert.match(f.pinnedAt, /^[0-9a-f]{40}$/, `${f.path}: pinnedAt is a full commit SHA`);
+    if (!hasObject(f.pinnedAt)) {
+      assert.ok(shallow(), `${f.path}: commit ${f.pinnedAt} is missing and the clone is not shallow`);
+      continue;
+    }
+    assert.equal(git("rev-parse", `${f.pinnedAt}:${f.path}`), f.blob, `${f.path} at ${f.pinnedAt.slice(0, 7)}`);
   }
 });
 
@@ -129,6 +140,26 @@ test("M-6 every assembled output, re-assembled from HEAD, has its pinned md5", (
   assert.match(out.P1, /^begin isolation level repeatable read;$/m);
   assert.match(out.P1, /\nrollback;\n$/, "P1 ends in ROLLBACK");
   assert.doesNotMatch(out.P1, /^commit;$/m, "P1 never commits");
+});
+
+test("M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer", () => {
+  const out = A.assembleAll("HEAD");
+  const probe = out["SIZE-PROBE"];
+  assert.ok(Buffer.byteLength(probe) > Buffer.byteLength(out.P1), "the probe is larger than P1");
+  assert.equal(Buffer.byteLength(probe) - Buffer.byteLength(out.P1), M.sizeProbe.exceedsP1By);
+  // Its whole text is the fixed head, a literal of filler lines, and the fixed tail:
+  // nothing but one SELECT over its own literal.
+  assert.ok(probe.startsWith(A.SIZE_PROBE_HEAD) && probe.endsWith(A.SIZE_PROBE_TAIL));
+  const literal = probe.slice(A.SIZE_PROBE_HEAD.length, probe.length - A.SIZE_PROBE_TAIL.length);
+  assert.ok(A.SIZE_PROBE_LINE.repeat(Math.ceil(literal.length / A.SIZE_PROBE_LINE.length)).startsWith(literal),
+    "the literal is filler lines only");
+  assert.doesNotMatch(literal, /\$probe\$/);
+  const outside = (A.SIZE_PROBE_HEAD + A.SIZE_PROBE_TAIL).replace(/^--.*$/gm, "");
+  assert.equal((outside.match(/;/g) || []).length, 1, "exactly one statement");
+  assert.doesNotMatch(outside, /\b(insert|update|delete|create|drop|alter|grant|revoke|truncate|begin|commit|call|do)\b/i,
+    "no write, DDL or transaction control outside the literal");
+  assert.deepEqual({ probe_bytes: Buffer.byteLength(literal), probe_md5: A.md5(literal) }, M.sizeProbe.expect,
+    "the answer the database must return");
 });
 
 test("M-7 A3: the pinned commit resolves the pinned trees and blobs; HEAD too while enforced", () => {
