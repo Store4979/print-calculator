@@ -99,6 +99,27 @@
 //    may exist; dispatchers (DISPATCHERS in inventory-allowlist.mjs) may be
 //    called only with a statically approved route-name literal or from
 //    reviewed internal forwarding, and never referenced as a value.
+//    Review of d01b74a (N1) closed two escapes:
+//    - Global aliases (`const w = window; w.fetch(…)`): request APIs are
+//      resolved through what an expression IS (globalKind: window, globalThis,
+//      self, top, parent, frames, opener, navigator, document.defaultView,
+//      and chains of them). The global object may only be read through, as
+//      the object of a member access, `typeof` or `in`. Holding it in any other
+//      way fails. So do eval, Function, a .constructor call and string timers,
+//      which reach globals by name from a string. Worker and SharedWorker are
+//      request APIs.
+//    - The dynamic asset exception: asset requests live only in
+//      src/lib/assetTransport.js (ASSET_TRANSPORT). Each is fetch(<listed
+//      const = a same-origin path, never /.netlify/functions/>, { method:
+//      "GET", credentials: "omit", redirect: "error" }) as literals.
+//    BOUND, stated: requests an element makes by loading a URL (an image src,
+//    navigation, a link, the service-worker registration of /sw.js) are not
+//    API calls and are not sites. They are GET-only and cannot set headers or
+//    a body. The only function routes that answer GET are deploy-context and
+//    register-job's diagnostic (read-only), enroll-list (needs a Bearer header
+//    such a load cannot send) and csrf-bootstrap (writes nothing; its response
+//    is not readable by an element). public/sw.js is outside src/ and has its
+//    own tests.
 //  - R2 re-exporting the package in any form — `export {…} from`, `export * from`,
 //    `export * as x from`, aliases — fails in every file, the gateway included.
 //  - R3 a `var` anywhere in an enclosing function body (any nested block, a
@@ -109,7 +130,7 @@ import { createHash } from "node:crypto";
 import { join, relative, sep, basename } from "node:path";
 import { Parser } from "acorn";
 import jsx from "acorn-jsx";
-import { DISPATCHERS, INTERNAL_FORWARDING } from "./inventory-allowlist.mjs";
+import { DISPATCHERS, INTERNAL_FORWARDING, ASSET_TRANSPORT } from "./inventory-allowlist.mjs";
 
 const JSXParser = Parser.extend(jsx());
 
@@ -396,17 +417,118 @@ export function protectedNamesFromMigrations(root) {
 // is by API, never by the URL's spelling: a route assembled at runtime from any
 // pieces is still a call to one of these, and every such call must be an
 // allowlisted site.
-const REQUEST_GLOBALS = new Set(["fetch", "XMLHttpRequest", "EventSource", "WebSocket"]);
-const GLOBAL_OBJECTS = new Set(["window", "globalThis", "self", "navigator"]);
+const REQUEST_GLOBALS = new Set(["fetch", "XMLHttpRequest", "EventSource", "WebSocket", "Worker", "SharedWorker"]);
 const REQUEST_LIBRARIES = new Set(["axios", "ky", "ky-universal", "superagent", "node-fetch", "cross-fetch", "isomorphic-fetch", "undici", "got"]);
 
-function requestApiOf(callee) {
-  if (callee.type === "Identifier" && REQUEST_GLOBALS.has(callee.name)) return callee.name;
-  if (callee.type === "MemberExpression" && !callee.computed && callee.object.type === "Identifier" && GLOBAL_OBJECTS.has(callee.object.name)) {
-    const p = callee.property.name;
-    if (REQUEST_GLOBALS.has(p)) return p;
-    if (callee.object.name === "navigator" && p === "sendBeacon") return "sendBeacon";
+// ── Global-object resolution (review of d01b74a, N1) ─────────────────────────
+// `const w = window; w.fetch(...)` used to escape: the scan knew `window.fetch`
+// but not an alias of `window`. The fix is to resolve what an expression IS
+// rather than what it is spelled like:
+//   - a free identifier window / globalThis / self / top / parent / frames /
+//     opener is the GLOBAL object (free: not declared in the module and not
+//     shadowed by a parameter, local or catch binding);
+//   - a free `navigator` is the navigator object, a free `document` the document;
+//   - `<global>.window|self|globalThis|top|parent|frames|opener` is the global
+//     object again, `<global>.navigator` the navigator, `<global>.document`
+//     the document, and `<document>.defaultView` the global object.
+// A resolved global (or navigator) may appear in exactly three positions: as
+// the object of a member access, as the operand of `typeof`, and as the right
+// side of `in`. Any other use (a binding, an argument, a spread, a
+// destructuring source, a return value) is an alias and FAILS, because
+// nothing after it can be followed. `<global>.fetch` and the other request
+// APIs, and `<navigator>.sendBeacon`, are request sites wherever the global
+// was reached from.
+const GLOBAL_NAMES = new Set(["window", "globalThis", "self", "top", "parent", "frames", "opener"]);
+const GLOBAL_PROPS = new Set(["window", "self", "globalThis", "top", "parent", "frames", "opener"]);
+const unwrapChain = (n) => (n && n.type === "ChainExpression" ? n.expression : n);
+const memberKey = (m) => (!m.computed ? m.property.name : (m.property.type === "Literal" && typeof m.property.value === "string" ? m.property.value : null));
+/** The source spelling of an identifier/member chain, for messages. */
+function spell(n) {
+  n = unwrapChain(n);
+  if (!n) return "?";
+  if (n.type === "Identifier") return n.name;
+  if (n.type === "MemberExpression") { const k = memberKey(n); return `${spell(n.object)}${k === null ? "[…]" : "." + k}`; }
+  return "(expression)";
+}
+
+/** "global" | "navigator" | "document" | null — what this expression resolves to. */
+function globalKind(node, isFree) {
+  node = unwrapChain(node);
+  if (!node) return null;
+  if (node.type === "Identifier") {
+    if (!GLOBAL_NAMES.has(node.name) && node.name !== "navigator" && node.name !== "document") return null;
+    if (!isFree(node)) return null;
+    if (GLOBAL_NAMES.has(node.name)) return "global";
+    if (node.name === "navigator") return "navigator";
+    if (node.name === "document") return "document";
+    return null;
   }
+  if (node.type === "MemberExpression") {
+    const obj = globalKind(node.object, isFree);
+    const key = memberKey(node);
+    if (!obj || key === null) return null;
+    if (obj === "global" && GLOBAL_PROPS.has(key)) return "global";
+    if (obj === "global" && key === "navigator") return "navigator";
+    if (obj === "global" && key === "document") return "document";
+    if (obj === "document" && key === "defaultView") return "global";
+  }
+  return null;
+}
+
+function requestApiOf(callee, isFree) {
+  callee = unwrapChain(callee);
+  if (callee.type === "Identifier" && REQUEST_GLOBALS.has(callee.name)) return callee.name;
+  if (callee.type === "MemberExpression") {
+    const key = memberKey(callee);
+    const obj = globalKind(callee.object, isFree);
+    if (obj === "global" && key !== null && REQUEST_GLOBALS.has(key)) return key;
+    if (obj === "navigator" && key === "sendBeacon") return "sendBeacon";
+  }
+  return null;
+}
+
+/** Names declared at module level: imports, top-level var/let/const, functions, classes. */
+function moduleBindings(ast) {
+  const names = new Set();
+  for (const st of ast.body) {
+    const decl = st.type === "ExportNamedDeclaration" || st.type === "ExportDefaultDeclaration" ? st.declaration : st;
+    if (!decl) continue;
+    if (decl.type === "ImportDeclaration") for (const sp of decl.specifiers) names.add(sp.local.name);
+    if (decl.type === "VariableDeclaration") for (const d of decl.declarations) for (const n of patternNames(d.id)) names.add(n);
+    if ((decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") && decl.id) names.add(decl.id.name);
+  }
+  return names;
+}
+
+// ── The asset transport rule (review of d01b74a, N1) ─────────────────────────
+// Permanent asset exceptions live ONLY in the reviewed transport module, and
+// each of its request sites must be: fetch(<a listed same-file string const
+// holding a same-origin absolute path>, { method: "GET", credentials: "omit",
+// redirect: "error" [, cache: "<literal>"] }) — a literal options object, no
+// body, no headers, nothing computed or spread.
+const ASSET_OPTION_KEYS = new Set(["method", "credentials", "redirect", "cache"]);
+function assetSiteProblem(call, consts, allowedConsts) {
+  if (unwrapChain(call.callee).type !== "Identifier" || call.callee.name !== "fetch") return "an asset transport site must be a direct fetch() call";
+  const [url, opts, ...rest] = call.arguments;
+  if (rest.length) return "fetch() takes exactly (url, options) here";
+  if (!url || url.type !== "Identifier" || !allowedConsts.includes(url.name) || !consts.has(url.name)) {
+    return `the URL must be one of the listed string constants (${allowedConsts.join(", ")})`;
+  }
+  const path = consts.get(url.name);
+  if (!/^\/(?!\/)[^?#\\]*$/.test(path) || /\/\.netlify\/functions(\/|$)/i.test(path) || /:/.test(path)) {
+    return `${url.name} = ${JSON.stringify(path)} is not a same-origin asset path (absolute, no scheme, no //, never /.netlify/functions/)`;
+  }
+  if (!opts || opts.type !== "ObjectExpression") return "the options must be a literal object";
+  const seen = new Map();
+  for (const p of opts.properties) {
+    if (p.type !== "Property" || p.computed || p.kind !== "init" || p.method || p.key.type !== "Identifier") return "the options may hold only plain literal properties (no spread, computed key or method)";
+    if (!ASSET_OPTION_KEYS.has(p.key.name)) return `option "${p.key.name}" is not allowed on an asset request (allowed: ${[...ASSET_OPTION_KEYS].join(", ")})`;
+    if (p.value.type !== "Literal" || typeof p.value.value !== "string") return `option "${p.key.name}" must be a string literal`;
+    seen.set(p.key.name, p.value.value);
+  }
+  if (seen.get("method") !== "GET") return 'method must be the literal "GET"';
+  if (seen.get("credentials") !== "omit") return 'credentials must be the literal "omit"';
+  if (seen.get("redirect") !== "error") return 'redirect must be the literal "error"';
   return null;
 }
 
@@ -520,7 +642,7 @@ export function compareToAllowlist(sites, allow) {
  * @param {string[]} [o.retiredEver] reviewed list of routes that were ever retired (A2)
  * @returns {{errors: string[], sites: Array<{file:string,line:number,kind:string,name:string}>}}
  */
-export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCHERS, forwarding = INTERNAL_FORWARDING }) {
+export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCHERS, forwarding = INTERNAL_FORWARDING, assetTransport = ASSET_TRANSPORT }) {
   const errors = [];
   const sites = [];
   const srcDir = join(root, "src");
@@ -585,6 +707,10 @@ export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCH
     const parents = new WeakMap();
     walk(ast, (n, p) => { if (p) parents.set(n, p); });
     const parentOf = (n) => parents.get(n) || null;
+    // A free identifier: a value reference not bound anywhere in this module.
+    const moduleNames = moduleBindings(ast);
+    const isFree = (n) => n.type === "Identifier" && !moduleNames.has(n.name)
+      && isValueReference(n, parentOf(n)) && !shadowedBy(n.name, n, parentOf);
 
     // imports / exports of the client and of the package
     for (const st of ast.body) {
@@ -642,24 +768,64 @@ export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCH
       if (node.type === "ImportDeclaration" && REQUEST_LIBRARIES.has(String(node.source.value))) {
         errors.push(`${file}:${node.loc.start.line}: imports the request library "${node.source.value}"; requests go only through reviewed transport sites`);
       }
+      const ln = node.loc ? node.loc.start.line : 0;
+      // The position an expression is USED in, looking through `?.` wrappers.
+      const useOf = (n) => { let u = n, p = parentOf(u); while (p && p.type === "ChainExpression") { u = p; p = parentOf(p); } return { u, p }; };
       if (node.type === "CallExpression" || node.type === "NewExpression") {
-        const api = requestApiOf(node.callee, node.type);
+        const api = requestApiOf(node.callee, isFree);
         if (api) {
-          site(node.loc.start.line, "request", `${enclosingName(node, parentOf)}:${api}:${argShape(node.arguments[0], consts, parentOf)}`);
+          const encl = enclosingName(node, parentOf);
+          site(ln, "request", `${encl}:${api}:${argShape(node.arguments[0], consts, parentOf)}`);
+          // N1: the asset transport's sites are held to GET / omit / error.
+          if (file === assetTransport.file) {
+            const allowed = assetTransport.sites[encl];
+            const problem = allowed ? assetSiteProblem(node, consts, allowed) : `a request in ${encl}, which is not a listed asset-transport function`;
+            if (problem) errors.push(`${file}:${ln}: asset transport: ${problem}`);
+          }
         }
+        // Code from a string can reach any global by name, past every rule here.
+        const callee = unwrapChain(node.callee);
+        if (callee.type === "Identifier" && (callee.name === "setTimeout" || callee.name === "setInterval") && isFree(callee)) {
+          const a = node.arguments[0];
+          if (a && (a.type === "Literal" || a.type === "TemplateLiteral" || a.type === "BinaryExpression")) {
+            errors.push(`${file}:${ln}: ${callee.name} with a string evaluates code from a string; pass a function`);
+          }
+        }
+        if (callee.type === "MemberExpression" && memberKey(callee) === "constructor") {
+          errors.push(`${file}:${ln}: calls a .constructor; a function's constructor evaluates code from a string`);
+        }
+      }
+      if (node.type === "Identifier" && (node.name === "eval" || node.name === "Function") && isFree(node)) {
+        errors.push(`${file}:${ln}: ${node.name} evaluates code from a string; not allowed in the client`);
       }
       if (node.type === "Identifier" && REQUEST_GLOBALS.has(node.name) && isValueReference(node, parent)) {
         const asCallee = parent && (parent.type === "CallExpression" || parent.type === "NewExpression") && parent.callee === node;
-        if (!asCallee) errors.push(`${file}:${node.loc.start.line}: the request API ${node.name} is referenced as a value (alias, argument or member use); only a direct call is a reviewable site`);
+        if (!asCallee) errors.push(`${file}:${ln}: the request API ${node.name} is referenced as a value (alias, argument or member use); only a direct call is a reviewable site`);
       }
-      if (node.type === "MemberExpression" && node.object.type === "Identifier" && GLOBAL_OBJECTS.has(node.object.name)) {
-        const prop = node.computed ? (node.property.type === "Literal" ? String(node.property.value) : null) : node.property.name;
-        if (node.computed && (prop === null || REQUEST_GLOBALS.has(prop) || prop === "sendBeacon")) {
-          errors.push(`${file}:${node.loc.start.line}: computed access on ${node.object.name} can reach a request API; not allowed`);
-        } else if (prop !== null && (REQUEST_GLOBALS.has(prop) || (node.object.name === "navigator" && prop === "sendBeacon"))) {
-          const p = parentOf(node);
-          const asCallee = p && (p.type === "CallExpression" || p.type === "NewExpression") && p.callee === node;
-          if (!asCallee) errors.push(`${file}:${node.loc.start.line}: ${node.object.name}.${prop} is referenced without being called; only a direct call is a reviewable site`);
+      // N1: the global object (and navigator, and document) may only be read
+      // through, never held. See globalKind().
+      if (node.type === "Identifier" || node.type === "MemberExpression") {
+        const kind = globalKind(node, isFree);
+        if (kind) {
+          const { u, p } = useOf(node);
+          const ok = p && ((p.type === "MemberExpression" && p.object === u)
+            || (p.type === "UnaryExpression" && p.operator === "typeof")
+            || (p.type === "BinaryExpression" && p.operator === "in" && p.right === u));
+          if (!ok) errors.push(`${file}:${ln}: ${spell(node)} (the ${kind} object) is used as a value (${p ? p.type : "top level"}); an alias of it hides every request made through it — read through it directly`);
+        }
+      }
+      if (node.type === "MemberExpression") {
+        const obj = globalKind(node.object, isFree);
+        const key = memberKey(node);
+        if ((obj === "global" || obj === "navigator" || obj === "document") && node.computed && (key === null || REQUEST_GLOBALS.has(key) || key === "sendBeacon" || GLOBAL_PROPS.has(key) || key === "defaultView")) {
+          errors.push(`${file}:${ln}: computed access on ${spell(node.object)} can reach a request API; not allowed`);
+        } else if ((obj === "global" && key && REQUEST_GLOBALS.has(key)) || (obj === "navigator" && key === "sendBeacon")) {
+          const { u, p } = useOf(node);
+          const asCallee = p && (p.type === "CallExpression" || p.type === "NewExpression") && p.callee === u;
+          if (!asCallee) errors.push(`${file}:${ln}: ${spell(node)} is referenced without being called; only a direct call is a reviewable site`);
+        }
+        if (key === "defaultView" && obj !== "document") {
+          errors.push(`${file}:${ln}: .defaultView on something that is not the free \`document\` reaches the global object unseen; not allowed`);
         }
       }
       const dispatchers = dispatchersFor[file];

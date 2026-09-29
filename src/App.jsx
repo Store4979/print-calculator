@@ -14,6 +14,7 @@ import EmployeeLogin from "./components/EmployeeLogin.jsx";
 import OrdersDashboard from "./components/OrdersDashboard.jsx";
 import CostModelEditor from "./components/CostModelEditor.jsx";
 import { openPdf } from "./lib/pdfSafe.js";
+import { loadLogoDataUrl, loadBundledPricing } from "./lib/assetTransport.js";
 import { clearAppCaches } from "./lib/swCache.js";
 import {
   canSeeMarginFor, marginLabelFor, visibleMetrics, marginMetric, sheetCostPerSheet, lfCostPerSqFt,
@@ -470,18 +471,12 @@ const drawImageFill = (ctx, img, cx, cy, boxW, boxH, userRotDeg=0) => {
 
 // ─── PDF ORDER SHEET ────────────────────────────────────────
 
+// The store-profile logo goes through the reviewed asset transport: its
+// policy runs before any request, so a logo_url naming anything but the
+// bundled logo or a data:image is never requested (src/lib/assetTransport.js).
 const ensureLogoPdfDataUrl = async () => {
   if (UPS_LOGO_PDF_DATA_URL) return;
-  try {
-    const res = await fetch(UPS_LOGO_DATA_URL, { cache:"no-store" });
-    const blob = await res.blob();
-    await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => { if (typeof r.result === "string" && r.result.startsWith("data:image")) UPS_LOGO_PDF_DATA_URL = r.result; resolve(); };
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
-  } catch {}
+  UPS_LOGO_PDF_DATA_URL = await loadLogoDataUrl(UPS_LOGO_DATA_URL);
 };
 
 const addOrderSheetPage = (doc, { jobType, details, totals, files=[] }) => {
@@ -1674,9 +1669,7 @@ function PriceCalculatorApp() {
       } catch {}
       // 2) Fallback: the bundled pricing.json (pre-Phase-A behavior, intact).
       try {
-        const res = await fetch("/pricing.json", { cache:"no-store" });
-        if (!res.ok) return;
-        applyConfigJson(await res.json());
+        applyConfigJson(await loadBundledPricing());
       } catch {}
     })();
   }, []);

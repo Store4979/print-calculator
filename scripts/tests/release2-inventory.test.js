@@ -89,10 +89,16 @@ test("INV-6 the snapshot is the production capture at the repo's applied baselin
 });
 
 test("INV-7 the request boundary: every raw request site is allowlisted, and each dispatcher is module-private with reviewed forwarding only", async () => {
-  const { DISPATCHERS, INTERNAL_FORWARDING } = await import("./inventory-allowlist.mjs");
+  const { DISPATCHERS, INTERNAL_FORWARDING, ASSET_TRANSPORT } = await import("./inventory-allowlist.mjs");
   const sites = run().sites.filter((s) => s.kind === "request");
-  assert.equal(sites.length, 8, "eight request sites today: three dispatchers, one direct route call, one signed download, three assets");
+  assert.equal(sites.length, 7, "seven request sites today: three dispatchers, one direct route call, one signed download, two assets");
   for (const s of sites) assert.ok(ALLOWLIST[`${s.file}|request|${s.name}`], `${s.file} ${s.name}`);
+  // N1 (review of d01b74a): an "asset" exception exists ONLY in the asset
+  // transport, and only for the functions it lists; nothing else carries the tag.
+  const assets = Object.keys(ALLOWLIST).filter((k) => ALLOWLIST[k].slice === "asset");
+  assert.deepEqual(assets.sort(), Object.keys(ASSET_TRANSPORT.sites)
+    .map((fn) => `${ASSET_TRANSPORT.file}|request|${fn}:fetch:const=${ASSET_TRANSPORT.sites[fn][0]}`).sort());
+  for (const s of sites) if (s.file !== ASSET_TRANSPORT.file) assert.notEqual(ALLOWLIST[`${s.file}|request|${s.name}`].slice, "asset");
   for (const f of Object.keys(DISPATCHERS)) {
     const src = readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
     for (const d of DISPATCHERS[f]) assert.match(src, new RegExp(`(function ${d}\\b|const ${d} =)`), `${f} defines ${d}`);

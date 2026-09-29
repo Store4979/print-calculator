@@ -532,7 +532,7 @@
     "note": "The production build of P4/P5 must reproduce these objects; each stop point compares git rev-parse <commit_ref>:<path>. While enforceAtHead is true, HEAD must match too: a change to production-bound code re-pins here, in review.",
     "trees": {
       "netlify": "356637d460a36e4c9125888a8afa75b2137667ef",
-      "src": "6eaff47d4a3b51d8d4bb7921ff05e9e316d9fd6a",
+      "src": "bd06d0d9a670f7f48f15890c809f7ee5c2618677",
       "public": "b1b872189d0203219fb68a8af2d664bd0cf8189b"
     },
     "blobs": {
@@ -549,8 +549,8 @@
       "scripts/check-build-env.mjs": "3484b0394de4fd3f213d22e426dc5cb8f53245c8",
       "scripts/write-deploy-context.mjs": "6f29742d966a63533a65e77791196248de73222d",
       "scripts/inject-sw-manifest.mjs": "7b63b613eb336ab8966fc9aa8b782a8492af3f26",
-      "scripts/tests/inventory-check.mjs": "099c6dd45e6b1eb093dc5234a16a1d99383d508f",
-      "scripts/tests/inventory-allowlist.mjs": "980fcebcfddca9217ce5a71e04eff7c954bc34d7"
+      "scripts/tests/inventory-check.mjs": "3339ad5c9f2727301b33a6d7d05a1cf4d7c930b2",
+      "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a"
     }
   },
   "p6": null,

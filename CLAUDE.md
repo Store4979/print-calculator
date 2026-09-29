@@ -70,7 +70,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   remote import()) is a site keyed by file + enclosing function + API +
   first-argument shape and must be allowlisted; dispatchers (callQueueFn,
   callFn, FN — DISPATCHERS in scripts/tests/inventory-allowlist.mjs) take only
-  a literal approved route name. A new fetch anywhere fails until reviewed. The Release 2 table names FORBIDDEN in src/ come from
+  a literal approved route name. A new fetch anywhere fails until reviewed.
+  The global object may only be READ THROUGH (window.x, typeof window,
+  "k" in navigator), never held: `const w = window` fails (d01b74a N1). Asset
+  requests go only through src/lib/assetTransport.js: fixed bundled paths,
+  GET, credentials omit, redirect error, all enforced by the scanner. The store
+  logo_url is policy-checked BEFORE any request, and a refused value is never
+  fetched. The Release 2 table names FORBIDDEN in src/ come from
   supabase/migrations/pending/release2_*.sql, not from the snapshot.
 - src/lib/supabase.js — client init, findEmployeeByPin, job-file storage helpers
 - src/lib/orderQueue.js — offline order queue. localStorage key is still

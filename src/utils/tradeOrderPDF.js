@@ -10,6 +10,7 @@
 // ============================================================
 
 import { drawBarcode128 } from "../barcode128.js";
+import { loadLogoDataUrl, BUNDLED_LOGO } from "../lib/assetTransport.js";
 
 const STORE = {
   name:    "The UPS Store #4979",
@@ -18,24 +19,13 @@ const STORE = {
   email:   "store4979@theupsstore.com",
 };
 
-const LOGO_URL = "/ups-logo.png";
+// The bundled logo, through the reviewed asset transport (GET, no
+// credentials, no redirects). src/lib/assetTransport.js.
 let LOGO_DATA_URL = null;
 const ensureLogo = async () => {
   if (LOGO_DATA_URL) return LOGO_DATA_URL;
-  try {
-    const res = await fetch(LOGO_URL, { cache: "no-store" });
-    const blob = await res.blob();
-    LOGO_DATA_URL = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => {
-        if (typeof r.result === "string" && r.result.startsWith("data:image")) resolve(r.result);
-        else reject(new Error("logo not an image"));
-      };
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
-    return LOGO_DATA_URL;
-  } catch { return null; }
+  LOGO_DATA_URL = await loadLogoDataUrl(BUNDLED_LOGO);
+  return LOGO_DATA_URL;
 };
 
 const getJsPDF = () => {

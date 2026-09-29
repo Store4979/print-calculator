@@ -57,12 +57,28 @@ export const ALLOWLIST = Object.freeze({
   // "asset" marks the narrow, reviewed, permanent GET exceptions.
   "src/App.jsx|request|callQueueFn:fetch:dynamic":            { count: 1, slice: "8" },   // dispatcher (kiosk upload)
   "src/App.jsx|request|sendOrderEmail:fetch:lit=/.netlify/functions/send-print-job": { count: 1, slice: "6" },
-  "src/App.jsx|request|PriceCalculatorApp:fetch:lit=/pricing.json": { count: 1, slice: "asset" },
-  "src/App.jsx|request|ensureLogoPdfDataUrl:fetch:dynamic":   { count: 1, slice: "asset" },   // store-profile logo image (admin-set URL), GET
   "src/components/PrintQueue.jsx|request|callFn:fetch:dynamic":           { count: 1, slice: "5" },   // dispatcher
   "src/components/PrintQueue.jsx|request|sendToCalculator:fetch:dynamic": { count: 1, slice: "5" },   // download of a signed URL from get-download-url
   "src/UploadApp.jsx|request|callFn:fetch:dynamic":           { count: 1, slice: "8" },   // dispatcher
-  "src/utils/tradeOrderPDF.js|request|ensureLogo:fetch:const=LOGO_URL": { count: 1, slice: "asset" },
+  // The ONLY asset exceptions, both in the asset transport (ASSET_TRANSPORT
+  // below): fixed bundled paths, GET, credentials omit, redirect error —
+  // enforced by the scanner, not by this comment.
+  "src/lib/assetTransport.js|request|fetchBundledLogo:fetch:const=BUNDLED_LOGO":       { count: 1, slice: "asset" },
+  "src/lib/assetTransport.js|request|fetchBundledPricing:fetch:const=BUNDLED_PRICING": { count: 1, slice: "asset" },
+});
+
+// ── The asset transport (review of d01b74a, N1) ─────────────────────────────
+// The one file allowed to hold "asset" request sites, and for each of its
+// fetching functions the string constants its URL may be. inventory-check.mjs
+// holds every request site in this file to: fetch(<listed const = a same-
+// origin absolute path, never /.netlify/functions/>, { method: "GET",
+// credentials: "omit", redirect: "error" [, cache] }) as literals.
+export const ASSET_TRANSPORT = Object.freeze({
+  file: "src/lib/assetTransport.js",
+  sites: Object.freeze({
+    fetchBundledLogo: ["BUNDLED_LOGO"],
+    fetchBundledPricing: ["BUNDLED_PRICING"],
+  }),
 });
 
 

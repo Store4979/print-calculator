@@ -602,3 +602,88 @@ test("MUT-48 CONTROLS: the real dispatcher calls with literal route names, and a
   assert.deepEqual(r.siteIn("src/v.js").filter((s) => s.kind === "request"), []);
   assert.deepEqual(mutateReal(() => {}).gate, [], "the real tree's literal dispatcher calls and reviewed forwarding pass");
 });
+
+// ── Review of d01b74a, N1: global aliases and the asset transport ────────────
+const LOGO_FETCH = 'return fetch(BUNDLED_LOGO, { method: "GET", credentials: "omit", redirect: "error", cache: "no-store" });';
+const CODEX_POST = 'fetch(["", ".net" + "lify", "functions", "register" + "-job"].join("/"), {\n  method: "POST",\n  body: JSON.stringify({ customerName: "MUTANT", files: [{ path: "x" }] })\n})';
+
+test("MUT-49 Codex exact #1: the split register-job POST, put where the logo request was and inside the asset transport, fails both ways", () => {
+  const inApp = mutateReal((root) => edit(root, "src/App.jsx",
+    "UPS_LOGO_PDF_DATA_URL = await loadLogoDataUrl(UPS_LOGO_DATA_URL);",
+    `await ${CODEX_POST};\n  UPS_LOGO_PDF_DATA_URL = await loadLogoDataUrl(UPS_LOGO_DATA_URL);`));
+  assert.match(inApp.gateJoined, /NOT ALLOWLISTED: src\/App\.jsx\|request\|ensureLogoPdfDataUrl:fetch:dynamic/);
+  const inTransport = mutateReal((root) => edit(root, "src/lib/assetTransport.js", LOGO_FETCH, `return ${CODEX_POST};`));
+  assert.match(inTransport.gateJoined, /asset transport: the URL must be one of the listed string constants/);
+  assert.match(inTransport.gateJoined, /NOT ALLOWLISTED: src\/lib\/assetTransport\.js\|request\|fetchBundledLogo:fetch:dynamic/);
+  assert.match(inTransport.gateJoined, /STALE: src\/lib\/assetTransport\.js\|request\|fetchBundledLogo:fetch:const=BUNDLED_LOGO/);
+});
+
+test("MUT-50 Codex exact #2, and every other way to hold or reach the global object", () => {
+  const exact = mutateReal((root) => edit(root, "src/App.jsx", 'import { loadLogoDataUrl, loadBundledPricing } from "./lib/assetTransport.js";',
+    'import { loadLogoDataUrl, loadBundledPricing } from "./lib/assetTransport.js";\nconst reviewBrowser = window;\nexport const reviewRequest = name =>\n  reviewBrowser.fetch(["", ".net" + "lify", "functions", name].join("/"));'));
+  assert.match(exact.gateJoined, /src\/App\.jsx:\d+: window \(the global object\) is used as a value \(VariableDeclarator\)/, "Codex's exact alias");
+  const cases = [
+    ["globalThis alias", "const g = globalThis;\nexport const a = (u) => g.fetch(u);\n", /globalThis \(the global object\) is used as a value/],
+    ["self alias", "const s = self;\nexport const a = (u) => s.fetch(u);\n", /self \(the global object\) is used as a value/],
+    ["window.self alias", "const s = window.self;\nexport const a = (u) => s.fetch(u);\n", /window\.self \(the global object\) is used as a value/],
+    ["destructured fetch", "const { fetch: f } = window;\nexport const a = (u) => f(u);\n", /window \(the global object\) is used as a value/],
+    ["Reflect.get", "export const a = (u) => Reflect.get(window, \"fetch\")(u);\n", /window \(the global object\) is used as a value \(CallExpression\)/],
+    ["argument", "const use = (w) => w.fetch;\nexport const a = (u) => use(globalThis)(u);\n", /globalThis \(the global object\) is used as a value/],
+    ["navigator alias", "const n = navigator;\nexport const a = (u) => n.sendBeacon(u);\n", /navigator \(the navigator object\) is used as a value/],
+    ["document alias", "const d = document;\nexport const a = (u) => d.defaultView.fetch(u);\n", /document \(the document object\) is used as a value/],
+    ["defaultView via a param", "export const a = (d, u) => d.defaultView.fetch(u);\n", /\.defaultView on something that is not the free `document`/],
+    ["computed global prop", "export const a = (k, u) => window[k].fetch(u);\n", /computed access on window can reach a request API/],
+    ["eval", "export const a = (s) => eval(s);\n", /eval evaluates code from a string/],
+    ["Function", "export const a = (s) => Function(s)();\n", /Function evaluates code from a string/],
+    ["constructor", "export const a = (s) => (() => 0).constructor(s)();\n", /calls a \.constructor/],
+    ["string timer", "export const a = () => setTimeout(\"fet\" + \"ch('/x')\", 0);\n", /setTimeout with a string evaluates code/],
+  ];
+  for (const [label, src, re] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, re, label);
+});
+
+test("MUT-51 requests reached THROUGH a global chain are sites, whatever the chain", () => {
+  const cases = [
+    ["window.self.fetch", "export const a = (u) => window.self.fetch(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:fetch:dynamic/],
+    ["globalThis.window.fetch", "export const a = (u) => globalThis.window.fetch(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:fetch:dynamic/],
+    ["document.defaultView.fetch", "export const a = (u) => document.defaultView.fetch(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:fetch:dynamic/],
+    ["free top", "export const a = (u) => top.fetch(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:fetch:dynamic/],
+    ["optional chain", "export const a = (u) => window?.fetch(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:fetch:dynamic/],
+    ["window.navigator.sendBeacon", "export const a = (u) => window.navigator.sendBeacon(u, \"x\");\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:sendBeacon:dynamic/],
+    ["Worker", "export const a = (u) => new Worker(u);\n", /NOT ALLOWLISTED: src\/v\.js\|request\|a:Worker:dynamic/],
+  ];
+  for (const [label, src, re] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, re, label);
+});
+
+test("MUT-52 the asset transport is GET / credentials omit / redirect error on a literal same-origin path: a POST, a body, credentials, a redirect or another URL fails", () => {
+  const on = (from, to) => mutateReal((root) => edit(root, "src/lib/assetTransport.js", LOGO_FETCH, LOGO_FETCH.replace(from, to))).gateJoined;
+  assert.match(on('method: "GET"', 'method: "POST"'), /asset transport: method must be the literal "GET"/, "POST through the asset path");
+  assert.match(on('method: "GET"', 'method: "GET", body: "x"'), /option "body" is not allowed on an asset request/, "a body");
+  assert.match(on('method: "GET"', 'method: "GET", headers: { "content-type": "application/json" }'), /option "headers" is not allowed on an asset request/, "headers");
+  assert.match(on('credentials: "omit"', 'credentials: "include"'), /credentials must be the literal "omit"/, "credentials include");
+  assert.match(on('redirect: "error"', 'redirect: "follow"'), /redirect must be the literal "error"/, "redirect follow");
+  assert.match(on(', redirect: "error"', ""), /redirect must be the literal "error"/, "redirect absent");
+  assert.match(mutateReal((root) => edit(root, "src/lib/assetTransport.js", LOGO_FETCH,
+    'const o = { method: "GET", credentials: "omit", redirect: "error" };\n  return fetch(BUNDLED_LOGO, o);')).gateJoined,
+    /the options must be a literal object/, "options via a variable");
+  assert.match(mutateReal((root) => edit(root, "src/lib/assetTransport.js", 'const BUNDLED_LOGO = "/ups-logo.png";', 'const BUNDLED_LOGO = "/.netlify/functions/register-job";')).gateJoined,
+    /BUNDLED_LOGO = "\/\.netlify\/functions\/register-job" is not a same-origin asset path/, "a function route as the asset path");
+  assert.match(mutateReal((root) => edit(root, "src/lib/assetTransport.js", 'const BUNDLED_LOGO = "/ups-logo.png";', 'const BUNDLED_LOGO = "https://example.com/logo.png";')).gateJoined,
+    /is not a same-origin asset path/, "another origin");
+  assert.match(mutateReal((root) => edit(root, "src/lib/assetTransport.js", "async function fetchBundledPricing() {",
+    'async function fetchSomethingElse(u) {\n  return fetch(u, { method: "GET", credentials: "omit", redirect: "error" });\n}\n\nasync function fetchBundledPricing() {')).gateJoined,
+    /asset transport: a request in fetchSomethingElse, which is not a listed asset-transport function/, "an unlisted transport function");
+});
+
+test("MUT-53 CONTROLS: locals named top/parent/self/window, typeof/in probes and member reads of the globals are not violations", () => {
+  const r = mutateReal((root) => write(root, "src/v.js", [
+    "export const a = () => { const top = { fetch: (x) => x }; return top.fetch(1); };",
+    "export const b = (parent) => parent.fetch;",
+    "export const c = () => { const self = { n: 1 }; return self; };",
+    "export const d = (window) => window;",
+    "export const e = () => typeof window !== \"undefined\" && \"serviceWorker\" in navigator && globalThis.navigator?.locks;",
+    "export const f = () => window.location.origin + document.title;",
+    "",
+  ].join("\n")));
+  assert.deepEqual(r.errors, [], "none of these hold or call through the global object");
+  assert.deepEqual(r.siteIn("src/v.js").filter((s) => s.kind === "request"), []);
+});
