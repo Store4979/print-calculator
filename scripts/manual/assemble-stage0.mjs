@@ -532,8 +532,10 @@ commit;
     "LOCKPROBE-B-LOCKTIMEOUT": lockProbeSession("B-LOCKTIMEOUT", { waitForHolder: true }),
     // 2a. B holds the lock past statement_timeout (8 s here): 57014, released.
     "LOCKPROBE-B-STMTTIMEOUT": lockProbeSession("B-STMTTIMEOUT", { sleepAfter: 30, statement: "8s", tx: "20s", deadline: 20 }),
-    // 2b. B holds the lock past transaction_timeout (8 s) with statement_timeout 60 s: the PG 17 hard timer.
-    "LOCKPROBE-B-TXTIMEOUT": lockProbeSession("B-TXTIMEOUT", { sleepAfter: 30, statement: "60s", tx: "8s", deadline: 20 }),
+    // 2b. B holds the lock past transaction_timeout (8 s) with statement_timeout 50 s: the PG 17 hard timer.
+    // (Not 60 s: PostgreSQL displays 60s as "1min", and the settings assert compares the display text —
+    // it failed closed on staging with 60s, 2026-09-29. Every production value displays as itself.)
+    "LOCKPROBE-B-TXTIMEOUT": lockProbeSession("B-TXTIMEOUT", { sleepAfter: 30, statement: "50s", tx: "8s", deadline: 20 }),
     // 2c. B holds the lock and is cancelled by C (statement_timeout 30 s as the backstop).
     "LOCKPROBE-B-CANCEL": lockProbeSession("B-CANCEL", { sleepAfter: 60, statement: "30s", tx: "45s", deadline: 40 }),
     "LOCKPROBE-C-CANCEL": `-- LOCKPROBE-C-CANCEL — session C (STAGING ONLY): find session B holding ACCESS EXCLUSIVE on the probe
