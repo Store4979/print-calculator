@@ -243,9 +243,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "60541fdc5d4633ef2de615733955075584925049",
-    "md5": "961852eaa19ade2992e50f7cdbb19d8c",
-    "bytes": 39169,
+    "blob": "5f4130e74fcd6693350d8e91e865f2e7bf40861e",
+    "md5": "2f5b6131a4aa146ceb6802ca030f6d2e",
+    "bytes": 39373,
     "pinnedAt": "manifest-commit"
   },
   "functions": {
@@ -531,8 +531,8 @@
       "bytes": 4911
     },
     "LOCKPROBE-C-CANCEL": {
-      "md5": "e136264c6592012698c4c2975706224d",
-      "bytes": 1276
+      "md5": "29dd1daff7d0ecd0e4a3689cda8b5db2",
+      "bytes": 1480
     },
     "LOCKPROBE-B-POSITIVE": {
       "md5": "f18e4ee1a898c7168c7bc65978fc4684",

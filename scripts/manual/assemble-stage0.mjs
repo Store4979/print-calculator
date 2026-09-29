@@ -542,6 +542,9 @@ do $c$
 declare v_pid int; v_t0 timestamptz := clock_timestamp();
 begin
   for i in 1..150 loop
+    -- pg_stat_activity is snapshotted once per transaction (stats_fetch_consistency
+    -- = cache); without clearing it, this loop would reread its first snapshot.
+    perform pg_stat_clear_snapshot();
     select a.pid into v_pid from pg_stat_activity a join pg_locks l on l.pid = a.pid
      where a.application_name = 'release2-stage0-lockprobe-B-CANCEL'
        and l.relation = 'stage0_lockprobe.t'::regclass and l.mode = 'AccessExclusiveLock' and l.granted
