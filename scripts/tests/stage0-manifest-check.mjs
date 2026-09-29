@@ -144,6 +144,7 @@ export function checkManifest(repo, M) {
   same(A.ROLLBACK_OPS, M.rollbackOperations, "rollbackOperations");
   same([A.PRODUCTION_REF, A.STAGING_SEED_STORE, A.PROBE_SLUG], [M.productionRef, M.identity.stagingSeedStore, M.identity.probeSlug], "identity markers");
   for (const m of M.migrations) if (m.pendingPath !== A.migrationPath(m)) say("M-5", `${m.name}: frozen path ${m.pendingPath}`);
+  same([A.LEDGER_COLUMNS, A.LEDGER_CREATED_BY], [M.ledgerRow?.columns, M.ledgerRow?.createdBy], "the ledger row shape (N6)");
 
   // M-6 every output re-assembled from the frozen inputs has its pinned md5.
   let out = null;
@@ -160,7 +161,8 @@ export function checkManifest(repo, M) {
       const w = out[`P2-${m.n}`] || "";
       if (!w.includes(`$stage0_file$${g.blob(m.blob).toString("utf8")}$stage0_file$`)) say("M-6", `P2-${m.n} does not embed the pinned blob verbatim`);
       if (!w.includes(`if md5(f) <> '${m.md5}' or octet_length(f) <> ${m.bytes} then`)) say("M-6", `P2-${m.n} lacks the md5/bytes gate before EXECUTE`);
-      if (!/array\[f\]\);/.test(w)) say("M-6", `P2-${m.n} does not write statements[1] from the checked literal`);
+      if (!w.includes(`values (v_version, '${m.name}', array[f], '${M.ledgerRow.createdBy}');`)) say("M-6", `P2-${m.n} does not write statements[1] from the checked literal with apply_migration's created_by`);
+      if (!w.includes("the ledger row does not have apply_migration''s shape")) say("M-6", `P2-${m.n} does not assert its ledger row's shape`);
     }
     if (!/^begin isolation level repeatable read;$/m.test(out.P1 || "") || !/\nrollback;\n$/.test(out.P1 || "") || /^commit;$/m.test(out.P1 || "")) say("M-6", "P1 must begin repeatable read, end in ROLLBACK and never commit");
     // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.

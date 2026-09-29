@@ -379,9 +379,10 @@ is the whole of C4 on staging, with staging's keys, and must also demonstrate:
    P1:
    - it is ONE read-only `SELECT` over its own literal, reads no table, and
      changes nothing;
-   - it is 216 071 bytes, 1 KiB larger than P1's 215 047;
-   - it must return `probe_bytes = 215873` and
-     `probe_md5 = d04703dc93e1880a935d6893341b906a` (manifest `sizeProbe`).
+   - it is exactly 1 KiB larger than P1, whatever P1's size at the time;
+   - its expected answer is the manifest's `sizeProbe.expect`, and its
+     output's md5 and bytes are the manifest's `outputs["SIZE-PROBE"]`. The
+     numbers move whenever P1's bytes do, so this plan does not restate them.
 
    Any other answer, a truncation or a transport error stops the C3 record.
    P1 is then not sent until the transport is solved.
@@ -657,8 +658,10 @@ begin
   if v <= (select max(version) from supabase_migrations.schema_migrations) then
     raise exception 'stage0 wrapper: version % not after the ledger head', v using errcode = 'P0001';
   end if;
-  insert into supabase_migrations.schema_migrations (version, name, statements)
-  values (v, '<name>', array[f]);                      -- statements[1] IS the md5-checked literal
+  insert into supabase_migrations.schema_migrations (version, name, statements, created_by)
+  values (v, '<name>', array[f], '<ledgerRow.createdBy>');  -- statements[1] IS the md5-checked literal
+  <assert the row's full shape: one element [1:1], md5 = f, created_by set,
+   idempotency_key and rollback null — apply_migration's shape (N6)>
   if clock_timestamp() - transaction_timestamp() > interval '40 seconds' then
     raise exception 'stage0 wrapper: deadline exceeded' using errcode = 'P0001';
   end if;
@@ -693,11 +696,23 @@ DDL**, so they commit or roll back together:
   later, so the next step waits for the clock to pass it;
 - `name` is the file's name without `.sql`;
 - `statements` is `array[f]`, so `statements[1]` is **the md5-checked
-  literal**, byte for byte.
+  literal**, byte for byte;
+- `created_by` is the value `apply_migration` records (the manifest's
+  `ledgerRow.createdBy`); `idempotency_key` and `rollback` stay null.
 
-P0 reads the ledger table's column list. The wrapper's three-column insert is
-used only if every other column is nullable or defaulted; otherwise P0 stops
-for review. The P2 file is then named by the version read back (CLAUDE.md rule
+That is **`apply_migration`'s row shape as read back from staging**, not an
+assumption. The record is in §E8 (N6). The wrapper asserts the whole shape
+of its own row before the transaction can commit.
+
+P0 reads production's ledger:
+- the column list, which must equal the pinned `ledgerRow.columns`
+  (`ledger_columns_as_pinned`);
+- the distinct `created_by` values;
+- that every row is a single-element array.
+
+Any difference stops P0 for review; the wrapper is re-pinned to the shape
+production holds. A ledger without `created_by` would also make the wrapper's
+insert fail (shown locally). The P2 file is then named by the version read back (CLAUDE.md rule
 4, whose intent — a file for every ledger row, byte-identical to
 `statements[1]` — is met; the tool is different, and that is why it is stated
 here).
@@ -742,7 +757,9 @@ rollback):*
 | `ledger_rows` | 20 |
 | `ledger_matches_repo` | true: the set of (version, `md5(statements[1])`) equals the 20 top-level files in `supabase/migrations/` (the assembler embeds the list from git blobs) |
 | `release2_in_ledger` | 0 |
-| `ledger_columns` | exactly the recorded column list; every column other than version/name/statements is nullable or defaulted |
+| `ledger_columns` | recorded; `ledger_columns_as_pinned` must be **true** (the six columns of §E8, N6) |
+| `ledger_created_by` | recorded; must be exactly `{store4979@theupsstore.com}` (the value `apply_migration` wrote on staging) or P0 stops and the wrapper is re-pinned |
+| `ledger_rows_single_element` | true: every existing row is one element [1:1], as `apply_migration` writes |
 
 *Identity (F-6) — positive, all required:*
 - `ledger_matches_repo` (above);
@@ -913,6 +930,43 @@ snapshot without the six tables. The file passes 7/7. RB-INV-10 shows the
 same file failing Codex's original reproduction, and a rollback whose
 snapshot keeps the dropped tables. RB-INV-9 fails against the previous INV-6
 with the message Codex reported.
+
+**E8. Staging records (review of d01b74a), each approved by Ryan for this
+round.**
+
+*N6 — the ledger row `apply_migration` writes (READ-ONLY, 2026-09-29).*
+Target confirmed first: `get_project_url` returned
+`https://lboajqihpsfrokqvjgnl.supabase.co` (staging), with role `postgres` and
+`server_version_num` 170006.
+- **Columns** of `supabase_migrations.schema_migrations`, in order:
+  - `version` text NOT NULL (the PK);
+  - `statements` text[];
+  - `name` text;
+  - `created_by` text;
+  - `idempotency_key` text (UNIQUE);
+  - `rollback` text[].
+
+  All are nullable except `version`, none has a default, and there are no user
+  triggers.
+- **The five reconciled rows** (`20260928160657`…`160847`, plus the reset
+  `20260928160606`): each has `cardinality(statements) = 1` with bounds
+  [1:1]. `md5(statements[1])` and `octet_length` equal A1 exactly
+  (`e97a5fd7…`/13 720 … `22b5010b…`/5 622), and each ends in LF.
+  `created_by` = `store4979@theupsstore.com`; `idempotency_key` and `rollback`
+  are null.
+- **The whole ledger** (31 rows): `created_by` is set on every row, to that one
+  value. There is no `idempotency_key`, no `rollback`, and no multi-element
+  `statements`.
+- **`list_migrations`** (read-only) lists all 31 rows by (version, name), in
+  version order, repeated names included.
+
+What changed: the wrapper's insert previously left `created_by` null. It now
+writes it, and asserts the full shape in-transaction. Every output was
+re-assembled and re-pinned. Locally, with a ledger of exactly this shape,
+the wrapper's five rows read back with that full shape. The `(version, name)`
+projection `list_migrations` returns lists them after the 20 baseline rows. A
+ledger without `created_by` is flagged by P0 and refuses the wrapper's
+insert. No live write was made to test recognition.
 
 **E7. Executed so far — locally, not on any Supabase project.** Every
 assembled text was run in a real Postgres 17 (PGlite 0.3.16 here; the review

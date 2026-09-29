@@ -77,15 +77,19 @@ create table storage.objects (id uuid primary key default gen_random_uuid(), buc
 alter table storage.objects enable row level security;
 create function storage.foldername(name text) returns text[] language sql immutable as $$ select string_to_array(name, '/') $$;
 create publication supabase_realtime;
-create table supabase_migrations.schema_migrations (version text primary key, statements text[], name text);
+-- The ledger exactly as staging's live table (read back 2026-09-29, review N6).
+create table supabase_migrations.schema_migrations (version text not null primary key, statements text[], name text,
+  created_by text, idempotency_key text unique, rollback text[]);
 alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
 alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
 alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
 `;
 
-async function freshDb({ staging = false } = {}) {
+async function freshDb({ staging = false, oldLedger = false } = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
-  await db.exec(SHIM);
+  await db.exec(oldLedger
+    ? SHIM.replace(/create table supabase_migrations\.schema_migrations \([\s\S]*?\);/, "create table supabase_migrations.schema_migrations (version text primary key, statements text[], name text);")
+    : SHIM);
   await db.exec(`insert into auth.users (instance_id, id, aud, role, email) values
     ('00000000-0000-0000-0000-000000000000', '11111111-1111-4111-8111-111111111111', 'authenticated', 'authenticated', 'owner@example.invalid'),
     ('00000000-0000-0000-0000-000000000000', '22222222-2222-4222-8222-222222222222', 'authenticated', 'authenticated', 'store4979@theupsstore.com');`);
@@ -93,8 +97,8 @@ async function freshDb({ staging = false } = {}) {
     const b = `${row.version}_${row.name}.sql`;
     const sql = blob(row.blob);
     try { await db.exec(sql); } catch (e) { throw new Error(`migration ${b}: ${e.message}`); }
-    await db.query("insert into supabase_migrations.schema_migrations (version, name, statements) values ($1, $2, array[$3])",
-      [row.version, row.name, sql]);
+    if (oldLedger) await db.query("insert into supabase_migrations.schema_migrations (version, name, statements) values ($1, $2, array[$3])", [row.version, row.name, sql]);
+    else await db.query("insert into supabase_migrations.schema_migrations (version, name, statements, created_by) values ($1, $2, array[$3], $4)", [row.version, row.name, sql, "store4979@theupsstore.com"]);
     if (row.version === "20260722003606") {
       // production data that predates phase_b_02: the store, its owner, staff.
       await db.exec(`insert into public.stores (slug, name) values ('store4979', 'The UPS Store #4979');
@@ -126,7 +130,9 @@ console.log("P0 (fresh):", JSON.stringify(p0a));
 expect("P0 identity + preconditions", p0a.ledger_matches_repo && p0a.production_ledger_marker && p0a.staging_seed_absent
   && p0a.production_store_present && p0a.stores_without_org == 0 && p0a.release2_tables_present == 0
   && p0a.release2_functions_present == 0 && !p0a.uniq_already_there && p0a.probe_slug_absent && p0a.nil_job_absent
-  && p0a.auth_users_user_triggers == 0 && p0a.free_pins >= 3 && p0a.ledger_rows == 20 && p0a.release2_in_ledger == 0);
+  && p0a.auth_users_user_triggers == 0 && p0a.free_pins >= 3 && p0a.ledger_rows == 20 && p0a.release2_in_ledger == 0
+  && p0a.ledger_columns_as_pinned === true && p0a.ledger_rows_single_element === true
+  && JSON.stringify(p0a.ledger_created_by) === JSON.stringify(["store4979@theupsstore.com"]));
 
 let r = await run(db, "P1");
 expect("P1 runs to ROLLBACK with every proof passing", r.ok, r.error || `${r.ms} ms`);
@@ -141,6 +147,18 @@ const led = (await db.query("select version, name, md5(statements[1]) as md5, oc
 console.log(led);
 expect("five forward ledger rows with A1 md5/bytes", led.length === 5 && led.map((x) => x.md5).join() ===
   "e97a5fd7c346a3b0a39bc6180dcfde46,734e0db7312b79081a769ca366c5b99a,302e05c6a4939eb8021234cbc7325473,2dcb03eb36e47c8404a29500151e8394,22b5010b9a3b20f5a3aaba4d212fd46c");
+// N6: the wrapper's rows have apply_migration's shape, in full.
+const shape = (await db.query(`select version, name, cardinality(statements) as n, array_lower(statements, 1) as lo, array_upper(statements, 1) as hi,
+    md5(statements[1]) as md5, created_by, idempotency_key, rollback from supabase_migrations.schema_migrations where name like 'release2%' order by version`)).rows;
+expect("N6: wrapper rows have apply_migration's full shape (one element [1:1], created_by set, idempotency_key and rollback null)",
+  shape.length === 5 && shape.every((x) => x.n === 1 && x.lo === 1 && x.hi === 1 && x.created_by === "store4979@theupsstore.com" && x.idempotency_key === null && x.rollback === null));
+// N6: list_migrations lists every ledger row by (version, name), in version
+// order (observed on staging 2026-09-29, including rows with repeated names).
+// The same projection here must list the five wrapper rows.
+const listed = (await db.query("select version, coalesce(name, '') as name from supabase_migrations.schema_migrations order by version")).rows;
+expect("N6: the list_migrations projection lists the five wrapper rows, after the 20 baseline rows",
+  listed.length === 25 && listed.slice(20).map((x) => x.name).join() === "release2_01_identity_schema,release2_02_auth_attempts_fn,release2_03_bind_and_atomicity,release2_04_staff_session_qualify_columns,release2_05_revoke_enrollment",
+  listed.slice(20).map((x) => x.version + " " + x.name).join("; "));
 r = await run(db, "P2-05");
 expect("P2-05 twice is refused", !r.ok && /already in the ledger/.test(r.error), r.error);
 
@@ -174,6 +192,12 @@ for (const name of ["P1", "P2-01"]) {
   r = await run(stg, name);
   expect(`${name} on a staging-shaped database is refused`, !r.ok && /staging/.test(r.error), r.error);
 }
+// N6 control: a ledger WITHOUT apply_migration's columns is flagged by P0 and refused by the wrapper.
+const old3 = await freshDb({ oldLedger: true });
+const p0old = await one(old3, OUT.P0);
+expect("N6 control: P0 flags a ledger of another shape (ledger_columns_as_pinned false)", p0old.ledger_columns_as_pinned === false);
+r = await run(old3, "P2-01");
+expect("N6 control: the wrapper cannot write its row into a ledger of another shape", !r.ok && /created_by/.test(r.error), r.error);
 const unk = await freshDb();
 await unk.exec("update supabase_migrations.schema_migrations set statements = array[statements[1] || ' '] where version = '20260427173246'");
 r = await run(unk, "P2-01");

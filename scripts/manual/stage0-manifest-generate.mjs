@@ -81,6 +81,11 @@ const M = {
   tables: old.tables,
   constraint: old.constraint,
   rollbackOperations: A.ROLLBACK_OPS,
+  ledgerRow: {
+    columns: A.LEDGER_COLUMNS,
+    createdBy: A.LEDGER_CREATED_BY,
+    observed: (old.ledgerRow && old.ledgerRow.observed) || "staging supabase_migrations.schema_migrations, read-only, 2026-09-29 (review of d01b74a, N6): six columns as `columns`; all 31 rows apply_migration wrote hold statements = one element [1:1] with the file's exact bytes, created_by = one value, idempotency_key and rollback null; list_migrations lists every row by (version, name)",
+  },
 };
 const all = A.assembleAll(M, { cwd: ROOT });
 M.outputs = Object.fromEntries(Object.entries(all).map(([k, v]) => [k, { md5: A.md5(v), bytes: Buffer.byteLength(v) }]));

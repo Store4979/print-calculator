@@ -243,9 +243,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "e513f020298887e3cad9bdbba2e8dab0327e6654",
-    "md5": "668a50cee517e45d054d6b7041fc1383",
-    "bytes": 25322,
+    "blob": "6811197b4e1507b6452fdb673a22bfe26ecc55fb",
+    "md5": "9ef5bf6bbe042aace2010d97a5dcd685",
+    "bytes": 28043,
     "pinnedAt": "manifest-commit"
   },
   "functions": {
@@ -468,61 +468,66 @@
       ]
     }
   ],
+  "ledgerRow": {
+    "columns": "version:text:NO:, statements:ARRAY:YES:, name:text:YES:, created_by:text:YES:, idempotency_key:text:YES:, rollback:ARRAY:YES:",
+    "createdBy": "store4979@theupsstore.com",
+    "observed": "staging supabase_migrations.schema_migrations, read-only, 2026-09-29 (review of d01b74a, N6): six columns as `columns`; all 31 rows apply_migration wrote hold statements = one element [1:1] with the file's exact bytes, created_by = one value, idempotency_key and rollback null; list_migrations lists every row by (version, name)"
+  },
   "outputs": {
     "P0": {
-      "md5": "9f642e8ae29aa458593169c3cffea765",
-      "bytes": 10628
+      "md5": "c71dbd8e6e9602b31453cd4f23760717",
+      "bytes": 11619
     },
     "P1": {
-      "md5": "a3655e5fe26550e2362814d039841a6d",
-      "bytes": 215047
+      "md5": "344585d3ec282679549efd9150c73679",
+      "bytes": 223369
     },
     "SIZE-PROBE": {
-      "md5": "1a7ac2b0d2cfdc2f78a90bd22cd6cecb",
-      "bytes": 216071
+      "md5": "7e98cd4615f49d207f9ffec636cc179e",
+      "bytes": 224393
     },
     "P2-01": {
-      "md5": "2c9e5b7796c9a8645946c05c44db0a78",
-      "bytes": 24190
+      "md5": "4c3f396455fee6cf1edf3580c0b925b5",
+      "bytes": 25013
     },
     "P2-02": {
-      "md5": "e3ad1aa4d152997ebcd1b7960aa4e208",
-      "bytes": 17916
+      "md5": "455eb4f1f4885c934c3c2565be4bfc18",
+      "bytes": 18740
     },
     "P2-03": {
-      "md5": "335c4ba72138467e9f7d91a461db483e",
-      "bytes": 25219
+      "md5": "0427d661f8bfca3f80c0b3c08db57802",
+      "bytes": 26045
     },
     "P2-04": {
-      "md5": "a3011d1b8089bc1f7fa1ad7c44677347",
-      "bytes": 18390
+      "md5": "381959417f47ae448db1aa8a7cadaa7e",
+      "bytes": 19227
     },
     "P2-05": {
-      "md5": "9f1d113058b0c1fa8adfb6d6db215a53",
-      "bytes": 18241
+      "md5": "02b97977ea6ac64412d3836864b35b64",
+      "bytes": 19066
     },
     "RB-5": {
-      "md5": "e64d999e72b8e165703ee67e9e5e887f",
-      "bytes": 15535
+      "md5": "056b236daf93abe61f34b00ef335d4af",
+      "bytes": 16370
     },
     "RB-43": {
-      "md5": "6c94eb003738c81c5fd8ecad480dd724",
-      "bytes": 34273
+      "md5": "f2619454d3fa7e402a05836e141319de",
+      "bytes": 35958
     },
     "RB-2": {
-      "md5": "0c012b77690d49f3eaef4e2f9b077a86",
-      "bytes": 14430
+      "md5": "d30a4bcb0afd4c1eed47d66064e2e81c",
+      "bytes": 15264
     },
     "RB-1": {
-      "md5": "8eddbd782f9a23a6c939112f01cf879b",
-      "bytes": 16674
+      "md5": "1b50b0438aee7fdb7205883f52699ec3",
+      "bytes": 17507
     }
   },
   "sizeProbe": {
     "runOn": "staging, in C3, only after Codex accepts revision 2 (Ryan's decision 2); read-only",
     "expect": {
-      "probe_bytes": 215873,
-      "probe_md5": "d04703dc93e1880a935d6893341b906a"
+      "probe_bytes": 224195,
+      "probe_md5": "d14f06ebffab93f6f9cefee55f76354e"
     },
     "exceedsP1By": 1024
   },

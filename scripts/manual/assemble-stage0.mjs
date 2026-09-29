@@ -223,6 +223,20 @@ const DEADLINE = (tag) => `  if clock_timestamp() - transaction_timestamp()
 // The ledger row, written from the md5-checked literal. In the rolled-back
 // rehearsal (P1) ten rows are written within a second or two, so a version
 // that is not after the head is bumped; for real (P2, RB) it stops.
+// THE LEDGER ROW SHAPE (review of d01b74a, N6). Read back read-only from
+// staging's schema_migrations on 2026-09-29, the table has six columns:
+//   version text NOT NULL (PK), statements text[], name text,
+//   created_by text, idempotency_key text (UNIQUE), rollback text[]
+// All nullable except version, none with a default. Every one of the 31 rows
+// apply_migration wrote there has statements = one element [1:1] holding the
+// file's exact bytes, created_by = the authorizing account's email (one
+// distinct value), and idempotency_key and rollback null. list_migrations
+// lists every row by (version, name). The wrapper writes that same shape.
+// P0 reads production's column list and created_by values, and stops if
+// either differs from what is pinned here and in the manifest (ledgerRow).
+export const LEDGER_CREATED_BY = "store4979@theupsstore.com";
+export const LEDGER_COLUMNS = "version:text:NO:, statements:ARRAY:YES:, name:text:YES:, created_by:text:YES:, idempotency_key:text:YES:, rollback:ARRAY:YES:";
+
 // A second row in the same transaction (RB-43) is stamped one second later.
 const LEDGER_INSERT = (varName, name, tag, offsetSeconds = 0) => `  v_head := (select max(m.version) from supabase_migrations.schema_migrations m);
   v_version := to_char((clock_timestamp() at time zone 'utc')${offsetSeconds ? ` + interval '${offsetSeconds} second'` : ""}, 'YYYYMMDDHH24MISS');
@@ -233,8 +247,18 @@ const LEDGER_INSERT = (varName, name, tag, offsetSeconds = 0) => `  v_head := (s
       raise exception '${tag}: version % is not after the ledger head %; refusing', v_version, v_head using errcode = 'P0001';
     end if;
   end if;
-  insert into supabase_migrations.schema_migrations (version, name, statements)
-  values (v_version, ${q(name)}, array[${varName}]);
+  insert into supabase_migrations.schema_migrations (version, name, statements, created_by)
+  values (v_version, ${q(name)}, array[${varName}], ${q(LEDGER_CREATED_BY)});
+  -- The row must have apply_migration's shape (N6): one element [1:1] holding
+  -- the checked bytes, created_by set, idempotency_key and rollback null.
+  if not exists (select 1 from supabase_migrations.schema_migrations m
+                  where m.version = v_version and m.name = ${q(name)}
+                    and cardinality(m.statements) = 1 and array_lower(m.statements, 1) = 1
+                    and md5(m.statements[1]) = md5(${varName}) and octet_length(m.statements[1]) = octet_length(${varName})
+                    and m.created_by = ${q(LEDGER_CREATED_BY)}
+                    and m.idempotency_key is null and m.rollback is null) then
+    raise exception '${tag}: the ledger row does not have apply_migration''s shape' using errcode = 'P0001';
+  end if;
 `;
 
 function fileLiteral(text, label) {
@@ -365,6 +389,16 @@ ${values}
                      order by c.ordinal_position)
      from information_schema.columns c
     where c.table_schema = 'supabase_migrations' and c.table_name = 'schema_migrations') as ledger_columns,
+  -- N6: the shape the wrapper writes must be the shape this ledger holds.
+  (select string_agg(c.column_name || ':' || c.data_type || ':' || c.is_nullable || ':' || coalesce(c.column_default, ''), ', '
+                     order by c.ordinal_position)
+     from information_schema.columns c
+    where c.table_schema = 'supabase_migrations' and c.table_name = 'schema_migrations') = ${q(LEDGER_COLUMNS)} as ledger_columns_as_pinned,
+  -- via to_jsonb so that a ledger WITHOUT the column still answers (null) rather than erroring
+  (select coalesce(array_agg(distinct to_jsonb(m) ->> 'created_by' order by to_jsonb(m) ->> 'created_by'), '{}')
+     from supabase_migrations.schema_migrations m) as ledger_created_by,
+  (select bool_and(cardinality(m.statements) = 1 and array_lower(m.statements, 1) = 1)
+     from supabase_migrations.schema_migrations m) as ledger_rows_single_element,
   -- identity markers
   exists (select 1 from supabase_migrations.schema_migrations m
            where m.version = '20260909232836' and m.name = 'phase_e_03_order_margin_snapshot'
