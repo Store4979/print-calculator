@@ -485,6 +485,16 @@ All four hold the production key with live legacy writers; that exposure ends
 only with credential rotation (stage 0 production half), after which a
 rollback is a fresh build of the old commit, never a republish.
 
+> **Superseded in part, 2026-09-29 (review of d01b74a, N4).** `89de03e`
+> and `7f89876` stay KEPT as retained URLs, and are probed and retired with
+> the key like every retained URL. They are **no longer rollback targets**:
+> both carry the pre-fix `src/lib/orderQueue.js` (blob `cdec8a2e…`), whose
+> drain loses orders queued during its awaits. The approved fresh-build
+> targets are `7ec5af4`, `9937728` and the stage-0 A3 source, each carrying
+> the fix `f99d16a9…`. See production plan B2 and the manifest's
+> `rollbackTargets` (checked by M-10). The rows below keep their 2026-09-24
+> wording as the record of that decision.
+
 **Approved for deletion by Ryan, 2026-09-24: 28** — every non-kept deploy whose bundle holds
 the key or whose key state is unknown (a 502 crash says nothing about the key;
 unknown is not absent). All are tier 1 (missing the cleanup-stale-jobs fix).

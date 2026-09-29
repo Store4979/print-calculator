@@ -282,19 +282,28 @@ P5. The set of URLs that P5's revocation must cut off is therefore the table
 re-taken **after P4 and immediately before the revocation step (C4.7)**, not
 this appendix. The same table is taken again after P5.
 
-**B2. Rollback targets are a named list (B4)**, each a reviewed commit that is
-compatible with the post-stage-0 database. The migrations are additive, and no
-listed commit's client or functions name a Release 2 object.
+**B2. Fresh-build rollback targets are a named list (B4)**, each a reviewed
+commit that is compatible with the post-stage-0 database. The migrations are
+additive, and no listed commit's client or functions name a Release 2 object.
+**Each must also carry the queue fix** (review of d01b74a, N4):
+`src/lib/orderQueue.js` blob `f99d16a9…`, shipped in `9937728` (`cefda59`,
+"stop the drain erasing orders queued during its awaits"). A target without
+it would reinstate the lost-order window the fix closed. The manifest's
+`rollbackTargets` block lists them, and M-10 checks each one's blob.
 
-| commit | deploy today | role |
-|---|---|---|
-| `7ec5af4` | `6ab020c50a788b0008d430c9` | published before P4 |
-| `9937728` | `6aad56a391c0cf0008d215fd` | rollback target |
-| `89de03e` | `6aa994d535444e0008272512` | rollback target |
-| `7f89876` | `6aa59114f573770008fb8dd5` | rollback target |
-| the A3 commit | P4's deploy | published from P4 |
+| commit | deploy today | role | `orderQueue.js` |
+|---|---|---|---|
+| `7ec5af4` | `6ab020c50a788b0008d430c9` | published before P4 | `f99d16a9…` ✓ |
+| `9937728` | `6aad56a391c0cf0008d215fd` | rollback target (the fix) | `f99d16a9…` ✓ |
+| the A3 commit | P4's deploy | published from P4 | `f99d16a9…` ✓ (M-10 on the pinned tree) |
 
-A rollback to anything not on this list is a new review. After P5 a rollback
+**Not rebuild targets:** `89de03e` (deploy `6aa994d5…`) and `7f89876` (deploy
+`6aa59114…`) carry the pre-fix blob `cdec8a2e…`, whose drain writes the
+pre-await `remaining` snapshot back. They remain **retained URLs** in the
+retirement inventory (B1, B3, C5.6–C5.8): they hold the key until P5, and are
+probed like every retained URL. They are never a rollback destination.
+
+A rollback to anything not on the list above is a new review. After P5 a rollback
 is a **fresh build** of a listed commit, never a republish: the kept deploys'
 functions hold the revoked key (C9).
 
@@ -1032,7 +1041,7 @@ section.
 | B1 presence-only probe; collapsing signer; probe matrix; invalid-key control; current vs historical; legacy writers, signer, deleter; provider-side evidence | C3.1, C5.5–C5.10, C6 |
 | B2 per-migration intermediate expectations | A1a, E4 |
 | B3 schema/data vs append-only ledger; reviewed rolled-back state accepted by the inventory | E2 (P0-S / P0-L), E6, the INV-6 net-state change and its regression test |
-| B4 break-glass re-enable; named rollback targets; re-probe; old-key set after P4 | B1–B3, C9 |
+| B4 break-glass re-enable; named rollback targets; re-probe; old-key set after P4 | B1–B3, C9; targets restricted to commits carrying the queue fix (N4, M-10) |
 | B5 runtime-enabled evidence separate from `flagPresent`; `deploy-context` kept | D4 — `flagEnabled` implemented in `64730fe` (DC-24); D (final paragraph) |
 | B6 A3/C pinned; deploy ids bound to source | A3, C5.4, D1, F1, F3 |
 | F5 rulings 1–5 | F5 |
@@ -1064,8 +1073,8 @@ section.
 
 | # | deploy id | context | state | PR | commit | built (UTC) | fixes (cleanup, recipient) | service-role key | role |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | `6aa59114f573770008fb8dd5` | production | ready | — | `7f898762` | 2026-09-12T17:51 | cleanup yes, recipient yes | PRESENT, writer live | rollback target |
-| 2 | `6aa994d535444e0008272512` | production | ready | — | `89de03e5` | 2026-09-15T18:56 | cleanup yes, recipient yes | PRESENT, writer live | rollback target |
+| 1 | `6aa59114f573770008fb8dd5` | production | ready | — | `7f898762` | 2026-09-12T17:51 | cleanup yes, recipient yes | PRESENT, writer live | retained (not a rebuild target: pre-queue-fix, N4) |
+| 2 | `6aa994d535444e0008272512` | production | ready | — | `89de03e5` | 2026-09-15T18:56 | cleanup yes, recipient yes | PRESENT, writer live | retained (not a rebuild target: pre-queue-fix, N4) |
 | 3 | `6aad56a391c0cf0008d215fd` | production | ready | — | `99377287` | 2026-09-18T15:20 | cleanup yes, recipient yes | PRESENT, writer live | rollback target |
 | 4 | `6ab020c50a788b0008d430c9` | production | ready | — | `7ec5af48` | 2026-09-20T18:07 | cleanup yes, recipient yes | PRESENT, writer live | published |
 | 5 | `69ea366eb345cb0008d4de89` | deploy-preview | ready | #2 | `1e909012` | 2026-04-23T15:10 | cleanup no, recipient no | no functions | — |

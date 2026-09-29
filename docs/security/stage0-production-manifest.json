@@ -553,6 +553,43 @@
       "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a"
     }
   },
+  "rollbackTargets": {
+    "note": "Approved FRESH-BUILD rollback targets (plan B2). Each must carry requiredBlob, the queue fix shipped in 9937728; M-10 checks it. Commits that predate the fix stay retained URLs in the retirement inventory and are NOT rebuild targets (review of d01b74a, N4).",
+    "requiredBlob": {
+      "path": "src/lib/orderQueue.js",
+      "blob": "f99d16a99680c0a15f6c9997f80fe1c31b744044",
+      "fixedBy": "9937728 (cefda59: stop the drain erasing orders queued during its awaits)"
+    },
+    "approved": [
+      {
+        "commit": "7ec5af48666e3779266464f77cdbe4bdf851ae5a",
+        "role": "published before P4",
+        "deploy": "6ab020c50a788b0008d430c9"
+      },
+      {
+        "commit": "993772878de145ecf7b88963bc01b123b42c1b14",
+        "role": "rollback target (the fix)",
+        "deploy": "6aad56a391c0cf0008d215fd"
+      },
+      {
+        "commit": "a3",
+        "role": "the A3 source, published from P4",
+        "deploy": null
+      }
+    ],
+    "retainedNotRebuildable": [
+      {
+        "commit": "89de03e59b66df0ae2097c11ae746bb1146fad83",
+        "deploy": "6aa994d535444e0008272512",
+        "orderQueueBlob": "cdec8a2e64c01557fc0a4afc1ab18a4993e3d437"
+      },
+      {
+        "commit": "7f898762a958fdcbf2e6036033ea363c45f903fe",
+        "deploy": "6aa59114f573770008fb8dd5",
+        "orderQueueBlob": "cdec8a2e64c01557fc0a4afc1ab18a4993e3d437"
+      }
+    ]
+  },
   "p6": null,
   "deploys": {
     "P4": null,

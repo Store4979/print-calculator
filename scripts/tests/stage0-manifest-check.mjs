@@ -79,7 +79,7 @@ export function pinnedFiles(M) {
 
 export function checkManifest(repo, M) {
   const g = gitIn(repo);
-  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [] };
+  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [], "M-10": [] };
   const say = (k, s) => P[k].push(s);
   if (g.tryTxt("rev-parse", "--is-inside-work-tree") !== "true") { say("M-0", `${repo} is not a git checkout`); return P; }
   const manifestCommit = g.lastChange(MANIFEST_PATH);
@@ -204,6 +204,29 @@ export function checkManifest(repo, M) {
   const val = (k) => (env.find((l) => l.startsWith(k + "=")) || "").slice(k.length + 1);
   if (val("VITE_SUPABASE_URL") !== `https://${M.productionRef}.supabase.co`) say("M-7b", ".env URL is not the production project");
   if (!/^sb_publishable_[A-Za-z0-9_-]+$/.test(val("VITE_SUPABASE_ANON_KEY"))) say("M-7b", ".env key is not a publishable key");
+
+  // M-10 fresh-build rollback targets (review of d01b74a, N4): every approved
+  // target carries the queue fix (the orderQueue.js blob 9937728 shipped), so a
+  // recovery never reinstates the drain that lost orders queued during its
+  // awaits. Commits that predate the fix stay retained URLs only.
+  const RT = M.rollbackTargets;
+  if (!RT || !RT.requiredBlob || !Array.isArray(RT.approved) || !RT.approved.length) {
+    P["M-10"] = ["the manifest has no rollbackTargets with a requiredBlob and an approved list"];
+  } else {
+    const k = "M-10";
+    P[k] = [];
+    const req = RT.requiredBlob;
+    for (const t of RT.approved) {
+      const commit = t.commit === "a3" ? resolve(M.a3.commit) : t.commit;
+      if (!g.hasCommit(commit)) { if (!g.shallow()) P[k].push(`approved target ${t.commit} is missing and the clone is not shallow`); continue; }
+      const got = g.objAt(commit, req.path);
+      if (got !== req.blob) P[k].push(`approved target ${t.commit} (${t.role}) has ${req.path} ${got}, not the fixed ${req.blob}`);
+    }
+    for (const r of RT.retainedNotRebuildable || []) {
+      if (RT.approved.some((t) => t.commit === r.commit)) P[k].push(`${r.commit} is both approved and retained-only`);
+      if (g.hasCommit(r.commit) && g.objAt(r.commit, req.path) === req.blob) P[k].push(`${r.commit} carries the fix; it needs no retained-only listing`);
+    }
+  }
 
   // M-8 the repository state the manifest records.
   const L = M.baselineLedger || [];

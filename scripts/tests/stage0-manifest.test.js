@@ -25,6 +25,8 @@
 //   M-8 the recorded state: the 20-row baseline, forwards applied in order,
 //       rollback records in RB order, and exactly the migration files that
 //       state implies
+//   M-10 every approved fresh-build rollback target carries the queue fix;
+//       commits before it are retained URLs only (review of d01b74a, N4)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -48,6 +50,7 @@ const NAMES = {
   "M-7": "A3: the pinned commit, and HEAD while enforced, hold the pinned trees and blobs",
   "M-7b": "the build-input binding: build scripts and .env",
   "M-8": "the recorded repository state: baseline, apply order, rollback records, exact file set",
+  "M-10": "every approved fresh-build rollback target carries the queue fix (orderQueue.js f99d16a9)",
 };
 for (const [k, name] of Object.entries(NAMES)) {
   test(`${k} ${name}`, () => assert.deepEqual(P[k], [], "\n  " + P[k].join("\n  ")));
