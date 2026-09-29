@@ -165,6 +165,17 @@ export function checkManifest(repo, M) {
       if (!w.includes("the ledger row does not have apply_migration''s shape")) say("M-6", `P2-${m.n} does not assert its ledger row's shape`);
     }
     if (!/^begin isolation level repeatable read;$/m.test(out.P1 || "") || !/\nrollback;\n$/.test(out.P1 || "") || /^commit;$/m.test(out.P1 || "")) say("M-6", "P1 must begin repeatable read, end in ROLLBACK and never commit");
+    // M-6c the staging lock rehearsal (N5) cannot touch anything but its own schema.
+    const lp = Object.entries(out).filter(([k]) => k.startsWith("LOCKPROBE-"));
+    if (lp.length !== 10) say("M-6", `expected 10 LOCKPROBE texts, found ${lp.length}`);
+    for (const [k, v] of lp) {
+      if (!/STAGING ONLY/.test(v)) say("M-6", `${k} is not marked STAGING ONLY`);
+      const ddl = [...v.replace(/--[^\n]*/g, " ").matchAll(/\b(create|alter|drop|truncate|insert\s+into|update|delete\s+from|lock\s+table)\s+(?:table\s+|schema\s+|constraint\s+)?([a-z_][a-z0-9_.]*)/gi)]
+        .map((x) => x[2].toLowerCase()).filter((t) => !t.startsWith("stage0_lockprobe") && !["if", "exception", "pg_temp"].includes(t));
+      if (ddl.length) say("M-6", `${k} writes outside stage0_lockprobe: ${[...new Set(ddl)].join(", ")}`);
+      if (/^B-/.test(k.slice(10)) && !v.includes("the staging seed store is absent")) say("M-6", `${k} lacks the staging-only guard`);
+      if (/'b7a8e54c99432c5e0ddb60be4c46505f'\) then\s+raise exception '[^']*production's ledger rows/.test(v)) say("M-6", `${k} carries the production identity guard`);
+    }
     // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.
     const probe = out["SIZE-PROBE"] || "";
     if (!(Buffer.byteLength(probe) > Buffer.byteLength(out.P1)) || Buffer.byteLength(probe) - Buffer.byteLength(out.P1) !== M.sizeProbe.exceedsP1By) say("M-6b", "SIZE-PROBE size");

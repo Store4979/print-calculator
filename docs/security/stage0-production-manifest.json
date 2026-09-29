@@ -243,9 +243,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "6811197b4e1507b6452fdb673a22bfe26ecc55fb",
-    "md5": "9ef5bf6bbe042aace2010d97a5dcd685",
-    "bytes": 28043,
+    "blob": "60541fdc5d4633ef2de615733955075584925049",
+    "md5": "961852eaa19ade2992e50f7cdbb19d8c",
+    "bytes": 39169,
     "pinnedAt": "manifest-commit"
   },
   "functions": {
@@ -475,59 +475,99 @@
   },
   "outputs": {
     "P0": {
-      "md5": "c71dbd8e6e9602b31453cd4f23760717",
-      "bytes": 11619
+      "md5": "2d6977169a592cac78a15c5ebe17509b",
+      "bytes": 11694
     },
     "P1": {
-      "md5": "344585d3ec282679549efd9150c73679",
-      "bytes": 223369
+      "md5": "37ebef2399d94a191e5ef5f663a1e27d",
+      "bytes": 224934
     },
     "SIZE-PROBE": {
-      "md5": "7e98cd4615f49d207f9ffec636cc179e",
-      "bytes": 224393
+      "md5": "6cdcd202983c9535242c28549b92b354",
+      "bytes": 225958
     },
     "P2-01": {
-      "md5": "4c3f396455fee6cf1edf3580c0b925b5",
-      "bytes": 25013
+      "md5": "b680442d19f25aca0ede5fdf32542207",
+      "bytes": 25194
     },
     "P2-02": {
-      "md5": "455eb4f1f4885c934c3c2565be4bfc18",
-      "bytes": 18740
+      "md5": "aecf712f514ae0620e578472b071e7df",
+      "bytes": 18921
     },
     "P2-03": {
-      "md5": "0427d661f8bfca3f80c0b3c08db57802",
-      "bytes": 26045
+      "md5": "1d3abb52deba91f9883cc275048a65a7",
+      "bytes": 26226
     },
     "P2-04": {
-      "md5": "381959417f47ae448db1aa8a7cadaa7e",
-      "bytes": 19227
+      "md5": "fed3234b01c164f51a54367478eb7594",
+      "bytes": 19408
     },
     "P2-05": {
-      "md5": "02b97977ea6ac64412d3836864b35b64",
-      "bytes": 19066
+      "md5": "266d2f32ab61633d1b5357c71ec5d7ab",
+      "bytes": 19247
+    },
+    "LOCKPROBE-SETUP": {
+      "md5": "d5a8c9de513479429cac9410090666d1",
+      "bytes": 991
+    },
+    "LOCKPROBE-HOLD": {
+      "md5": "8ebe3533508c6b1487889d780fd66502",
+      "bytes": 377
+    },
+    "LOCKPROBE-B-LOCKTIMEOUT": {
+      "md5": "726f086647bb2a1ef087f19e16de6527",
+      "bytes": 5519
+    },
+    "LOCKPROBE-B-STMTTIMEOUT": {
+      "md5": "b4bb7ddaaedb12c6c97b41ff44529fce",
+      "bytes": 4969
+    },
+    "LOCKPROBE-B-TXTIMEOUT": {
+      "md5": "02554a498f9b419987bf47ea1f362215",
+      "bytes": 4945
+    },
+    "LOCKPROBE-B-CANCEL": {
+      "md5": "93b15361895d300621bb28cc6b104264",
+      "bytes": 4911
+    },
+    "LOCKPROBE-C-CANCEL": {
+      "md5": "e136264c6592012698c4c2975706224d",
+      "bytes": 1276
+    },
+    "LOCKPROBE-B-POSITIVE": {
+      "md5": "f18e4ee1a898c7168c7bc65978fc4684",
+      "bytes": 4871
+    },
+    "LOCKPROBE-READBACK": {
+      "md5": "f0d1a6e51d5012fb732241f9e2ae9cc2",
+      "bytes": 1164
+    },
+    "LOCKPROBE-CLEANUP": {
+      "md5": "c31297aaa5f8cb481acf48f1cdaa810c",
+      "bytes": 924
     },
     "RB-5": {
-      "md5": "056b236daf93abe61f34b00ef335d4af",
-      "bytes": 16370
+      "md5": "92c1c8bceb5c6a943c682cf3ca4c20db",
+      "bytes": 16551
     },
     "RB-43": {
-      "md5": "f2619454d3fa7e402a05836e141319de",
-      "bytes": 35958
+      "md5": "55c1d3bd57b62e913225add48ef0080a",
+      "bytes": 36139
     },
     "RB-2": {
-      "md5": "d30a4bcb0afd4c1eed47d66064e2e81c",
-      "bytes": 15264
+      "md5": "11ee730aac45528de1e49b19faae78af",
+      "bytes": 15445
     },
     "RB-1": {
-      "md5": "1b50b0438aee7fdb7205883f52699ec3",
-      "bytes": 17507
+      "md5": "c250dd6e36cc72836caa8be2b14780b5",
+      "bytes": 17688
     }
   },
   "sizeProbe": {
     "runOn": "staging, in C3, only after Codex accepts revision 2 (Ryan's decision 2); read-only",
     "expect": {
-      "probe_bytes": 224195,
-      "probe_md5": "d14f06ebffab93f6f9cefee55f76354e"
+      "probe_bytes": 225760,
+      "probe_md5": "1d83d0fd91a5a786673544fbe695da0f"
     },
     "exceedsP1By": 1024
   },

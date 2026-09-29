@@ -635,8 +635,8 @@ select set_config('application_name', 'release2-stage0-P2-01', true),
        set_config('lock_timeout', '3s', true),
        set_config('statement_timeout', '45s', true),
        set_config('idle_in_transaction_session_timeout', '10s', true);
--- PG >= 17 only (P0 reads server_version_num); the assembler emits this line
--- only when the manifest's p0.serverVersionNum says so:
+-- The hard timer. PG 17 only: an older server rejects the parameter and the
+-- text stops here, before any DDL (N5). P0 requires PG 17.
 select set_config('transaction_timeout', '45s', true);
 do $stage0_wrap$
 declare
@@ -644,7 +644,9 @@ declare
   v   text;
 begin
   -- the settings above are in force in THIS transaction, or nothing runs
-  if current_setting('lock_timeout') <> '3s' or current_setting('statement_timeout') <> '45s' then
+  if current_setting('server_version_num')::int < 170000
+     or current_setting('lock_timeout') <> '3s' or current_setting('statement_timeout') <> '45s'
+     or current_setting('transaction_timeout') <> '45s' then
     raise exception 'stage0 wrapper: timeouts not in force' using errcode = 'P0001';
   end if;
   <positive identity guard, §E2>                       -- refuses staging and unknown datasets
@@ -674,10 +676,20 @@ How it bounds and aborts:
 - **`lock_timeout` 3 s bounds the wait for ACCESS EXCLUSIVE.** A counter
   transaction that holds `employees` makes the wrapper fail rather than queue.
   A queued ACCESS EXCLUSIVE request would itself block every later reader.
-- **The whole migration is ONE statement** (the `DO` block), so
-  `statement_timeout` 45 s is a **whole-transaction deadline** for the DDL and
-  the ledger write. `transaction_timeout` backs it up where the server has it.
-  The explicit deadline check is last.
+- **Three different bounds, stated exactly (corrected, N5):**
+  - **`statement_timeout` bounds ONE statement.** It is 45 s for P2 and RB,
+    90 s for P1. In P2 and RB the DDL, the ledger write and every check are
+    in one `DO` statement, so it bounds that work. The few `set_config`
+    statements around it are separately bounded, and instant.
+  - **`transaction_timeout` is the hard timer for the whole transaction.** It
+    is 45 s for P2 and RB, 110 s for P1. It **exists only from PG 17**: an
+    older server rejects the parameter, and the text stops at that line
+    before any DDL. The wrapper also asserts the server version and that the
+    timer is in force. P0 stops unless `pg17_hard_timer` is true. When it
+    fires, it ends the SESSION (FATAL), which rolls the transaction back.
+  - **The deadline checks are boundary checks, not timers.** They are the
+    wrapper's final check and P1's checks at each proofs section. They run
+    only when execution reaches them and interrupt nothing.
 - **Timeout, cancel, error.** A timeout, a `pg_cancel_backend` on the session
   (found in `pg_stat_activity` by its `application_name`), or any raised check
   aborts the transaction. PostgreSQL releases the locks at abort, and the
@@ -747,7 +759,7 @@ rollback):*
 | `nil_job_absent` | true: no `pending_jobs.id` is the nil uuid (C6 row X) |
 | `auth_users_user_triggers` | 0 (the proofs insert synthetic `auth.users` rows; a trigger there would be an unreviewed side effect inside P1) |
 | `free_pins` | ≥ 3 (the proofs need three unused four-digit PINs; `employees_pin_unique` is global). Counted, never listed |
-| `server_version_num` | recorded (decides `transaction_timeout`) |
+| `server_version_num`, `pg17_hard_timer` | **`pg17_hard_timer` must be true** (`server_version_num` ≥ 170000), or P0 stops: `transaction_timeout`, the only hard timer, exists only from PG 17 (N5). Staging reports 170006 |
 
 *P0-L — the ledger (append-only; it never returns to these values after P2):*
 
@@ -788,8 +800,12 @@ Stop on any unexpected value.
 **E3. P1 — rehearsal on production, one transaction, `ROLLBACK`.** It is emitted
 by the assembler as one text (md5 in the manifest):
 - `begin isolation level repeatable read`;
-- the E1 settings, with `statement_timeout` 90 s per statement;
-- a whole-transaction deadline asserted at every section boundary, 100 s.
+- the E1 settings, with `statement_timeout` 90 s per statement and
+  `transaction_timeout` 110 s. The latter is the hard timer, PG 17, required
+  by P0;
+- a 100 s deadline CHECK at every proofs section boundary. It is a boundary
+  check that interrupts nothing; if a statement runs long, the two timers
+  above are what stop it.
 
 Order:
 1. Capture the catalog rows behind `catalog_fingerprint`, and md5s of the real
@@ -967,6 +983,50 @@ the wrapper's five rows read back with that full shape. The `(version, name)`
 projection `list_migrations` returns lists them after the 20 baseline rows. A
 ledger without `created_by` is flagged by P0 and refuses the wrapper's
 insert. No live write was made to test recognition.
+
+*N5 — the two-session lock rehearsal (APPROVED to run on staging).* The
+texts are the pinned `LOCKPROBE-*` outputs of the assembler; M-6c checks that
+none writes outside its own schema. They use the same `execute_sql` tool and
+the P2 wrapper pattern, built from the same code. That means:
+- the same settings line;
+- the same settings assert, which now requires PG 17;
+- the same md5 gate, `EXECUTE`, ledger insert, shape assert and deadline.
+
+They differ only in:
+- their own guard: the staging seed store must be present and the production
+  marker absent. **The production identity guard is untouched and never
+  used**;
+- a throwaway schema `stage0_lockprobe`, with a table `t` and a ledger of the
+  real ledger's shape. The "migration" is
+  `alter table stage0_lockprobe.t add constraint t_id_uniq unique (id)`, the
+  lock class 01 takes on `employees`;
+- scaled timeouts where a scenario must fire in reasonable time;
+- one handler that re-raises any error with its SQLSTATE, the elapsed ms and
+  the backend pid. `query_canceled` is named explicitly, because PL/pgSQL's
+  `OTHERS` does not match it.
+
+Procedure (session A, B and C calls issued concurrently where marked), with a
+READBACK after each scenario:
+0. SETUP.
+1. Lock refusal: A holds ACCESS SHARE on `t` for 15 s, as a counter reader
+   holds it on `employees` ∥ B-LOCKTIMEOUT waits until it sees A's lock, then
+   must fail `55P03` at ≈3 s. No DDL, no ledger row; A's lock alone remains
+   until A ends.
+2. a. B-STMTTIMEOUT acquires the lock, then holds it past `statement_timeout`
+      8 s: `57014`. Lock released, no DDL, no ledger row.
+   b. B-TXTIMEOUT holds it past `transaction_timeout` 8 s, with
+      `statement_timeout` 60 s. The PG 17 hard timer ends the session.
+      Lock released, no DDL, no ledger row.
+   c. B-CANCEL holds it (`statement_timeout` 30 s as backstop) ∥ C finds
+      B's backend by `application_name` holding ACCESS EXCLUSIVE, then calls
+      `pg_cancel_backend` and reports B's pid. B fails `57014` "user
+      request". Lock released, no DDL, no ledger row.
+3. B-POSITIVE, with no holder: commits the DDL and one ledger row of
+   `apply_migration`'s shape.
+4. CLEANUP drops only `stage0_lockprobe`, and shows no relation, lock or
+   active rehearsal backend left.
+
+The record follows this paragraph once run.
 
 **E7. Executed so far — locally, not on any Supabase project.** Every
 assembled text was run in a real Postgres 17 (PGlite 0.3.16 here; the review

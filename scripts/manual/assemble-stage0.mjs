@@ -206,11 +206,19 @@ function tableState(present, tag, label) {
 `;
 }
 
-const SETTINGS_ASSERT = (tag) => `  if current_setting('lock_timeout') <> '3s'
-     or current_setting('statement_timeout') not in ('45s', '90s')
+// Review of d01b74a, N5: the hard timer is transaction_timeout, which exists
+// only from PG 17. The settings line sets it unconditionally (an older server
+// rejects the parameter, and the text stops there, before any DDL). This
+// assert requires PG 17 and the timer in force; P0 stops on pg17_hard_timer
+// false. statement_timeout bounds ONE statement; the deadline checks are
+// boundary checks that interrupt nothing.
+const SETTINGS_ASSERT = (tag, t = { lock: ["3s"], statement: ["45s", "90s"], tx: ["45s", "110s"], modes: ["P1", "P2", "RB"] }) => `  if current_setting('server_version_num')::int < 170000
+     or current_setting('lock_timeout') not in (${t.lock.map(q).join(", ")})
+     or current_setting('statement_timeout') not in (${t.statement.map(q).join(", ")})
+     or current_setting('transaction_timeout') not in (${t.tx.map(q).join(", ")})
      or current_setting('idle_in_transaction_session_timeout') <> '10s'
-     or current_setting('release2.stage0_mode', true) not in ('P1', 'P2', 'RB') then
-    raise exception '${tag}: the stage-0 timeouts are not in force in this transaction' using errcode = 'P0001';
+     or current_setting('release2.stage0_mode', true) not in (${t.modes.map(q).join(", ")}) then
+    raise exception '${tag}: the stage-0 timeouts (PG 17 transaction_timeout included) are not in force in this transaction' using errcode = 'P0001';
   end if;
 `;
 
@@ -238,7 +246,7 @@ export const LEDGER_CREATED_BY = "store4979@theupsstore.com";
 export const LEDGER_COLUMNS = "version:text:NO:, statements:ARRAY:YES:, name:text:YES:, created_by:text:YES:, idempotency_key:text:YES:, rollback:ARRAY:YES:";
 
 // A second row in the same transaction (RB-43) is stamped one second later.
-const LEDGER_INSERT = (varName, name, tag, offsetSeconds = 0) => `  v_head := (select max(m.version) from supabase_migrations.schema_migrations m);
+const LEDGER_INSERT = (varName, name, tag, offsetSeconds = 0, table = "supabase_migrations.schema_migrations") => `  v_head := (select max(m.version) from ${table} m);
   v_version := to_char((clock_timestamp() at time zone 'utc')${offsetSeconds ? ` + interval '${offsetSeconds} second'` : ""}, 'YYYYMMDDHH24MISS');
   if v_version <= v_head then
     if current_setting('release2.stage0_mode') = 'P1' then
@@ -247,11 +255,11 @@ const LEDGER_INSERT = (varName, name, tag, offsetSeconds = 0) => `  v_head := (s
       raise exception '${tag}: version % is not after the ledger head %; refusing', v_version, v_head using errcode = 'P0001';
     end if;
   end if;
-  insert into supabase_migrations.schema_migrations (version, name, statements, created_by)
+  insert into ${table} (version, name, statements, created_by)
   values (v_version, ${q(name)}, array[${varName}], ${q(LEDGER_CREATED_BY)});
   -- The row must have apply_migration's shape (N6): one element [1:1] holding
   -- the checked bytes, created_by set, idempotency_key and rollback null.
-  if not exists (select 1 from supabase_migrations.schema_migrations m
+  if not exists (select 1 from ${table} m
                   where m.version = v_version and m.name = ${q(name)}
                     and cardinality(m.statements) = 1 and array_lower(m.statements, 1) = 1
                     and md5(m.statements[1]) = md5(${varName}) and octet_length(m.statements[1]) = octet_length(${varName})
@@ -326,9 +334,9 @@ function settings(name, mode, statementTimeout, deadline, txTimeout) {
        set_config('idle_in_transaction_session_timeout', '10s', true),
        set_config('release2.stage0_mode', ${q(mode)}, true),
        set_config('release2.stage0_deadline_s', ${q(String(deadline))}, true);
--- transaction_timeout exists from PG 17; on older servers this line sets nothing.
-select set_config('transaction_timeout', ${q(txTimeout)}, true)
- where current_setting('server_version_num')::int >= 170000;
+-- The hard timer. transaction_timeout exists only from PG 17: an older server
+-- rejects this parameter and the text stops here, before any DDL (N5).
+select set_config('transaction_timeout', ${q(txTimeout)}, true);
 `;
 }
 
@@ -371,6 +379,7 @@ ${catalogRows}     ) c) as catalog_fingerprint,
   (select count(*) from generate_series(1000, 9999) g
     where not exists (select 1 from public.employees e where e.pin = lpad(g::text, 4, '0'))) as free_pins,
   current_setting('server_version_num')::int as server_version_num,
+  current_setting('server_version_num')::int >= 170000 as pg17_hard_timer,
   -- P0-L: the ledger (append-only)
   (select max(m.version) from supabase_migrations.schema_migrations m) as ledger_head,
   (select count(*) from supabase_migrations.schema_migrations m) as ledger_rows,
@@ -425,6 +434,160 @@ export function sizeProbe(p1Bytes) {
   return { text: SIZE_PROBE_HEAD + filler + SIZE_PROBE_TAIL, literal: filler };
 }
 
+// ── N5: the staging two-session lock rehearsal ───────────────────────────────
+// A throwaway schema on STAGING ONLY (stage0_lockprobe: a table t and a ledger
+// of the real ledger's shape). The session-B texts are the P2 wrapper pattern:
+// the same settings line, settings assert, md5 gate, EXECUTE, ledger insert,
+// shape assert and deadline. They differ in exactly these ways:
+//   - their own guard: staging seed store present, production marker absent;
+//   - their own table and ledger;
+//   - scaled timeouts where a scenario needs one to fire in reasonable time;
+//   - one handler around the whole body that re-raises with the SQLSTATE,
+//     the elapsed ms and the backend pid. The re-raise aborts the transaction
+//     exactly as the P2 wrapper's unhandled error does.
+// The production identity guard is untouched and never applied here.
+export const LOCKPROBE_FILE = "alter table stage0_lockprobe.t add constraint t_id_uniq unique (id);\n";
+const LOCKPROBE_GUARD = (tag) => `  if not exists (select 1 from public.stores s where s.id = ${q(STAGING_SEED_STORE)}) then
+    raise exception '${tag}: the staging seed store is absent — this rehearsal runs on staging only; refusing' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from supabase_migrations.schema_migrations m
+              where m.version = '20260909232836' and m.name = 'phase_e_03_order_margin_snapshot'
+                and md5(m.statements[1]) = 'b7a8e54c99432c5e0ddb60be4c46505f') then
+    raise exception '${tag}: the production ledger marker is present — not staging; refusing' using errcode = 'P0001';
+  end if;
+  if to_regclass('stage0_lockprobe.t') is null or to_regclass('stage0_lockprobe.ledger') is null then
+    raise exception '${tag}: run LOCKPROBE-SETUP first' using errcode = 'P0001';
+  end if;
+`;
+function lockProbeSession(name, { waitForHolder = false, sleepAfter = 0, lock = "3s", statement = "45s", tx = "45s", deadline = 40 }) {
+  const tag = `lockprobe ${name}`;
+  const f = LOCKPROBE_FILE;
+  const wait = waitForHolder ? `  -- a CONFLICTING lock must be held by another backend before the DDL is tried
+  for i in 1..100 loop
+    exit when exists (select 1 from pg_locks l where l.relation = 'stage0_lockprobe.t'::regclass
+                        and l.granted and l.pid <> pg_backend_pid());
+    perform pg_sleep(0.1);
+  end loop;
+  if not exists (select 1 from pg_locks l where l.relation = 'stage0_lockprobe.t'::regclass and l.granted and l.pid <> pg_backend_pid()) then
+    raise exception '${tag}: no holder seen within 10 s — the sessions did not overlap; nothing was tried' using errcode = 'P0001';
+  end if;
+` : "";
+  const hold = sleepAfter ? `  perform pg_sleep(${sleepAfter});   -- the lock from the DDL is held here\n` : "";
+  return `-- ${name} — staging two-session lock rehearsal, session B (plan §E8, N5). STAGING ONLY.
+begin;
+${settings(`lockprobe-${name}`, "P2", statement, deadline, tx).replace("set_config('lock_timeout', '3s', true)", `set_config('lock_timeout', ${q(lock)}, true)`)}do $stage0_wrap$
+declare
+  f constant text := ${fileLiteral(f, "LOCKPROBE_FILE")};
+  v_head text;
+  v_version text;
+  v_t0 timestamptz := clock_timestamp();
+begin
+${SETTINGS_ASSERT(tag, { lock: [lock], statement: [statement], tx: [tx], modes: ["P2"] })}${LOCKPROBE_GUARD(tag)}  if md5(f) <> ${q(md5(f))} or octet_length(f) <> ${Buffer.byteLength(f)} then
+    raise exception '${tag}: the embedded bytes differ' using errcode = 'P0001';
+  end if;
+${wait}  v_t0 := clock_timestamp();
+  execute f;
+${hold}${LEDGER_INSERT("f", "lockprobe", tag, 0, "stage0_lockprobe.ledger")}${DEADLINE(tag)}exception
+  -- query_canceled (57014: statement timeout, pg_cancel_backend) is NOT matched
+  -- by OTHERS in PL/pgSQL, so it is named. A transaction_timeout ends the
+  -- session (FATAL) and cannot be caught at all.
+  when query_canceled then
+    raise exception '${tag}: [%] % — after % ms, backend %', sqlstate, sqlerrm,
+      round(extract(epoch from clock_timestamp() - v_t0) * 1000), pg_backend_pid() using errcode = sqlstate;
+  when others then
+    raise exception '${tag}: [%] % — after % ms, backend %', sqlstate, sqlerrm,
+      round(extract(epoch from clock_timestamp() - v_t0) * 1000), pg_backend_pid() using errcode = sqlstate;
+end
+$stage0_wrap$;
+commit;
+`;
+}
+function lockProbeTexts() {
+  return {
+    "LOCKPROBE-SETUP": `-- LOCKPROBE-SETUP — STAGING ONLY (plan §E8, N5): a throwaway schema, never a real table.
+do $g$ begin
+  if not exists (select 1 from public.stores s where s.id = ${q(STAGING_SEED_STORE)}) then
+    raise exception 'lockprobe setup: not staging; refusing' using errcode = 'P0001'; end if;
+  if to_regnamespace('stage0_lockprobe') is not null then
+    raise exception 'lockprobe setup: stage0_lockprobe already exists; clean up first' using errcode = 'P0001'; end if;
+end $g$;
+create schema stage0_lockprobe;
+create table stage0_lockprobe.t (id int);
+insert into stage0_lockprobe.t values (1), (2);
+create table stage0_lockprobe.ledger (version text not null primary key, statements text[], name text,
+  created_by text, idempotency_key text unique, rollback text[]);
+insert into stage0_lockprobe.ledger (version, name, statements, created_by) values ('20000101000000', 'baseline', array['-- baseline'], ${q(LEDGER_CREATED_BY)});
+select 'stage0_lockprobe ready' as setup;
+`,
+    // Session A: a READER, as a counter PIN lookup is, holding ACCESS SHARE for 15 s.
+    "LOCKPROBE-HOLD": `-- LOCKPROBE-HOLD — session A (STAGING ONLY): a reader holding ACCESS SHARE on the probe table for 15 s,
+-- as a counter PIN lookup holds it on employees. Conflicts with the ACCESS EXCLUSIVE the DDL needs.
+begin;
+select set_config('application_name', 'release2-stage0-lockprobe-holder', true);
+lock table stage0_lockprobe.t in access share mode;
+select pg_sleep(15);
+commit;
+`,
+    // 1. B meets a held lock: lock_timeout 3 s must refuse it (55P03).
+    "LOCKPROBE-B-LOCKTIMEOUT": lockProbeSession("B-LOCKTIMEOUT", { waitForHolder: true }),
+    // 2a. B holds the lock past statement_timeout (8 s here): 57014, released.
+    "LOCKPROBE-B-STMTTIMEOUT": lockProbeSession("B-STMTTIMEOUT", { sleepAfter: 30, statement: "8s", tx: "20s", deadline: 20 }),
+    // 2b. B holds the lock past transaction_timeout (8 s) with statement_timeout 60 s: the PG 17 hard timer.
+    "LOCKPROBE-B-TXTIMEOUT": lockProbeSession("B-TXTIMEOUT", { sleepAfter: 30, statement: "60s", tx: "8s", deadline: 20 }),
+    // 2c. B holds the lock and is cancelled by C (statement_timeout 30 s as the backstop).
+    "LOCKPROBE-B-CANCEL": lockProbeSession("B-CANCEL", { sleepAfter: 60, statement: "30s", tx: "45s", deadline: 40 }),
+    "LOCKPROBE-C-CANCEL": `-- LOCKPROBE-C-CANCEL — session C (STAGING ONLY): find session B holding ACCESS EXCLUSIVE on the probe
+-- table (by application_name), cancel it with pg_cancel_backend, and report who and when.
+do $c$
+declare v_pid int; v_t0 timestamptz := clock_timestamp();
+begin
+  for i in 1..150 loop
+    select a.pid into v_pid from pg_stat_activity a join pg_locks l on l.pid = a.pid
+     where a.application_name = 'release2-stage0-lockprobe-B-CANCEL'
+       and l.relation = 'stage0_lockprobe.t'::regclass and l.mode = 'AccessExclusiveLock' and l.granted
+     limit 1;
+    exit when v_pid is not null;
+    perform pg_sleep(0.1);
+  end loop;
+  if v_pid is null then raise exception 'lockprobe C: session B never held the lock within 15 s' using errcode = 'P0001'; end if;
+  perform set_config('lockprobe.cancelled_pid', v_pid::text, true);
+  perform set_config('lockprobe.cancelled_ok', pg_cancel_backend(v_pid)::text, true);
+  perform set_config('lockprobe.waited_ms', round(extract(epoch from clock_timestamp() - v_t0) * 1000)::text, true);
+end $c$;
+select current_setting('lockprobe.cancelled_pid') as cancelled_pid, current_setting('lockprobe.cancelled_ok') as pg_cancel_backend,
+       current_setting('lockprobe.waited_ms') as found_after_ms, pg_backend_pid() as canceller_pid;
+`,
+    // 3. The positive control: no holder, the same wrapper commits.
+    "LOCKPROBE-B-POSITIVE": lockProbeSession("B-POSITIVE", {}),
+    "LOCKPROBE-READBACK": `-- LOCKPROBE-READBACK (STAGING ONLY, read-only): DDL, ledger rows, locks and backends on the probe.
+select
+  exists (select 1 from pg_constraint k where k.conrelid = 'stage0_lockprobe.t'::regclass and k.conname = 't_id_uniq') as ddl_committed,
+  (select json_agg(json_build_object('version', m.version, 'name', m.name, 'n', cardinality(m.statements),
+          'md5', md5(m.statements[1]), 'created_by', m.created_by) order by m.version) from stage0_lockprobe.ledger m) as ledger,
+  (select coalesce(json_agg(json_build_object('pid', l.pid, 'mode', l.mode, 'granted', l.granted,
+          'app', (select a.application_name from pg_stat_activity a where a.pid = l.pid))), '[]'::json)
+     from pg_locks l where l.relation in ('stage0_lockprobe.t'::regclass, 'stage0_lockprobe.ledger'::regclass)
+      and l.pid <> pg_backend_pid()) as locks,
+  (select coalesce(json_agg(json_build_object('pid', a.pid, 'app', a.application_name, 'state', a.state,
+          'xact_start', a.xact_start, 'backend_start', a.backend_start)), '[]'::json)
+     from pg_stat_activity a where a.application_name like 'release2-stage0-lockprobe%') as lockprobe_backends,
+  now() as read_at;
+`,
+    "LOCKPROBE-CLEANUP": `-- LOCKPROBE-CLEANUP (STAGING ONLY): drop ONLY the rehearsal schema, then show nothing is left.
+do $g$ begin
+  if not exists (select 1 from public.stores s where s.id = ${q(STAGING_SEED_STORE)}) then
+    raise exception 'lockprobe cleanup: not staging; refusing' using errcode = 'P0001'; end if;
+end $g$;
+drop schema stage0_lockprobe cascade;
+select to_regnamespace('stage0_lockprobe') is null as schema_gone,
+       (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'stage0_lockprobe') as relations_left,
+       (select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid
+         where a.application_name like 'release2-stage0-lockprobe%' and l.pid <> pg_backend_pid()) as probe_locks_left,
+       (select count(*) from pg_stat_activity a where a.application_name like 'release2-stage0-lockprobe%' and a.state <> 'idle') as probe_backends_active;
+`,
+  };
+}
+
 /**
  * Every stage-0 SQL text, by name, from the manifest's frozen inputs.
  * Deterministic: the same manifest inputs give the same bytes, wherever the
@@ -459,6 +622,7 @@ export function assembleAll(manifest, opts = {}) {
   for (const m of MIGRATIONS) {
     out[`P2-${m.n}`] = `-- P2-${m.n} — apply ${m.name} to production (plan §E1, §E4).\nbegin;\n${settings(`P2-${m.n}`, "P2", "45s", 40, "45s")}${W[m.n]}commit;\n`;
   }
+  Object.assign(out, lockProbeTexts());
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
   }

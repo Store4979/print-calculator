@@ -131,7 +131,7 @@ expect("P0 identity + preconditions", p0a.ledger_matches_repo && p0a.production_
   && p0a.production_store_present && p0a.stores_without_org == 0 && p0a.release2_tables_present == 0
   && p0a.release2_functions_present == 0 && !p0a.uniq_already_there && p0a.probe_slug_absent && p0a.nil_job_absent
   && p0a.auth_users_user_triggers == 0 && p0a.free_pins >= 3 && p0a.ledger_rows == 20 && p0a.release2_in_ledger == 0
-  && p0a.ledger_columns_as_pinned === true && p0a.ledger_rows_single_element === true
+  && p0a.pg17_hard_timer === true && p0a.ledger_columns_as_pinned === true && p0a.ledger_rows_single_element === true
   && JSON.stringify(p0a.ledger_created_by) === JSON.stringify(["store4979@theupsstore.com"]));
 
 let r = await run(db, "P1");
