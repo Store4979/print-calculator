@@ -1026,7 +1026,66 @@ READBACK after each scenario:
 4. CLEANUP drops only `stage0_lockprobe`, and shows no relation, lock or
    active rehearsal backend left.
 
-The record follows this paragraph once run.
+**N5 RECORD — PASS, 2026-09-29 16:31–16:49Z, staging `lboajqihpsfrokqvjgnl`
+(PG 170006), with the texts pinned at `8faf290`, `83bbf62` and `1e122db`.**
+
+*The transport, measured first (read-only):*
+- Every `execute_sql` call runs on a NEW backend (`application_name`
+  `mgmt-api`, backend started ≈17 ms before the query), and that connection is
+  closed after the call. A transaction therefore cannot outlive a call, and
+  a closed connection releases its locks.
+- Calls issued by one caller are serialized, even when issued together.
+- A background subagent calling the same tool runs CONCURRENTLY with the
+  caller: its backend was `active` while the caller's query ran. The second
+  session in every scenario below is such a caller, through the same tool.
+- The tool returns only the rows of the LAST row-returning statement, which is
+  why every scenario is followed by a separate read-back.
+
+| scenario | session(s), pid | result | read-back after |
+|---|---|---|---|
+| 0 SETUP | — | `stage0_lockprobe ready` | — |
+| 1 lock refusal | A holder 1836823 (`release2-stage0-lockprobe-holder`, ACCESS SHARE, xact 16:38:50.078) ∥ B 1836824 | **`55P03` "canceling statement due to lock timeout" after 3001 ms** | no DDL; ledger = baseline only; locks: A's ACCESS SHARE only (B left none); B's backend gone |
+| 2a statement timeout | B 1836837 (lock taken, then `pg_sleep(30)` under `statement_timeout` 8 s) | **`57014` "canceling statement due to statement timeout" after 7998 ms** | no DDL; baseline only; no locks; no rehearsal backend |
+| 2b transaction timeout | B (lock taken, then `pg_sleep(30)` under `transaction_timeout` 8 s, `statement_timeout` 50 s) | **FATAL `25P04` "terminating connection due to transaction timeout"**, inside `pg_sleep(30)`. The session is ended; there is no pid in the message, because FATAL cannot be caught | no DDL; baseline only; no locks; no rehearsal backend |
+| 2c cancel | B 1837574, run by a subagent, held **AccessExclusiveLock** (and the index build's ShareLock) at 16:47:42.08 ∥ C 1837575 found it by `application_name` in 3 ms, then `pg_cancel_backend(1837574)` → **true** | B: **`57014` "canceling statement due to user request" after 1013 ms, backend 1837574** | (16:47:44.26) no DDL; baseline only; no locks; no rehearsal backend |
+| 3 positive control | B-POSITIVE, no holder | committed | `t_id_uniq` present; ledger row `20260929164826 lockprobe`, one element, md5 `59ece267…` = the checked bytes, `created_by` set; no locks |
+| 4 CLEANUP | — | `drop schema stage0_lockprobe cascade` | schema gone, 0 relations, 0 rehearsal locks, 0 active rehearsal backends. Real ledger unchanged (31 rows, head `20260928160847`); no `stage0*` schema; no `t_id_uniq` |
+
+*Found and fixed during the run, each re-pinned in its own commit BEFORE the
+affected text ran again:*
+- **The `pg_stat_activity` snapshot.** A wait loop joined to
+  `pg_stat_activity` rereads the transaction's first snapshot
+  (`stats_fetch_consistency = cache`) and never sees a new session.
+  C-CANCEL now calls `pg_stat_clear_snapshot()` on each iteration
+  (`83bbf62`). B's wait loops read `pg_locks`, which is live.
+- **A display value.** `statement_timeout = 60s` displays as `1min`, so
+  B-TXTIMEOUT's settings assert (it compares display text) failed closed:
+  P0001, no DDL, nothing left behind. The rehearsal value became 50 s
+  (`1e122db`). Every production value displays as itself. 3 s, 10 s and 45 s
+  were confirmed on staging by the assert passing; 90 s and 110 s (P1) were
+  confirmed on PG 17.5 locally. A mismatch fails closed at the assert before
+  any DDL.
+- **Two scenario-1 attempts that did not overlap.** The B text refused with
+  "no holder seen within 10 s — the sessions did not overlap; nothing was
+  tried". The caller's own calls were serialized, or issued in a later turn,
+  after the holder had finished. The guard did what it says; nothing was
+  changed.
+
+*What this establishes for production, and what it does not:*
+- **Established:**
+  - `lock_timeout` refuses a DDL that meets a reader's lock at ≈3 s.
+  - `statement_timeout`, `transaction_timeout` (PG 17) and
+    `pg_cancel_backend` each end the transaction after the ACCESS EXCLUSIVE
+    lock is held, and each releases it with no DDL and no ledger row.
+  - The same wrapper pattern commits cleanly when nothing contends.
+  - All of it through the `execute_sql` tool that P1/P2 will use.
+- **For the operator:** cancelling a running P1/P2 needs a SECOND caller while
+  the first call is in flight. One caller's calls are serialized. The C-CANCEL
+  pattern — find the backend by `application_name`, clear the stats snapshot,
+  `pg_cancel_backend` — is the rehearsed way. Otherwise the timers are the
+  bound.
+- **Not established:** production's own lock traffic, and a PG 17 server other
+  than staging's 17.6. P0 requires PG 17.
 
 **E7. Executed so far — locally, not on any Supabase project.** Every
 assembled text was run in a real Postgres 17 (PGlite 0.3.16 here; the review
@@ -1160,9 +1219,20 @@ section.
 | B6 A3/C pinned; deploy ids bound to source | A3, C5.4, D1, F1, F3 |
 | F5 rulings 1–5 | F5 |
 | staging qualifications | G |
+
+**The review of `d01b74a` (AMEND), item by item:**
+
+| item | resolved in |
+|---|---|
+| N1 request boundary: global aliases, the dynamic asset exception | `1c7d552`. The inventory resolves the global object through aliases, chains, `document.defaultView`, eval/Function/constructor/string timers; the global may only be read through. `src/lib/assetTransport.js` is the only asset site: fixed bundled paths, GET/omit/error, all enforced by the scanner. The logo policy runs before any request. MUT-49..53 include Codex's two exact snippets, a function-route logo, POST and redirect cases; `asset-transport.test.js` is the runtime test |
+| N2 INV-6 in the real test file | `c995894`. `release2-inventory.test.js` INV-6 uses `appliedReleaseState`. RB-INV-9 runs the real file on Codex's lifecycle fixture (7/7), and RB-INV-10 shows it still failing Codex's original reproduction. It fails the old INV-6 with Codex's message |
+| N3 manifest lifecycle; frozen inputs; build-input binding; PGlite version | `45ee1a3`. Inputs pinned by blob, state-aware checks, the lifecycle test (pending → each apply → fully applied → committed rollback → record-only update), manifest-commit resolution, M-7b (every build script and `.env`), PGlite 0.4.6 in the harness docs; A5, A7 |
+| N4 rollback targets | `a2ae897`. B2 lists `7ec5af4`, `9937728` and the A3 source only; `89de03e` and `7f89876` are retained URLs; M-10 requires `orderQueue.js` `f99d16a9…` |
+| N5 deadline wording; PG 17; the lock rehearsal | `8faf290` (wording E1/E2/E3, PG 17 mandatory in wrapper and P0, texts pinned), `83bbf62` and `1e122db` (fixes found in the run), and this record (§E8) |
+| N6 ledger-row shape | `e58834e`. The staging read-back (§E8), the wrapper writing `created_by` and asserting the full shape, P0's ledger-shape columns, the manifest `ledgerRow`, and local recognition via the `list_migrations` projection |
 | inventory residual (R1, request boundary) | G0 condition 5 (F3); closed at the boundary in `bbbd637`, pending review |
 
-## I. Decisions and what remains (nothing run)
+## I. Decisions, what has run, and what remains
 
 **Ryan's decisions, 2026-09-29:**
 1. **D4:** `flagEnabled` added with the gate's exact predicate, with tests;
@@ -1176,9 +1246,17 @@ section.
    (C7).
 5. **No private type-only check route** (C4.2).
 
+**Run on staging for the review of `d01b74a` (both approved by Ryan for that
+round; records in §E8):**
+- N6: the read-only ledger read-back;
+- N5: the two-session lock rehearsal, in a throwaway schema that was dropped
+  afterwards.
+
+Nothing ran on production.
+
 **Remaining, each at its own stop point, none started:**
-1. Codex's review of revision 2.
-2. C3 on staging, including C3.7.
+1. Codex's review of this revision (including the N1–N6 corrections).
+2. C3 on staging, including C3.7, only after Codex accepts.
 3. P0 (read-only), then P1 onward.
 
 ---

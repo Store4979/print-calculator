@@ -200,6 +200,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     ledger row itself (plan §E1).
   - Netlify SECRET env values are write-only: nobody can read a key's type
     back from the dashboard.
+  - The Supabase MCP execute_sql (measured on staging 2026-09-29, plan §E8):
+    - every call is a NEW backend (application_name mgmt-api), closed after
+      the call, so a transaction cannot outlive a call;
+    - one caller's calls are SERIALIZED, even when issued together. A second
+      concurrent session needs a second caller (a background subagent calling
+      the same tool worked);
+    - only the LAST row-returning statement's rows come back, so read back
+      separately;
+    - a loop that polls pg_stat_activity must call pg_stat_clear_snapshot()
+      each time, or it rereads the transaction's first snapshot. pg_locks is
+      live;
+    - current_setting() returns DISPLAY text, so statement_timeout 60s reads
+      back as '1min'.
   - netlify/functions/deploy-context.js reports `flagPresent` (scoping) AND
     `flagEnabled`. `flagEnabled` is release2FlagEnabled() from
     netlify/lib/deploy-context.js, the SAME function release2Allowed() calls
