@@ -1162,6 +1162,21 @@ P1 on production is the first run that shows those.
 | plus: credential transition | C5 steps 1–10 recorded: key inventory; current-deploy proof including the canary's `store:store4979`; historical baseline and proof per URL of the post-P4 old-key set; provider-side record; C8's prefix; the cleanup answer (scheduler named, or paused) |
 | plus: bound to source | the P4, P5 and P6 deploy ids and `commit_ref`s, each compared with the manifest's pinned trees |
 
+**What G0 condition 5's inventory gate is, and is not (review of dc5a88b,
+N1).** It is a regression gate against unreviewed or accidental request paths
+in `src/`. Every raw request API is an allowlisted site. The global object may
+only be read through. It fails closed on the named code-evaluation sinks:
+- `eval` and `Function`, free or through any global chain (computed access
+  included);
+- any `.constructor` member;
+- timers whose first argument is not provably a function;
+- non-literal `import()` specifiers and worker URLs.
+
+It is **not** a sandbox against deliberately obfuscated source. For example,
+it does not resolve computed member access with a non-literal key on ordinary
+objects. Mandatory code review of every change to `src/` is the control for
+that.
+
 **F4. Rollback, per step (F-7).**
 
 | step | rollback | precondition | class |

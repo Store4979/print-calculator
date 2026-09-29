@@ -112,6 +112,19 @@
 //      src/lib/assetTransport.js (ASSET_TRANSPORT). Each is fetch(<listed
 //      const = a same-origin path, never /.netlify/functions/>, { method:
 //      "GET", credentials: "omit", redirect: "error" }) as literals.
+//    Review of dc5a88b (N1) closed the code-evaluation sinks, fail-closed:
+//    eval/Function free or as members of any global chain (computed access
+//    included), any .constructor member, setTimeout/setInterval (bare or
+//    qualified) whose first argument is not PROVABLY a function (an arrow, a
+//    function expression, or a name bound to a function declaration or a
+//    never-assigned const function; see provablyCallable), a timer held as a
+//    value, new Worker/SharedWorker with a non-literal URL, and import() with
+//    a non-literal specifier.
+//    WHAT THIS GATE IS, AND IS NOT: a regression gate against unreviewed or
+//    accidental request paths. It fails closed on the named code-evaluation
+//    sinks. It is NOT a sandbox against deliberately obfuscated source: for
+//    example, it does not resolve computed member access with a non-literal
+//    key on ordinary objects. Mandatory code review is the control for that.
 //    BOUND, stated: requests an element makes by loading a URL (an image src,
 //    navigation, a link, the service-worker registration of /sw.js) are not
 //    API calls and are not sites. They are GET-only and cannot set headers or
@@ -487,6 +500,78 @@ function requestApiOf(callee, isFree) {
   return null;
 }
 
+// ── Code-evaluation sinks (review of dc5a88b, N1) ────────────────────────────
+// Code from a string reaches any global by name, past every rule in this file.
+// So these fail closed wherever the global object is reached from:
+//   - eval and Function, free or as a member of the global object (and any
+//     computed access on it);
+//   - any .constructor member: (()=>{}).constructor is Function,
+//     [].constructor.constructor too, and so on;
+//   - setTimeout/setInterval, bare or qualified, unless the first argument is
+//     PROVABLY a function (below). Held as a value, they fail too;
+//   - new Worker/SharedWorker with a non-literal URL, and import() with a
+//     non-literal specifier.
+const EVAL_NAMES = new Set(["eval", "Function"]);
+const TIMER_NAMES = new Set(["setTimeout", "setInterval"]);
+
+/** "setTimeout" | "setInterval" | null — bare (free) or through any global chain. */
+function timerOf(callee, isFree) {
+  callee = unwrapChain(callee);
+  if (callee.type === "Identifier" && TIMER_NAMES.has(callee.name) && isFree(callee)) return callee.name;
+  if (callee.type === "MemberExpression" && globalKind(callee.object, isFree) === "global" && TIMER_NAMES.has(memberKey(callee))) return memberKey(callee);
+  return null;
+}
+
+/**
+ * Is this argument PROVABLY a function? Yes for an arrow or function
+ * expression, and for a name whose binding is a function declaration or a
+ * `const` initialized with one, provided nothing in the module assigns to that
+ * name. Everything else — a parameter, a let/var, an import, a member, a call
+ * result, an undeclared name — is no. Fail closed: "cannot prove" is "no".
+ */
+function provablyCallable(arg, parentOf, ast) {
+  if (!arg) return false;
+  if (arg.type === "ArrowFunctionExpression" || arg.type === "FunctionExpression") return true;
+  if (arg.type !== "Identifier") return false;
+  const name = arg.name;
+  let assigned = false;
+  walk(ast, (n) => {
+    if (n.type === "AssignmentExpression" && patternNames(n.left).includes(name)) assigned = true;
+    if (n.type === "UpdateExpression" && n.argument.type === "Identifier" && n.argument.name === name) assigned = true;
+  });
+  if (assigned) return false;
+  const isFnInit = (d) => d.init && (d.init.type === "ArrowFunctionExpression" || d.init.type === "FunctionExpression");
+  const inStatements = (stmts) => {
+    for (const st0 of stmts) {
+      const st = st0 && (st0.type === "ExportNamedDeclaration" || st0.type === "ExportDefaultDeclaration") ? st0.declaration : st0;
+      if (!st) continue;
+      if (st.type === "FunctionDeclaration" && st.id?.name === name) return true;
+      if (st.type === "ClassDeclaration" && st.id?.name === name) return false;
+      if (st.type === "VariableDeclaration") {
+        for (const d of st.declarations) {
+          if (patternNames(d.id).includes(name)) return st.kind === "const" && d.id.type === "Identifier" && isFnInit(d);
+        }
+      }
+      if (st.type === "ImportDeclaration" && st.specifiers.some((sp) => sp.local.name === name)) return false;
+    }
+    return null;
+  };
+  for (let cur = parentOf(arg); cur; cur = parentOf(cur)) {
+    if (/^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(cur.type)) {
+      if (cur.params.some((p) => patternNames(p).includes(name))) return false;
+      if (cur.type === "FunctionExpression" && cur.id?.name === name) return true;
+      if (functionVarNames(cur).includes(name)) return false;
+    }
+    if (cur.type === "CatchClause" && cur.param && patternNames(cur.param).includes(name)) return false;
+    let found = null;
+    if (cur.type === "BlockStatement" || cur.type === "Program") found = inStatements(cur.body);
+    else if (cur.type === "SwitchStatement") found = inStatements(cur.cases.flatMap((c) => c.consequent));
+    else if (cur.type === "ForStatement" || cur.type === "ForInStatement" || cur.type === "ForOfStatement") found = inStatements([cur.init || cur.left].filter(Boolean));
+    if (found !== null) return found;
+  }
+  return false;
+}
+
 /** Names declared at module level: imports, top-level var/let/const, functions, classes. */
 function moduleBindings(ast) {
   const names = new Set();
@@ -783,20 +868,29 @@ export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCH
             if (problem) errors.push(`${file}:${ln}: asset transport: ${problem}`);
           }
         }
-        // Code from a string can reach any global by name, past every rule here.
-        const callee = unwrapChain(node.callee);
-        if (callee.type === "Identifier" && (callee.name === "setTimeout" || callee.name === "setInterval") && isFree(callee)) {
-          const a = node.arguments[0];
-          if (a && (a.type === "Literal" || a.type === "TemplateLiteral" || a.type === "BinaryExpression")) {
-            errors.push(`${file}:${ln}: ${callee.name} with a string evaluates code from a string; pass a function`);
-          }
+        // Code-evaluation sinks (dc5a88b N1): a timer must be handed something
+        // provably callable, or a string would be evaluated as code.
+        const timer = timerOf(node.callee, isFree);
+        if (timer && !provablyCallable(node.arguments[0], parentOf, ast)) {
+          errors.push(`${file}:${ln}: ${spell(node.callee)}'s first argument is not provably a function (an arrow, a function expression, or a name bound to a function declaration or a never-assigned const function); anything else could be a string evaluated as code`);
         }
-        if (callee.type === "MemberExpression" && memberKey(callee) === "constructor") {
-          errors.push(`${file}:${ln}: calls a .constructor; a function's constructor evaluates code from a string`);
+        if ((api === "Worker" || api === "SharedWorker") && argShape(node.arguments[0], consts, parentOf) === "dynamic") {
+          errors.push(`${file}:${ln}: new ${api} with a non-literal URL; a worker's script is code the scan cannot see`);
         }
       }
-      if (node.type === "Identifier" && (node.name === "eval" || node.name === "Function") && isFree(node)) {
+      if (node.type === "Identifier" && EVAL_NAMES.has(node.name) && isFree(node)) {
         errors.push(`${file}:${ln}: ${node.name} evaluates code from a string; not allowed in the client`);
+      }
+      // A timer held as a value can later be called with a string.
+      if (node.type === "Identifier" && TIMER_NAMES.has(node.name) && isFree(node)) {
+        const { u, p } = useOf(node);
+        if (!(p && (p.type === "CallExpression" || p.type === "NewExpression") && p.callee === u)) {
+          errors.push(`${file}:${ln}: ${node.name} is referenced as a value; only a direct call with a provable function is reviewable`);
+        }
+      }
+      // Any .constructor member reaches Function from any function or array.
+      if (node.type === "MemberExpression" && memberKey(node) === "constructor") {
+        errors.push(`${file}:${ln}: ${spell(node)} reads a .constructor; from any function it is Function, which evaluates code from a string`);
       }
       if (node.type === "Identifier" && REQUEST_GLOBALS.has(node.name) && isValueReference(node, parent)) {
         const asCallee = parent && (parent.type === "CallExpression" || parent.type === "NewExpression") && parent.callee === node;
@@ -817,8 +911,15 @@ export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCH
       if (node.type === "MemberExpression") {
         const obj = globalKind(node.object, isFree);
         const key = memberKey(node);
-        if ((obj === "global" || obj === "navigator" || obj === "document") && node.computed && (key === null || REQUEST_GLOBALS.has(key) || key === "sendBeacon" || GLOBAL_PROPS.has(key) || key === "defaultView")) {
-          errors.push(`${file}:${ln}: computed access on ${spell(node.object)} can reach a request API; not allowed`);
+        if ((obj === "global" || obj === "navigator" || obj === "document") && node.computed && (key === null || REQUEST_GLOBALS.has(key) || key === "sendBeacon" || GLOBAL_PROPS.has(key) || key === "defaultView" || EVAL_NAMES.has(key) || TIMER_NAMES.has(key))) {
+          errors.push(`${file}:${ln}: computed access on ${spell(node.object)} can reach a request API or a code-evaluation sink; not allowed`);
+        } else if (obj === "global" && key && EVAL_NAMES.has(key)) {
+          errors.push(`${file}:${ln}: ${spell(node)} evaluates code from a string; not allowed in the client`);
+        } else if (obj === "global" && key && TIMER_NAMES.has(key)) {
+          const { u, p } = useOf(node);
+          if (!(p && (p.type === "CallExpression" || p.type === "NewExpression") && p.callee === u)) {
+            errors.push(`${file}:${ln}: ${spell(node)} is referenced as a value; only a direct call with a provable function is reviewable`);
+          }
         } else if ((obj === "global" && key && REQUEST_GLOBALS.has(key)) || (obj === "navigator" && key === "sendBeacon")) {
           const { u, p } = useOf(node);
           const asCallee = p && (p.type === "CallExpression" || p.type === "NewExpression") && p.callee === u;

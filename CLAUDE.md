@@ -72,7 +72,17 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   callFn, FN — DISPATCHERS in scripts/tests/inventory-allowlist.mjs) take only
   a literal approved route name. A new fetch anywhere fails until reviewed.
   The global object may only be READ THROUGH (window.x, typeof window,
-  "k" in navigator), never held: `const w = window` fails (d01b74a N1). Asset
+  "k" in navigator), never held: `const w = window` fails (d01b74a N1). It
+  fails closed on code-evaluation sinks too (dc5a88b N1):
+  - eval/Function free or as window./globalThis./self. members;
+  - any .constructor member access;
+  - setTimeout/setInterval whose first argument is not an arrow, a function
+    expression or a name bound to a function declaration / never-assigned
+    const function (so `setTimeout(cb)` with a parameter FAILS);
+  - non-literal import() or Worker URLs.
+
+  It is a regression gate, not a sandbox against obfuscated source; code
+  review is that control. Asset
   requests go only through src/lib/assetTransport.js: fixed bundled paths,
   GET, credentials omit, redirect error, all enforced by the scanner. The store
   logo_url is policy-checked BEFORE any request, and a refused value is never

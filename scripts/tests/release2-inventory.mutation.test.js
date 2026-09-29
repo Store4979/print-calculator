@@ -635,8 +635,8 @@ test("MUT-50 Codex exact #2, and every other way to hold or reach the global obj
     ["computed global prop", "export const a = (k, u) => window[k].fetch(u);\n", /computed access on window can reach a request API/],
     ["eval", "export const a = (s) => eval(s);\n", /eval evaluates code from a string/],
     ["Function", "export const a = (s) => Function(s)();\n", /Function evaluates code from a string/],
-    ["constructor", "export const a = (s) => (() => 0).constructor(s)();\n", /calls a \.constructor/],
-    ["string timer", "export const a = () => setTimeout(\"fet\" + \"ch('/x')\", 0);\n", /setTimeout with a string evaluates code/],
+    ["constructor", "export const a = (s) => (() => 0).constructor(s)();\n", /reads a \.constructor/],
+    ["string timer", "export const a = () => setTimeout(\"fet\" + \"ch('/x')\", 0);\n", /setTimeout's first argument is not provably a function/],
   ];
   for (const [label, src, re] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, re, label);
 });
@@ -686,4 +686,67 @@ test("MUT-53 CONTROLS: locals named top/parent/self/window, typeof/in probes and
   ].join("\n")));
   assert.deepEqual(r.errors, [], "none of these hold or call through the global object");
   assert.deepEqual(r.siteIn("src/v.js").filter((s) => s.kind === "request"), []);
+});
+
+// ── Review of dc5a88b, N1: code-evaluation sinks, fail-closed ────────────────
+test("MUT-54 Codex's four exact modules each fail the unchanged gate", () => {
+  const cases = [
+    ["window.eval", "export const reviewRun = source => window.eval(source);\n", /window\.eval evaluates code from a string/],
+    ["window.Function", "export const reviewRun = source => window.Function(source)();\n", /window\.Function evaluates code from a string/],
+    ["window.setTimeout", "export const reviewRun = source => window.setTimeout(source, 0);\n", /window\.setTimeout's first argument is not provably a function/],
+    ["setTimeout", "export const reviewRun = source => setTimeout(source, 0);\n", /setTimeout's first argument is not provably a function/],
+  ];
+  for (const [label, src, re] of cases) {
+    const r = mutateReal((root) => write(root, "src/v.js", src));
+    assert.match(r.gateJoined, re, label);
+  }
+});
+
+test("MUT-55 every other route to an evaluation sink fails: qualified, computed, aliased, via .constructor", () => {
+  const cases = [
+    ["globalThis.Function", "export const a = (s) => new globalThis.Function(s);\n", /globalThis\.Function evaluates code/],
+    ["self['eval']", "export const a = (s) => self[\"eval\"](s);\n", /computed access on self can reach a request API or a code-evaluation sink/],
+    ["window[k]", "export const a = (k, s) => window[k](s);\n", /computed access on window/],
+    ["alias of window.eval", "const e = window.eval;\nexport const a = (s) => e(s);\n", /window\.eval evaluates code/],
+    ["window.self.eval", "export const a = (s) => window.self.eval(s);\n", /window\.self\.eval evaluates code/],
+    ["indirect eval", "export const a = (s) => (0, eval)(s);\n", /eval evaluates code from a string/],
+    ["arrow constructor", "export const a = (s) => (() => 0).constructor(s)();\n", /reads a \.constructor/],
+    ["array constructor chain", "export const a = (s) => [].constructor.constructor(s)();\n", /reads a \.constructor/],
+    ["constructor held", "const F = (() => {}).constructor;\nexport const a = (s) => F(s)();\n", /reads a \.constructor/],
+    ["async constructor", "export const a = (s) => Object.getPrototypeOf(async function () {}).constructor(s);\n", /reads a \.constructor/],
+    ["computed 'constructor'", "export const a = (s) => (() => 0)[\"constructor\"](s)();\n", /reads a \.constructor/],
+    ["setInterval with a string var", "export const a = (s) => setInterval(s, 10);\n", /setInterval's first argument is not provably a function/],
+    ["globalThis.setInterval", "export const a = (s) => globalThis.setInterval(s, 10);\n", /globalThis\.setInterval's first argument is not provably a function/],
+    ["template-string timer", "export const a = () => setTimeout(`fet${\"ch\"}('/x')`, 0);\n", /setTimeout's first argument is not provably a function/],
+    ["timer held", "const st = setTimeout;\nexport const a = (s) => st(s, 0);\n", /setTimeout is referenced as a value/],
+    ["qualified timer held", "const st = window.setTimeout;\nexport const a = (s) => st(s, 0);\n", /window\.setTimeout is referenced as a value/],
+    ["let-bound callback (reassignable)", "export const a = () => { let g = () => 1; setTimeout(g, 0); };\n", /setTimeout's first argument is not provably a function/],
+    ["const function later reassigned via destructuring", "const g = () => 1;\nexport const a = () => setTimeout(g, 0);\nexport const b = (o) => { ({ g } = o); };\n", /setTimeout's first argument is not provably a function/],
+    ["parameter callback", "export const a = (cb) => setTimeout(cb, 0);\n", /setTimeout's first argument is not provably a function/],
+    ["member callback", "export const a = (o) => setTimeout(o.run, 0);\n", /setTimeout's first argument is not provably a function/],
+    ["dynamic import()", "export const a = (n) => import(n);\n", /dynamic import\(\) with a non-literal specifier/],
+    ["template import()", "export const a = (n) => import(`./${n}.js`);\n", /dynamic import\(\) with a non-literal specifier/],
+    ["Worker with a variable URL", "export const a = (u) => new Worker(u);\n", /new Worker with a non-literal URL/],
+    ["SharedWorker with a variable URL", "export const a = (u) => new SharedWorker(u);\n", /new SharedWorker with a non-literal URL/],
+  ];
+  for (const [label, src, re] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, re, label);
+});
+
+test("MUT-56 CONTROLS: ordinary callback timers, literal imports and class constructors pass", () => {
+  const r = mutateReal((root) => write(root, "src/v.js", [
+    "function tick() { return 1; }",
+    "const tock = () => 2;",
+    "const named = function namedFn() { return setTimeout(namedFn, 5); };",
+    "export const a = () => setTimeout(() => {}, 0);",
+    "export const b = () => setTimeout(function () {}, 0);",
+    "export const c = () => setInterval(tick, 10);",
+    "export const d = () => setInterval(tock, 10);",
+    "export const e = () => window.setTimeout(() => {}, 1);",
+    "export const f = () => { const local = () => 3; return setTimeout(local, 0); };",
+    "export const g = async () => (await import(\"qrcode\")).default;",
+    "export class K { constructor(x) { this.x = x; } }",
+    "export const h = () => { const id = setTimeout(() => {}, 1); clearTimeout(id); return named; };",
+    "",
+  ].join("\n")));
+  assert.deepEqual(r.errors, [], "none of these can evaluate a string");
 });
