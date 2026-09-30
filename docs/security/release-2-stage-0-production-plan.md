@@ -1405,6 +1405,13 @@ cancel procedure accepted):**
 |---|---|
 | N1 residual: a `for…of` / `for…in` head writing to a function declaration's name passed the timer check | the N1 structural commit. `provablyCallable` no longer looks for writes. The argument passes only as an inline arrow or function expression, or as a name that scope resolution (`resolveBinding`) binds to a `const` initialized with one. Codex's two exact cases (MUT-57), 24 variants (MUT-58: destructuring writes, `var` redeclaration, a function declaration passed directly, a `let` arrow reassigned or not, shadowing params/catch/for-of, imports and more), and controls (MUT-59, TrainingDrawer's `const measure` included), all with the allowlist unchanged. No `src/` file changed |
 
+**The review of `87f3d3d` (the for…of/for…in cases and the client smoke
+record accepted):**
+
+| item | resolved in |
+|---|---|
+| N1 blocker: `resolveBinding` searched a switch's case declarations for a reference in the DISCRIMINANT, which the language evaluates in the enclosing scope | the scope-audit commit. A scope's declarations now apply only to what the language evaluates inside it: the switch discriminant resolves outward, and parameter expressions never see the body's vars. The const-only rule is unchanged. Every case is scanned AND executed as a real module with a recording timer, and the record is printed. MUT-60 is Codex's exact case: refused, and executed it hands the timer the caller's string. MUT-61 is the audit, all refused: for…of/for…in right sides, the for(;;) init/test/update, parameter defaults (plain, destructuring, arrow, catch), class `extends` and computed method/field keys, and object computed keys. MUT-62 holds the cases where the scanner credits a const still in its TDZ — a case test, a later declarator in a for head, a statement before a block's const. Executed, each throws `ReferenceError` with ZERO timer calls. MUT-63 holds controls with recorded function calls: consts in case and loop bodies, a for-head const, a parameter default that the language resolves to an outer const, and the real tree (TrainingDrawer). No `src/` file, assembler or SQL changed; the manifest moves only the scanner pin |
+
 ## I. Decisions, what has run, and what remains
 
 **Ryan's decisions, 2026-09-29:**

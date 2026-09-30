@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, cpSync, writeFileSync, rmSync, readFileSync, existsSync, renameSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInventory, compareToAllowlist, appliedBaselineVersion } from "./inventory-check.mjs";
 import { ALLOWLIST, RETIRED_EVER } from "./inventory-allowlist.mjs";
 
@@ -819,4 +819,103 @@ test("MUT-59 CONTROLS: inline arrow, inline function, const arrow and const func
   const real = readFileSync(join(ROOT, "src", "TrainingDrawer.jsx"), "utf8");
   assert.match(real, /const measure = \(\) =>/, "TrainingDrawer still declares measure as a const arrow");
   assert.match(real, /setInterval\(measure, 250\)/, "and passes it to setInterval");
+});
+
+// ── Review of 87f3d3d: a scope's declarations only for what it evaluates ─────
+// Each case below is judged twice:
+//   - by the scanner, with the allowlist unchanged;
+//   - by EXECUTION: the same module text is imported as a real ES module, and
+//     one call runs with setTimeout/setInterval replaced by a recorder. The
+//     recorder evaluates nothing; it records each call's first argument.
+// The record — what was thrown, and every timer call — is printed as a test
+// diagnostic and asserted. "string" means the language handed the timer the
+// caller's string, so the scanner MUST refuse. "tdz" means reading the name
+// threw a ReferenceError before the timer was reached. "function" means the
+// timer received the const's function.
+async function executeIntercepted(src, run) {
+  const dir = mkdtempSync(join(tmpdir(), "inv-exec-"));
+  try {
+    const file = join(dir, "v.mjs");
+    writeFileSync(file, src);
+    const mod = await import(pathToFileURL(file).href);
+    const calls = [];
+    const record = (api) => (first) => { calls.push({ api, type: typeof first, value: typeof first === "function" ? "<function>" : String(first) }); return 0; };
+    const saved = { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval };
+    globalThis.setTimeout = record("setTimeout");
+    globalThis.setInterval = record("setInterval");
+    let threw = null;
+    try { run(mod); } catch (e) { threw = `${e.name}: ${e.message}`; }
+    finally { globalThis.setTimeout = saved.setTimeout; globalThis.setInterval = saved.setInterval; }
+    return { threw, calls };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+const PAYLOAD = "PAYLOAD-never-evaluated";
+async function judge(t, c) {
+  const r = mutateReal((root) => write(root, "src/v.js", c.src));
+  const mine = r.errors.filter((e) => e.startsWith("src/v.js"));
+  const refused = mine.some((e) => NOT_CALLABLE.test(e));
+  const x = await executeIntercepted(c.src, c.run);
+  t.diagnostic(`${c.label} | scanner: ${refused ? "REFUSED" : "passed"} | run: ${x.threw || "returned"} | timer calls: ${JSON.stringify(x.calls)}`);
+  if (c.scanner === "refused") assert.ok(refused, `${c.label}: the scanner must refuse\n${mine.join("\n")}`);
+  else assert.deepEqual(mine, [], `${c.label}: the scanner must pass`);
+  if (c.runtime === "string") assert.ok(x.calls.some((k) => k.type === "string" && k.value === PAYLOAD), `${c.label}: expected the language to hand the timer the string`);
+  if (c.runtime === "tdz") {
+    assert.match(x.threw || "", /^ReferenceError: Cannot access '\w+' before initialization$/, `${c.label}: expected a TDZ ReferenceError`);
+    assert.deepEqual(x.calls, [], `${c.label}: the timer must never be reached`);
+  }
+  if (c.runtime === "function") {
+    assert.equal(x.threw, null, `${c.label}: expected no throw`);
+    assert.ok(x.calls.length > 0 && x.calls.every((k) => k.type === "function"), `${c.label}: expected only function arguments`);
+  }
+}
+
+test("MUT-60 Codex's exact 87f3d3d case: the switch DISCRIMINANT resolves in the enclosing scope — refused; executed, the language hands the timer the caller's string", async (t) => {
+  await judge(t, {
+    label: "switch discriminant (Codex exact)",
+    src: "export function schedule(source) {\n  switch (setTimeout(source, 0)) {\n    default:\n      const source = () => {};\n      return source;\n  }\n}\n",
+    run: (m) => m.schedule(PAYLOAD), scanner: "refused", runtime: "string",
+  });
+});
+
+test("MUT-61 the audit: every expression the language evaluates OUTSIDE a scope is resolved outside it — refused, each executed and recorded", async (t) => {
+  const cases = [
+    { label: "for…of right side vs a same-named head const", src: "export function schedule(source) { for (const source of [setTimeout(source, 0)]) {} }\n", runtime: "tdz" },
+    { label: "for…in right side vs a same-named head const", src: "export function schedule(source) { for (const source in { [setTimeout(source, 0)]: 1 }) {} }\n", runtime: "tdz" },
+    { label: "for(;;) init expression vs a body const", src: "export function schedule(source) { for (setTimeout(source, 0); ;) { const source = () => {}; return source; } }\n", runtime: "string" },
+    { label: "for(;;) test vs a body const", src: "export function schedule(source) { for (let i = 0; i < 1 && setTimeout(source, 0) >= 0; i++) { const source = () => {}; } }\n", runtime: "string" },
+    { label: "for(;;) update vs a body const", src: "export function schedule(source) { for (let i = 0; i < 1; i++, setTimeout(source, 0)) { const source = () => {}; } }\n", runtime: "string" },
+    { label: "parameter default vs a body const", src: "export function schedule(cb) { return (function f(x = setTimeout(cb, 0)) { const cb = () => {}; return x; })(); }\n", runtime: "string" },
+    { label: "destructuring parameter default vs a body const", src: "export function schedule(cb) { return (function f({ x = setTimeout(cb, 0) } = {}) { const cb = () => {}; return x; })(); }\n", runtime: "string" },
+    { label: "arrow parameter default vs a body const", src: "export function schedule(cb) { return ((x = setTimeout(cb, 0)) => { const cb = () => {}; return x; })(); }\n", runtime: "string" },
+    { label: "catch parameter default vs a catch-body const", src: "export function schedule(source) { try { throw {}; } catch ({ x = setTimeout(source, 0) }) { const source = () => {}; return x; } }\n", runtime: "string" },
+    { label: "class extends vs a static-block const", src: "export function schedule(source) { class K extends (setTimeout(source, 0), Object) { static { const source = () => {}; } } return K; }\n", runtime: "string" },
+    { label: "class computed key vs a static-block const", src: "export function schedule(source) { class K { [setTimeout(source, 0)]() {} static { const source = () => {}; } } return K; }\n", runtime: "string" },
+    { label: "class computed key vs the method body's const", src: "export function schedule(source) { class K { [setTimeout(source, 0)]() { const source = () => {}; return source; } } return K; }\n", runtime: "string" },
+    { label: "class computed field key vs a static-block const", src: "export function schedule(source) { class K { static [setTimeout(source, 0)] = 1; static { const source = () => {}; } } return K; }\n", runtime: "string" },
+    { label: "object computed key vs the method body's const", src: "export function schedule(source) { return { [setTimeout(source, 0)]() { const source = () => {}; return source; } }; }\n", runtime: "string" },
+    { label: "class extends vs the class's own name", src: "export function schedule() { class source extends (setTimeout(source, 0), Object) {} return source; }\n", runtime: "tdz" },
+  ];
+  for (const c of cases) await judge(t, { ...c, run: (m) => m.schedule(PAYLOAD), scanner: "refused" });
+});
+
+test("MUT-62 where the scanner credits a const that is still uninitialized, the language throws before the timer — demonstrated by execution, recorded", async (t) => {
+  const cases = [
+    { label: "case TEST vs a const declared in a case body", src: "export function schedule(source, k) { switch (k) { case setTimeout(source, 0): return 1; default: const source = () => {}; return source; } }\n" },
+    { label: "for(;;) init vs a LATER declarator of the same head", src: "export function schedule(source) { for (const first = setTimeout(source, 0), source = () => {}; ;) { return first; } }\n" },
+    { label: "a block's statement before the block's const", src: "export function schedule(source) { { setTimeout(source, 0); const source = () => {}; return source; } }\n" },
+  ];
+  for (const c of cases) await judge(t, { ...c, run: (m) => m.schedule(PAYLOAD, 5), scanner: "passes", runtime: "tdz" });
+});
+
+test("MUT-63 CONTROLS, executed: a const arrow used in a case body, a const arrow declared in a loop body, a parameter default that the language resolves to an outer const (not the body's var); TrainingDrawer's const passes", async (t) => {
+  const cases = [
+    { label: "const arrow in a case body", src: "export function schedule(source, k) { switch (k) { case 1: return 0; default: const cb = () => source; return setTimeout(cb, 0); } }\n", run: (m) => m.schedule(PAYLOAD, 5) },
+    { label: "const arrow in a case body, used by a later case", src: "export function schedule(k) { switch (k) { case 1: const cb = () => k; case 2: return setTimeout(cb, 0); } }\n", run: (m) => m.schedule(1) },
+    { label: "const arrow declared in a for…of body", src: "export function schedule(xs) { for (const x of xs) { const cb = () => x; setTimeout(cb, 0); } }\n", run: (m) => m.schedule(["a", "b"]) },
+    { label: "const arrow declared in a for(;;) body", src: "export function schedule() { for (let i = 0; i < 2; i++) { const cb = () => i; setInterval(cb, 10); } }\n", run: (m) => m.schedule() },
+    { label: "const arrow in a for(;;) head, used in the body", src: "export function schedule() { for (const cb = () => 1; ;) { setTimeout(cb, 0); return; } }\n", run: (m) => m.schedule() },
+    { label: "parameter default sees the outer const, not the body's var", src: "const cb = () => {};\nexport function schedule() { return (function f(x = setTimeout(cb, 0)) { var cb = \"PAYLOAD-never-evaluated\"; return x; })(); }\n", run: (m) => m.schedule() },
+  ];
+  for (const c of cases) await judge(t, { ...c, scanner: "passes", runtime: "function" });
+  assert.deepEqual(mutateReal(() => {}).gate, [], "the real src/ tree, unchanged (TrainingDrawer's `const measure = () => …` included), passes");
 });

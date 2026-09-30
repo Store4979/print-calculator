@@ -81,7 +81,11 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     initialized with one (add1d2c). A function declaration, let, var,
     parameter or import FAILS, so write `const cb = () => …`, not
     `function cb() {}`. The rule never consults writes: listing write forms
-    missed for…of/for…in heads;
+    missed for…of/for…in heads. The resolver consults a scope only for what
+    the language evaluates INSIDE it (87f3d3d): a switch DISCRIMINANT is
+    outside the case block, and parameter expressions never see body vars.
+    MUT-60..63 prove each case by executing the module with a recording
+    timer;
   - non-literal import() or Worker URLs.
 
   It is a regression gate, not a sandbox against obfuscated source; code

@@ -572,30 +572,48 @@ function lexicalBinding(stmts, name) {
 
 /**
  * Scope resolution for one identifier reference: walk outward from it and
- * return the FIRST scope's binding of that name. Each scope is checked for:
- *   - a block, module, switch or for-head: its let/const/class/function/import;
+ * return the FIRST scope's binding of that name. A scope's declarations are
+ * consulted only for the parts of the construct the language evaluates INSIDE
+ * that scope (review of 87f3d3d):
+ *   - a block, the module or a static block: its let/const/class/function/
+ *     import, for everything in it;
+ *   - a switch: its case-block declarations for the case TESTS and bodies —
+ *     never for the DISCRIMINANT, which is evaluated in the enclosing scope;
+ *   - a for(;;) head's let/const: for the init, test, update and body, which
+ *     all run in the loop scope;
+ *   - a for-in/for-of head's let/const: for the body, and for the right-hand
+ *     side, which the language evaluates in a scope holding those names
+ *     uninitialized (a read there throws);
  *   - a catch clause: its parameter;
- *   - a function: its parameters, its hoisted vars and `arguments`, then a
- *     function expression's own name;
+ *   - a function: its parameters and `arguments` for the parameters and the
+ *     body. Its hoisted body vars count for the BODY only: parameter
+ *     expressions are evaluated before, and apart from, the body's var
+ *     scope. Then a function expression's own name;
  *   - a static block or the module: its hoisted vars;
- *   - a class: its own name.
+ *   - a class: its own name, for its heritage, computed keys and body. A method
+ *     body or static block is its own scope and is never consulted for the
+ *     heritage or a key.
  * The result is { kind, declarator? }, or { kind: "with" } inside a `with`
- * statement, or null for a free name.
+ * statement, or null for a free name. A const it finds may still be
+ * uninitialized where the reference runs (the temporal dead zone). Reading it
+ * then throws a ReferenceError before any call, which the mutation tests
+ * demonstrate by execution.
  */
 function resolveBinding(ref, parentOf) {
   const name = ref.name;
-  for (let cur = parentOf(ref); cur; cur = parentOf(cur)) {
+  for (let child = ref, cur = parentOf(ref); cur; child = cur, cur = parentOf(cur)) {
     if (cur.type === "WithStatement") return { kind: "with" };
     let stmts = null;
     if (cur.type === "BlockStatement" || cur.type === "Program" || cur.type === "StaticBlock") stmts = cur.body;
-    else if (cur.type === "SwitchStatement") stmts = cur.cases.flatMap((c) => c.consequent);
+    else if (cur.type === "SwitchStatement" && child !== cur.discriminant) stmts = cur.cases.flatMap((c) => c.consequent);
     else if (cur.type === "ForStatement") stmts = [cur.init];
     else if (cur.type === "ForInStatement" || cur.type === "ForOfStatement") stmts = [cur.left];
     if (stmts) { const b = lexicalBinding(stmts, name); if (b) return b; }
     if (cur.type === "CatchClause" && cur.param && patternNames(cur.param).includes(name)) return { kind: "catch" };
     if (FUNCTION_NODE.test(cur.type)) {
+      const fromParams = cur.params.includes(child);
       if (cur.params.some((p) => patternNames(p).includes(name))) return { kind: "param" };
-      if (hoistedNames(cur.body).includes(name)) return { kind: "var" };
+      if (!fromParams && cur.body.type === "BlockStatement" && hoistedNames(cur.body).includes(name)) return { kind: "var" };
       if (cur.type !== "ArrowFunctionExpression" && name === "arguments") return { kind: "arguments" };
       if (cur.type === "FunctionExpression" && cur.id?.name === name) return { kind: "function-name" };
     }
