@@ -1085,7 +1085,8 @@ READBACK after each scenario:
 2. a. B-STMTTIMEOUT acquires the lock, then holds it past `statement_timeout`
       8 s: `57014`. Lock released, no DDL, no ledger row.
    b. B-TXTIMEOUT holds it past `transaction_timeout` 8 s, with
-      `statement_timeout` 60 s. The PG 17 hard timer ends the session.
+      `statement_timeout` 50 s (`1e122db`; 60 s displays as `1min` and failed
+      the settings assert, see below). The PG 17 hard timer ends the session.
       Lock released, no DDL, no ledger row.
    c. B-CANCEL holds it (`statement_timeout` 30 s as backstop) ∥ C finds
       B's backend by `application_name` holding ACCESS EXCLUSIVE, then calls
@@ -1345,7 +1346,8 @@ section.
 | item | resolved in |
 |---|---|
 | N1 qualified eval/Function, `.constructor` chains, string timers, dynamic import/worker URLs | `8f5c428`. The scanner fails closed on each, through the existing global-object resolution; MUT-54 (Codex's four cases), MUT-55 (24 variants), MUT-56 (controls: callback timers, literal imports). No `src/` file changed. The boundary statement is in F3 and the scanner header |
-| N7 partial-apply recovery | the N7 commit. P2-0304 (§A6, E1, E4) replaces P2-03 and P2-04; P1 keeps 03's 42702 inside a savepoint (E3); the prefix → recovery table and the STATE read-back (§A6, F4); the harness from every prefix and two forced failures inside P2-0304 (E7); LC-3/LC-4 and RB-INV-11; M-6 and M-8 checks for the new step |
+| N7 partial-apply recovery | `a3a4544`. P2-0304 (§A6, E1, E4) replaces P2-03 and P2-04; P1 keeps 03's 42702 inside a savepoint (E3); the prefix → recovery table and the STATE read-back (§A6, F4); the harness from every prefix and two forced failures inside P2-0304 (E7); LC-3/LC-4 and RB-INV-11; M-6 and M-8 checks for the new step |
+| E8 stale "60 s" in the 2b procedure | the E8 commit: 50 s, as run and recorded |
 
 ## I. Decisions, what has run, and what remains
 
