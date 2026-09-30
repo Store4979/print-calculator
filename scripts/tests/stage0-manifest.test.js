@@ -27,6 +27,10 @@
 //       state implies
 //   M-10 every approved fresh-build rollback target carries the queue fix;
 //       commits before it are retained URLs only (review of d01b74a, N4)
+//   M-12 the send policy the pinned sender enforces (review of 07574c1): every
+//       output exactly once; production texts to production only, lock probes
+//       to staging only, SIZE-PROBE to staging; read_only for P0, STATE and
+//       SIZE-PROBE; the sender itself pinned
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -51,6 +55,7 @@ const NAMES = {
   "M-7b": "the build-input binding: build scripts and .env",
   "M-8": "the recorded repository state: baseline, apply order, rollback records, exact file set",
   "M-10": "every approved fresh-build rollback target carries the queue fix (orderQueue.js f99d16a9)",
+  "M-12": "the send policy: every output once, targets and read_only fixed, the sender pinned",
 };
 for (const [k, name] of Object.entries(NAMES)) {
   test(`${k} ${name}`, () => assert.deepEqual(P[k], [], "\n  " + P[k].join("\n  ")));

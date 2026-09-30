@@ -15,7 +15,8 @@
 //     the manifest.
 // What it preserves from the existing manifest (records, not derivations):
 //   the baseline ledger once frozen, migrations[].productionVersion,
-//   rollbackRecords, rollbackTargets, deploys, p6, a3.enforceAtHead, and the
+//   rollbackRecords, rollbackTargets, deploys, p6, a3.enforceAtHead, the send
+//   policy (which texts may go to which project, read-only or not), and the
 //   reviewer-facing notes.
 //
 //   node scripts/manual/stage0-manifest-generate.mjs          write the manifest
@@ -61,6 +62,7 @@ const rollbacks = A.MIGRATIONS.map((x) => {
 });
 const proofs = { path: A.PROOFS, ...entry(A.PROOFS, old.proofs) };
 const assembler = { path: "scripts/manual/assemble-stage0.mjs", ...entry("scripts/manual/assemble-stage0.mjs", old.assembler) };
+const sender = { path: "scripts/manual/stage0-send.mjs", ...entry("scripts/manual/stage0-send.mjs", old.sender) };
 
 const F = A.FUNCTIONS;
 const M = {
@@ -75,6 +77,7 @@ const M = {
   rollbackRecords: old.rollbackRecords || [],
   proofs,
   assembler,
+  sender,
   functions: Object.fromEntries(Object.entries(F).map(([k, [sig, h, acl]]) => [k, { signature: sig, prosrcMd5: h, execute: acl.split(",") }])),
   stateAfter: A.STATE_AFTER,
   bodies: old.bodies,
@@ -104,7 +107,7 @@ const a3trees = Object.fromEntries(A3_TREES.map((p) => [p, txt("rev-parse", `${i
 const a3blobs = Object.fromEntries(A3_BLOBS.map((p) => [p, txt("rev-parse", `${index}:${p}`)]));
 const a3Changed = JSON.stringify([a3trees, a3blobs]) !== JSON.stringify([old.a3.trees, old.a3.blobs]);
 M.a3 = { ...old.a3, commit: a3Changed ? "manifest-commit" : old.a3.commit, trees: a3trees, blobs: a3blobs };
-for (const k of ["rollbackTargets", "p6", "deploys"]) if (k in old) M[k] = old[k];
+for (const k of ["rollbackTargets", "p6", "deploys", "send"]) if (k in old) M[k] = old[k];
 
 const text = JSON.stringify(M, null, 2) + "\n";
 if (process.argv.includes("--check")) {

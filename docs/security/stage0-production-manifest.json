@@ -243,9 +243,16 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "a874ce970a5454a9ce78c494bae0b53c6d23f099",
-    "md5": "23469aa1f93a89bf5f37ac3308a86bcb",
-    "bytes": 54582,
+    "blob": "61668585a29000003d212cb0490c1a5613eb2672",
+    "md5": "fd2073c87a787893fec093ae8abad84c",
+    "bytes": 54633,
+    "pinnedAt": "manifest-commit"
+  },
+  "sender": {
+    "path": "scripts/manual/stage0-send.mjs",
+    "blob": "9081e38631beebf029c087f7f494699489dc29f4",
+    "md5": "a10c533fb5ae1075ce333955f7ce5d26",
+    "bytes": 12005,
     "pinnedAt": "manifest-commit"
   },
   "functions": {
@@ -648,5 +655,161 @@
     "P4": null,
     "P5": null,
     "P6": null
+  },
+  "send": {
+    "endpoint": "https://api.supabase.com/v1/projects/{ref}/database/query",
+    "source": "The endpoint and body shape the Supabase MCP server's execute_sql uses: @supabase/mcp-server-supabase 0.13.0 (npm; GitHub supabase-community/supabase-mcp main at 4cc6660f656673eb83f3b80b0c3ae7030b3d2772): execute_sql -> database.executeSql(project_id, { query, read_only }) -> POST /v1/projects/{ref}/database/query with body { query, parameters, read_only }; the published dist (chunk-ZKX2YAIQ.js) has the same call. Plan section E1, The transport.",
+    "readOnlyNote": "read_only:true only for texts that read nothing but their own statement and the catalog/ledger (P0, STATE, SIZE-PROBE). CANCEL-INSPECT and LOCKPROBE-READBACK read OTHER sessions' pg_stat_activity rows, which a read-only role may see only in part, so they go as the default role like every other text; neither writes (M-6, M-6c).",
+    "targets": {
+      "production": "gmxyisjjaxtpycsmmzef",
+      "staging": "lboajqihpsfrokqvjgnl"
+    },
+    "texts": {
+      "P0": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true
+      },
+      "P1": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "SIZE-PROBE": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true
+      },
+      "P2-01": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "P2-02": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "P2-0304": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "P2-05": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "STATE": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true
+      },
+      "CANCEL-INSPECT": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "CANCEL-STEP-TEMPLATE": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false,
+        "instantiate": "cancel"
+      },
+      "LOCKPROBE-SETUP": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-HOLD": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-B-LOCKTIMEOUT": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-B-STMTTIMEOUT": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-B-TXTIMEOUT": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-B-CANCEL": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-C-CANCEL": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-B-POSITIVE": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-READBACK": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "LOCKPROBE-CLEANUP": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false
+      },
+      "RB-5": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "RB-43": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "RB-2": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      },
+      "RB-1": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false
+      }
+    }
   }
 }

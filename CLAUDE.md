@@ -230,10 +230,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       live;
     - current_setting() returns DISPLAY text, so statement_timeout 60s reads
       back as '1min'.
-    - to cancel a stage-0 text in flight, use a second caller: pinned
-      CANCEL-INSPECT, then `assemble-stage0.mjs --cancel <step>
-      <backend_start>` (never hand-edit the template), then CANCEL-INSPECT
-      again, then STATE (plan §E8).
+    - to cancel a stage-0 text in flight, use a second caller (Ryan's second
+      PowerShell window): CANCEL-INSPECT through the sender, then
+      `stage0-send.mjs --cancel <step> <backend_start>` (never hand-edit the
+      template), then CANCEL-INSPECT again, then STATE (plan §E8).
   - netlify/functions/deploy-context.js reports `flagPresent` (scoping) AND
     `flagEnabled`. `flagEnabled` is release2FlagEnabled() from
     netlify/lib/deploy-context.js, the SAME function release2Allowed() calls
@@ -250,6 +250,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     scripts/manual/stage0-local-pglite.mjs runs all of it in a local PG 17
     (PGlite 0.4.6, installed OUTSIDE the repo). It proves the SQL executes,
     not how production behaves.
+  - A pinned text reaches a database ONLY through
+    scripts/manual/stage0-send.mjs (07574c1, decision A). Never retype one
+    into execute_sql:
+    - a session cannot reproduce P1's 240 KB byte for byte, and the server
+      md5-gates only the embedded files;
+    - Ryan runs the sender with a PAT in SUPABASE_ACCESS_TOKEN; the session
+      runs only --dry-run and reads .stage0-send/;
+    - the sender posts to the endpoint execute_sql itself uses,
+      /v1/projects/{ref}/database/query (MCP 0.13.0);
+    - the manifest's send policy (M-12) fixes each text's project and
+      read_only;
+    - execute_sql remains for small ad-hoc, unpinned read-backs, labelled as
+      such.
   - The manifest pins stage-0 inputs by git BLOB ID. The assembler reads them
     by blob, never by path or HEAD, so the P2 git-mv's change no output. The
     checks are state-aware (productionVersion, rollbackRecords decide where

@@ -304,7 +304,9 @@ changes anything.
 - the proofs file's blob id and md5;
 - the assembler's blob id and the md5 of **every SQL text it emits** (§E1),
   including the read-only SIZE-PROBE (C3.7) and its expected answer, and the
-  read-only STATE read-back (§A6).
+  read-only STATE read-back (§A6);
+- the sender's blob id, and the **send policy**: which project each text may
+  go to, and which go `read_only` (§E1 "The transport", M-12).
 
 `scripts/tests/stage0-manifest.test.js` runs the checks in
 `scripts/tests/stage0-manifest-check.mjs` on this repository. They read **git
@@ -435,9 +437,11 @@ is the whole of C4 on staging, with staging's keys, and must also demonstrate:
    API logs for the probe timestamps show whether an entry carries anything
    that identifies the key (a key name or prefix) or only a status. Whatever
    they carry is what C6's provider-side column may rely on in production.
-7. **The SQL tool accepts P1's size** (Ryan's decision 2). The assembled
-   `SIZE-PROBE` is sent through the same `execute_sql` tool that will carry
-   P1:
+7. **The transport accepts P1's size** (Ryan's decision 2). The assembled
+   `SIZE-PROBE` is sent by Ryan through the pinned sender, the same path P1
+   will take (E1, "The transport"; review of `07574c1`, decision A):
+   `stage0-send.mjs SIZE-PROBE --target staging`, with `read_only`. The
+   size limit is the endpoint's, whatever the role;
    - it is ONE read-only `SELECT` over its own literal, reads no table, and
      changes nothing;
    - it is exactly 1 KiB larger than P1, whatever P1's size at the time;
@@ -686,9 +690,9 @@ Therefore:
 own session, so a `SET LOCAL` sent in a separate call cannot bound the DDL. The
 timeouts must be set **in the transaction that executes the DDL**, and A1's
 bytes must not change. So **P2 does not use `apply_migration`.** Each step is
-one `execute_sql` call whose text is emitted by
-`scripts/manual/assemble-stage0.mjs` from git blobs, with every output's md5
-pinned in the manifest:
+one send, by the pinned sender (see "The transport" at the end of E1), of a
+text emitted by `scripts/manual/assemble-stage0.mjs` from git blobs, with
+every output's md5 pinned in the manifest:
 
 ```sql
 begin;
@@ -797,14 +801,92 @@ file, and it refuses otherwise. **RB operations use the same wrapper:**
 - one ledger row is written per rollback file, in the same transaction — RB-43
   writes two, one second apart.
 
+**The transport (review of `07574c1`, Codex's decision A).** A pinned text
+reaches a database **only** through `scripts/manual/stage0-send.mjs`. It is
+never retyped into a tool call.
+
+Why: `execute_sql` takes its query as an argument that the preparing
+session must generate, and cannot read a file. So every earlier "send the
+assembled text" meant regenerating it by hand. For P1 (240 KB) or the
+SIZE-PROBE (241 KB) that is not possible byte for byte. For the 10–36 KB
+texts it is possible but unverified. The server-side md5 gates cover only
+the embedded migration and rollback literals, not the guards, state checks or
+STATE's recovery table around them.
+
+- **Endpoint (confirmed from source).** The sender POSTs to
+  `https://api.supabase.com/v1/projects/<ref>/database/query`, with the body
+  `{"query": <text>}`, plus `"read_only": true` where the policy says. That
+  is the endpoint and body `execute_sql` uses:
+  - `@supabase/mcp-server-supabase` **0.13.0** (npm; GitHub
+    `supabase-community/supabase-mcp` main at `4cc6660f`): the tool calls
+    `database.executeSql(project_id, { query, read_only })`, which POSTs
+    `/v1/projects/{ref}/database/query` with `{ query, parameters, read_only }`
+    against base `https://api.supabase.com`, with `Authorization: Bearer <token>`;
+  - the published dist has the same call;
+  - the Management API's OpenAPI spec: `query` required, `parameters` and
+    `read_only` optional, success `201`;
+  - the connector's own `execute_sql` description matches that source's text.
+
+  So the E8 transport facts (a new backend per call, `application_name`
+  `mgmt-api`, only the last statement's rows returned) are facts about this
+  endpoint. The endpoint is marked **beta/experimental** by Supabase. A change
+  there reaches `execute_sql` equally, and C3.7 is the check before P1.
+- **What it checks first.**
+  - This file and the assembler are the blobs the manifest at HEAD pins.
+  - The assembled text's md5 and bytes equal `outputs[<text>]`.
+  - The manifest's send policy allows the target (`send.texts`, checked by
+    M-12). Every production text goes to production only, the lock probes
+    to staging only, and SIZE-PROBE to staging.
+  - `--confirm-ref` repeats the target's ref.
+
+  `--dry-run` stops there, with no network call.
+- **`read_only`.** Sent as `true` for P0, STATE and SIZE-PROBE. CANCEL-INSPECT
+  and LOCKPROBE-READBACK go as the default role: they read OTHER sessions'
+  `pg_stat_activity` rows, which a read-only role may see only in part. Neither
+  writes (M-6, M-6c). Whether the read-only role can read everything P0 and
+  STATE touch is not yet observed. A permission error there is a STOP for
+  review, never a resend without `read_only`.
+- **The token.** A Supabase personal access token (`sbp_…`), read ONLY from
+  `SUPABASE_ACCESS_TOKEN` in the environment of Ryan's own PowerShell. It is
+  never in argv, never written, never printed. The sender refuses without it,
+  and the preparing session never holds it.
+  - **A PAT is account-wide:** it reaches every project the account can, so a
+    token created for a staging session can also reach production. The
+    sender's policy is the only thing that scopes it.
+  - It is created per session with the **shortest expiry the dashboard
+    offers**, and **deleted** (Account → Access Tokens) at the end of every
+    session, whatever the outcome.
+  - Ryan's commands are in `docs/security/stage0-c3-runbook.md` §0.
+- **The record.** Each send writes the request md5/bytes, target, ref, start and
+  finish times, HTTP status and raw response body to `.stage0-send/`
+  (gitignored), and prints a short summary. The preparing session reads the
+  file and transcribes it into the plan's record. A response containing the
+  token is redacted before it is written.
+- **Unknown outcomes.** The client timeout is 150 s, above P1's 110 s
+  `transaction_timeout`. A timeout, a dropped connection or a missing
+  response decides nothing: STATE (through the sender) is read back first, as
+  in §A6.
+- **What `execute_sql` is still for.** Small **ad-hoc, unpinned, read-only**
+  read-backs, such as C3's R2-PROBE count or a ledger row's md5. Each is
+  labelled "ad-hoc (not pinned)" in the record. A decision that must rest
+  on pinned bytes — STATE, P0 — goes through the sender.
+- **Tests.** `scripts/tests/stage0-send.test.js`:
+  - every policy text dry-runs on every target it allows;
+  - a wrong md5, a wrong target, a missing token or a non-PAT is refused;
+  - against a local mock server, the JSON body's `query` is exactly the
+    manifest's bytes, and the token appears only in the Authorization
+    header — not in the URL, another header, the body, the results file or
+    the console.
+
 **E2. P0 — read-only preconditions and positive identity (F-2, F-6, B3).**
 **Out of band, first:**
 - the MCP `project_id` for every call is `gmxyisjjaxtpycsmmzef`;
 - `get_project_url` returns `https://gmxyisjjaxtpycsmmzef.supabase.co`;
 - both are recorded.
 
-Then the assembled P0 statement, shown to Ryan before it runs. It returns one
-row in two groups.
+Then the assembled P0 statement, sent by Ryan through the sender
+(`stage0-send.mjs P0 --target production`, `read_only`; its `--dry-run`
+output is shown first). It returns one row in two groups.
 
 *P0-S — schema and data (restorable; must return identically after any
 rollback):*
@@ -859,7 +941,8 @@ history, by mistake.
 Stop on any unexpected value.
 
 **E3. P1 — rehearsal on production, one transaction, `ROLLBACK`.** It is emitted
-by the assembler as one text (md5 in the manifest):
+by the assembler as one text (md5 in the manifest) and sent by the sender
+(`stage0-send.mjs P1 --target production`), never retyped:
 - `begin isolation level repeatable read`;
 - the E1 settings, with `statement_timeout` 90 s per statement and
   `transaction_timeout` 110 s. The latter is the hard timer, PG 17, required
@@ -929,7 +1012,7 @@ Stop on:
   P0-S or P0-L column. P1 commits nothing, so both groups must be identical.
 
 **E4. P2 — apply, four wrapper transactions.** The assembled `P2-01`,
-`P2-02`, `P2-0304`, `P2-05` texts, in that order. P2-0304 applies 03 and 04
+`P2-02`, `P2-0304`, `P2-05` texts, in that order, each sent by the sender. P2-0304 applies 03 and 04
 in ONE transaction (§A6, N7), so no committed state holds 03's defective
 staff-session body.
 
@@ -939,7 +1022,12 @@ After EACH step, before the next, a read-only read-back:
   and byte count. The wrapper inserts the literal it checked, so the
   transport-stripped-newline case cannot arise, and the check confirms that;
 - A1a's row for the state that step leaves, from the catalog;
-- the STATE text (§A6), which must name the step's prefix.
+- the STATE text (§A6), **through the sender**, which must name the step's
+  prefix.
+
+The ledger-row and catalog read-backs are ad-hoc and unpinned, so they may use
+`execute_sql`, labelled "ad-hoc (not pinned)". STATE is the read-back that
+decides.
 
 Anything else stops P2 at that step. So does a response that never arrives:
 STATE is read back first, and §A6's table names the recovery for the prefix
@@ -949,7 +1037,8 @@ For P2-0304 that is one commit for both.
 
 **E5. P3 — post-apply read-back.**
 - A2 in full, outside a transaction.
-- Then `scripts/manual/tables-snapshot.sql` (read-only), and
+- Then `scripts/manual/tables-snapshot.sql` (read-only, 3 KB, not a stage-0
+  output: an ad-hoc read-back whose result the snapshot validator checks), and
   `supabase/tables.json` refreshed. `ledgerVersion` becomes 05's production
   version and the six tables appear. The inventory gate (INV-6) then REQUIRES
   them from applied state, while the browser prohibition on those names stays
@@ -1142,6 +1231,25 @@ affected text ran again:*
   after the holder had finished. The guard did what it says; nothing was
   changed.
 
+*How these texts were sent, and what that leaves standing (review of
+`07574c1`).* The N5 texts were retyped into `execute_sql` by the preparing
+session, before the sender existed. Only their embedded `LOCKPROBE_FILE` was
+md5-checked by the server; the rest of each text was not verified against
+its pin.
+
+**My assessment: the recorded BEHAVIOUR stands.**
+- Every scenario's outcome was observed from the server: SQLSTATE, message,
+  elapsed ms, backend pid, locks, and the read-backs.
+- Each B text's settings assert compared the timeouts in force with the
+  expected values and passed, except the one it rightly refused (`1min`),
+  so a slip in those values would have shown.
+- The positive control's ledger row carries the checked file's md5.
+
+**The claim "the pinned bytes ran" does NOT stand.** What ran was text that
+matched the pins in every respect the server checked. If Codex wants the
+byte claim, the N5 texts can be re-run through the sender on staging
+(`LOCKPROBE-*` are allowed only there), as a separately approved step.
+
 *What this establishes for production, and what it does not:*
 - **Established:**
   - `lock_timeout` refuses a DDL that meets a reader's lock at ≈3 s.
@@ -1151,10 +1259,10 @@ affected text ran again:*
   - The same wrapper pattern commits cleanly when nothing contends.
   - All of it through the `execute_sql` tool that P1/P2 will use.
 - **For the operator:** cancelling a running P1/P2 needs a SECOND caller while
-  the first call is in flight. One caller's calls are serialized. The C-CANCEL
-  pattern — find the backend by `application_name`, clear the stats snapshot,
-  `pg_cancel_backend` — is the rehearsed way, and the pinned procedure below
-  is built on it. Otherwise the timers are the bound.
+  the first call is in flight. One MCP caller's calls are serialized. The
+  C-CANCEL pattern — find the backend by `application_name`, clear the stats
+  snapshot, `pg_cancel_backend` — is the rehearsed way, and the pinned
+  procedure below is built on it. Otherwise the timers are the bound.
 - **Not established:** production's own lock traffic, and a PG 17 server other
   than staging's 17.6. P0 requires PG 17.
 
@@ -1162,9 +1270,13 @@ affected text ran again:*
 non-blocking).* Every stage-0 text runs under
 `application_name = release2-stage0-<step>`, where the step is P1, P2-01,
 P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2 or RB-1 (M-6 checks each). To stop
-one that is in flight, the second caller is a background subagent on the
-same `execute_sql` tool and project id, and runs:
-1. **CANCEL-INSPECT** (pinned, read-only). It returns every stage-0 backend
+one that is in flight, the second caller is Ryan's SECOND PowerShell window,
+running the sender with its own `SUPABASE_ACCESS_TOKEN`. Each sender run is a
+separate API request, so it does not queue behind the first. That is
+expected, not yet observed: E8 measured concurrency with a second MCP
+caller. It runs:
+1. **CANCEL-INSPECT** (pinned, read-only by content; sent by the sender,
+   `--target production`). It returns every stage-0 backend
    except the caller, with:
    - its exact `backend_start`, as UTC text to the microsecond;
    - its state and wait event;
@@ -1173,11 +1285,13 @@ same `execute_sql` tool and project id, and runs:
    It also returns the backends per name and every lock on
    `public.employees`. Proceed only if exactly one row carries the step's
    name.
-2. **`node scripts/manual/assemble-stage0.mjs --cancel <step> <backend_start>`**
-   produces CANCEL-STEP from its pinned template. It refuses unless the
-   template's md5 and bytes equal the manifest's, the step is one of the nine,
-   and `backend_start` is exactly in INSPECT's format. The text is shown to
-   Ryan before it runs.
+2. **`node scripts/manual/stage0-send.mjs --cancel <step> <backend_start> --target production`**
+   produces CANCEL-STEP from its pinned template, and sends it. It refuses
+   unless the template's md5 and bytes equal the manifest's, the step is one
+   of the nine, and `backend_start` is exactly in INSPECT's format. Its
+   `--dry-run` output is shown to Ryan before the live send.
+   (`assemble-stage0.mjs --cancel` prints the same text for review; it
+   sends nothing.)
 3. **CANCEL-STEP**, from the second caller:
    - it re-validates both values in SQL, so a hand-edited copy refuses too;
    - it matches the exact `application_name` AND the exact `backend_start`,
@@ -1324,7 +1438,7 @@ that.
 | step | rollback | precondition | class |
 |---|---|---|---|
 | P1 | none needed — rolled back by construction | — | — |
-| P2/P3, **before P6 only** | STATE first (§A6), then exactly the sequence §A6's prefix table names for the committed prefix — at most RB-5, RB-43, RB-2, RB-1 — through the E1 wrapper, each read back, in an E0 window (RB-1 closes the counter). `STOP` from STATE means return to review. Then E6: P0-S identical, P0-L = the original rows + the appended rows | **the Release 2 state is empty or disposable** (RB-1's guard enforces zero rows in the five identity/capability tables). **There are no active consumers:** P6 not merged, Phase 1 on the published deploy answering 404 at that time (recorded), and the inventory green (no client names an endpoint) | reversal of a reviewed decision |
+| P2/P3, **before P6 only** | STATE first (§A6), then exactly the sequence §A6's prefix table names for the committed prefix — at most RB-5, RB-43, RB-2, RB-1 — each sent by the sender (E1, "The transport"), each read back, in an E0 window (RB-1 closes the counter). `STOP` from STATE means return to review. Then E6: P0-S identical, P0-L = the original rows + the appended rows | **the Release 2 state is empty or disposable** (RB-1's guard enforces zero rows in the five identity/capability tables). **There are no active consumers:** P6 not merged, Phase 1 on the published deploy answering 404 at that time (recorded), and the inventory green (no client names an endpoint) | reversal of a reviewed decision |
 | P4 | `RELEASE2_ENABLED` removed, then a fresh build of the A3 source | — | not an incident |
 | P5 (C) | C9 — break-glass rules apply | — | depends on branch |
 | **after P6** | `RELEASE2_ENABLED=false`, then a **fresh approved build** → every Release 2 endpoint 404s. **The data is never dropped**: the tables, their rows and the ledger stay. The RB operations are NOT available after P6 | — | an incident if data was written through the endpoints |
@@ -1412,6 +1526,13 @@ record accepted):**
 |---|---|
 | N1 blocker: `resolveBinding` searched a switch's case declarations for a reference in the DISCRIMINANT, which the language evaluates in the enclosing scope | the scope-audit commit. A scope's declarations now apply only to what the language evaluates inside it: the switch discriminant resolves outward, and parameter expressions never see the body's vars. The const-only rule is unchanged. Every case is scanned AND executed as a real module with a recording timer, and the record is printed. MUT-60 is Codex's exact case: refused, and executed it hands the timer the caller's string. MUT-61 is the audit, all refused: for…of/for…in right sides, the for(;;) init/test/update, parameter defaults (plain, destructuring, arrow, catch), class `extends` and computed method/field keys, and object computed keys. MUT-62 holds the cases where the scanner credits a const still in its TDZ — a case test, a later declarator in a for head, a statement before a block's const. Executed, each throws `ReferenceError` with ZERO timer calls. MUT-63 holds controls with recorded function calls: consts in case and loop bodies, a for-head const, a parameter default that the language resolves to an outer const, and the real tree (TrainingDrawer). No `src/` file, assembler or SQL changed; the manifest moves only the scanner pin |
 
+**The review of `07574c1` (ACCEPT; C3 cleared), and the C3.7 finding:**
+
+| item | resolved in |
+|---|---|
+| Finding: pinned texts cannot be sent byte-exact by retyping them into `execute_sql` (P1 and the SIZE-PROBE are 240 KB) — Codex's decision A | the sender commit. `scripts/manual/stage0-send.mjs`, pinned in the manifest with the send policy (M-12). The endpoint is confirmed from `@supabase/mcp-server-supabase` 0.13.0 as the one `execute_sql` uses (§E1 "The transport"). Dry-run for every text; the token only from the environment; results to `.stage0-send/`. `stage0-send.test.js` SEND-1..7, including a mock-server check that the body is the manifest's bytes and the token is only in the Authorization header. P0–P2, STATE, RB, C3.7 and the cancel procedure now name the sender. The N5 byte claim is qualified in §E8 |
+| C3 runbook | `docs/security/stage0-c3-runbook.md`, with C3.7 through the sender |
+
 ## I. Decisions, what has run, and what remains
 
 **Ryan's decisions, 2026-09-29:**
@@ -1438,11 +1559,9 @@ The review of `dc5a88b` round was repo-only: nothing ran on staging or
 production.
 
 **Remaining, each at its own stop point, none started:**
-1. The client smoke record (Ryan).
-2. Codex's review of this revision (including the d01b74a N1–N6 and the
-   dc5a88b N1 and N7 corrections).
-3. C3 on staging, including C3.7, only after Codex accepts.
-4. P0 (read-only), then P1 onward.
+1. Codex's review of the C3 runbook and the sender.
+2. C3 on staging, items 1–7, in one session with Ryan.
+3. P0 (read-only), then P1 onward. Every pinned text goes through the sender.
 
 ---
 

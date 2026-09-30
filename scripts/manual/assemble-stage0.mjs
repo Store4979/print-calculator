@@ -93,6 +93,7 @@ export const ROLLBACK_OPS = [
 
 // E2 identity markers.
 export const PRODUCTION_REF = "gmxyisjjaxtpycsmmzef";
+export const STAGING_REF = "lboajqihpsfrokqvjgnl";
 export const STAGING_SEED_STORE = "5ee41000-0000-4000-8000-0000000000a1";
 export const PROBE_SLUG = "r2-probe-nonexistent";
 

@@ -13,6 +13,11 @@ dist/
 # tracking it would let a stale commit ref describe a fresh deploy.
 netlify/lib/deploy-context.json
 
+# Written by scripts/manual/stage0-send.mjs: one record per send (request
+# md5/bytes, target, timestamps, HTTP status, raw response). Local evidence,
+# read back and transcribed into the plan's record; never committed raw.
+.stage0-send/
+
 # OS noise
 .DS_Store
 Thumbs.db

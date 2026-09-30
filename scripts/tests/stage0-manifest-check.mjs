@@ -18,6 +18,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import * as A from "../manual/assemble-stage0.mjs";
+import * as S from "../manual/stage0-send.mjs";
 
 export const MANIFEST_PATH = "docs/security/stage0-production-manifest.json";
 const md5 = (b) => createHash("md5").update(b).digest("hex");
@@ -74,12 +75,13 @@ export function pinnedFiles(M) {
   }
   files.push({ label: "proofs", entry: M.proofs, path: M.proofs.path, frozenPath: M.proofs.path });
   files.push({ label: "assembler", entry: M.assembler, path: M.assembler.path, frozenPath: M.assembler.path });
+  if (M.sender) files.push({ label: "sender", entry: M.sender, path: M.sender.path, frozenPath: M.sender.path });
   return files;
 }
 
 export function checkManifest(repo, M) {
   const g = gitIn(repo);
-  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [], "M-10": [] };
+  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [], "M-10": [], "M-12": [] };
   const say = (k, s) => P[k].push(s);
   if (g.tryTxt("rev-parse", "--is-inside-work-tree") !== "true") { say("M-0", `${repo} is not a git checkout`); return P; }
   const manifestCommit = g.lastChange(MANIFEST_PATH);
@@ -145,6 +147,29 @@ export function checkManifest(repo, M) {
   same([A.PRODUCTION_REF, A.STAGING_SEED_STORE, A.PROBE_SLUG], [M.productionRef, M.identity.stagingSeedStore, M.identity.probeSlug], "identity markers");
   for (const m of M.migrations) if (m.pendingPath !== A.migrationPath(m)) say("M-5", `${m.name}: frozen path ${m.pendingPath}`);
   same([A.LEDGER_COLUMNS, A.LEDGER_CREATED_BY], [M.ledgerRow?.columns, M.ledgerRow?.createdBy], "the ledger row shape (N6)");
+
+  // M-12 the send policy (review of 07574c1, decision A): pinned texts reach a
+  // database only through scripts/manual/stage0-send.mjs, which sends a text
+  // only where this policy allows. Every assembled output has exactly one
+  // entry; the policy's shape is fixed here, so widening it is a test failure.
+  const SP = M.send || {};
+  if (!M.sender || M.sender.path !== S.SENDER_PATH) say("M-12", "the manifest does not pin the sender at " + S.SENDER_PATH);
+  if (SP.endpoint !== S.API_BASE + S.ENDPOINT || SP.endpoint !== "https://api.supabase.com/v1/projects/{ref}/database/query") say("M-12", "the endpoint is not the Management API database/query endpoint the sender posts to");
+  if (JSON.stringify(SP.targets) !== JSON.stringify({ production: A.PRODUCTION_REF, staging: A.STAGING_REF })) say("M-12", "the targets are not exactly production and staging, by ref");
+  const texts = SP.texts || {};
+  const outs = Object.keys(M.outputs || {});
+  for (const k of outs) if (!texts[k]) say("M-12", `${k} has no send-policy entry`);
+  for (const k of Object.keys(texts)) if (!outs.includes(k)) say("M-12", `the send policy names ${k}, which is not an output`);
+  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE"];
+  for (const [k, e] of Object.entries(texts)) {
+    const want = k.startsWith("LOCKPROBE-") ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
+    if (want && JSON.stringify(e.targets) !== JSON.stringify(want)) say("M-12", `${k} must go to ${want.join(", ")} only; the policy says ${JSON.stringify(e.targets)}`);
+    if (k === "SIZE-PROBE" && (!Array.isArray(e.targets) || !e.targets.includes("staging") || e.targets.some((t) => !["staging", "production"].includes(t)))) say("M-12", "SIZE-PROBE must include staging and name no other target than production");
+    if ((e.readOnly === true) !== READ_ONLY.includes(k)) say("M-12", `${k}: readOnly must be ${READ_ONLY.includes(k)}`);
+    if ((e.instantiate === "cancel") !== (k === "CANCEL-STEP-TEMPLATE") || (e.instantiate !== undefined && e.instantiate !== "cancel")) say("M-12", `${k}: only CANCEL-STEP-TEMPLATE is instantiated, and only by --cancel`);
+    const extra = Object.keys(e).filter((x) => !["targets", "readOnly", "instantiate"].includes(x));
+    if (extra.length) say("M-12", `${k}: unknown policy fields ${extra.join(", ")}`);
+  }
 
   // M-6 every output re-assembled from the frozen inputs has its pinned md5.
   let out = null;
