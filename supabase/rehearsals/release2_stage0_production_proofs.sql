@@ -6,11 +6,17 @@
 -- this file at its "@@stage0-proofs section" markers and interleaves the
 -- sections with the P2 wrapper bodies and the rollback operations inside ONE
 -- transaction that ends in ROLLBACK (P1):
---   section 0  before 01   capture the catalog and the real rows it touches
---   section 1  after 03    fixtures; 03's staff-session body raises 42702
---   section 2  after 05    A2 by catalog-set equality; every end-to-end call
---   section 3  after 2     fixture removal; tables empty; real rows unchanged
---   section 4  after RB-*  the catalog equals section 0's, row for row
+--   section 0   before 01    capture the catalog and the real rows it touches
+--   section 1   after 02     fixtures, including a live enrollment for 1b
+--   section 1b  after 03 ALONE, inside a savepoint that P1 then rolls back:
+--               03's staff-session body raises 42702. P2 never applies 03
+--               alone — P2-0304 applies 03 and 04 in one transaction (review
+--               of dc5a88b, N7) — so this state exists only here, to show
+--               what 04 repairs
+--   section 2   after P2-0304 and P2-05: A2 by catalog-set equality; every
+--               end-to-end call
+--   section 3   after 2      fixture removal; tables empty; real rows unchanged
+--   section 4   after RB-*   the catalog equals section 0's, row for row
 --
 -- WHAT A FAILURE LOOKS LIKE: every check raises P0001 with its id
 -- ("STAGE0 PROOF <id> FAILED: …"), which aborts the whole transaction.
@@ -202,7 +208,7 @@ select pg_temp.stage0_check('S0.3', (select count(*) from pg_trigger t
                                       where t.tgrelid = 'auth.users'::regclass and not t.tgisinternal) = 0,
   'auth.users has no user-defined trigger (the fixtures insert there)');
 
--- @@stage0-proofs section 1: after 03 — fixtures, and 03's body raising 42702
+-- @@stage0-proofs section 1: after 02 — fixtures (they must survive section 1b's savepoint rollback)
 select pg_temp.stage0_deadline('section 1');
 do $s1$
 declare
@@ -216,12 +222,6 @@ declare
   tk bytea := extensions.gen_random_bytes(32);
   r record;
 begin
-  perform pg_temp.stage0_check('S1.0',
-    md5((select p.prosrc from pg_proc p
-          where p.oid = to_regprocedure('public.release2_create_staff_session(uuid,uuid,bytea,bytea,timestamptz,timestamptz)')))
-      = 'bd6da6a2f80e13c7b20deab3b2c76e63',
-    'the staff-session function has 03''s body (bd6da6a2…) between 03 and 04');
-
   select array_agg(x.p order by x.p) into v_pins from (
     select lpad(g::text, 4, '0') as p from generate_series(1000, 9999) g
      where not exists (select 1 from public.employees e where e.pin = lpad(g::text, 4, '0'))
@@ -250,26 +250,39 @@ begin
     ('own_a', own_a), ('mgr_a', mgr_a), ('own_b', own_b), ('org_a', org_a), ('org_b', org_b),
     ('st_a', st_a), ('st_b', st_b), ('st_c', st_c), ('emp_a', emp_a), ('memp_a', memp_a), ('emp_b', emp_b);
 
-  -- A live enrollment: an unknown one raises 28000 before the ambiguous
-  -- statement is ever reached, which would prove nothing about 03's defect.
+  -- A live enrollment for section 1b's 42702 probe (01's redeem function).
   insert into public.enrollment_tickets (store_id, ticket_hash, created_by, expires_at)
     values (st_a, extensions.digest(tk, 'sha256'), own_a, now() + interval '15 minutes');
   select * into r from public.redeem_enrollment_ticket(extensions.digest(tk, 'sha256'),
     extensions.gen_random_bytes(32), extensions.gen_random_bytes(32), 'stage0 42702 probe');
   perform pg_temp.stage0_check('S1.2', r.store_id = st_a, 'the 42702 probe''s enrollment is at store A');
   insert into stage0_fix values ('enr_42702', r.enrollment_id);
-
-  perform pg_temp.stage0_expect_error('S1.3', null,
-    format('select * from public.release2_create_staff_session(%L::uuid, %L::uuid, extensions.gen_random_bytes(32), '
-           'extensions.gen_random_bytes(32), now() + interval ''12 hours'', now() + interval ''1 hour'')',
-           r.enrollment_id, emp_a),
-    '42702', 'column reference "store_id" is ambiguous',
-    format('select s::text from public.staff_sessions s where s.enrollment_id = %L', r.enrollment_id)
-      || format(' union all select de::text from public.device_enrollments de where de.id = %L', r.enrollment_id));
 end
 $s1$;
 
--- @@stage0-proofs section 2: after 05 — A2 by catalog-set equality, then every end-to-end call
+-- @@stage0-proofs section 1b: after 03 ALONE, inside a savepoint — 03's body raises 42702
+select pg_temp.stage0_deadline('section 1b');
+do $s1b$
+declare enr uuid := pg_temp.fx('enr_42702');
+begin
+  perform pg_temp.stage0_check('S1.0',
+    md5((select p.prosrc from pg_proc p
+          where p.oid = to_regprocedure('public.release2_create_staff_session(uuid,uuid,bytea,bytea,timestamptz,timestamptz)')))
+      = 'bd6da6a2f80e13c7b20deab3b2c76e63',
+    'the staff-session function has 03''s body (bd6da6a2…) after 03 alone');
+  -- A live enrollment: an unknown one raises 28000 before the ambiguous
+  -- statement is ever reached, which would prove nothing about 03's defect.
+  perform pg_temp.stage0_expect_error('S1.3', null,
+    format('select * from public.release2_create_staff_session(%L::uuid, %L::uuid, extensions.gen_random_bytes(32), '
+           'extensions.gen_random_bytes(32), now() + interval ''12 hours'', now() + interval ''1 hour'')',
+           enr, pg_temp.fx('emp_a')),
+    '42702', 'column reference "store_id" is ambiguous',
+    format('select s::text from public.staff_sessions s where s.enrollment_id = %L', enr)
+      || format(' union all select de::text from public.device_enrollments de where de.id = %L', enr));
+end
+$s1b$;
+
+-- @@stage0-proofs section 2: after P2-0304 and P2-05 — A2 by catalog-set equality, then every end-to-end call
 select pg_temp.stage0_deadline('section 2');
 
 -- A2: the Release 2 functions are EXACTLY these six, with these bodies and grantees.

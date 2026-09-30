@@ -297,6 +297,126 @@ $stage0_wrap$;
 `;
 }
 
+// ── N7 (review of dc5a88b): 03 and 04 are ONE forward transaction ───────────
+// 03 alone is the 42702 defect, and RB-43 already treats the pair as one. A
+// separately committed 03 with no 04 would leave a state that no reviewed
+// rollback reverses (RB-43 needs 04's row; RB-2 needs the after-02 state).
+// P2-0304 therefore:
+//   - checks both files' md5 and bytes before executing either;
+//   - asserts the after-02 state, executes 03 then 04, asserts the after-04
+//     state;
+//   - writes 03's ledger row and then 04's, one second later (the RB-43
+//     technique), each with apply_migration's shape.
+// Any failure rolls back both files and both rows, leaving the after-02 state.
+export const P2_STEPS = [
+  { step: "P2-01", files: ["01"] },
+  { step: "P2-02", files: ["02"] },
+  { step: "P2-0304", files: ["03", "04"] },
+  { step: "P2-05", files: ["05"] },
+];
+
+function forwardWrapperMulti(src, ns, rows, tag) {
+  const ms = ns.map((n) => MIGRATIONS.find((x) => x.n === n));
+  const decl = [], gate = [], run = [];
+  ms.forEach((m, i) => {
+    const text = src.migration(m);
+    if (md5(text) !== m.md5 || Buffer.byteLength(text) !== m.bytes) throw new Error(`${m.name}: git bytes differ from A1`);
+    decl.push(`  f${i + 1} constant text := ${fileLiteral(text, m.name)};`);
+    gate.push(`  if md5(f${i + 1}) <> ${q(m.md5)} or octet_length(f${i + 1}) <> ${m.bytes} then
+    raise exception '${tag}: the embedded bytes of ${m.name} differ from the manifest' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from supabase_migrations.schema_migrations m where m.name = ${q(m.name)}) then
+    raise exception '${tag}: ${m.name} is already in the ledger' using errcode = 'P0001';
+  end if;
+`);
+    run.push(`  execute f${i + 1};\n`);
+  });
+  const prev = String(Number(ns[0]) - 1).padStart(2, "0");
+  const last = ns[ns.length - 1];
+  const ledger = ms.map((m, i) => LEDGER_INSERT(`f${i + 1}`, m.name, tag, i)).join("");
+  return `do $stage0_wrap$
+declare
+${decl.join("\n")}
+  v_head text;
+  v_version text;
+begin
+${SETTINGS_ASSERT(tag)}${identityGuard(rows, tag)}${gate.join("")}${fnState(prev, tag, "state before")}${tableState(prev !== "00", tag, "state before")}${run.join("")}${fnState(last, tag, "state after")}${tableState(true, tag, "state after")}${ledger}${DEADLINE(tag)}end
+$stage0_wrap$;
+`;
+}
+
+// ── N7: recovery by committed prefix, decided by read-back ───────────────────
+// The EFFECTIVE committed prefix is the forward rows in the ledger (with A1's
+// md5) minus those a later rollback row undid. Each prefix has exactly one
+// reviewed recovery sequence. Any other combination — a prefix that is not
+// one of these, a catalog that does not match the prefix, a forward row with
+// the wrong md5 — is STOP: no operation is chosen, and it returns to review.
+export const RECOVERY = [
+  { prefix: [], state: "00", ops: [] },
+  { prefix: ["01"], state: "01", ops: ["RB-1"] },
+  { prefix: ["01", "02"], state: "02", ops: ["RB-2", "RB-1"] },
+  { prefix: ["01", "02", "03", "04"], state: "04", ops: ["RB-43", "RB-2", "RB-1"] },
+  { prefix: ["01", "02", "03", "04", "05"], state: "05", ops: ["RB-5", "RB-43", "RB-2", "RB-1"] },
+];
+
+function stateReadback(rows) {
+  const keys = ["00", "01", "02", "03", "04", "05"];
+  const have = `(select p.proname || '(' || oidvectortypes(p.proargtypes) || ')' as ident, md5(p.prosrc) as body_md5,
+               (select string_agg(coalesce(r.rolname, 'PUBLIC') || '=' || a.privilege_type, ','
+                                  order by coalesce(r.rolname, 'PUBLIC'), a.privilege_type)
+                  from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  left join pg_roles r on r.oid = a.grantee) as acl
+          from pg_proc p
+         where p.pronamespace = 'public'::regnamespace
+           and (p.proname like 'release2\\_%' or p.proname = 'redeem_enrollment_ticket'))`;
+  const want = (k) => {
+    const w = STATE_AFTER[k].map((f) => FUNCTIONS[f]);
+    return w.length
+      ? `(values ${w.map(([i, m, a]) => `(${q(i)}, ${q(m)}, ${q(a)})`).join(", ")})`
+      : `(select null::text, null::text, null::text where false)`;
+  };
+  const matchCols = keys.map((k) => `(select count(*) = 0 from ((select * from h except select * from ${want(k)} as w${k}(ident, body_md5, acl))
+          union all (select * from ${want(k)} as v${k}(ident, body_md5, acl) except select * from h)) d) as s${k}`).join(",\n       ");
+  const fwd = MIGRATIONS.map((m) => `(${q(m.n)}, ${q(m.name)}, ${q(m.md5)})`).join(", ");
+  const rec = RECOVERY.map((r) => `(${q(r.prefix.join(","))}, ${q(r.state)}, ${q(r.ops.join(", ") || "none — nothing is applied")})`).join(", ");
+  return `-- STATE — READ-ONLY (plan §A6/F4, review of dc5a88b N7). Run it BEFORE choosing any recovery, and
+-- whenever a step's outcome is unknown (a lost response, a dropped connection, a timeout reported by the
+-- client). It derives the effective committed prefix from the ledger, checks the catalog matches it, and
+-- names the one reviewed recovery sequence for that prefix — or STOP.
+with led as (
+  select f.n, f.name, f.body_md5,
+         (select m.version from supabase_migrations.schema_migrations m where m.name = f.name order by m.version desc limit 1) as fwd_version,
+         (select count(*) from supabase_migrations.schema_migrations m where m.name = f.name) as fwd_rows,
+         (select count(*) from supabase_migrations.schema_migrations m where m.name = f.name and md5(m.statements[1]) = f.body_md5) as fwd_rows_md5_ok,
+         (select m.version from supabase_migrations.schema_migrations m where m.name = f.name || '_rollback' order by m.version desc limit 1) as rb_version
+    from (values ${fwd}) as f(n, name, body_md5)
+),
+eff as (
+  select coalesce(string_agg(n, ',' order by n) filter (where fwd_version is not null and (rb_version is null or rb_version < fwd_version)), '') as prefix,
+         bool_and(fwd_rows = fwd_rows_md5_ok) as md5_ok
+    from led
+),
+h as ${have},
+cat as (
+  select ${matchCols}
+),
+cat_state as (
+  select case when s05 then '05' when s04 then '04' when s03 then '03' when s02 then '02' when s01 then '01'
+              when s00 and (select count(*) from pg_class c where c.relnamespace = 'public'::regnamespace
+                              and c.relname in (${TABLES.map(q).join(", ")})) = 0 then '00'
+              else 'unrecognized' end as state
+    from cat
+),
+recovery(prefix, state, ops) as (values ${rec})
+select (select prefix from eff) as effective_prefix,
+       (select md5_ok from eff) as ledger_md5_ok,
+       (select state from cat_state) as catalog_state,
+       (select json_agg(json_build_object('n', n, 'forward', fwd_version, 'rollback', rb_version) order by n) from led) as ledger_rows,
+       coalesce((select r.ops from recovery r, eff, cat_state
+                  where r.prefix = eff.prefix and r.state = cat_state.state and eff.md5_ok), 'STOP — no reviewed recovery for this ledger/catalog combination; return to review') as recovery;
+`;
+}
+
 function rollbackWrapper(src, op, rows) {
   const tag = `stage0 ${op.op}`;
   const decl = [], body = [];
@@ -343,10 +463,11 @@ select set_config('transaction_timeout', ${q(txTimeout)}, true);
 /** The proofs file split at its section markers, plus the catalog-rows query. */
 export function proofSections(src) {
   const text = src.proofs();
-  const parts = text.split(/^-- @@stage0-proofs section (\d):.*$/m);
+  const parts = text.split(/^-- @@stage0-proofs section (\d[a-z]?):.*$/m);
   const sections = {};
-  for (let i = 1; i < parts.length; i += 2) sections[parts[i]] = parts[i + 1];
-  if (Object.keys(sections).join(",") !== "0,1,2,3,4") throw new Error("proofs: expected sections 0–4 in order");
+  const order = [];
+  for (let i = 1; i < parts.length; i += 2) { sections[parts[i]] = parts[i + 1]; order.push(parts[i]); }
+  if (order.join(",") !== "0,1,1b,2,3,4") throw new Error("proofs: expected sections 0, 1, 1b, 2, 3, 4 in order");
   const cat = /^-- @@catalog-rows begin\n([\s\S]*?)^-- @@catalog-rows end$/m.exec(text);
   if (!cat) throw new Error("proofs: catalog-rows markers not found");
   return { text, sections, catalogRows: cat[1] };
@@ -602,7 +723,15 @@ export function assembleAll(manifest, opts = {}) {
   const src = sourceFromManifest(manifest, opts);
   const rows = src.ledger();
   const { sections, catalogRows } = proofSections(src);
-  const W = Object.fromEntries(MIGRATIONS.map((m) => [m.n, forwardWrapper(src, m, rows)]));
+  // The P2 step bodies (N7: 03 and 04 are one step), plus 03 ALONE, which
+  // only P1 uses, inside a savepoint it rolls back, to show 03's 42702.
+  const W = {
+    "01": forwardWrapper(src, MIGRATIONS[0], rows),
+    "02": forwardWrapper(src, MIGRATIONS[1], rows),
+    "0304": forwardWrapperMulti(src, ["03", "04"], rows, "stage0 P2-0304"),
+    "05": forwardWrapper(src, MIGRATIONS[4], rows),
+  };
+  const W03alone = forwardWrapper(src, MIGRATIONS[2], rows);
   const RB = Object.fromEntries(ROLLBACK_OPS.map((op) => [op.op, rollbackWrapper(src, op, rows)]));
   const out = {};
   out.P0 = p0(rows, catalogRows);
@@ -613,9 +742,11 @@ export function assembleAll(manifest, opts = {}) {
     "\n-- ===== proofs section 0 =====", sections["0"],
     "\n-- ===== P2-01 body =====\n", W["01"],
     "\n-- ===== P2-02 body =====\n", W["02"],
-    "\n-- ===== P2-03 body =====\n", W["03"],
     "\n-- ===== proofs section 1 =====", sections["1"],
-    "\n-- ===== P2-04 body =====\n", W["04"],
+    "\n-- ===== 03 ALONE, in a savepoint (never a P2 step): its 42702, then undone =====\nsavepoint stage0_03_alone;\n", W03alone,
+    "\n-- ===== proofs section 1b =====", sections["1b"],
+    "\nrollback to savepoint stage0_03_alone;\nrelease savepoint stage0_03_alone;\n",
+    "\n-- ===== P2-0304 body =====\n", W["0304"],
     "\n-- ===== P2-05 body =====\n", W["05"],
     "\n-- ===== proofs section 2 =====", sections["2"],
     "\n-- ===== proofs section 3 =====", sections["3"],
@@ -624,9 +755,11 @@ export function assembleAll(manifest, opts = {}) {
     "\nrollback;\n",
   ].join("");
   out["SIZE-PROBE"] = sizeProbe(Buffer.byteLength(out.P1)).text;
-  for (const m of MIGRATIONS) {
-    out[`P2-${m.n}`] = `-- P2-${m.n} — apply ${m.name} to production (plan §E1, §E4).\nbegin;\n${settings(`P2-${m.n}`, "P2", "45s", 40, "45s")}${W[m.n]}commit;\n`;
+  for (const s of P2_STEPS) {
+    const names = s.files.map((n) => MIGRATIONS.find((x) => x.n === n).name).join(" + ");
+    out[s.step] = `-- ${s.step} — apply ${names} to production${s.files.length > 1 ? " in ONE transaction (N7)" : ""} (plan §E1, §E4).\nbegin;\n${settings(s.step, "P2", "45s", 40, "45s")}${W[s.files.join("")]}commit;\n`;
   }
+  out.STATE = stateReadback(rows);
   Object.assign(out, lockProbeTexts());
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;

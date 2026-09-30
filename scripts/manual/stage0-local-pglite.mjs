@@ -37,6 +37,7 @@
 // assembled texts and the 20 baseline migrations, both by blob id, as the
 // assembler reads them.
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -49,7 +50,11 @@ const { PGlite } = await import(pathToFileURL(join(process.env.PGLITE_DIR, "dist
 const { pgcrypto } = await import(pathToFileURL(join(process.env.PGLITE_DIR, "dist", "contrib", "pgcrypto.js")).href);
 const { assembleAll, manifestAt, gitBlob } = await import(pathToFileURL(join(REPO, "scripts", "manual", "assemble-stage0.mjs")).href);
 process.chdir(REPO);
-const MANIFEST = manifestAt(REV, REPO);
+// STAGE0_MANIFEST=<file> runs an uncommitted manifest (authoring only); the
+// default is the manifest committed at [rev].
+const MANIFEST = process.env.STAGE0_MANIFEST
+  ? JSON.parse((await import("node:fs")).readFileSync(process.env.STAGE0_MANIFEST, "utf8"))
+  : manifestAt(REV, REPO);
 const blob = (id) => gitBlob(id, REPO).toString("utf8");
 const OUT = assembleAll(MANIFEST, { cwd: REPO });
 
@@ -139,10 +144,14 @@ expect("P1 runs to ROLLBACK with every proof passing", r.ok, r.error || `${r.ms}
 const p0b = await one(db, OUT.P0);
 expect("P0 after P1 is identical (S and L)", JSON.stringify(p0b) === JSON.stringify(p0a));
 
-for (const n of ["01", "02", "03", "04", "05"]) {
-  r = await run(db, `P2-${n}`);
-  expect(`P2-${n} commits`, r.ok, r.error || `${r.ms} ms`);
+const STEPS = ["P2-01", "P2-02", "P2-0304", "P2-05"];   // N7: 03 and 04 are one step
+for (const k of STEPS) {
+  r = await run(db, k);
+  expect(`${k} commits`, r.ok, r.error || `${r.ms} ms`);
 }
+const st5 = await one(db, OUT.STATE);
+expect("STATE after all four steps: prefix 01..05, catalog 05, recovery RB-5, RB-43, RB-2, RB-1",
+  st5.effective_prefix === "01,02,03,04,05" && st5.catalog_state === "05" && st5.ledger_md5_ok === true && st5.recovery === "RB-5, RB-43, RB-2, RB-1", JSON.stringify(st5));
 const led = (await db.query("select version, name, md5(statements[1]) as md5, octet_length(statements[1]) as bytes from supabase_migrations.schema_migrations where name like 'release2%' order by version")).rows;
 console.log(led);
 expect("five forward ledger rows with A1 md5/bytes", led.length === 5 && led.map((x) => x.md5).join() ===
@@ -217,7 +226,7 @@ catch (e) { expect("a wrong A2 expectation fails P1", /STAGE0 PROOF S2\.1 FAILED
 
 // a rollback file run on its own (outside RB-43) refuses
 const db4 = await freshDb();
-for (const n of ["01", "02", "03", "04", "05"]) { r = await run(db4, `P2-${n}`); if (!r.ok) throw new Error(r.error); }
+for (const k of STEPS) { r = await run(db4, k); if (!r.ok) throw new Error(r.error); }
 for (const [f, re] of [["release2_05_revoke_enrollment", null], ["release2_04_staff_session_qualify_columns", /only inside operation RB-43/]]) {
   const text = blob(MANIFEST.rollbacks.find((x) => f.startsWith(`release2_${x.n}_`)).blob);
   if (!re) { await db4.exec("begin"); await db4.exec(text); await db4.exec("rollback"); expect(`${f}.rollback.sql runs standalone inside begin…rollback`, true); continue; }
@@ -231,6 +240,96 @@ expect("mutation control 2: E2's expected message was mutated", bad2 !== OUT.P1)
 const db5 = await freshDb();
 try { await db5.exec(bad2); expect("a wrong E2 expectation fails P1", false); }
 catch (e) { expect("a wrong E2 expectation fails P1", /STAGE0 PROOF E2 FAILED/.test(e.message), e.message.slice(0, 200)); }
+
+// ── N7 (review of dc5a88b): recovery from EVERY committed prefix ─────────────
+// For each prefix the P2 steps can commit, the pinned STATE read-back must name
+// exactly one recovery sequence, and running it must restore P0-S (catalog
+// fingerprint included) while the ledger only grows: the original 20 rows, the
+// forward rows, then the rollback rows, in order.
+const RB_NAMES = { "RB-5": ["05"], "RB-43": ["04", "03"], "RB-2": ["02"], "RB-1": ["01"] };
+const NAME = Object.fromEntries(MANIFEST.migrations.map((m) => [m.n, m.name]));
+const PREFIXES = [
+  { steps: ["P2-01"], prefix: "01", state: "01", ops: ["RB-1"] },
+  { steps: ["P2-01", "P2-02"], prefix: "01,02", state: "02", ops: ["RB-2", "RB-1"] },
+  { steps: ["P2-01", "P2-02", "P2-0304"], prefix: "01,02,03,04", state: "04", ops: ["RB-43", "RB-2", "RB-1"] },
+  { steps: ["P2-01", "P2-02", "P2-0304", "P2-05"], prefix: "01,02,03,04,05", state: "05", ops: ["RB-5", "RB-43", "RB-2", "RB-1"] },
+];
+async function recoverAndCheck(d, label, p0orig, fwd, ops) {
+  for (const op of ops) {
+    const rr = await run(d, op);
+    expect(`${label}: ${op} commits`, rr.ok, rr.error || `${rr.ms} ms`);
+  }
+  const after = await one(d, OUT.P0);
+  expect(`${label}: after recovery P0-S is identical to the original (catalog fingerprint included)`,
+    JSON.stringify(pick(after, P0S)) === JSON.stringify(pick(p0orig, P0S)), JSON.stringify(pick(after, P0S)));
+  const names = (await d.query("select name from supabase_migrations.schema_migrations where name like 'release2%' order by version")).rows.map((x) => x.name);
+  const want = [...fwd.map((n) => NAME[n]), ...ops.flatMap((o) => RB_NAMES[o]).map((n) => NAME[n] + "_rollback")];
+  expect(`${label}: the ledger only grew — 20 + ${fwd.length} forward + ${want.length - fwd.length} rollback rows, in order`,
+    after.ledger_rows == 20 + want.length && names.join() === want.join(), names.join());
+  const fin = await one(d, OUT.STATE);
+  expect(`${label}: STATE afterwards — nothing applied`, fin.effective_prefix === "" && fin.catalog_state === "00" && /^none/.test(fin.recovery), JSON.stringify(fin));
+}
+for (const P of PREFIXES) {
+  const d = await freshDb();
+  const p0orig = await one(d, OUT.P0);
+  for (const k of P.steps) { const rr = await run(d, k); if (!rr.ok) throw new Error(`${k}: ${rr.error}`); }
+  const st = await one(d, OUT.STATE);
+  expect(`prefix ${P.prefix}: STATE names the prefix, the matching catalog and ${P.ops.join(", ")}`,
+    st.effective_prefix === P.prefix && st.catalog_state === P.state && st.recovery === P.ops.join(", "), JSON.stringify(st));
+  await recoverAndCheck(d, `prefix ${P.prefix}`, p0orig, P.prefix.split(","), P.ops);
+}
+
+// A partial recovery is itself a prefix: after RB-5 from the full prefix, STATE names what remains.
+{
+  const d = await freshDb();
+  for (const k of STEPS) { const rr = await run(d, k); if (!rr.ok) throw new Error(rr.error); }
+  const rr = await run(d, "RB-5");
+  expect("partial recovery: RB-5 commits", rr.ok, rr.error);
+  const st = await one(d, OUT.STATE);
+  expect("partial recovery: STATE then names prefix 01..04 and RB-43, RB-2, RB-1",
+    st.effective_prefix === "01,02,03,04" && st.catalog_state === "04" && st.recovery === "RB-43, RB-2, RB-1", JSON.stringify(st));
+}
+
+// Forced failures INSIDE P2-0304 — local fault injection on a COPY of the pinned
+// text, never a change to it. Each must leave the after-02 state with no 03 row.
+const F2_GATE = /if md5\(f2\) <> '2dcb03eb36e47c8404a29500151e8394' or octet_length\(f2\) <> 5858 then/;
+expect("fault injection anchor: P2-0304 gates f2 (04) on its md5 and bytes", F2_GATE.test(OUT["P2-0304"]));
+async function afterFailed0304(label, text, errRe) {
+  const d = await freshDb();
+  const p0orig = await one(d, OUT.P0);
+  for (const k of ["P2-01", "P2-02"]) { const rr = await run(d, k); if (!rr.ok) throw new Error(rr.error); }
+  let err = null;
+  try { await d.exec(text); } catch (e) { err = e.message; await d.exec("rollback").catch(() => {}); }
+  expect(`${label}: P2-0304 fails`, err !== null && errRe.test(err), err);
+  const rows = (await d.query("select name from supabase_migrations.schema_migrations where name like 'release2%' order by version")).rows.map((x) => x.name);
+  expect(`${label}: no 03 or 04 row — the ledger holds 01 and 02 only`, rows.join() === [NAME["01"], NAME["02"]].join(), rows.join());
+  const st = await one(d, OUT.STATE);
+  expect(`${label}: STATE — prefix 01,02, the after-02 catalog, recovery RB-2, RB-1`,
+    st.effective_prefix === "01,02" && st.catalog_state === "02" && st.recovery === "RB-2, RB-1", JSON.stringify(st));
+  await recoverAndCheck(d, label, p0orig, ["01", "02"], ["RB-2", "RB-1"]);
+}
+// (a) 04's bytes wrong: the md5 gate refuses before EITHER file executes.
+const origF2 = MANIFEST.migrations.find((m) => m.n === "04");
+const f2text = blob(origF2.blob);
+const f2wrong = f2text.replace("could not run.", "could not ruN.");
+expect("fault (a) mutated 04's bytes", f2wrong !== f2text && OUT["P2-0304"].includes(f2text));
+await afterFailed0304("forced failure (a), 04's bytes wrong", OUT["P2-0304"].replace(f2text, f2wrong), /embedded bytes of release2_04_staff_session_qualify_columns differ/);
+// (b) a failure AFTER 03 has executed: 04's literal fails at runtime, with its gate
+//     re-pointed at the faulty bytes so that 03 really runs first.
+const f2fault = "select 1/0;\n" + f2text;
+const md5 = (t) => createHash("md5").update(t, "utf8").digest("hex");
+const faultText = OUT["P2-0304"].replace(f2text, f2fault)
+  .replace(F2_GATE, `if md5(f2) <> '${md5(f2fault)}' or octet_length(f2) <> ${Buffer.byteLength(f2fault)} then`);
+await afterFailed0304("forced failure (b), 04 fails after 03 executed", faultText, /division by zero/);
+
+// STATE refuses a combination no recovery covers: the catalog says 03 ran, the ledger says it did not.
+{
+  const d = await freshDb();
+  for (const k of ["P2-01", "P2-02"]) { const rr = await run(d, k); if (!rr.ok) throw new Error(rr.error); }
+  await d.exec(blob(MANIFEST.migrations.find((m) => m.n === "03").blob));   // fault injection: 03 outside any wrapper, no ledger row
+  const st = await one(d, OUT.STATE);
+  expect("STATE control: catalog 03 with ledger 01,02 is STOP, not an operation", st.catalog_state === "03" && /^STOP/.test(st.recovery), JSON.stringify(st));
+}
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 process.exit(failures ? 1 : 0);

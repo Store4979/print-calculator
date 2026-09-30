@@ -48,9 +48,9 @@ function tree() {
 const MIG = (root) => join(root, "supabase", "migrations");
 const PEND = (root) => join(MIG(root), "pending");
 
-/** P2's repository move: forward files and companions out of pending/. */
-function apply(root) {
-  NAMES.forEach((n, i) => {
+/** P2's repository move: forward files and companions out of pending/ (the first `count` of them). */
+function apply(root, count = NAMES.length) {
+  NAMES.slice(0, count).forEach((n, i) => {
     renameSync(join(PEND(root), `${n}.sql`), join(MIG(root), `${FWD(i)}_${n}.sql`));
     renameSync(join(PEND(root), `${n}.rollback.sql`), join(MIG(root), `${FWD(i)}_${n}.rollback.sql`));
   });
@@ -196,6 +196,37 @@ test("RB-INV-9 Codex's lifecycle fixture — five forwards moved with history ke
     assert.match(r.out, /^# pass 7$/m);
     assert.match(r.out, /^# fail 0$/m);
   });
+});
+
+// Review of dc5a88b, N7: every committed prefix P2 can leave (01; 01–02;
+// 01–04, since P2-0304 commits 03 and 04 together), in both states the
+// recovery passes through — the prefix applied with the six tables captured,
+// then the prefix's own RB order recorded with the six gone — runs the REAL file.
+test("RB-INV-11 every committed prefix, applied and then recovered, passes the REAL release2-inventory.test.js", () => {
+  for (const count of [1, 2, 4]) {
+    withTree((root) => {
+      apply(root, count);
+      snapshot(root, FWD(count - 1), [...CAPTURE.tables, ...SIX].sort());
+      let r = realInventoryFile(root);
+      assert.equal(r.code, 0, `prefix of ${count} applied:\n${r.out}`);
+      assert.match(r.out, /^# fail 0$/m);
+      const order = RB_ORDER.filter((i) => i < count);
+      rollBack(root, { order });
+      snapshot(root, RBV(order.length - 1));
+      assert.equal(readdirSync(PEND(root)).filter((f) => /^release2_0\d_[a-z_]+\.sql$/.test(f)).length, 5 - count, "the unapplied files stay pending");
+      assert.equal(readdirSync(MIG(root)).filter((f) => /^\d{14}_release2_0\d_[a-z_]+_rollback\.sql$/.test(f)).length, count, "one rollback record per applied file");
+      r = realInventoryFile(root);
+      assert.equal(r.code, 0, `prefix of ${count} recovered:\n${r.out}`);
+      assert.match(r.out, /^# pass 7$/m);
+      assert.match(r.out, /^# fail 0$/m);
+      if (count === 4) {   // control: the same recovered prefix with a snapshot that kept the dropped tables
+        snapshot(root, RBV(order.length - 1), [...CAPTURE.tables, ...SIX].sort());
+        r = realInventoryFile(root);
+        assert.notEqual(r.code, 0);
+        assert.match(r.out, /dropped by the applied reviewed rollback|which the applied reviewed rollback \d{14}_release2_\w+_rollback\.sql dropped/);
+      }
+    });
+  }
 });
 
 test("RB-INV-10 the REAL file still fails Codex's original reproduction (applied, not rolled back, tables absent) and a rollback whose snapshot keeps the dropped tables", () => {

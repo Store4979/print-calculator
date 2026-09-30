@@ -157,13 +157,33 @@ export function checkManifest(repo, M) {
       if (A.md5(v) !== M.outputs[k].md5) say("M-6", `${k}: md5 ${A.md5(v)} != ${M.outputs[k].md5}`);
       if (Buffer.byteLength(v) !== M.outputs[k].bytes) say("M-6", `${k}: bytes`);
     }
-    for (const m of M.migrations) {
-      const w = out[`P2-${m.n}`] || "";
-      if (!w.includes(`$stage0_file$${g.blob(m.blob).toString("utf8")}$stage0_file$`)) say("M-6", `P2-${m.n} does not embed the pinned blob verbatim`);
-      if (!w.includes(`if md5(f) <> '${m.md5}' or octet_length(f) <> ${m.bytes} then`)) say("M-6", `P2-${m.n} lacks the md5/bytes gate before EXECUTE`);
-      if (!w.includes(`values (v_version, '${m.name}', array[f], '${M.ledgerRow.createdBy}');`)) say("M-6", `P2-${m.n} does not write statements[1] from the checked literal with apply_migration's created_by`);
-      if (!w.includes("the ledger row does not have apply_migration''s shape")) say("M-6", `P2-${m.n} does not assert its ledger row's shape`);
+    // The P2 steps (N7: 03 and 04 are ONE step, P2-0304). Each embeds every
+    // file of its step verbatim, gates each on md5/bytes before any EXECUTE,
+    // and writes one ledger row per file from the checked literal.
+    if (JSON.stringify(A.P2_STEPS.map((x) => x.step)) !== JSON.stringify(["P2-01", "P2-02", "P2-0304", "P2-05"])) say("M-6", "the P2 steps are not P2-01, P2-02, P2-0304, P2-05");
+    for (const k of ["P2-03", "P2-04"]) if (out[k] !== undefined) say("M-6", `${k} exists: 03 must never be applied on its own (N7)`);
+    for (const stp of A.P2_STEPS) {
+      const w = out[stp.step] || "";
+      const multi = stp.files.length > 1;
+      stp.files.forEach((n, i) => {
+        const m = M.migrations.find((x) => x.n === n);
+        const v = multi ? `f${i + 1}` : "f";
+        if (!w.includes(`$stage0_file$${g.blob(m.blob).toString("utf8")}$stage0_file$`)) say("M-6", `${stp.step} does not embed ${m.name}'s pinned blob verbatim`);
+        if (!w.includes(`if md5(${v}) <> '${m.md5}' or octet_length(${v}) <> ${m.bytes} then`)) say("M-6", `${stp.step} lacks ${m.name}'s md5/bytes gate before EXECUTE`);
+        if (!w.includes(`values (v_version, '${m.name}', array[${v}], '${M.ledgerRow.createdBy}');`)) say("M-6", `${stp.step} does not write ${m.name}'s statements[1] from the checked literal with apply_migration's created_by`);
+      });
+      if (multi) {
+        const gates = stp.files.map((_, i) => w.indexOf(`if md5(f${i + 1}) <>`));
+        const firstExec = w.indexOf("execute f1;");
+        if (gates.some((x) => x < 0 || x > firstExec)) say("M-6", `${stp.step} does not check every file before executing any`);
+        if (!(w.indexOf("execute f1;") < w.indexOf("execute f2;"))) say("M-6", `${stp.step} does not execute 03 before 04`);
+      }
+      if (!w.includes("the ledger row does not have apply_migration''s shape")) say("M-6", `${stp.step} does not assert its ledger rows' shape`);
     }
+    // STATE is read-only and names exactly the reviewed recovery sequences.
+    const stt = (out.STATE || "").replace(/--[^\n]*/g, " ");
+    if (/\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|lock)\b/i.test(stt.replace(/'[^']*'/g, "''"))) say("M-6", "STATE is not read-only");
+    for (const r of A.RECOVERY) if (r.ops.length && !stt.includes(`'${r.ops.join(", ")}'`)) say("M-6", `STATE does not name the recovery ${r.ops.join(", ")}`);
     if (!/^begin isolation level repeatable read;$/m.test(out.P1 || "") || !/\nrollback;\n$/.test(out.P1 || "") || /^commit;$/m.test(out.P1 || "")) say("M-6", "P1 must begin repeatable read, end in ROLLBACK and never commit");
     // M-6c the staging lock rehearsal (N5) cannot touch anything but its own schema.
     const lp = Object.entries(out).filter(([k]) => k.startsWith("LOCKPROBE-"));
@@ -259,6 +279,11 @@ export function checkManifest(repo, M) {
     if (!/^\d{14}$/.test(m.productionVersion) || !(m.productionVersion > prev)) say("M-8", `${m.name}: version ${m.productionVersion} is not after ${prev}`);
     prev = m.productionVersion;
   }
+  // N7: 03 and 04 are one transaction — recorded applied together, rolled back together.
+  const pv = (n) => M.migrations.find((x) => x.n === n).productionVersion;
+  if (Boolean(pv("03")) !== Boolean(pv("04"))) say("M-8", "03 and 04 are recorded in different states; P2-0304 applies them in one transaction");
+  const rec = (n) => M.rollbackRecords.some((r) => r.n === n);
+  if (rec("03") !== rec("04")) say("M-8", "03 and 04 have different rollback records; RB-43 rolls them back in one transaction");
   // rollback records follow the RB order over what was applied, each after the last forward
   const applied = M.migrations.filter((m) => m.productionVersion).map((m) => m.n);
   const rbOrder = M.rollbackOperations.flatMap((o) => o.files).filter((n) => applied.includes(n));

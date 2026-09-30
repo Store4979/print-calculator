@@ -247,6 +247,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     clone. Regenerate with scripts/manual/stage0-manifest-generate.mjs AFTER
     staging the change (A3 pins come from the index); "manifest-commit" pins
     resolve to the commit that last changed the manifest.
+  - 03 is NEVER committed alone (dc5a88b N7): its staff-session body is the
+    42702 defect, and RB-43 cannot start from "after 03". P2 is four steps:
+    P2-01, P2-02, P2-0304 (one transaction, two ledger rows one second
+    apart), P2-05. The repo records P2-0304 and RB-43 as ONE commit each, and
+    M-8 fails if 03/04 are recorded apart. P1 alone visits "after 03", inside
+    a savepoint. After any unknown outcome (lost response, dropped
+    connection), run the pinned read-only STATE text FIRST. It names the
+    committed prefix and the one reviewed recovery, or STOP. Never pick an
+    operation from memory.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only
