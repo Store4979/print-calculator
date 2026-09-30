@@ -1309,7 +1309,9 @@ only be read through. It fails closed on the named code-evaluation sinks:
 - `eval` and `Function`, free or through any global chain (computed access
   included);
 - any `.constructor` member;
-- timers whose first argument is not provably a function;
+- timers whose first argument is not provably a function. Since the review
+  of `add1d2c` that means only an inline arrow or function expression, or a
+  name that scope resolution binds to a `const` initialized with one;
 - non-literal `import()` specifiers and worker URLs.
 
 It is **not** a sandbox against deliberately obfuscated source. For example,
@@ -1395,6 +1397,13 @@ section.
 | N7 partial-apply recovery | `a3a4544`. P2-0304 (§A6, E1, E4) replaces P2-03 and P2-04; P1 keeps 03's 42702 inside a savepoint (E3); the prefix → recovery table and the STATE read-back (§A6, F4); the harness from every prefix and two forced failures inside P2-0304 (E7); LC-3/LC-4 and RB-INV-11; M-6 and M-8 checks for the new step |
 | E8 stale "60 s" in the 2b procedure | `12460fe`: 50 s, as run and recorded |
 | (non-blocking) pinned second-caller cancel | the cancel commit. CANCEL-INSPECT and the CANCEL-STEP template (§E8): exact `application_name` + `backend_start`, caller excluded, ambiguity refused, read-back then STATE; M-6, M-11, and the local refusals. Not yet run with a live second session |
+
+**The review of `add1d2c` (N7, F-8, B6, the N1 boundary statement and the
+cancel procedure accepted):**
+
+| item | resolved in |
+|---|---|
+| N1 residual: a `for…of` / `for…in` head writing to a function declaration's name passed the timer check | the N1 structural commit. `provablyCallable` no longer looks for writes. The argument passes only as an inline arrow or function expression, or as a name that scope resolution (`resolveBinding`) binds to a `const` initialized with one. Codex's two exact cases (MUT-57), 24 variants (MUT-58: destructuring writes, `var` redeclaration, a function declaration passed directly, a `let` arrow reassigned or not, shadowing params/catch/for-of, imports and more), and controls (MUT-59, TrainingDrawer's `const measure` included), all with the allowlist unchanged. No `src/` file changed |
 
 ## I. Decisions, what has run, and what remains
 

@@ -602,7 +602,7 @@
       "scripts/check-build-env.mjs": "3484b0394de4fd3f213d22e426dc5cb8f53245c8",
       "scripts/write-deploy-context.mjs": "6f29742d966a63533a65e77791196248de73222d",
       "scripts/inject-sw-manifest.mjs": "7b63b613eb336ab8966fc9aa8b782a8492af3f26",
-      "scripts/tests/inventory-check.mjs": "d259aaa6ee6f9720f18ab8c42d3901ce23ff9491",
+      "scripts/tests/inventory-check.mjs": "67e869690c160e40f2c1d912cbe52112ede802bd",
       "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a"
     }
   },

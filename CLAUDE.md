@@ -76,9 +76,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   fails closed on code-evaluation sinks too (dc5a88b N1):
   - eval/Function free or as window./globalThis./self. members;
   - any .constructor member access;
-  - setTimeout/setInterval whose first argument is not an arrow, a function
-    expression or a name bound to a function declaration / never-assigned
-    const function (so `setTimeout(cb)` with a parameter FAILS);
+  - setTimeout/setInterval whose first argument is not an inline arrow /
+    function expression or a name that SCOPE RESOLUTION binds to a `const`
+    initialized with one (add1d2c). A function declaration, let, var,
+    parameter or import FAILS, so write `const cb = () => …`, not
+    `function cb() {}`. The rule never consults writes: listing write forms
+    missed for…of/for…in heads;
   - non-literal import() or Worker URLs.
 
   It is a regression gate, not a sandbox against obfuscated source; code

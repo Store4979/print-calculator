@@ -721,7 +721,7 @@ test("MUT-55 every other route to an evaluation sink fails: qualified, computed,
     ["timer held", "const st = setTimeout;\nexport const a = (s) => st(s, 0);\n", /setTimeout is referenced as a value/],
     ["qualified timer held", "const st = window.setTimeout;\nexport const a = (s) => st(s, 0);\n", /window\.setTimeout is referenced as a value/],
     ["let-bound callback (reassignable)", "export const a = () => { let g = () => 1; setTimeout(g, 0); };\n", /setTimeout's first argument is not provably a function/],
-    ["const function later reassigned via destructuring", "const g = () => 1;\nexport const a = () => setTimeout(g, 0);\nexport const b = (o) => { ({ g } = o); };\n", /setTimeout's first argument is not provably a function/],
+    ["function declaration later reassigned via destructuring", "function g() { return 1; }\nexport const a = () => setTimeout(g, 0);\nexport const b = (o) => { ({ g } = o); };\n", /setTimeout's first argument is not provably a function/],
     ["parameter callback", "export const a = (cb) => setTimeout(cb, 0);\n", /setTimeout's first argument is not provably a function/],
     ["member callback", "export const a = (o) => setTimeout(o.run, 0);\n", /setTimeout's first argument is not provably a function/],
     ["dynamic import()", "export const a = (n) => import(n);\n", /dynamic import\(\) with a non-literal specifier/],
@@ -734,19 +734,89 @@ test("MUT-55 every other route to an evaluation sink fails: qualified, computed,
 
 test("MUT-56 CONTROLS: ordinary callback timers, literal imports and class constructors pass", () => {
   const r = mutateReal((root) => write(root, "src/v.js", [
-    "function tick() { return 1; }",
     "const tock = () => 2;",
-    "const named = function namedFn() { return setTimeout(namedFn, 5); };",
+    "const tack = function () { return 3; };",
     "export const a = () => setTimeout(() => {}, 0);",
     "export const b = () => setTimeout(function () {}, 0);",
-    "export const c = () => setInterval(tick, 10);",
     "export const d = () => setInterval(tock, 10);",
+    "export const d2 = () => setInterval(tack, 10);",
     "export const e = () => window.setTimeout(() => {}, 1);",
     "export const f = () => { const local = () => 3; return setTimeout(local, 0); };",
     "export const g = async () => (await import(\"qrcode\")).default;",
     "export class K { constructor(x) { this.x = x; } }",
-    "export const h = () => { const id = setTimeout(() => {}, 1); clearTimeout(id); return named; };",
+    "export const h = () => { const id = setTimeout(() => {}, 1); clearTimeout(id); return tock; };",
     "",
   ].join("\n")));
   assert.deepEqual(r.errors, [], "none of these can evaluate a string");
+});
+
+// ── Review of add1d2c, N1: "provably callable" is structural ─────────────────
+// A timer's first argument passes only as (a) an inline arrow or function
+// expression, or (b) a name that scope resolution binds to a `const`
+// initialized with one. The allowlist is unchanged in every case below.
+const NOT_CALLABLE = /(setTimeout|setInterval)'s first argument is not provably a function/;
+
+test("MUT-57 Codex's two exact add1d2c cases (a for…of / for…in write to a function declaration's name) fail the unchanged gate", () => {
+  const cases = [
+    ["for…of", "export const reviewRun = source => { function callback(){}; for (callback of [source]) {}; setTimeout(callback, 0); };\n"],
+    ["for…in", "export const reviewRun = source => { function callback(){}; for (callback in { [source]: 1 }) {}; setTimeout(callback, 0); };\n"],
+  ];
+  for (const [label, src] of cases) assert.match(mutateReal((root) => write(root, "src/v.js", src)).gateJoined, NOT_CALLABLE, label);
+});
+
+test("MUT-58 every binding other than a const function fails by rule, whatever writes it or not", () => {
+  const cases = [
+    ["array destructuring write", "export const a = source => { function callback() {}; [callback] = [source]; setTimeout(callback, 0); };\n"],
+    ["object destructuring write", "export const a = (o) => { function callback() {}; ({ a: callback } = o); setTimeout(callback, 0); };\n"],
+    ["var redeclaration shadowing a function", "function callback() {}\nexport const a = (source) => { var callback = source; setTimeout(callback, 0); };\n"],
+    ["var in a nested block shadowing an outer const arrow", "const callback = () => 1;\nexport const a = (source) => { if (source) { var callback = source; } setTimeout(callback, 0); };\n"],
+    ["a function declaration passed directly", "function callback() {}\nexport const a = () => setTimeout(callback, 0);\n"],
+    ["a function declaration, never written", "export const a = () => { function tick() { return 1; } return setInterval(tick, 10); };\n"],
+    ["a function expression's own name", "export const a = function namedFn() { return setTimeout(namedFn, 5); };\n"],
+    ["a let arrow reassigned", "export const a = (source) => { let cb = () => 1; cb = source; setTimeout(cb, 0); };\n"],
+    ["a let arrow never reassigned", "export const a = () => { let cb = () => 1; setTimeout(cb, 0); };\n"],
+    ["a var arrow", "export const a = () => { var cb = () => 1; setTimeout(cb, 0); };\n"],
+    ["an inner let shadowing an outer const arrow", "const cb = () => 1;\nexport const a = (source) => { let cb = source; setTimeout(cb, 0); };\n"],
+    ["a parameter shadowing an outer const arrow", "const cb = () => 1;\nexport const a = (cb) => setTimeout(cb, 0);\n"],
+    ["a catch binding shadowing an outer const arrow", "const cb = () => 1;\nexport const a = () => { try { x(); } catch (cb) { setTimeout(cb, 0); } };\n"],
+    ["a for-of const shadowing an outer const arrow", "const cb = () => 1;\nexport const a = (xs) => { for (const cb of xs) setTimeout(cb, 0); };\n"],
+    ["a destructured const", "export const a = (o) => { const { cb } = o; setTimeout(cb, 0); };\n"],
+    ["a const holding a call result", "const make = () => () => 1;\nconst cb = make();\nexport const a = () => setTimeout(cb, 0);\n"],
+    ["a const alias of a const arrow", "const f = () => 1;\nconst cb = f;\nexport const a = () => setTimeout(cb, 0);\n"],
+    ["an imported binding", "import { cb } from \"./lib/assetTransport.js\";\nexport const a = () => setTimeout(cb, 0);\n"],
+    ["a class", "class C {}\nexport const a = () => setTimeout(C, 0);\n"],
+    ["arguments", "export const a = function () { return setTimeout(arguments, 0); };\n"],
+    ["a free name", "export const a = () => setTimeout(notDeclaredAnywhere, 0);\n"],
+    ["a member, qualified timer", "export const a = (o) => window.setTimeout(o.cb, 0);\n"],
+    ["a bound function", "const f = () => 1;\nexport const a = () => setTimeout(f.bind(null), 0);\n"],
+    ["a conditional of two arrows", "export const a = (k) => setTimeout(k ? () => 1 : () => 2, 0);\n"],
+  ];
+  for (const [label, src] of cases) {
+    const r = mutateReal((root) => write(root, "src/v.js", src));
+    assert.match(r.gateJoined, NOT_CALLABLE, label);
+  }
+});
+
+test("MUT-59 CONTROLS: inline arrow, inline function, const arrow and const function expression pass — at module level, in a block, in a for-head, exported, and with a (throwing) write to the const elsewhere; the real tree (TrainingDrawer's `const measure = () => …`) passes", () => {
+  const r = mutateReal((root) => write(root, "src/v.js", [
+    "const tock = () => 1;",
+    "export const exported = () => 2;",
+    "export const a = () => setTimeout(() => {}, 0);",
+    "export const b = () => setTimeout(function () {}, 0);",
+    "export const c = () => setInterval(tock, 10);",
+    "export const d = () => setInterval(exported, 10);",
+    "export const e = () => { { const inner = function () { return 3; }; return setTimeout(inner, 0); } };",
+    "export const f = () => { for (const step = () => 4; ;) return setTimeout(step, 0); };",
+    "export const g = (k) => { let cb = k; { const cb = () => 5; setTimeout(cb, 0); } return cb; };",
+    // A write to a const throws at run time and changes nothing, so it does not
+    // defeat the rule; the rule never consults writes.
+    "export const h = (o) => { ({ tock } = o); };",
+    "export const i = () => window.setTimeout(tock, 1);",
+    "",
+  ].join("\n")));
+  assert.deepEqual(r.errors, [], "each argument is an inline function or a const bound to one");
+  assert.deepEqual(mutateReal(() => {}).gate, [], "the real src/ tree, unchanged, passes");
+  const real = readFileSync(join(ROOT, "src", "TrainingDrawer.jsx"), "utf8");
+  assert.match(real, /const measure = \(\) =>/, "TrainingDrawer still declares measure as a const arrow");
+  assert.match(real, /setInterval\(measure, 250\)/, "and passes it to setInterval");
 });

@@ -115,11 +115,13 @@
 //    Review of dc5a88b (N1) closed the code-evaluation sinks, fail-closed:
 //    eval/Function free or as members of any global chain (computed access
 //    included), any .constructor member, setTimeout/setInterval (bare or
-//    qualified) whose first argument is not PROVABLY a function (an arrow, a
-//    function expression, or a name bound to a function declaration or a
-//    never-assigned const function; see provablyCallable), a timer held as a
-//    value, new Worker/SharedWorker with a non-literal URL, and import() with
-//    a non-literal specifier.
+//    qualified) whose first argument is not PROVABLY a function, a timer held
+//    as a value, new Worker/SharedWorker with a non-literal URL, and import()
+//    with a non-literal specifier. Review of add1d2c made "provably" structural
+//    (provablyCallable): an inline arrow or function expression, or a name
+//    that scope resolution binds to a `const` initialized with one. Nothing
+//    else passes: a function declaration, a let/var, a parameter or an import
+//    all fail.
 //    WHAT THIS GATE IS, AND IS NOT: a regression gate against unreviewed or
 //    accidental request paths. It fails closed on the named code-evaluation
 //    sinks. It is NOT a sandbox against deliberately obfuscated source: for
@@ -522,54 +524,106 @@ function timerOf(callee, isFree) {
   return null;
 }
 
+const FUNCTION_NODE = /^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/;
+const isFunctionValue = (n) => !!n && (n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression");
+
 /**
- * Is this argument PROVABLY a function? Yes for an arrow or function
- * expression, and for a name whose binding is a function declaration or a
- * `const` initialized with one, provided nothing in the module assigns to that
- * name. Everything else — a parameter, a let/var, an import, a member, a call
- * result, an undeclared name — is no. Fail closed: "cannot prove" is "no".
+ * Names a var scope (a function body, a class static block, the module)
+ * binds by hoisting: every `var`, at any block depth, not crossing a nested
+ * function or static block. It also counts every function declaration in a
+ * nested block. In a module those are block-scoped, but a sloppy script
+ * (Annex B) also binds them here. Counting them can only make resolution
+ * find a non-const binding, which fails closed.
  */
-function provablyCallable(arg, parentOf, ast) {
-  if (!arg) return false;
-  if (arg.type === "ArrowFunctionExpression" || arg.type === "FunctionExpression") return true;
-  if (arg.type !== "Identifier") return false;
-  const name = arg.name;
-  let assigned = false;
-  walk(ast, (n) => {
-    if (n.type === "AssignmentExpression" && patternNames(n.left).includes(name)) assigned = true;
-    if (n.type === "UpdateExpression" && n.argument.type === "Identifier" && n.argument.name === name) assigned = true;
-  });
-  if (assigned) return false;
-  const isFnInit = (d) => d.init && (d.init.type === "ArrowFunctionExpression" || d.init.type === "FunctionExpression");
-  const inStatements = (stmts) => {
-    for (const st0 of stmts) {
-      const st = st0 && (st0.type === "ExportNamedDeclaration" || st0.type === "ExportDefaultDeclaration") ? st0.declaration : st0;
-      if (!st) continue;
-      if (st.type === "FunctionDeclaration" && st.id?.name === name) return true;
-      if (st.type === "ClassDeclaration" && st.id?.name === name) return false;
-      if (st.type === "VariableDeclaration") {
-        for (const d of st.declarations) {
-          if (patternNames(d.id).includes(name)) return st.kind === "const" && d.id.type === "Identifier" && isFnInit(d);
-        }
-      }
-      if (st.type === "ImportDeclaration" && st.specifiers.some((sp) => sp.local.name === name)) return false;
+function hoistedNames(root) {
+  const names = [];
+  const visit = (n, top) => {
+    if (!n || typeof n.type !== "string") return;
+    if (!top && (FUNCTION_NODE.test(n.type) || n.type === "StaticBlock")) {
+      if (n.type === "FunctionDeclaration" && n.id) names.push(n.id.name);
+      return;
     }
-    return null;
+    if (n.type === "VariableDeclaration" && n.kind === "var") for (const d of n.declarations) names.push(...patternNames(d.id));
+    for (const k of Object.keys(n)) {
+      if (k === "type" || k === "loc") continue;
+      const v = n[k];
+      if (Array.isArray(v)) for (const x of v) visit(x, false);
+      else if (v && typeof v === "object") visit(v, false);
+    }
   };
-  for (let cur = parentOf(arg); cur; cur = parentOf(cur)) {
-    if (/^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(cur.type)) {
-      if (cur.params.some((p) => patternNames(p).includes(name))) return false;
-      if (cur.type === "FunctionExpression" && cur.id?.name === name) return true;
-      if (functionVarNames(cur).includes(name)) return false;
+  visit(root, true);
+  return names;
+}
+
+/** The lexical binding a statement list declares for `name`, or null. */
+function lexicalBinding(stmts, name) {
+  for (const st0 of stmts) {
+    const st = st0 && (st0.type === "ExportNamedDeclaration" || st0.type === "ExportDefaultDeclaration") ? st0.declaration : st0;
+    if (!st) continue;
+    if (st.type === "VariableDeclaration" && st.kind !== "var") {
+      for (const d of st.declarations) if (patternNames(d.id).includes(name)) return { kind: st.kind, declarator: d };
     }
-    if (cur.type === "CatchClause" && cur.param && patternNames(cur.param).includes(name)) return false;
-    let found = null;
-    if (cur.type === "BlockStatement" || cur.type === "Program") found = inStatements(cur.body);
-    else if (cur.type === "SwitchStatement") found = inStatements(cur.cases.flatMap((c) => c.consequent));
-    else if (cur.type === "ForStatement" || cur.type === "ForInStatement" || cur.type === "ForOfStatement") found = inStatements([cur.init || cur.left].filter(Boolean));
-    if (found !== null) return found;
+    if (st.type === "FunctionDeclaration" && st.id?.name === name) return { kind: "function" };
+    if (st.type === "ClassDeclaration" && st.id?.name === name) return { kind: "class" };
+    if (st.type === "ImportDeclaration" && st.specifiers.some((sp) => sp.local.name === name)) return { kind: "import" };
   }
-  return false;
+  return null;
+}
+
+/**
+ * Scope resolution for one identifier reference: walk outward from it and
+ * return the FIRST scope's binding of that name. Each scope is checked for:
+ *   - a block, module, switch or for-head: its let/const/class/function/import;
+ *   - a catch clause: its parameter;
+ *   - a function: its parameters, its hoisted vars and `arguments`, then a
+ *     function expression's own name;
+ *   - a static block or the module: its hoisted vars;
+ *   - a class: its own name.
+ * The result is { kind, declarator? }, or { kind: "with" } inside a `with`
+ * statement, or null for a free name.
+ */
+function resolveBinding(ref, parentOf) {
+  const name = ref.name;
+  for (let cur = parentOf(ref); cur; cur = parentOf(cur)) {
+    if (cur.type === "WithStatement") return { kind: "with" };
+    let stmts = null;
+    if (cur.type === "BlockStatement" || cur.type === "Program" || cur.type === "StaticBlock") stmts = cur.body;
+    else if (cur.type === "SwitchStatement") stmts = cur.cases.flatMap((c) => c.consequent);
+    else if (cur.type === "ForStatement") stmts = [cur.init];
+    else if (cur.type === "ForInStatement" || cur.type === "ForOfStatement") stmts = [cur.left];
+    if (stmts) { const b = lexicalBinding(stmts, name); if (b) return b; }
+    if (cur.type === "CatchClause" && cur.param && patternNames(cur.param).includes(name)) return { kind: "catch" };
+    if (FUNCTION_NODE.test(cur.type)) {
+      if (cur.params.some((p) => patternNames(p).includes(name))) return { kind: "param" };
+      if (hoistedNames(cur.body).includes(name)) return { kind: "var" };
+      if (cur.type !== "ArrowFunctionExpression" && name === "arguments") return { kind: "arguments" };
+      if (cur.type === "FunctionExpression" && cur.id?.name === name) return { kind: "function-name" };
+    }
+    if ((cur.type === "StaticBlock" || cur.type === "Program") && hoistedNames(cur).includes(name)) return { kind: "var" };
+    if ((cur.type === "ClassDeclaration" || cur.type === "ClassExpression") && cur.id?.name === name) return { kind: "class" };
+  }
+  return null;
+}
+
+/**
+ * Is a timer's first argument PROVABLY a function (review of add1d2c)?
+ * Only two forms pass:
+ *   (a) an inline arrow or function expression;
+ *   (b) a name that resolveBinding() resolves to a `const` declared as a plain
+ *       identifier and initialized with an arrow or a function expression.
+ *       A const cannot be reassigned: a write to it throws, so its value is
+ *       that function once it is initialized. Before that, a read throws.
+ * Everything else fails closed: a function declaration or a function
+ * expression's own name, a let/var, a parameter, an import, a catch binding,
+ * a class, a destructured const, a member, a call, a free name. No list of
+ * write forms is consulted; the rule is structural.
+ */
+function provablyCallable(arg, parentOf) {
+  if (!arg) return false;
+  if (isFunctionValue(arg)) return true;
+  if (arg.type !== "Identifier") return false;
+  const b = resolveBinding(arg, parentOf);
+  return !!b && b.kind === "const" && b.declarator.id.type === "Identifier" && isFunctionValue(b.declarator.init);
 }
 
 /** Names declared at module level: imports, top-level var/let/const, functions, classes. */
@@ -871,8 +925,8 @@ export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCH
         // Code-evaluation sinks (dc5a88b N1): a timer must be handed something
         // provably callable, or a string would be evaluated as code.
         const timer = timerOf(node.callee, isFree);
-        if (timer && !provablyCallable(node.arguments[0], parentOf, ast)) {
-          errors.push(`${file}:${ln}: ${spell(node.callee)}'s first argument is not provably a function (an arrow, a function expression, or a name bound to a function declaration or a never-assigned const function); anything else could be a string evaluated as code`);
+        if (timer && !provablyCallable(node.arguments[0], parentOf)) {
+          errors.push(`${file}:${ln}: ${spell(node.callee)}'s first argument is not provably a function (an inline arrow or function expression, or a name that resolves to a const initialized with one); anything else could be a string evaluated as code`);
         }
         if ((api === "Worker" || api === "SharedWorker") && argShape(node.arguments[0], consts, parentOf) === "dynamic") {
           errors.push(`${file}:${ln}: new ${api} with a non-literal URL; a worker's script is code the scan cannot see`);
