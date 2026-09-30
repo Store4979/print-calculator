@@ -1153,10 +1153,56 @@ affected text ran again:*
 - **For the operator:** cancelling a running P1/P2 needs a SECOND caller while
   the first call is in flight. One caller's calls are serialized. The C-CANCEL
   pattern — find the backend by `application_name`, clear the stats snapshot,
-  `pg_cancel_backend` — is the rehearsed way. Otherwise the timers are the
-  bound.
+  `pg_cancel_backend` — is the rehearsed way, and the pinned procedure below
+  is built on it. Otherwise the timers are the bound.
 - **Not established:** production's own lock traffic, and a PG 17 server other
   than staging's 17.6. P0 requires PG 17.
+
+*The pinned second-caller cancel procedure (review of `dc5a88b`,
+non-blocking).* Every stage-0 text runs under
+`application_name = release2-stage0-<step>`, where the step is P1, P2-01,
+P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2 or RB-1 (M-6 checks each). To stop
+one that is in flight, the second caller is a background subagent on the
+same `execute_sql` tool and project id, and runs:
+1. **CANCEL-INSPECT** (pinned, read-only). It returns every stage-0 backend
+   except the caller, with:
+   - its exact `backend_start`, as UTC text to the microsecond;
+   - its state and wait event;
+   - every lock it holds or awaits.
+
+   It also returns the backends per name and every lock on
+   `public.employees`. Proceed only if exactly one row carries the step's
+   name.
+2. **`node scripts/manual/assemble-stage0.mjs --cancel <step> <backend_start>`**
+   produces CANCEL-STEP from its pinned template. It refuses unless the
+   template's md5 and bytes equal the manifest's, the step is one of the nine,
+   and `backend_start` is exactly in INSPECT's format. The text is shown to
+   Ryan before it runs.
+3. **CANCEL-STEP**, from the second caller:
+   - it re-validates both values in SQL, so a hand-edited copy refuses too;
+   - it matches the exact `application_name` AND the exact `backend_start`,
+     never the caller (`pid <> pg_backend_pid()`);
+   - it refuses zero matches and more than one, with nothing signalled;
+   - then `pg_cancel_backend` (never `pg_terminate_backend`) returns the pid
+     and the signal's result.
+
+   The match and the signal are two statements: a target that ends between
+   them makes the signal return false, and PID reuse inside that window is
+   not prevented.
+4. **CANCEL-INSPECT again** — the target gone or idle, its locks released —
+   **then STATE** (§A6), which alone decides what committed.
+
+Evidence so far: M-6 checks the texts statically, and M-11 checks the
+instantiation's refusals. Locally (PGlite, one connection), INSPECT runs as a
+read. CANCEL-STEP refuses:
+- a missing target;
+- the caller's own `application_name` + `backend_start` (which match exactly
+  one backend without the exclusion);
+- hand-edited values.
+
+**Not yet run with a live second session.** The mechanism is the one
+rehearsed as C-CANCEL (2c above). A staging run of these texts would be a
+separate approval.
 
 **E7. Executed so far — locally, not on any Supabase project.** Every
 assembled text was run in a real Postgres 17 (PGlite 0.3.16 here; the review
@@ -1347,7 +1393,8 @@ section.
 |---|---|
 | N1 qualified eval/Function, `.constructor` chains, string timers, dynamic import/worker URLs | `8f5c428`. The scanner fails closed on each, through the existing global-object resolution; MUT-54 (Codex's four cases), MUT-55 (24 variants), MUT-56 (controls: callback timers, literal imports). No `src/` file changed. The boundary statement is in F3 and the scanner header |
 | N7 partial-apply recovery | `a3a4544`. P2-0304 (§A6, E1, E4) replaces P2-03 and P2-04; P1 keeps 03's 42702 inside a savepoint (E3); the prefix → recovery table and the STATE read-back (§A6, F4); the harness from every prefix and two forced failures inside P2-0304 (E7); LC-3/LC-4 and RB-INV-11; M-6 and M-8 checks for the new step |
-| E8 stale "60 s" in the 2b procedure | the E8 commit: 50 s, as run and recorded |
+| E8 stale "60 s" in the 2b procedure | `12460fe`: 50 s, as run and recorded |
+| (non-blocking) pinned second-caller cancel | the cancel commit. CANCEL-INSPECT and the CANCEL-STEP template (§E8): exact `application_name` + `backend_start`, caller excluded, ambiguity refused, read-back then STATE; M-6, M-11, and the local refusals. Not yet run with a live second session |
 
 ## I. Decisions, what has run, and what remains
 

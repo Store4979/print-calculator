@@ -56,6 +56,24 @@ for (const [k, name] of Object.entries(NAMES)) {
   test(`${k} ${name}`, () => assert.deepEqual(P[k], [], "\n  " + P[k].join("\n  ")));
 }
 
+test("M-11 CANCEL-STEP is instantiated only for a stage-0 step and CANCEL-INSPECT's exact backend_start; the values are the only change", async () => {
+  const A = await import("../manual/assemble-stage0.mjs");
+  const t = A.assembleAll(M, { cwd: ROOT })["CANCEL-STEP-TEMPLATE"];
+  assert.equal(A.md5(t), M.outputs["CANCEL-STEP-TEMPLATE"].md5, "the template is the pinned one");
+  const ok = "2026-10-01T12:00:00.123456Z";
+  const s = A.cancelStepText(t, "P2-0304", ok);
+  assert.ok(!s.includes(A.CANCEL_APP) && !s.includes(A.CANCEL_START), "no placeholder left");
+  assert.equal(s, t.replace(A.CANCEL_APP, "release2-stage0-P2-0304").replace(A.CANCEL_START, ok), "only the two values change");
+  for (const step of ["P1", "P2-01", "P2-02", "P2-0304", "P2-05", "RB-5", "RB-43", "RB-2", "RB-1"]) assert.doesNotThrow(() => A.cancelStepText(t, step, ok), step);
+  for (const step of ["P2-03", "P2-04", "P0", "STATE", "lockprobe-B-CANCEL", "", "P2-0304' or true --", undefined]) {
+    assert.throws(() => A.cancelStepText(t, step, ok), /is not a stage-0 step/, String(step));
+  }
+  for (const bs of ["2026-10-01T12:00:00Z", "2026-10-01 12:00:00.123456+00", "2026-10-01T12:00:00.123456Z'; select 1; --", "2026-10-01T12:00:00.123456Z\n", "", undefined]) {
+    assert.throws(() => A.cancelStepText(t, "P2-0304", bs), /backend_start must be exactly as CANCEL-INSPECT prints it/, JSON.stringify(bs));
+  }
+  assert.throws(() => A.cancelStepText(t + t, "P2-0304", ok), /each placeholder exactly once/);
+});
+
 test("M-9 the manifest is at schema 2, pending today, and the assembler reads it by blob only", () => {
   assert.equal(M.schema, "stage0-production-manifest/2");
   assert.equal(M.baselineLedger.length, 20);

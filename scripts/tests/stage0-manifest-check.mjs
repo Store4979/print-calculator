@@ -184,6 +184,26 @@ export function checkManifest(repo, M) {
     const stt = (out.STATE || "").replace(/--[^\n]*/g, " ");
     if (/\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|lock)\b/i.test(stt.replace(/'[^']*'/g, "''"))) say("M-6", "STATE is not read-only");
     for (const r of A.RECOVERY) if (r.ops.length && !stt.includes(`'${r.ops.join(", ")}'`)) say("M-6", `STATE does not name the recovery ${r.ops.join(", ")}`);
+    // The second-caller cancel procedure (plan §E8): INSPECT only reads; the
+    // STEP template cancels (never terminates) ONE backend matched by exact
+    // application_name AND backend_start, never the caller, refusing 0 or >1
+    // matches before it signals.
+    const ins = (out["CANCEL-INSPECT"] || "").replace(/--[^\n]*/g, " ").replace(/'[^']*'/g, "''");
+    if (!ins.trim() || /\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|do|lock)\b|pg_cancel_backend|pg_terminate_backend/i.test(ins)) say("M-6", "CANCEL-INSPECT is not read-only");
+    const cs = (out["CANCEL-STEP-TEMPLATE"] || "").replace(/--[^\n]*/g, " ");
+    if ((cs.match(/pg_cancel_backend\(/g) || []).length !== 1 || /pg_terminate_backend/.test(cs)) say("M-6", "CANCEL-STEP must call pg_cancel_backend exactly once and never pg_terminate_backend");
+    for (const [what, re] of [
+      ["matches the exact application_name", /where a\.application_name = v_app\s/],
+      ["matches the exact backend_start", /backend_start at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS\.US"Z"'\) = v_start\s/],
+      ["excludes the caller", /and a\.pid <> pg_backend_pid\(\);/],
+      ["refuses zero matches", /if v_n = 0 then\s+raise exception/],
+      ["refuses more than one match", /if v_n > 1 then\s+raise exception/],
+      ["accepts only the stage-0 step names", new RegExp(`if v_app not in \\(${A.CANCEL_TARGETS.map((x) => `'${x}'`).join(", ")}\\) then\\s+raise exception`)],
+    ]) if (!re.test(cs)) say("M-6", `CANCEL-STEP ${what}`);
+    const sig = cs.indexOf("pg_cancel_backend(");
+    if (!(cs.indexOf("if v_n = 0") < sig && cs.indexOf("if v_n > 1") < sig)) say("M-6", "CANCEL-STEP signals before its refusals");
+    const stepNames = ["P1", ...A.P2_STEPS.map((x) => x.step), ...A.ROLLBACK_OPS.map((x) => x.op)];
+    for (const n of stepNames) if (!(out[n] || "").includes(`set_config('application_name', 'release2-stage0-${n}', true)`)) say("M-6", `${n} does not run under the application_name CANCEL-STEP targets`);
     if (!/^begin isolation level repeatable read;$/m.test(out.P1 || "") || !/\nrollback;\n$/.test(out.P1 || "") || /^commit;$/m.test(out.P1 || "")) say("M-6", "P1 must begin repeatable read, end in ROLLBACK and never commit");
     // M-6c the staging lock rehearsal (N5) cannot touch anything but its own schema.
     const lp = Object.entries(out).filter(([k]) => k.startsWith("LOCKPROBE-"));

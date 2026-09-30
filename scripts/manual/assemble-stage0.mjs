@@ -714,6 +714,104 @@ select to_regnamespace('stage0_lockprobe') is null as schema_gone,
   };
 }
 
+// ── The second-caller cancel procedure (plan §E8; review of dc5a88b, non-blocking) ──
+// One caller's execute_sql calls are serialized, so a running stage-0 text can
+// only be cancelled from a SECOND caller. CANCEL-INSPECT (read-only) lists every
+// backend running a stage-0 text with its exact backend_start and its locks.
+// CANCEL-STEP is a pinned TEMPLATE: `--cancel <step> <backend_start>` checks it
+// against the manifest's md5, validates both values and substitutes them. That
+// is the reviewed way to produce its text; nothing stops a hand edit, which is
+// why the text re-validates both values itself.
+export const CANCEL_TARGETS = ["P1", ...P2_STEPS.map((s) => s.step), ...ROLLBACK_OPS.map((o) => o.op)].map((n) => `release2-stage0-${n}`);
+export const BACKEND_START_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const BACKEND_START = (col) => `to_char(${col} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+export const CANCEL_APP = "@@CANCEL_APPLICATION_NAME@@";
+export const CANCEL_START = "@@CANCEL_BACKEND_START@@";
+
+function cancelTexts() {
+  return {
+    "CANCEL-INSPECT": `-- CANCEL-INSPECT — READ-ONLY, from a SECOND caller while a stage-0 text is in flight (plan §E8).
+-- Every backend running a stage-0 text (application_name release2-stage0-…), never the caller: its exact
+-- backend_start (the value CANCEL-STEP needs), its state, and every lock it holds or awaits; and every lock
+-- on public.employees. Run it BEFORE CANCEL-STEP to choose the ONE target, and AFTER it to read back the
+-- outcome; then run STATE.
+select pg_stat_clear_snapshot();
+select
+  (select coalesce(json_agg(json_build_object(
+          'pid', a.pid, 'application_name', a.application_name,
+          'backend_start', ${BACKEND_START("a.backend_start")},
+          'xact_start', a.xact_start, 'state', a.state,
+          'wait_event_type', a.wait_event_type, 'wait_event', a.wait_event,
+          'locks', (select coalesce(json_agg(json_build_object('locktype', l.locktype, 'relation', l.relation::regclass::text,
+                                                               'mode', l.mode, 'granted', l.granted)
+                                             order by l.granted desc, l.mode), '[]'::json)
+                      from pg_locks l where l.pid = a.pid))
+          order by a.backend_start), '[]'::json)
+     from pg_stat_activity a
+    where a.application_name like 'release2-stage0-%' and a.pid <> pg_backend_pid()) as stage0_backends,
+  (select coalesce(json_agg(json_build_object('application_name', t.app, 'backends', t.n) order by t.app), '[]'::json)
+     from (select a.application_name as app, count(*) as n from pg_stat_activity a
+            where a.application_name like 'release2-stage0-%' and a.pid <> pg_backend_pid()
+            group by a.application_name) t) as backends_per_name,
+  (select coalesce(json_agg(json_build_object('pid', l.pid, 'mode', l.mode, 'granted', l.granted,
+          'application_name', (select a.application_name from pg_stat_activity a where a.pid = l.pid)) order by l.pid), '[]'::json)
+     from pg_locks l where l.relation = 'public.employees'::regclass and l.pid <> pg_backend_pid()) as employees_locks,
+  pg_backend_pid() as caller_pid,
+  clock_timestamp() as read_at;
+`,
+    "CANCEL-STEP-TEMPLATE": `-- CANCEL-STEP — from a SECOND caller only (plan §E8). Instantiate it with
+-- \`node scripts/manual/assemble-stage0.mjs --cancel <step> <backend_start>\`, which checks this template
+-- against its pinned md5 and validates both values; never edit the placeholders by hand. Shown to Ryan
+-- before it runs.
+-- It cancels ONE backend: the exact application_name of a stage-0 step AND the exact backend_start that
+-- CANCEL-INSPECT reported, never the caller. On zero matches or more than one, nothing is cancelled.
+-- It uses pg_cancel_backend only, never pg_terminate_backend: the target's transaction aborts and releases its locks.
+-- The match and the signal are two statements. A target that ends between them makes pg_cancel_backend
+-- return false; PID reuse inside that window is not prevented. Read back with CANCEL-INSPECT, then STATE.
+do $stage0_cancel$
+declare
+  v_app   constant text := '${CANCEL_APP}';
+  v_start constant text := '${CANCEL_START}';
+  v_n     int;
+  v_pid   int;
+begin
+  if v_app not in (${CANCEL_TARGETS.map(q).join(", ")}) then
+    raise exception 'stage0 cancel: % is not a stage-0 step; nothing was cancelled', v_app using errcode = 'P0001';
+  end if;
+  if v_start !~ ${q(BACKEND_START_RE.source)} then
+    raise exception 'stage0 cancel: backend_start % is not in CANCEL-INSPECT''s format; nothing was cancelled', v_start using errcode = 'P0001';
+  end if;
+  perform pg_stat_clear_snapshot();
+  select count(*), min(a.pid) into v_n, v_pid
+    from pg_stat_activity a
+   where a.application_name = v_app
+     and ${BACKEND_START("a.backend_start")} = v_start
+     and a.pid <> pg_backend_pid();
+  if v_n = 0 then
+    raise exception 'stage0 cancel: no backend is % started at % (it has ended, or a value is wrong); nothing was cancelled — run CANCEL-INSPECT and STATE', v_app, v_start using errcode = 'P0001';
+  end if;
+  if v_n > 1 then
+    raise exception 'stage0 cancel: % backends are % started at %; ambiguous, nothing was cancelled', v_n, v_app, v_start using errcode = 'P0001';
+  end if;
+  perform set_config('stage0.cancel_pid', v_pid::text, false);
+  perform set_config('stage0.cancel_sent', pg_cancel_backend(v_pid)::text, false);
+end
+$stage0_cancel$;
+select current_setting('stage0.cancel_pid') as cancelled_pid, current_setting('stage0.cancel_sent') as pg_cancel_backend,
+       pg_backend_pid() as caller_pid, clock_timestamp() as sent_at;
+`,
+  };
+}
+
+/** CANCEL-STEP from the pinned template: a known stage-0 step and CANCEL-INSPECT's exact backend_start, or a throw. */
+export function cancelStepText(template, step, backendStart) {
+  const app = `release2-stage0-${step}`;
+  if (!CANCEL_TARGETS.includes(app)) throw new Error(`--cancel: "${step}" is not a stage-0 step; one of ${CANCEL_TARGETS.map((x) => x.slice("release2-stage0-".length)).join(", ")}`);
+  if (typeof backendStart !== "string" || !BACKEND_START_RE.test(backendStart)) throw new Error("--cancel: backend_start must be exactly as CANCEL-INSPECT prints it (YYYY-MM-DDTHH:MM:SS.ffffffZ)");
+  if (template.split(CANCEL_APP).length !== 2 || template.split(CANCEL_START).length !== 2) throw new Error("--cancel: the template does not carry each placeholder exactly once");
+  return template.replace(CANCEL_APP, app).replace(CANCEL_START, backendStart);
+}
+
 /**
  * Every stage-0 SQL text, by name, from the manifest's frozen inputs.
  * Deterministic: the same manifest inputs give the same bytes, wherever the
@@ -760,6 +858,7 @@ export function assembleAll(manifest, opts = {}) {
     out[s.step] = `-- ${s.step} — apply ${names} to production${s.files.length > 1 ? " in ONE transaction (N7)" : ""} (plan §E1, §E4).\nbegin;\n${settings(s.step, "P2", "45s", 40, "45s")}${W[s.files.join("")]}commit;\n`;
   }
   out.STATE = stateReadback(rows);
+  Object.assign(out, cancelTexts());
   Object.assign(out, lockProbeTexts());
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
@@ -774,7 +873,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   if (i >= 0) { manifest = JSON.parse(readFileSync(args[i + 1], "utf8")); args.splice(i, 2); }
   else manifest = manifestAt("HEAD");
   const all = assembleAll(manifest);
-  if (args[0] === "--list" || !args.length) {
+  if (args[0] === "--cancel") {
+    const t = all["CANCEL-STEP-TEMPLATE"];
+    const pin = manifest.outputs && manifest.outputs["CANCEL-STEP-TEMPLATE"];
+    if (!pin || md5(t) !== pin.md5 || Buffer.byteLength(t) !== pin.bytes) {
+      process.stderr.write("--cancel: the CANCEL-STEP template does not match the manifest's pin; refusing\n");
+      process.exit(2);
+    }
+    try { process.stdout.write(cancelStepText(t, args[1], args[2])); }
+    catch (e) { process.stderr.write(`${e.message}\n`); process.exit(2); }
+  } else if (args[0] === "--list" || !args.length) {
     for (const [k, v] of Object.entries(all)) process.stdout.write(`${md5(v)}  ${String(Buffer.byteLength(v)).padStart(7)}  ${k}\n`);
   } else if (all[args[0]] !== undefined) {
     process.stdout.write(all[args[0]]);

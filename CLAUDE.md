@@ -223,6 +223,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       live;
     - current_setting() returns DISPLAY text, so statement_timeout 60s reads
       back as '1min'.
+    - to cancel a stage-0 text in flight, use a second caller: pinned
+      CANCEL-INSPECT, then `assemble-stage0.mjs --cancel <step>
+      <backend_start>` (never hand-edit the template), then CANCEL-INSPECT
+      again, then STATE (plan §E8).
   - netlify/functions/deploy-context.js reports `flagPresent` (scoping) AND
     `flagEnabled`. `flagEnabled` is release2FlagEnabled() from
     netlify/lib/deploy-context.js, the SAME function release2Allowed() calls

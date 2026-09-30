@@ -10,11 +10,15 @@
 // supabase/migrations/ in version order with its ledger row. Production data
 // that predates phase_b_02 is inserted at that point: store4979, an owner and
 // two employees. On that database it runs:
-//   P0; P1; P0 again (must be identical); P2-01..05; the ledger read-back;
-//   the rollback operations out of order (must refuse) and in order; RB-1
-//   over a non-empty table (must refuse); P0-S restored; P0-L appended.
+//   P0; P1; P0 again (must be identical); P2-01, P2-02, P2-0304, P2-05; the
+//   ledger read-back; the rollback operations out of order (must refuse) and
+//   in order; RB-1 over a non-empty table (must refuse); P0-S restored; P0-L
+//   appended.
 // Plus the negative controls: a staging-shaped database, an unknown ledger,
 // a rollback file outside its operation, and two mutated proof expectations.
+// N7 (review of dc5a88b): STATE and the recovery from every committed prefix,
+// two forced failures inside P2-0304, and STATE's STOP. Then the refusals of
+// the second-caller cancel texts that one connection can reach.
 //
 // WHAT IT CANNOT SHOW:
 //   - concurrency (PGlite is one connection), so lock_timeout, a held
@@ -329,6 +333,45 @@ await afterFailed0304("forced failure (b), 04 fails after 03 executed", faultTex
   await d.exec(blob(MANIFEST.migrations.find((m) => m.n === "03").blob));   // fault injection: 03 outside any wrapper, no ledger row
   const st = await one(d, OUT.STATE);
   expect("STATE control: catalog 03 with ledger 01,02 is STOP, not an operation", st.catalog_state === "03" && /^STOP/.test(st.recovery), JSON.stringify(st));
+}
+
+// ── The second-caller cancel texts (plan §E8) — what ONE connection can show ──
+// A real cancel of another backend needs a second connection, which PGlite does
+// not have. The staging C-CANCEL record (§E8, 2c) is the evidence for the
+// mechanism. Here: INSPECT reads, and CANCEL-STEP refuses a missing target,
+// refuses the caller itself, and refuses hand-edited values.
+{
+  const { cancelStepText } = await import(pathToFileURL(join(REPO, "scripts", "manual", "assemble-stage0.mjs")).href);
+  const d = await freshDb();
+  const last = async (sql) => { const r = await d.exec(sql); return r[r.length - 1].rows[0]; };
+  const js = (v) => (typeof v === "string" ? JSON.parse(v) : v);
+  const tryText = async (sql) => { try { await d.exec(sql); return null; } catch (e) { return e.message; } };
+  const T = OUT["CANCEL-STEP-TEMPLATE"];
+  const ins = await last(OUT["CANCEL-INSPECT"]);
+  expect("CANCEL-INSPECT runs as a read and never lists the caller", ins && Array.isArray(js(ins.stage0_backends)) && !js(ins.stage0_backends).some((b) => b.pid === ins.caller_pid), JSON.stringify(ins));
+  let e = await tryText(cancelStepText(T, "P2-0304", "2000-01-01T00:00:00.000000Z"));
+  expect("CANCEL-STEP with no matching backend refuses; nothing is signalled", /no backend is release2-stage0-P2-0304 started at 2000-01-01T00:00:00\.000000Z/.test(e || ""), e);
+  await d.exec("set application_name = 'release2-stage0-P2-0304'");
+  // Control: without the caller exclusion, the same two values match exactly
+  // one backend (this one), so it is the exclusion that refuses below.
+  const me = await one(d, `with mine as (select to_char(a.backend_start at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as bs
+                                          from pg_stat_activity a where a.pid = pg_backend_pid())
+                           select mine.bs, (select count(*) from pg_stat_activity x
+                                             where x.application_name = 'release2-stage0-P2-0304'
+                                               and to_char(x.backend_start at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') = mine.bs) as visible
+                             from mine`);
+  if (me && me.bs && Number(me.visible) === 1) {
+    e = await tryText(cancelStepText(T, "P2-0304", me.bs));
+    expect("CANCEL-STEP never matches the caller: its own application_name and backend_start (1 match without the exclusion) refuse as no match", /no backend is release2-stage0-P2-0304/.test(e || ""), `${me.bs}: ${e}`);
+  } else {
+    console.log(`SKIP  CANCEL-STEP caller exclusion — this PGlite shows no backend_start for its own session (${JSON.stringify(me)})`);
+  }
+  await d.exec("reset application_name");
+  const hand = (app, bs) => T.replace("@@CANCEL_APPLICATION_NAME@@", app).replace("@@CANCEL_BACKEND_START@@", bs);
+  e = await tryText(hand("release2-stage0-P2-03", "2000-01-01T00:00:00.000000Z"));
+  expect("a hand-edited CANCEL-STEP naming no stage-0 step refuses in SQL", /is not a stage-0 step; nothing was cancelled/.test(e || ""), e);
+  e = await tryText(hand("release2-stage0-P2-0304", "2000-01-01 00:00:00+00"));
+  expect("a hand-edited CANCEL-STEP with a malformed backend_start refuses in SQL", /is not in CANCEL-INSPECT's format; nothing was cancelled/.test(e || ""), e);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");

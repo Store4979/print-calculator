@@ -243,9 +243,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "2b5b2d77a3a26721c2bae85de4a98406f23cf93f",
-    "md5": "087856f06e6dfb195145fd63216f85e0",
-    "bytes": 47464,
+    "blob": "a874ce970a5454a9ce78c494bae0b53c6d23f099",
+    "md5": "23469aa1f93a89bf5f37ac3308a86bcb",
+    "bytes": 54582,
     "pinnedAt": "manifest-commit"
   },
   "functions": {
@@ -505,6 +505,14 @@
     "STATE": {
       "md5": "41dd91021512640818cf80cc7c8ee0f9",
       "bytes": 10781
+    },
+    "CANCEL-INSPECT": {
+      "md5": "286b4d4e8e4a89ab935b3245471ea47a",
+      "bytes": 2178
+    },
+    "CANCEL-STEP-TEMPLATE": {
+      "md5": "f78372186350073851d28f7be31fb6c0",
+      "bytes": 2652
     },
     "LOCKPROBE-SETUP": {
       "md5": "d5a8c9de513479429cac9410090666d1",
