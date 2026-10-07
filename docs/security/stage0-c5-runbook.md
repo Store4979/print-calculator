@@ -251,8 +251,10 @@ may hold the new key; every other context must be as stated above.
    - the row shows `runtime=node`, `apikey.prefix` beginning **`sb_secret_`**,
      and a hash that is new to the record;
    - the 15-character `apikey.prefix` equals the prefix the API Keys page
-     shows for the new key. Ryan reads it there if displayed; otherwise the
-     binding is by elimination, and the record says so;
+     shows for the new key, which Ryan reads there. **If the name cannot be
+     positively bound to the observed prefix and hash — the page shows no
+     prefix, or it differs — STOP before step 7.** There is no elimination
+     fallback (plan C5.5);
    - **Ryan** re-confirms it is listed under **"Secret keys"**.
 
    A publishable prefix, or a JWT, is STOP.

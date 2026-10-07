@@ -500,13 +500,15 @@ with a check after every paste, built from the C3 session's mistakes.
        C3.6's reading rule) shows `request.sb.apikey.apikey.prefix` beginning
        **`sb_secret_`**, and an `apikey.hash` that differs from every other
        key's hash in the record;
-     - **the binding to the new key's name.** The log carries no key name
-       (C3.6). If the API Keys page displays a prefix for the named key, the
-       log row's full 15-character `apikey.prefix` must equal it. That field
-       may be read in full because it is the public identifier the page
-       itself shows; every other credential field stays at 10 characters. If
-       the page shows no prefix, the binding is by elimination — the only
-       secret key created in C5.2 — and the record says so;
+     - **the binding to the new key's name, positively.** The log carries no
+       key name (C3.6). The log row's full 15-character `apikey.prefix` must
+       equal the prefix the API Keys page displays for the named key. That
+       field may be read in full because it is the public identifier the page
+       itself shows; every other credential field stays at 10 characters.
+       **If the name cannot be positively bound to the observed prefix and
+       hash, for any reason — the page shows no prefix, or it differs — STOP
+       before C5.7.** No elimination argument (review of `c2b01a0`) stands in
+       for this binding;
      - **Ryan's confirmation** that the key is listed under **"Secret keys"**
        with that name;
    - the canary mail (C7), which must show `recipientSource = "store:store4979"`;
@@ -1904,10 +1906,17 @@ length; no raw credential was ever selected):
     79c453d9ccdc3a1b14eb34619ffe2cea` = the manifest's `sizeProbe.expect`;
   - no token text in the file (`tokenRedactedFromResponse false`).
 
-  **C3.7 established:** the transport P1 will use carried the exact
-  241 149-byte pinned text, 1 KiB larger than P1, intact, through the pinned
-  sender, and the server's own measurement of what it received equals the
-  pin.
+  **C3.7 established.** Two measurements, each equal to its own pin:
+  - **the sender measured the full request text** it sent: **241 149 bytes,
+    md5 `64836acd787dc72bb0ad3e6564a66db4`**, equal to the manifest's
+    `outputs["SIZE-PROBE"]`. That is the whole SELECT, 1 KiB larger than P1;
+  - **the server measured the literal inside it**, as received:
+    **240 951 bytes, md5 `79c453d9ccdc3a1b14eb34619ffe2cea`**, equal to the
+    manifest's `sizeProbe.expect`.
+
+  The transport P1 will use carried that text through the pinned sender,
+  and the server's measurement of the literal matched the pin. The server
+  did not measure the full request; its 240 951 bytes are the literal only.
 - **9.5** (Ryan, ≈ 00:15Z): both access tokens deleted, `stage0-c3-2026-10-06`
   and `stage0-c3-2026-10-06b`. No `stage0-c3-…` token remains.
 
@@ -1988,7 +1997,7 @@ length; no raw credential was ever selected):
 | 4 owner auth, legacy disabled | `[200, 200]` on `D_new2` |
 | 5 re-enable restores the same keys? | **yes**: the same `service_role` JWT (`Gx7NWL`) was accepted again within ≈ 4½ min |
 | 6 provider-side record | rows identify the key (new keys: prefix plus hash; legacy: signature prefix) and carry the refusal code. Not every request has a row |
-| 7 SIZE-PROBE | `201`; answer `probe_bytes 240951`, `probe_md5 79c453d9…` = `sizeProbe.expect`; request md5/bytes = the pin; through the sender |
+| 7 SIZE-PROBE | `201` through the sender. **Sender-measured full request:** 241 149 bytes, md5 `64836acd…` = `outputs["SIZE-PROBE"]`. **Server-measured literal:** `probe_bytes 240951`, `probe_md5 79c453d9…` = `sizeProbe.expect` |
 
 **Operator events, all recorded above:**
 - 3.1/3.2 set all contexts, not Production only (no non-production build
@@ -2013,6 +2022,13 @@ on one of them.
   rebuild**, with the staging environment of that moment. The commit
   recording this one triggers the next. It is recorded in the commit after
   it, never chased within one commit.
+- **The push of `c2b01a0`** rebuilt staging as **`6ac598c104819d0008b24a8b`**,
+  `builtAt 2026-10-07T00:59:09.354Z`, published by 00:59:37Z:
+  - row R → accepted at 00:59:37Z;
+  - its function lookup (00:59:39.122Z, `runtime=node`) carried
+    `sb_secret_` `u7JJiAtlix` (`release2_stage0_c3s`);
+  - the `runtime=web` row beside it is a browser using the `default`
+    publishable key.
 
 **The C3 record review (Codex) adopted the findings** into C5.5 (key-type
 proof), C5.8 (bounded re-probe and the two accepted refusals), and §E1
@@ -2022,6 +2038,81 @@ proof), C5.8 (bounded re-probe and the two accepted refusals), and §E1
   then-valid `c3_temp` (≈ 17:11:12Z) and the refused legacy-anon request
   (17:30:09Z) have **no edge_logs row**. The logs identify keys when a row
   exists, but not every request has one.
+
+**E10. P0 on production — RECORD, 2026-10-07.** Approved by Codex at
+`c2b01a0`: production, read-only, through the pinned sender, with a
+project-scoped Database: Read token and `read_only true`. **Everything else
+stays held.** Nothing was pushed until this record.
+
+- **Checkout** (Ryan): `git rev-parse HEAD` =
+  `c2b01a0a706a90eea4d55e2eb0d5a2b40193d3c9`, and `git status` shows only
+  `?? AGENTS.md`. Claude's checkout and the remote branch head were the same
+  commit.
+- **Dry run** (Ryan, and independently Claude): `target production =
+  gmxyisjjaxtpycsmmzef; read_only true; request md5
+  2d6977169a592cac78a15c5ebe17509b; 11694 bytes; no network call made`.
+- **Token** (Ryan): **`stage0-p0-2026-10-07`**, resource access Project →
+  **the production project only** (`gmxyisjjaxtpycsmmzef`), **Database:
+  Read** as the only permission, expiry 1 day. The value was entered at the
+  masked prompt (44 asterisks). `StartsWith("sbp_")` → `True`, length → `44`.
+- **Send** (Ryan): `stage0-send.mjs P0 --target production --confirm-ref
+  gmxyisjjaxtpycsmmzef` → **`HTTP 201`**, `2026-10-07T15:21:44.109Z →
+  15:21:44.596Z`. Then `Remove-Item Env:SUPABASE_ACCESS_TOKEN`, and **the
+  token was deleted at 11:25 EDT (15:25Z)**.
+- **Results file** (Claude read it):
+  `.stage0-send/2026-10-07T15-21-44-109Z_P0_production.json`:
+  - `requestMd5 2d6977169a592cac78a15c5ebe17509b`, `requestBytes 11694`;
+  - `ref gmxyisjjaxtpycsmmzef`, `readOnly true`;
+  - endpoint `…/v1/projects/gmxyisjjaxtpycsmmzef/database/query`;
+  - `httpStatus 201`, `error null`, one row;
+  - no token text in the file.
+
+  The `read_only` role could read everything P0 reads: no permission error.
+
+**Every P0 column against §E2:**
+
+| column | P0 | §E2 expects | |
+|---|---|---|---|
+| `has_store_role` | true | true | ✓ |
+| `organizations` | true | true | ✓ |
+| `stores_org_id` | true | true | ✓ |
+| `stores_without_org` | 0 | 0 (else STOP) | ✓ |
+| `stores_without_org_ids` | `[]` | empty | ✓ |
+| `uniq_already_there` | false | false | ✓ |
+| `release2_tables_present` | 0 | 0 | ✓ |
+| `release2_functions_present` | 0 | 0 | ✓ |
+| `catalog_fingerprint` | `8b3c9eadf9eb8a98cb8cc6dca996663e` | recorded; P1 and any rollback must reproduce it | recorded |
+| `probe_slug_absent` | true | true | ✓ |
+| `nil_job_absent` | true | true | ✓ |
+| `auth_users_user_triggers` | 0 | 0 | ✓ |
+| `free_pins` | 8999 | ≥ 3 | ✓ |
+| `server_version_num` | 170006 | recorded | recorded |
+| `pg17_hard_timer` | true | true (PG 17 required) | ✓ |
+| `ledger_head` | `20260909232836` | `20260909232836` | ✓ |
+| `ledger_rows` | 20 | 20 | ✓ |
+| `ledger_matches_repo` | true | true | ✓ |
+| `release2_in_ledger` | 0 | 0 | ✓ |
+| `ledger_columns` | `version:text:NO:, statements:ARRAY:YES:, name:text:YES:, created_by:text:YES:, idempotency_key:text:YES:, rollback:ARRAY:YES:` | the pinned `ledgerRow.columns` | ✓ |
+| `ledger_columns_as_pinned` | true | true | ✓ |
+| `ledger_created_by` | `["store4979@theupsstore.com"]` | exactly that one value | ✓ |
+| `ledger_rows_single_element` | true | true | ✓ |
+| `production_ledger_marker` | true | true (`20260909232836` `phase_e_03_order_margin_snapshot`, `b7a8e54c…`) | ✓ |
+| `staging_seed_absent` | true | true | ✓ |
+| `production_store_present` | true | true (`store4979`) | ✓ |
+
+**P0 result: PASS.**
+- 24 columns are equal to §E2, and 2 recorded values are kept for P1 and
+  rollback (`catalog_fingerprint`, `server_version_num`).
+- There is no mismatch and no permission error. The positive production
+  identity holds, as do the exact 20-row ledger baseline and its shape
+  (`created_by` included).
+- There are no Release 2 objects. PG 17 is present (170006). The probe
+  identities are absent, and `stores_without_org = 0`.
+- Production's `catalog_fingerprint` equals the one
+  `stage0-local-pglite.mjs` computes for its production-shaped database, built
+  from the 20 committed migrations. That agrees with `ledger_matches_repo`.
+- §E0's rule is unchanged: a gap of more than a day between P1 and P2 means
+  P0 and P1 are re-run.
 
 ---
 
@@ -2216,11 +2307,18 @@ Production was not touched.
 - §E1: project-scoped read and write tokens;
 - the production C5 runbook.
 
-**Remaining, each at its own stop point, none started:**
+**P0 ran on production, 2026-10-07 (§E10): PASS.** It was read-only, through
+the sender, with a project-scoped Database: Read token that was deleted
+afterwards. Every column matches §E2.
+
+**Remaining, each at its own stop point, none started; everything is held
+until approved:**
 1. Review of the production C5 runbook,
-   `docs/security/stage0-c5-runbook.md` (DRAFT). It is not used before that
+   `docs/security/stage0-c5-runbook.md` (DRAFT), including Codex's LOOP notes
+   (a wall-clock deadline, an exact HTTP 500 / JSON match per revocation
+   kind) and the step-1.7 gateway-log question. It is not used before that
    review.
-2. P0 (read-only), then P1 onward. Every pinned text goes through the sender,
+2. P1 onward, each when approved. Every pinned text goes through the sender,
    with the read token or the write token as §E1 assigns.
 3. P5 (C5), after P4 and before P6 (C10), from the reviewed C5 runbook.
 
