@@ -420,7 +420,9 @@ is the whole of C4 on staging, with staging's keys, and must also demonstrate:
 
    The exact refusal message is recorded for **both revocation kinds**: a
    deleted secret key and disabled legacy JWT keys. P5 accepts only those
-   recorded messages.
+   recorded messages. **Recorded in §E9:** `Unregistered API key`
+   (`UNAUTHORIZED_UNREGISTERED_API_KEY`) and `Legacy API keys are disabled`
+   (`UNAUTHORIZED_DISABLED_LEGACY_KEY`). The table is in C5.8.
 2. **The cleanup read.** An authorized `POST` with `x-cleanup-key` and
    `{"dryRun":true}` reaches its SELECT: `200` with `dryRun:true` on a valid
    key, and `500` with the recorded message on the control.
@@ -476,7 +478,10 @@ Evidence, in order:
    first.
 
 **C5. Steps on production.** Ryan performs them in the dashboards; this
-session never sees a key.
+session never sees a key. **They run from the production C5 runbook,
+`docs/security/stage0-c5-runbook.md`, which is a DRAFT and needs its own
+review before use.** It turns these steps into click-by-click instructions,
+with a check after every paste, built from the C3 session's mistakes.
 1. Record the key inventory and the variable metadata (C4.1). Re-take the old-key
    set (B1).
 2. **Create a new secret API key** (`release2-stage0-<date>`).
@@ -488,6 +493,22 @@ session never sees a key.
 5. **Current-deploy proof** (C6, rows marked *current*) on the new deploy:
    - presence;
    - the distinguishing read, which must be **accepted**;
+   - **the key's TYPE, proven separately (C3 record review).** Row R cannot
+     tell a publishable key from a secret key; C3's first "secret" key was
+     publishable, and row R accepted it. All three are required:
+     - the gateway log row for the row-R probe's timestamp (`query_logs`,
+       C3.6's reading rule) shows `request.sb.apikey.apikey.prefix` beginning
+       **`sb_secret_`**, and an `apikey.hash` that differs from every other
+       key's hash in the record;
+     - **the binding to the new key's name.** The log carries no key name
+       (C3.6). If the API Keys page displays a prefix for the named key, the
+       log row's full 15-character `apikey.prefix` must equal it. That field
+       may be read in full because it is the public identifier the page
+       itself shows; every other credential field stays at 10 characters. If
+       the page shows no prefix, the binding is by elimination — the only
+       secret key created in C5.2 — and the record says so;
+     - **Ryan's confirmation** that the key is listed under **"Secret keys"**
+       with that name;
    - the canary mail (C7), which must show `recipientSource = "store:store4979"`;
    - the cleanup dry run (C7), if authorized;
    - the counter check by Ryan: a real order save and the queue tab.
@@ -502,7 +523,32 @@ session never sees a key.
    distinguishing read must now be **refused** with a C3-recorded message.
    The routes that cannot distinguish get C6's provider-side evidence and the
    same-deploy binding.
-9. **Current deploy re-probed after revocation.** The distinguishing read must
+   - **A revocation takes effect after a delay (C3 record).** After the
+     legacy disable at 17:29:01Z, the legacy `service_role` JWT was still
+     accepted at 70 s and refused by 242 s; the second disable was refused at
+     78 s. So each old-key URL is re-probed in a **bounded loop**:
+     - row R every **30 s**;
+     - stop at the first refusal carrying an accepted message (below);
+     - at most **10 min** per URL.
+
+     Every attempt is recorded with its time. A URL **not refused within 10
+     min is STOP**: record it and return to review. It is never "accepted
+     because it worked once".
+   - The same loop applies after a **deleted secret key**.
+   - **Accepted refusals — only the two C3 recorded** (gateway code from the
+     edge log, message from row R):
+
+     | revocation | row R | gateway code |
+     |---|---|---|
+     | deleted secret key | `500 Store lookup failed: Unregistered API key` | `UNAUTHORIZED_UNREGISTERED_API_KEY` |
+     | disabled legacy JWT keys | `500 Store lookup failed: Legacy API keys are disabled` | `UNAUTHORIZED_DISABLED_LEGACY_KEY` |
+
+     Any other message is STOP. That includes `Invalid API key` /
+     `UNAUTHORIZED_INVALID_API_KEY`, which C3 recorded for a malformed
+     (bad-checksum) value: it is the control's answer and proves nothing
+     about a revocation.
+9. **Current deploy re-probed after revocation**, only once step 8's loop
+   has finished for every old-key URL. The distinguishing read must
    still be **accepted**, which proves the revocation missed the new key. C8's
    owner-auth check follows.
 10. **Provider-side record:**
@@ -850,13 +896,34 @@ STATE's recovery table around them.
   `SUPABASE_ACCESS_TOKEN` in the environment of Ryan's own PowerShell. It is
   never in argv, never written, never printed. The sender refuses without it,
   and the preparing session never holds it.
-  - **A PAT is account-wide:** it reaches every project the account can, so a
-    token created for a staging session can also reach production. The
-    sender's policy is the only thing that scopes it.
-  - It is created per session with the **shortest expiry the dashboard
-    offers**, and **deleted** (Account → Access Tokens) at the end of every
-    session, whatever the outcome.
-  - Ryan's commands are in `docs/security/stage0-c3-runbook.md` §0.
+  - **Project-scoped tokens only (C3 record review).** The dashboard's
+    "Generate token" offers Resource access → **Project**, with
+    per-permission levels; C3.7 used one. Its "Create legacy token" (an
+    account-wide, full-access token) is never used. Every stage-0 token:
+    - is scoped to **exactly one project**, the target of its texts;
+    - has only the **Database → "Database"** permission, at the level its
+      texts need, and every other permission None;
+    - has the shortest expiry offered;
+    - is created **just before its step** and **deleted right after it**
+      (Account → Access Tokens), whatever the outcome.
+  - **Two tokens, never one for everything:**
+
+    | token | Database level | sends | read_only |
+    |---|---|---|---|
+    | **read token** | **Read** (enough for a `read_only` query: C3.7, `201`) | P0, STATE, SIZE-PROBE; any read-only read-back sent through the sender | `true` |
+    | **write token** | the level above Read (named as the dashboard shows it at creation, and recorded) | P1, P2-*, RB-*; and the cancel procedure's CANCEL-INSPECT and CANCEL-STEP, which go as the default role (`read_only` not set) | not set |
+
+    Whether a read token is REFUSED for a text sent without `read_only` has
+    not been observed. The sender's policy, not the token, decides
+    `read_only`; the token scope is a second, independent limit on what a
+    mistaken send could do.
+  - The project scope is what keeps a token for one project from reaching
+    the other. C3's token could not have reached production. The sender's
+    target policy (M-12) is the first limit, and the scope is the second.
+  - Ryan's commands for creating a token and setting the variable are in
+    `docs/security/stage0-c3-runbook.md` §0 and §9. The value goes at the
+    masked prompt; the `Read-Host` label is never edited (C3: a token prefix
+    reached the chat that way).
 - **The record.** Each send writes the request md5/bytes, target, ref, start and
   finish times, HTTP status and raw response body to `.stage0-send/`
   (gitignored), and prints a short summary. The preparing session reads the
@@ -1932,6 +1999,25 @@ length; no raw credential was ever selected):
 
 Each was caught by a check, corrected, and recorded. No result above rests
 on one of them.
+
+**After the record commit.** Pushing `6c5bf25` to `security/release-2-slice-2`
+(staging's production branch) rebuilt staging:
+- the published deploy is **`6ac593ddfe275f00080ea3ac`**, production,
+  `6c5bf25`, `builtAt 2026-10-07T00:38:12.830Z`;
+- row R → accepted at 00:38:35Z. The gateway log row for that lookup
+  (00:38:36.562Z, `runtime=node`) shows **`sb_secret_` `u7JJiAtlix`**
+  (`release2_stage0_c3s`). The rows from the same seconds with the `default`
+  publishable key are the staging app in a browser (`runtime=web`, referer
+  the new deploy's URL);
+- **every record commit pushed to that branch triggers one more staging
+  rebuild**, with the staging environment of that moment. The commit
+  recording this one triggers the next. It is recorded in the commit after
+  it, never chased within one commit.
+
+**The C3 record review (Codex) adopted the findings** into C5.5 (key-type
+proof), C5.8 (bounded re-probe and the two accepted refusals), and §E1
+(project-scoped read and write tokens). The production C5 runbook is
+`docs/security/stage0-c5-runbook.md`, a draft for its own review.
 - **Logging gaps** (relevant to C3.6): `D_tmpS`'s accepted lookup with the
   then-valid `c3_temp` (≈ 17:11:12Z) and the refused legacy-anon request
   (17:30:09Z) have **no edge_logs row**. The logs identify keys when a row
@@ -2124,13 +2210,19 @@ production.
 2026-10-06/07. Codex accepted the runbook and the sender at `d25d234`.
 Production was not touched.
 
+**Codex reviewed the C3 record** and its findings were adopted:
+- C5.5: the key type is proven separately from row R;
+- C5.8: a bounded re-probe, accepting only the two recorded refusals;
+- §E1: project-scoped read and write tokens;
+- the production C5 runbook.
+
 **Remaining, each at its own stop point, none started:**
-1. Codex's review of the C3 record (§E9). It includes three findings that
-   bear on production:
-   - the legacy-disable delay (C5.8 must wait and re-probe);
-   - project-scoped access tokens (§E1's account-wide note);
-   - the generated control failing the key checksum (C3.1a's wording).
-2. P0 (read-only), then P1 onward. Every pinned text goes through the sender.
+1. Review of the production C5 runbook,
+   `docs/security/stage0-c5-runbook.md` (DRAFT). It is not used before that
+   review.
+2. P0 (read-only), then P1 onward. Every pinned text goes through the sender,
+   with the read token or the write token as §E1 assigns.
+3. P5 (C5), after P4 and before P6 (C10), from the reviewed C5 runbook.
 
 ---
 

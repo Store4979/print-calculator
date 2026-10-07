@@ -256,7 +256,11 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     - a session cannot reproduce P1's 240 KB byte for byte, and the server
       md5-gates only the embedded files;
     - Ryan runs the sender with a PAT in SUPABASE_ACCESS_TOKEN; the session
-      runs only --dry-run and reads .stage0-send/;
+      runs only --dry-run and reads .stage0-send/. Tokens are PROJECT-SCOPED
+      only (plan §E1, never "Create legacy token"):
+      - a read token (Database: Read) for P0, STATE and SIZE-PROBE;
+      - a separate write token for P1, P2-*, RB-* and the cancel texts;
+      - each one is created just before its step and deleted right after;
     - the sender posts to the endpoint execute_sql itself uses,
       /v1/projects/{ref}/database/query (MCP 0.13.0);
     - the manifest's send policy (M-12) fixes each text's project and
@@ -285,6 +289,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       line (a token prefix leaked that way once).
     - Bind every deploy by its `deploy-context` deployId. A "published"
       report can come before the build finishes (about 3 minutes).
+    - Production C5 (P5) runs from docs/security/stage0-c5-runbook.md (a
+      DRAFT until reviewed). Its V-checks after every paste come from these
+      C3 mistakes. Only `Unregistered API key` and `Legacy API keys are
+      disabled` count as revocation proof; `Invalid API key` is the
+      malformed-key control. Each pushed record commit rebuilds staging once
+      more.
   - The manifest pins stage-0 inputs by git BLOB ID. The assembler reads them
     by blob, never by path or HEAD, so the P2 git-mv's change no output. The
     checks are state-aware (productionVersion, rollbackRecords decide where
