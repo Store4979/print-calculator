@@ -295,6 +295,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       disabled` count as revocation proof; `Invalid API key` is the
       malformed-key control. Each pushed record commit rebuilds staging once
       more.
+  - P1–P3 run in one window from docs/security/stage0-p1-p3-runbook.md (a
+    DRAFT until reviewed):
+    - two windows, each with its own project-scoped token: window R holds the
+      read token, for P0 and STATE; window W holds the write token, for P1,
+      P2-* and RB-*;
+    - through the query endpoint a text returns only its LAST row-returning
+      statement:
+      - a committed P2/RB wrapper returns `[{"set_config":"45s"}]`;
+      - P1 returns its 45 proof rows (`select n, what from stage0_proof`)
+        before `ROLLBACK`;
+    - the scripts/tests fixtures assume the Release 2 files are PENDING at
+      HEAD (Blocker PRE-0), so the P3 record commits turn `yarn test` red
+      (349/372 after P2-01's record) until those fixtures are state-aware.
   - The manifest pins stage-0 inputs by git BLOB ID. The assembler reads them
     by blob, never by path or HEAD, so the P2 git-mv's change no output. The
     checks are state-aware (productionVersion, rollbackRecords decide where

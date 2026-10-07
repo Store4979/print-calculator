@@ -2319,7 +2319,21 @@ until approved:**
    kind) and the step-1.7 gateway-log question. It is not used before that
    review.
 2. P1 onward, each when approved. Every pinned text goes through the sender,
-   with the read token or the write token as §E1 assigns.
+   with the read token or the write token as §E1 assigns. P1–P3 run in one
+   window from `docs/security/stage0-p1-p3-runbook.md` (DRAFT, needs review).
+   Two items there are open:
+   - **Blocker PRE-0**, measured in a scratch clone. With the P3 record commits
+     made as that runbook writes them, `yarn test` fails:
+     - 349/372 after the P2-01 record;
+     - 347/372 after all four records.
+
+     The failing tests are the inventory mutation fixtures, RB-INV-1…11, and
+     LC-3/LC-4. Each builds its fixtures from HEAD and assumes the Release 2
+     files are still pending. The record itself passes M-1…M-12 and the real
+     INV-6. The fix is a separate reviewed change before the window.
+   - **Decision D-P2**, for Codex: whether the recovery that STATE returns may
+     run in the window after a partial P2, or whether every partial state is
+     STOP-and-review.
 3. P5 (C5), after P4 and before P6 (C10), from the reviewed C5 runbook.
 
 ---
