@@ -11,6 +11,20 @@
 // ledger version == the copied tree's applied baseline), so the control run
 // proves the validation is reachable, not skipped.
 //
+// Two kinds of copy (Blocker PRE-0, docs/security/stage0-p1-p3-runbook.md):
+//   - mutate() copies the tree in the PENDING layout. The Release 2 files are
+//     put back where they sit before P2, from wherever the manifest's
+//     recorded state says they are now (stage0-recorded-state.mjs). Its
+//     snapshot is the fixture below, at the baseline ledger version. Every
+//     mutate() test therefore starts from the same tree before and after the
+//     P2/RB record commits.
+//   - mutateReal() copies the tree EXACTLY as HEAD records it, with the real
+//     committed snapshot: the reviewer's reproductions run against the real
+//     state in every state.
+// MUT-33 is the one test that replays an apply on the real capture. It starts
+// from the pending layout with the real capture's pending view (its own
+// non-Release-2 tables at the baseline version).
+//
 // The lexical route check (INV-R1) is bounded: a route assembled from pieces
 // none of which contains ".netlify", "netlify/" or "/functions/" is not seen by
 // it. That residual was REJECTED as sufficient for G0 (reviews of the fcb5da6
@@ -32,9 +46,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInventory, compareToAllowlist, appliedBaselineVersion } from "./inventory-check.mjs";
 import { ALLOWLIST, RETIRED_EVER } from "./inventory-allowlist.mjs";
+import { readManifest, resetToPending, pendingCapture } from "./stage0-recorded-state.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const BASELINE = appliedBaselineVersion(ROOT);
+const RECORDED = readManifest(ROOT);
+// The pending layout's applied baseline: the newest of the 20 baseline files
+// (M-8 allows no other top-level migration file).
+const BASELINE = RECORDED.ledgerBaseline.head;
 
 const FIXTURE_TABLES = {
   project: "gmxyisjjaxtpycsmmzef", capturedBy: "fixture", query: "scripts/manual/tables-snapshot.sql", capturedAt: "2026-09-23T14:59:46Z",
@@ -46,12 +64,19 @@ const FIXTURE_TABLES = {
 };
 const TOMBSTONE = "// TOMBSTONE\nexport const TOMBSTONE = true;\nexport const handler = async () => ({ statusCode: 410, body: \"Gone\" });\n";
 
-/** A working copy: src/, netlify/functions/, supabase/migrations (names + pending bodies), fixture snapshot. */
-function copyTree() {
+/**
+ * A working copy: src/, netlify/functions/, supabase/migrations.
+ * - asRecorded false (mutate): the migrations in the PENDING layout, derived
+ *   from the recorded state, with the fixture snapshot.
+ * - asRecorded true (mutateReal): the migrations exactly as HEAD records them;
+ *   the caller supplies the snapshot.
+ */
+function copyTree({ asRecorded = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "inv-"));
   cpSync(join(ROOT, "src"), join(root, "src"), { recursive: true });
   cpSync(join(ROOT, "netlify", "functions"), join(root, "netlify", "functions"), { recursive: true });
   cpSync(join(ROOT, "supabase", "migrations"), join(root, "supabase", "migrations"), { recursive: true });
+  if (!asRecorded) resetToPending(root, RECORDED);
   writeFileSync(join(root, "supabase", "tables.json"), JSON.stringify(FIXTURE_TABLES, null, 2));
   return root;
 }
@@ -64,8 +89,8 @@ const IMPORT = 'import { supabase } from "./lib/supabase.js";\n';
 
 /** Run one mutant; return errors and helpers. `gate` is the COMPOSED verdict:
  *  scanner errors plus the real allowlist's problems — what CI would say. */
-function mutate(apply, opts = {}) {
-  const root = copyTree();
+function mutate(apply, opts = {}, tree = {}) {
+  const root = copyTree(tree);
   try {
     apply(root);
     const r = runInventory({ root, retiredEver: RETIRED_EVER, ...opts });
@@ -88,6 +113,12 @@ test("CONTROL — the unmutated copy with the fixture snapshot scans clean, and 
   assert.deepEqual(r.gate, [], "\n  " + r.gate.join("\n  "));
   assert.ok(r.sites.length > 40, "the real sites are found");
   assert.ok(BASELINE, "the copied tree has an applied baseline to reconcile against");
+  const copy = copyTree();
+  try {
+    assert.equal(appliedBaselineVersion(copy), BASELINE, "the pending copy's newest applied file is the recorded baseline head");
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
 });
 
 // ── reach shapes (F5, R7) ────────────────────────────────────────────────────
@@ -393,6 +424,14 @@ function mutateReal(apply, opts = {}) {
   return mutate((root) => {
     cpSync(join(ROOT, "supabase", "tables.json"), join(root, "supabase", "tables.json"));
     apply(root);
+  }, opts, { asRecorded: true });
+}
+/** The pending layout with the REAL capture's pending view (MUT-33 only). */
+function mutateRealPending(apply, opts = {}) {
+  return mutate((root) => {
+    const real = JSON.parse(readFileSync(join(ROOT, "supabase", "tables.json"), "utf8"));
+    writeFileSync(join(root, "supabase", "tables.json"), JSON.stringify(pendingCapture(real, RECORDED), null, 2));
+    apply(root);
   }, opts);
 }
 
@@ -440,7 +479,10 @@ test("MUT-32 Codex I4 exact: the real snapshot with capturedAt, capturedBy and d
 
 test("MUT-33 Codex lifecycle note: a stage-0 apply with the REAL snapshot refreshed passes the composed gate", () => {
   const R2 = ["auth_attempts", "device_enrollments", "enrollment_tickets", "staff_sessions", "upload_capabilities", "upload_capability_files"];
-  const r = mutateReal((root) => {
+  // From the pending layout with the real capture's pending view, so the whole
+  // apply is replayed whatever HEAD records (in the pending state the view IS
+  // the committed capture).
+  const r = mutateRealPending((root) => {
     const pending = join(root, "supabase", "migrations", "pending"), applied = join(root, "supabase", "migrations");
     for (const f of readdirSync(pending)) if (/^release2_/.test(f)) renameSync(join(pending, f), join(applied, `20261001000000_${f}`));
     const p = join(root, "supabase", "tables.json");

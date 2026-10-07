@@ -18,6 +18,14 @@
 // layout.
 //
 // It tests the COMMITTED HEAD, not the working tree: that is what a clone is.
+//
+// Every walk starts from the PENDING state (Blocker PRE-0,
+// docs/security/stage0-p1-p3-runbook.md). When HEAD already records applies
+// or rollbacks, the scratch clone first commits the state back to pending:
+// the files are located from the recorded state (stage0-recorded-state.mjs)
+// and git-mv'd back, the records removed, and the manifest's record fields
+// cleared. Before P2 that commit does not exist, because HEAD is pending.
+// LC-1 also checks HEAD exactly as it is recorded.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -27,11 +35,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkManifest, MANIFEST_PATH, forwardPath, companionPath, recordPath } from "./stage0-manifest-check.mjs";
 import { P2_STEPS, RECOVERY } from "../manual/assemble-stage0.mjs";
+import { commitBackToPending } from "./stage0-recorded-state.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ID = ["-c", "user.name=stage0-lifecycle-test", "-c", "user.email=stage0-lifecycle@example.invalid", "-c", "commit.gpgsign=false"];
 
-function scratch() {
+/** A scratch clone of HEAD. `atPending` (the default) first commits the recorded state back to pending, when it is not. */
+function scratch({ atPending = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "s0-life-"));
   execFileSync("git", ["clone", "--quiet", "--shared", ROOT, dir]);
   const git = (...a) => execFileSync("git", [...ID, ...a], { cwd: dir, maxBuffer: 1 << 26 }).toString("utf8").trim();
@@ -39,7 +49,9 @@ function scratch() {
   const save = (m) => writeFileSync(join(dir, MANIFEST_PATH), JSON.stringify(m, null, 2) + "\n");
   const commit = (msg) => { git("add", "-A"); git("commit", "--quiet", "--allow-empty", "-m", msg); };
   const clean = () => rmSync(dir, { recursive: true, force: true });
-  return { dir, git, M, save, commit, clean };
+  const s = { dir, git, M, save, commit, clean };
+  if (atPending) commitBackToPending(s);
+  return s;
 }
 const failures = (P) => Object.entries(P).filter(([, v]) => v.length).map(([k, v]) => `${k}: ${v.join(" | ")}`);
 const FWD = (n) => `2026100112000${Number(n)}`;
@@ -77,6 +89,10 @@ const topFiles = (s) => s.git("ls-tree", "--name-only", "HEAD", "supabase/migrat
   .filter((p) => /\/\d{14}_.*\.sql$/.test(p) && !/\.rollback\.sql$/.test(p));
 
 test("LC-1 pending → each P2 step → fully applied → committed rollback: every manifest check passes in every state, outputs byte-identical", () => {
+  const head = scratch({ atPending: false });
+  try {
+    assert.deepEqual(failures(checkManifest(head.dir, head.M)), [], "HEAD, exactly as recorded");
+  } finally { head.clean(); }
   const s = scratch();
   try {
     assert.deepEqual(P2_STEPS.map((x) => x.step), ["P2-01", "P2-02", "P2-0304", "P2-05"]);

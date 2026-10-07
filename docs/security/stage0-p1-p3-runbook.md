@@ -1,7 +1,10 @@
 # Stage 0 — P1 to P3 on production: runbook
 
-**Status: DRAFT. It needs review before use, and nothing below has run.** It
-turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
+**Status: DRAFT. It needs review before use, and nothing below has run.** Three
+positions are Ryan's, for Codex to rule on (§R). Blocker PRE-0 is resolved in
+the repository and is shown green at every state by the record replay (§PRE-0).
+
+It turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
 **production**:
 - Supabase project `gmxyisjjaxtpycsmmzef`;
 - Netlify site `printcalculator2` (read only in this window).
@@ -9,13 +12,16 @@ turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
 It follows the C3 runbook's step style (`docs/security/stage0-c3-runbook.md`)
 and the C5 draft's paste checks (`docs/security/stage0-c5-runbook.md` §0.2).
 
-**Proposed window: Sunday 2026-10-11, 10:00–12:30 EDT (14:00–16:30Z),
-reserve to 13:15 EDT.** The window is outside counter hours, with the owner
-present. If Sunday is a counter day for #4979, the window moves to the first
-time after close with at least 3½ hours before opening. Nothing else changes.
+**Window: Sunday 2026-10-11, from 17:00 EDT (21:00Z).** Ryan confirmed that
+#4979 is closed on Sundays, and set the start at 5:00 PM.
+- The database part (§2–§9) runs 17:00–18:30 EDT, with a reserve to 19:00.
+- With an in-window recovery (D-P2 = A), it runs to about 19:45.
+- The repository part (§11) follows, with the counter open, until about
+  19:40, or about 20:25 after a recovery.
 
-Why Sunday: a STOP leaves the rest of the day for review before Monday's
-opening, and E0 keeps the counter closed for P1 and P2.
+The window is outside counter hours, with the owner present. A STOP leaves the
+evening and the night for review before Monday's opening, and E0 keeps the
+counter closed for P1 and P2.
 
 Each step is one of:
 - **RYAN** — an exact command or dashboard click-path. Ryan replies with the
@@ -29,48 +35,122 @@ Records go into plan §E11–E13 (template at the end).
 
 ---
 
-## Blocker PRE-0 — the suite goes red at the P3 record (measured)
+## §R — Ryan's positions, for Codex to rule on
 
-E5 requires the inventory suite and the manifest test to be green on the P3
-commit. **With today's tests, that commit would be red.**
+1. **D-P2 = Option A** (§A.2), the in-window recovery, with all of its
+   conditions, plus:
+   - **Ryan's explicit "go" in chat before each RB step**;
+   - **a P0 re-check after the recovery**: the schema equals the baseline
+     (P0-S identical to P0₀, `catalog_fingerprint` included), and the ledger
+     is only appended to (P0-L).
 
-This was measured on 2026-10-07 in a scratch clone of `09bcf38`. §10's record
-commits were made exactly as written here, with made-up versions: `git mv`,
-`productionVersion`, the manifest generator, and `tables.json` with the six
-tables.
+   Option B stays written out.
+2. **The counter re-opens after §7 (the database read-back) and §8 (the
+   legacy smoke test) pass** (§10). The repository record (§11) follows with
+   the counter open. It records a database that is already verified, and it
+   changes only the repository: its commits stay local until §12, which
+   pushes only the branch that builds staging.
+3. **No second-session cancel.** The PG 17 time limits are the bound (§0.2).
 
-| repository state | `yarn test` |
-|---|---|
-| `09bcf38` (pending) | 372 / 372 |
-| after the P2-01 record commit | **349 / 372** |
-| after all four P2 record commits | **347 / 372** |
+---
 
-The record itself passes the checks that judge it:
-- `stage0-manifest.test.js` (M-1…M-12);
-- the real INV-6 in `release2-inventory.test.js`.
+## §PRE-0 — the suite stays green through the record (Blocker PRE-0, resolved)
 
-The failing tests build their fixtures from HEAD and assume the Release 2
-files are still in `pending/`:
-- **`release2-inventory.mutation.test.js`:** CONTROL, MUT-1, 6, 11, 13, 14,
-  18, 19, 21, 25, 27 and 33. Their fixture snapshot carries the baseline
-  `ledgerVersion` and no Release 2 tables.
-- **`release2-inventory.rollback.test.js`:** RB-INV-1…11. `apply()` renames
-  from `pending/` paths that no longer exist (`ENOENT`).
-- **`stage0-manifest.lifecycle.test.js`:** LC-3 and LC-4 once every step is
-  recorded. They re-apply steps that HEAD already records.
+**The finding (`da23e23`).** E5 requires the suite to be green on the P3
+commit, and Netlify runs `yarn test` in every build. A failing record commit
+therefore fails the staging build it triggers.
+- In a scratch clone of `09bcf38`, §11's record commits took `yarn test` from
+  372/372 to **349/372** after P2-01's record, and to **347/372** after all
+  four.
+- The record itself passed M-1…M-12 and the real INV-6.
+- The failing tests built their fixtures from HEAD and assumed the Release 2
+  files were still in `pending/`:
+  - `release2-inventory.mutation.test.js`: CONTROL, MUT-1, 6, 11, 13, 14, 18,
+    19, 21, 25, 27 and 33;
+  - `release2-inventory.rollback.test.js`: RB-INV-1…11;
+  - `stage0-manifest.lifecycle.test.js`: LC-3 and LC-4.
 
-**Needed before the window, as a separate reviewed repo-only change:** make
-those fixtures independent of HEAD's recorded state. For example, they could
-rebuild the pending layout from the manifest's blobs. The failures implicate
-only the fixtures, and none of the three failing files is pinned in the
-manifest. If the fix turns out to need a pinned file, it re-pins in review.
+**The fix (this commit).** No assertion was removed or loosened, and no pinned
+file changed. What changed is where the fixtures start.
+- **`scripts/tests/stage0-recorded-state.mjs`** reads where the Release 2
+  files ARE from the manifest's recorded state (`productionVersion`,
+  `rollbackRecords`). It uses the manifest checks' own path functions:
+  `forwardPath`, `companionPath`, `recordPath`. It puts a copy (or a scratch
+  clone, by commit) back into the pending layout, so every fixture starts
+  where it always did, whatever HEAD records.
+  - `pendingCapture()` is the committed capture without the six Release 2
+    tables, at the baseline version. Before P2 it equals the committed
+    capture.
+- **The mutation fixtures:** `mutate()` starts from the pending layout.
+  `mutateReal()` keeps the tree and the real snapshot EXACTLY as HEAD records
+  them, in every state. MUT-33 replays the apply on the real capture's
+  pending view. CONTROL now also asserts the pending copy's baseline.
+- **RB-INV-1…11** start from the pending layout and capture. RB-INV-8 now
+  also checks the tree and the composed gate exactly as HEAD records them.
+- **A race the replay found (pre-existing, any `yarn test`, Netlify
+  included).**
+  - The race:
+    - the deploy-context tests write and remove the generated, gitignored
+      `netlify/lib/deploy-context.json` in the REAL tree
+      (`deploy-context-fixture.mjs`);
+    - meanwhile, in another test process, RB-INV's fixture recursively
+      copies the real `netlify/`;
+    - run 1 of the replay caught it as `ENOENT` (`cpSync`, `netlify\lib`) in
+      RB-INV-1, in 1 of 15 suites. That was a setup error, not an assertion.
+  - The fix: the copy now leaves that one generated file out. No fixture reads
+    it, and a clean checkout does not have it. The mutation fixtures copy only
+    `netlify/functions/` and were never exposed.
+- **The LC tests** start from a pending commit in the scratch clone. LC-1
+  now also checks HEAD exactly as recorded.
+- **`scripts/manual/stage0-record.mjs`** is new. It STAGES one step's record,
+  and it is what §11 and §A.4 run (§11 has what it checks and what it
+  refuses). `scripts/tests/stage0-record.test.js` (REC-1, REC-2, in
+  `yarn test`) shows two things:
+  - it stages exactly the record, for a forward step and for a rollback, and
+    each committed result passes the manifest checks and the snapshot
+    validation;
+  - it refuses 18 wrong inputs, each before changing anything.
+- **`scripts/tests/replay/stage0-record-replay.test.js`** is new, and runs on
+  demand:
+  - it makes the runbook's record commits with `stage0-record.mjs`, using
+    synthetic versions and snapshots, in a scratch clone of the committed
+    HEAD;
+  - it runs the FULL suite at every state;
+  - every state must show 0 failed, 0 skipped and the same test count as
+    HEAD.
 
-**Acceptance:** the full suite green in a scratch clone at every repository
-state this window can produce:
-- after each P2 step record;
-- after each recovery operation record from every prefix (LC-3's set).
+  It stays outside the `yarn test` glob: inside the suite it would run
+  itself, and 15 full suites would add tens of minutes to every Netlify
+  build.
 
-Until then, P3 cannot pass (§10), and under §11 the counter waits for P3.
+**The replay, 2026-10-07** (all 15 states, 3 suites at a time):
+- Run 1 was on `bc20640`, before the race fix.
+- Run 2 was on `ebdf1a6`, which differs from this commit only in this
+  runbook's results text and CLAUDE.md's race note. Every script, test and
+  pinned file is identical.
+- Each count is `yarn test`'s: 372 before this change, plus REC-1 and REC-2.
+- Run 2 had 0 failed, 0 cancelled, 0 skipped and 0 todo at every state, and
+  the replay's own test passed. It took 29 min.
+
+| state | run 1 | run 2 |
+|---|---|---|
+| pending (HEAD) | 374/374 | 374/374 |
+| P2-01 | 374/374 | 374/374 |
+| P2-02 | 374/374 | 374/374 |
+| P2-0304 | **373/374**: RB-INV-1 `ENOENT` in its fixture copy (the race above) | 374/374 |
+| P2-05 (fully applied) | 374/374 | 374/374 |
+| after RB-5 | 374/374 | 374/374 |
+| after RB-43 | 374/374 | 374/374 |
+| after RB-2 | 374/374 | 374/374 |
+| RB-1 (committed rollback) | 374/374 | 374/374 |
+| prefix 01 → RB-1 | 374/374 | 374/374 |
+| prefix 01–02 → RB-2 | 374/374 | 374/374 |
+| prefix 01–02 → RB-1 | 374/374 | 374/374 |
+| prefix 01–04 → RB-43 | 374/374 | 374/374 |
+| prefix 01–04 → RB-2 | 374/374 | 374/374 |
+| prefix 01–04 → RB-1 | 374/374 | 374/374 |
+
+The pre-window step §1.2 re-runs it at H.
 
 ---
 
@@ -101,15 +181,16 @@ Until then, P3 cannot pass (§10), and under §11 the counter waits for P3.
     §0.6's.
 - **No edits in the checkout from §2 until §9.** Ryan's commands run in this
   checkout, and the sender reads the manifest at HEAD. Claude keeps snapshots
-  and notes in its scratchpad until §10.
+  and notes in its scratchpad until §11.
 - **No pushes from §1 until §12** (§12 has the rules).
-- **No cancel procedure.** Every text is bounded by its own timers:
+- **No cancel procedure (position 3, §R).** Every text is bounded by its own
+  PG 17 timers:
   - P1: `statement_timeout` 90 s, `transaction_timeout` 110 s;
   - P2 and RB: 45 s and 45 s;
   - the sender's client timeout: 150 s.
 
   The second-caller cancel (plan §E8) would need the write token in a third
-  window, and it has never run with a live second session. *(For review.)*
+  window, and it has never run with a live second session.
 
 ### 0.3 Two windows, two tokens
 
@@ -287,10 +368,14 @@ select (select count(*) from public.device_enrollments) as device_enrollments,
 ```
 
 **TABLES-SNAPSHOT** is the statement in `scripts/manual/tables-snapshot.sql`
-(plan §E5: an ad-hoc read-back, not a stage-0 output). Claude saves each
-output verbatim in the scratchpad as `tables-after-<step>.json`. The header
-fields `project` and `capturedBy` are filled at commit time, as that script's
-header says.
+(plan §E5: an ad-hoc read-back, not a stage-0 output).
+- Claude saves its `tables_json` value verbatim in the scratchpad as
+  `tables-after-<step>.json`.
+- In §11, `stage0-record.mjs` fills the two by-hand fields, `project` and
+  `capturedBy`. It refuses the snapshot unless:
+  - its `ledgerVersion` is the step's last version;
+  - its Release 2 tables follow the step;
+  - its other tables, views and buckets are the committed capture's.
 
 **CONSUMERS** shows that production's four Release 2 endpoints refuse. They
 are the only server code on the published deploy (`7ec5af4`) that names the
@@ -446,8 +531,11 @@ and `read_only` as in §0.7. Ryan pastes the output.
 
 **1.2 CLAUDE.**
 - The same dry-run loop at H, with the same 44 lines.
-- `yarn test` at H in a clean clone must be green, **including Blocker
-  PRE-0's fix**.
+- `yarn test` at H, in a clean clone: green.
+- **The record replay at H** (§PRE-0):
+  `node --test scripts/tests/replay/stage0-record-replay.test.js`. Every one
+  of its 15 states must be green, with H's test count. It takes about 30 min
+  at 3 suites at a time on this machine.
 - Claude checks that no stage-0 text changed between this runbook and H. If
   one did, the manifest at H governs, and §0.7 is re-checked against it.
 
@@ -723,61 +811,76 @@ tokens under §3.
 
 ---
 
-## 10. P3 — the repository half (CLAUDE; requires Blocker PRE-0's fix)
+## 10. RYAN — re-open the counter (position 2, §R)
+
+Only after **§7** (the database half of P3, every read-back as expected) and
+**§8** (the legacy smoke test) have both passed. Report the time.
+
+The repository record (§11) follows with the counter open. It touches only
+the repository, and its commits stay local until §12.
+
+---
+
+## 11. P3 — the repository half (CLAUDE; the counter is open)
 
 Each commit is made in this checkout, and none is pushed until §12. Let `vNN`
-be the versions LEDGER read back in §6.
+be the versions LEDGER read back in §6. The snapshots are §6 h's
+`tables-after-<step>.json`. Every commit must be green on its own. Netlify
+runs `yarn test` in every build: a red head fails the staging build at §12,
+and a red intermediate commit fails any later build of it. The replay
+(§PRE-0) has shown this exact sequence green at every state, with synthetic
+versions.
 
-**10.1–10.4 — one commit per P2 step, in order (plan §E4, A5).** P2-0304 is
-ONE commit, with both files (M-8).
-
-For each file `NN` of the step:
+**11.1–11.4 — one commit per P2 step, in order (plan §E4, A5).** P2-0304 is
+ONE commit, with both files (M-8). For each step, Claude runs:
 
 ```bash
-git mv supabase/migrations/pending/<name>.sql          supabase/migrations/<vNN>_<name>.sql
-git mv supabase/migrations/pending/<name>.rollback.sql supabase/migrations/<vNN>_<name>.rollback.sql
+node scripts/manual/stage0-record.mjs forward <step> "<scratchpad>/tables-after-<step>.json" <NN>=<vNN> [<NN>=<vNN>] --captured-by "Claude Code session <id> via Supabase MCP execute_sql (read-only, ad-hoc), authorized by Ryan, 2026-10-11"
 ```
 
-Then:
-1. Record `migrations[NN].productionVersion = "<vNN>"` in the manifest.
-2. `git add -A`, then `node scripts/manual/stage0-manifest-generate.mjs`
-   (it reads the index), then `git add -A` again.
-   - Expected: `git diff --cached` on the manifest shows only the
-     `productionVersion` line(s).
-   - The moved blobs are unchanged, so every output and pin is byte-identical
-     (plan §A5, N3).
-3. `supabase/tables.json` ← `tables-after-<step>.json`:
-   - `project "gmxyisjjaxtpycsmmzef"`;
-   - `capturedBy` naming this session, `execute_sql`, Ryan's authorization
-     and the date.
-4. Plan §E12: that step's row.
-5. Commit, then run the full suite on that commit in a scratch clone
-   (memory: verify-commit-in-scratch-clone). It must be green.
-6. After each commit, `node scripts/manual/stage0-manifest-generate.mjs
-   --check` → "the manifest is current".
+It **stages** the record and stops:
+- `git mv` of each forward file and its companion to
+  `supabase/migrations/<vNN>_<name>…`;
+- `productionVersion` recorded;
+- the manifest generator run;
+- `supabase/tables.json` from the snapshot, with `project` and `capturedBy`
+  filled.
 
-**10.5 — the P1–P3 record commit.** It holds:
+It stages only those paths, never `git add -A`: this checkout holds an
+untracked `AGENTS.md`.
+
+It refuses, before changing anything:
+- a dirty tree;
+- a step out of order;
+- versions that are not one per file, increasing and after everything
+  recorded;
+- a snapshot whose `ledgerVersion`, Release 2 tables, other tables, views,
+  buckets, role, query or keys are not as §0.7 requires.
+
+After staging it checks:
+- the manifest changed only in the record fields;
+- the staged paths are exactly the record;
+- the generator's `--check` passes.
+
+Then Claude:
+1. adds that step's row to plan §E12, then
+   `git add docs/security/release-2-stage-0-production-plan.md`;
+2. commits (`<step> on production: RECORD`);
+3. runs the full suite on that commit in a scratch clone (memory:
+   verify-commit-in-scratch-clone). It must be green with the same count as
+   H.
+
+**11.5 — the P1–P3 record commit.** It holds:
 - plan §E11 (window start, P0, P1, P0 again, STATE);
-- §E13 (P3, the smoke test, tokens);
+- §E13 (P3, the smoke test, tokens, the counter's re-opening);
 - §I;
-- `CLAUDE.md`'s Release 2 paragraph: production now holds 01–05 at `v01`…`v05`,
-  and `tables.json` lists the six tables.
+- `CLAUDE.md`'s Release 2 paragraph: production now holds 01–05 at
+  `v01`…`v05`, and `tables.json` lists the six tables.
 
 It touches no pinned file. Then, in a clean clone of that commit:
 `yarn install && yarn test` (record the count) and `yarn build`.
 
-**P3 PASS** = §7 + §8 + §10, all green.
-
----
-
-## 11. RYAN — re-open the counter
-
-Only after **P3 PASS** (§10.5) and the smoke test (§8). Report the time.
-
-*(For review: §10 keeps the counter closed for about 35 minutes of repository
-work after the database is verified. If Codex prefers, the counter may
-re-open after §7 and §8, and §10 follows. The rule as written is the one
-given for this runbook.)*
+**P3 PASS** = §7 + §8 + §11, all green.
 
 ---
 
@@ -792,8 +895,8 @@ given for this runbook.)*
 - Production is untouched by the push.
   - **RYAN:** Netlify → `printcalculator2` → Deploys shows no new deploy.
   - **CLAUDE:** `deploy-context` on staging records the new staging deploy.
-    It goes in the next record commit, together with the staging rebuilds
-    already pending from `09bcf38` and from this runbook's commit.
+    Its build ran `yarn test` on the record commits. It goes in the next
+    record commit, together with any staging rebuild not yet recorded.
 - If 1.3 found a GitHub integration, the push waits for review.
 
 ---
@@ -810,7 +913,7 @@ given for this runbook.)*
 | P2-01 stopped, STATE `""` / `00` | unchanged | P0 (R) = P0₀ | re-opens after that P0 and the smoke test |
 | **P2 stopped with prefix 01, 01–02 or 01–04; or §8 fails after a complete P2** | a reviewed prefix, with read-backs as §0.7 for it | **decision D-P2 (A.2)** | **D-P2** |
 | any read-back that STATE does not explain: STATE `STOP`, `ledger_md5_ok false`, a LEDGER/CATALOG difference for the prefix STATE names, or §7.2's fingerprint | not a reviewed state | only reads (STATE, P0, LEDGER, CATALOG, R2COUNTS, CONSUMERS), then §9 | stays closed until review. Ryan may re-open after the smoke test passes, and records why |
-| §10 only: the repository record is red, but §7 and §8 passed | A2, verified | nothing; the red commit stays local and unpushed, for review | §11 as written keeps it closed. The note under §11 is the alternative |
+| §11 only: a repository record is red, or `stage0-record.mjs` refuses, but §7 and §8 passed | A2, verified | nothing; no push, and the red or refused record stays local for review | already open (§10). It is a record problem, not production's |
 
 Every path runs §9. Then come the records (§A.4).
 
@@ -820,10 +923,17 @@ When P2 stops at a prefix STATE recognizes, and every read-back of that
 prefix matches §0.7, may the window run the recovery STATE returns, or is
 every partial state STOP-and-review?
 
-**Option A — pre-authorized in-window recovery (proposed).** Ryan sends
-exactly the sequence STATE returns, one operation at a time, from window W.
-Each operation is read back (§A.3) before the next. **All** of these must
-hold, checked by Claude just before the first operation:
+**Option A — pre-authorized in-window recovery (Ryan's position, §R 1).**
+Ryan sends exactly the sequence STATE returns, one operation at a time, from
+window W. Before each operation:
+- Claude states the operation, its md5 and bytes (§0.7), and the
+  preconditions it just re-checked;
+- **Ryan gives an explicit "go" in chat for that one operation.** No "go"
+  covers a later operation;
+- each operation is read back (§A.3) before the next is proposed.
+
+**All** of these must hold, checked by Claude just before the first
+operation, with STATE re-read before each later one:
 1. STATE returns a `recovery` sequence (not `STOP`), with
    `ledger_md5_ok true`, and LEDGER and CATALOG match that prefix exactly.
 2. **The Release 2 tables are empty:** R2COUNTS all 0. RB-1's own guard also
@@ -841,18 +951,23 @@ hold, checked by Claude just before the first operation:
    - If STATE names the same operation again, it did not commit: STOP.
    - If STATE names the next operation, it committed: continue after the
      read-backs.
-6. **At the end:**
+6. **At the end, the P0 re-check (window R):**
    - STATE shows `""` / `00` / `none — nothing is applied`;
-   - P0 (R): **P0-S identical to P0₀** (`catalog_fingerprint`
-     `8b3c9eadf9eb8a98cb8cc6dca996663e` included);
-   - **P0-L** is the original 20 rows plus exactly the appended rows
-     (plan §E6): `ledger_rows` = 20 + 2k, `release2_in_ledger` = 2k, for k
-     forward files; `ledger_head` = the last rollback row;
-     `ledger_matches_repo false`;
-   - then the smoke test (§8), and the counter re-opens.
+   - **the schema equals the baseline:** P0-S identical to P0₀, column by
+     column (`catalog_fingerprint` `8b3c9eadf9eb8a98cb8cc6dca996663e`
+     included);
+   - **the ledger was only appended to** (P0-L, plan §E6):
+     - the original 20 rows are kept, and the production marker holds;
+     - `ledger_rows` = 20 + 2k and `release2_in_ledger` = 2k, for k forward
+       files;
+     - `ledger_head` = the last rollback row;
+     - `ledger_matches_repo false`;
+     - LEDGER lists the k forward rows, then the k rollback rows, in RB order;
+   - then the smoke test (§8), and the counter re-opens (§10).
 
-   The repository record (§A.4) follows, and does not hold the counter: the
-   database is back at the reviewed pre-window state.
+   The repository record (§A.4) follows with the counter open: the database is
+   back at the reviewed pre-window state. A failed P0 re-check is STOP-and-review,
+   and the counter stays closed until review.
 
 Why A:
 - **The evidence.** No recovery could be better evidenced: the same RB bytes
@@ -893,6 +1008,7 @@ For each operation STATE names, in order:
 
 | | who | what | expected |
 |---|---|---|---|
+| 0 | CLAUDE, then RYAN | Claude proposes `RB-x` with its md5/bytes and the re-checked preconditions; Ryan answers **"go RB-x"** | an explicit go for this operation only |
 | a | RYAN (W) | send `RB-x`. → **V-WIN**, **V-SEND** | `HTTP 201`, `[{"set_config":"45s"}]` |
 | b | RYAN (R) | `STATE` | the next row of §0.7's STATE table, read upward |
 | c | CLAUDE | V-FILE ×2; LEDGER (the new `_rollback` row(s), §0.7's rollback md5 and bytes); CATALOG (the state STATE names); TABLES-SNAPSHOT (`tables-after-<op>.json`; after RB-1, the 14 tables again) | as listed |
@@ -903,16 +1019,23 @@ Then point 6 of A.2.
 
 - **Nothing applied:** the plan record only.
 - **A prefix left applied (D-P2 = B):**
-  - §10's per-step commits for the steps that committed;
+  - §11's per-step commits for the steps that committed;
   - each needs its own snapshot (§6 h).
 - **After a recovery:**
-  - §10's per-step commits for the forward steps;
-  - then one commit per RB operation, RB-43's two records together (M-8).
-    Each rollback's bytes go under `supabase/migrations/<rb version>_<name>_rollback.sql`,
-    with `rollbackRecords` appended and that operation's snapshot (plan §E6,
+  - §11's per-step commits for the forward steps;
+  - then one commit per RB operation, RB-43's two records together (M-8):
+
+    ```bash
+    node scripts/manual/stage0-record.mjs rollback <RB-x> "<scratchpad>/tables-after-<RB-x>.json" <NN>=<version> [<NN>=<version>] --captured-by "…"
+    ```
+
+    It writes each rollback's pinned bytes as
+    `supabase/migrations/<version>_<name>_rollback.sql`, appends
+    `rollbackRecords`, and refuses an operation out of RB order (plan §E6,
     LC-3's layout).
 
-  Each commit must be green. That also needs Blocker PRE-0's fix.
+  Each commit must be green on its own. The replay covers these states too:
+  the recovery from every shorter prefix, and the full RB sequence.
 
 ---
 
@@ -920,7 +1043,7 @@ Then point 6 of A.2.
 
 | § | step | who | budget (min) | server bound |
 |---|---|---|---|---|
-| 1 | pre-window: checkout, dry runs, suite, integration read | both | 20 (before the window) | — |
+| 1 | pre-window: checkout, dry runs, suite, the record replay (about 30 min), integration read | both | before the window | — |
 | 2 | counter, backup, published deploy, Claude's first read-backs | R + C | 10 | — |
 | 3 | two windows, two tokens, V-checks | R | 10 | — |
 | 4 | P0 and its comparison | R + C | 5 | P0 took 0.5 s on 2026-10-07 |
@@ -929,16 +1052,18 @@ Then point 6 of A.2.
 | 7 | A2, P0 after, STATE, CONSUMERS | R + C | 8 | — |
 | 8 | smoke test | R | 10 | — |
 | 9 | tokens deleted | R | 5 | — |
-| 10 | 4 + 1 commits, a full suite on each (about 4.5 min, measured), build | C | 35 | — |
-| 11 | counter re-opens | R | — | — |
-| 12 | push and staging check | C + R | 10 (after re-opening) | — |
+| 10 | counter re-opens | R | — | — |
+| 11 | 4 + 1 record commits, a full suite on each (about 5 min, measured), build | C | 35 (counter open) | — |
+| 12 | push and staging check | C + R | 10 | — |
 
-- **In the window, to re-opening: about 2 h 05 min**, with a reserve to
-  2 h 30 (10:00–12:30 EDT).
-- **With an in-window recovery (D-P2 = A):** about 45 min more (the
-  preconditions, up to four operations at about 7 min each, then P0 and the
-  smoke test), to about 3 h 15 (13:15 EDT). The repository record of a
-  recovery follows after re-opening.
+- **To the counter's re-opening: about 1 h 30 min** (§2–§9), so
+  17:00–18:30 EDT, with a reserve to 19:00.
+- **With an in-window recovery (D-P2 = A):** about 45 min more, to about
+  19:45 EDT. That covers the preconditions, up to four operations at about
+  7 min each with Ryan's go before each, then the P0 re-check and the smoke
+  test.
+- **The repository record (§11)** then takes about 35 min with the counter
+  open: until about 19:40 EDT, or 20:25 after a recovery.
 
 ---
 

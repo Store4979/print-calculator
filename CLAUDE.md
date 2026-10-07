@@ -305,9 +305,26 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       - a committed P2/RB wrapper returns `[{"set_config":"45s"}]`;
       - P1 returns its 45 proof rows (`select n, what from stage0_proof`)
         before `ROLLBACK`;
-    - the scripts/tests fixtures assume the Release 2 files are PENDING at
-      HEAD (Blocker PRE-0), so the P3 record commits turn `yarn test` red
-      (349/372 after P2-01's record) until those fixtures are state-aware.
+    - the record commits are made ONLY by scripts/manual/stage0-record.mjs:
+      it stages one step's record, never `git add -A` (this checkout has an
+      untracked AGENTS.md), and refuses any out-of-order step or mismatched
+      snapshot;
+    - test fixtures that need the pending layout derive the Release 2 file
+      locations from the RECORDED state (scripts/tests/stage0-recorded-state.mjs:
+      resetToPending, commitBackToPending, pendingCapture). Never hard-code
+      pending/ in a fixture again. Before that fix (Blocker PRE-0), the first
+      record commit took `yarn test` to 349/372, and Netlify runs `yarn test`
+      in every build;
+    - `node --test scripts/tests/replay/stage0-record-replay.test.js`, on
+      demand and outside the `yarn test` glob, replays every record commit
+      and runs the FULL suite at each state. Run it before the window, and
+      after any change to a fixture or to the record tool. A directory
+      argument to `node --test` does not work on Node 22; name the file.
+    - test files run in PARALLEL processes, and the deploy-context tests
+      write and remove the gitignored netlify/lib/deploy-context.json in the
+      REAL tree. A fixture that copies the real netlify/ must leave that
+      file out: RB-INV-1 once failed ENOENT mid-copy (caught by the replay,
+      2026-10-07).
   - The manifest pins stage-0 inputs by git BLOB ID. The assembler reads them
     by blob, never by path or HEAD, so the P2 git-mv's change no output. The
     checks are state-aware (productionVersion, rollbackRecords decide where

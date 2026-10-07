@@ -16,15 +16,24 @@
 // pass by listing tables a rollback dropped. There is no real post-rollback
 // capture, because no rollback has happened. That is why only the fields a
 // capture changes are advanced.
+//
+// Every fixture starts from the PENDING layout (Blocker PRE-0,
+// docs/security/stage0-p1-p3-runbook.md). The copy is put back there from
+// wherever the manifest's recorded state says the Release 2 files are now
+// (stage0-recorded-state.mjs), and "the capture" is the committed capture's
+// pending view: its own non-Release-2 tables at the baseline version. Before
+// P2 both are HEAD exactly. RB-INV-8 also checks the tree exactly as HEAD
+// records it.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, cpSync, writeFileSync, rmSync, readFileSync, renameSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runInventory, compareToAllowlist, readTablesSnapshot, appliedReleaseState } from "./inventory-check.mjs";
+import { runInventory, compareToAllowlist, readTablesSnapshot, appliedReleaseState, appliedBaselineVersion } from "./inventory-check.mjs";
 import { ALLOWLIST, RETIRED_EVER } from "./inventory-allowlist.mjs";
+import { readManifest, resetToPending, pendingCapture } from "./stage0-recorded-state.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const NAMES = [
@@ -38,11 +47,28 @@ const FWD = (i) => `2026100112000${i + 1}`;          // forward versions, 01..05
 const RB_ORDER = [4, 3, 2, 1, 0];                    // RB-5, RB-43 (04 then 03), RB-2, RB-1
 const RBV = (k) => `2026100113000${k + 1}`;          // rollback versions, in apply order
 const SIX = ["device_enrollments", "enrollment_tickets", "staff_sessions", "upload_capabilities", "upload_capability_files", "auth_attempts"];
-const CAPTURE = JSON.parse(readFileSync(join(ROOT, "supabase", "tables.json"), "utf8"));
+const RECORDED = readManifest(ROOT);
+const COMMITTED_CAPTURE = JSON.parse(readFileSync(join(ROOT, "supabase", "tables.json"), "utf8"));
+const CAPTURE = pendingCapture(COMMITTED_CAPTURE, RECORDED);
 
-function tree() {
+// netlify/lib/deploy-context.json is generated and gitignored. The
+// deploy-context tests WRITE AND REMOVE it in the real tree
+// (deploy-context-fixture.mjs) while this file runs in another process, so a
+// recursive copy of netlify/ could list it and then fail ENOENT. The record
+// replay caught that once (RB-INV-1, 2026-10-07). No fixture here reads it, and
+// a clean checkout does not have it, so the copy leaves it out. The filter also
+// keeps cpSync on its JS path.
+const GENERATED = "netlify/lib/deploy-context.json";
+const notGenerated = (src) => relative(ROOT, src).split(sep).join("/") !== GENERATED;
+
+/** A copy of src/, netlify/ and supabase/: in the pending layout with the pending capture, or exactly as HEAD records it. */
+function tree({ asRecorded = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "inv-rb-"));
-  for (const d of ["src", "netlify", "supabase"]) cpSync(join(ROOT, d), join(root, d), { recursive: true });
+  for (const d of ["src", "netlify", "supabase"]) cpSync(join(ROOT, d), join(root, d), { recursive: true, filter: notGenerated });
+  if (!asRecorded) {
+    resetToPending(root, RECORDED);
+    writeFileSync(join(root, "supabase", "tables.json"), JSON.stringify(CAPTURE, null, 2) + "\n");
+  }
   return root;
 }
 const MIG = (root) => join(root, "supabase", "migrations");
@@ -76,8 +102,8 @@ function gate(root) {
   const r = runInventory({ root, retiredEver: RETIRED_EVER });
   return [...r.errors, ...compareToAllowlist(r.sites, ALLOWLIST)];
 }
-function withTree(fn) {
-  const root = tree();
+function withTree(fn, opts) {
+  const root = tree(opts);
   try { return fn(root); } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
@@ -163,7 +189,12 @@ test("RB-INV-7 a comment that mentions a DROP drops nothing", () => {
 
 test("RB-INV-8 controls: the committed tree passes, and applied-without-rollback passes with the tables captured", () => {
   withTree((root) => {
-    assert.equal(snap(root).error, undefined, "today's tree and capture");
+    assert.equal(snap(root).error, undefined, "the tree and capture exactly as HEAD records them");
+    assert.deepEqual(gate(root), [], "and the composed gate on them");
+  }, { asRecorded: true });
+  withTree((root) => {
+    assert.equal(appliedBaselineVersion(root), RECORDED.ledgerBaseline.head, "the pending layout's newest applied file is the recorded baseline head");
+    assert.equal(snap(root).error, undefined, "the pending layout and the pending capture");
     apply(root);
     snapshot(root, FWD(4), [...CAPTURE.tables, ...SIX].sort());
     assert.equal(snap(root).error, undefined, "applied state with the six tables present");

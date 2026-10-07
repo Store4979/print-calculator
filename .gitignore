@@ -21,3 +21,6 @@ netlify/lib/deploy-context.json
 # OS noise
 .DS_Store
 Thumbs.db
+# scripts/tests/replay/stage0-record-replay.test.js: scratch clones and the last summary
+.stage0-replay/
+.stage0-replay-summary.json
