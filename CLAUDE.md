@@ -263,6 +263,28 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       read_only;
     - execute_sql remains for small ad-hoc, unpinned read-backs, labelled as
       such.
+  - C3 on staging (plan §E9, 2026-10-06/07) — facts production will meet:
+    - "Disable JWT-based API keys" reaches the legacy service_role JWT AFTER
+      A DELAY: still accepted at 70 s, refused by 242 s (78 s the second
+      time). Probe until refused, timing every attempt; an early accept is
+      not a failure. Re-enabling restores the SAME keys, so break-glass
+      reopens every legacy-captured deploy.
+    - Refusal messages, as seen by row R:
+      - deleted secret key → `Unregistered API key`;
+      - disabled legacy JWT → `Legacy API keys are disabled`;
+      - a made-up sb_secret_ value → `Invalid API key`. sb_secret_ keys carry
+        a checksum, so a fabricated value is malformed, not unknown.
+    - Row R ("Unknown store") cannot tell a publishable key from a secret
+      key. Confirm the key TYPE from edge_logs
+      `request.sb.apikey.apikey.prefix`/`.hash`, reading only the first 10
+      characters, never a raw value. The dashboard's per-section "Add new"
+      button decides the type; C3's first "secret" key was made publishable.
+    - Personal access tokens can be scoped to ONE project with Database: Read,
+      and still start `sbp_` (44 characters). `Read-Host`'s first argument is
+      the prompt LABEL. The value goes at the prompt, never on the command
+      line (a token prefix leaked that way once).
+    - Bind every deploy by its `deploy-context` deployId. A "published"
+      report can come before the build finishes (about 3 minutes).
   - The manifest pins stage-0 inputs by git BLOB ID. The assembler reads them
     by blob, never by path or HEAD, so the P2 git-mv's change no output. The
     checks are state-aware (productionVersion, rollbackRecords decide where

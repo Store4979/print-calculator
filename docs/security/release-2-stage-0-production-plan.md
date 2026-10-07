@@ -1257,7 +1257,8 @@ byte claim, the N5 texts can be re-run through the sender on staging
     `pg_cancel_backend` each end the transaction after the ACCESS EXCLUSIVE
     lock is held, and each releases it with no DDL and no ledger row.
   - The same wrapper pattern commits cleanly when nothing contends.
-  - All of it through the `execute_sql` tool that P1/P2 will use.
+  - The observations were made through `execute_sql`, which uses the same
+    Management API endpoint the pinned sender will use for P1/P2.
 - **For the operator:** cancelling a running P1/P2 needs a SECOND caller while
   the first call is in flight. One MCP caller's calls are serialized. The
   C-CANCEL pattern — find the backend by `application_name`, clear the stats
@@ -1276,7 +1277,7 @@ separate API request, so it does not queue behind the first. That is
 expected, not yet observed: E8 measured concurrency with a second MCP
 caller. It runs:
 1. **CANCEL-INSPECT** (pinned, read-only by content; sent by the sender,
-   `--target production`). It returns every stage-0 backend
+   `--target production --confirm-ref gmxyisjjaxtpycsmmzef`). It returns every stage-0 backend
    except the caller, with:
    - its exact `backend_start`, as UTC text to the microsecond;
    - its state and wait event;
@@ -1285,7 +1286,7 @@ caller. It runs:
    It also returns the backends per name and every lock on
    `public.employees`. Proceed only if exactly one row carries the step's
    name.
-2. **`node scripts/manual/stage0-send.mjs --cancel <step> <backend_start> --target production`**
+2. **`node scripts/manual/stage0-send.mjs --cancel <step> <backend_start> --target production --confirm-ref gmxyisjjaxtpycsmmzef`**
    produces CANCEL-STEP from its pinned template, and sends it. It refuses
    unless the template's md5 and bytes equal the manifest's, the step is one
    of the nine, and `backend_start` is exactly in INSPECT's format. Its
@@ -1374,6 +1375,567 @@ Results, all as designed:
 - production's server version and rows.
 
 P1 on production is the first run that shows those.
+
+**E9. C3 on staging — RECORD (run under `docs/security/stage0-c3-runbook.md`
+at `d25d234`; Codex accepted the runbook and the sender).** Staging only
+(`lboajqihpsfrokqvjgnl`, Netlify `printcalculator2-staging`); production was
+not touched. Steps are numbered as in the runbook.
+
+*Section 1 — records before anything changed:*
+- **1.1** (Ryan, 2026-10-01): the API Keys page lists two new-style keys,
+  both named `default`, one **publishable** and one **secret**; the page
+  shows no created time for either. Legacy JWT-based keys (`anon`,
+  `service_role`): **enabled**.
+- **1.2** (Ryan, Netlify `printcalculator2-staging` → Environment
+  variables): 14 variables. Every one is **All scopes · Same value in all
+  deploy contexts** (Production, Deploy Previews, Branch deploys, Preview
+  Server & Agent Runners, Local development). Every one was last updated by
+  Ryan "19 days ago" (≈ 2026-09-12, the day the staging project was created).
+  Values are masked in the view.
+  - That includes `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_ANON_KEY`,
+    `SUPABASE_URL` and `CLEANUP_SECRET`, which is **present**.
+  - **C8 on staging — FAILED as found.** Read from the public client bundle
+    of the published deploy (`/assets/index-Dc-Ij1f-.js`, 2026-10-01T22:55Z),
+    because `VITE_SUPABASE_ANON_KEY` has one value in every scope and context.
+    The value compiled for `import.meta.env.VITE_SUPABASE_ANON_KEY`, next to
+    `https://lboajqihpsfrokqvjgnl.supabase.co`, is a JWT: prefix
+    `eyJhbGciOiJIUzI`, claims `iss: supabase`, `ref: lboajqihpsfrokqvjgnl`,
+    `role: anon`, issued 2026-09-12T00:28:35Z. That is staging's **legacy
+    anon key**. The bundle's only `sb_publishable_` text is supabase-js's own
+    prefix check.
+  - So the Functions' runtime `VITE_SUPABASE_ANON_KEY` is the legacy anon JWT
+    too, and runbook step 1.8 applies: set it to the staging publishable key
+    before any build in C3. It was found here, not assumed. The production
+    Functions value is still checked at C8 on production, independently.
+  - `SUPABASE_URL`, revealed by Ryan: `https://lboajqihpsfrokqvjgnl.supabase.co`
+    in all five contexts.
+  - Ryan holds the existing `CLEANUP_SECRET`, so 2.1 adds nothing. F.4's
+    no-key cleanup call is therefore expected to answer `401`.
+- **1.3** (Ryan, the published deploy's page): **`D_old` =
+  `6abd9a2823b6fa0008970b8d`**, `security/release-2-slice-2@d25d234`
+  (production context), built 2026-09-30 19:24–19:27 EDT (≈ 23:24–23:27Z) by
+  the push of `d25d234`. Its build log shows 372/372 tests and
+  `write-deploy-context … context=production site=printcalculator2-staging
+  commit=d25d234…`. **The deploy that captured the old key:**
+  `https://6abd9a2823b6fa0008970b8d--printcalculator2-staging.netlify.app`.
+  Branches and deploy contexts:
+  - production branch `security/release-2-slice-2`;
+  - **branch deploys: `security/release-2-stage-0` only**;
+  - Deploy Previews: any pull request against those branches;
+  - no build hooks.
+
+  The UI build command is superseded by `netlify.toml`'s (the log says
+  so), and Node 22 comes from `.nvmrc`.
+- **1.4** (Ryan): other holders of the staging `default` secret key or the
+  legacy `service_role` JWT outside the repository: **none, to his
+  knowledge**.
+- **1.5** (Claude): `get_project_url` →
+  `https://lboajqihpsfrokqvjgnl.supabase.co`. READBACK, ad-hoc (not
+  pinned), at 2026-10-01T23:09:05Z: `r2_probe_rows = 0`,
+  `probe_slug_rows = 0`, `pending_jobs_total = 2`.
+- **1.6** (Claude, 23:09:11–13Z):
+  - CTX on the plain URL and on `D_old`'s unique URL: both
+    `deployId 6abd9a2823b6fa0008970b8d`, `commitRef d25d234…`, `context
+    production`, `siteName printcalculator2-staging`, `flagEnabled true`;
+  - **ROW-R(`D_old`) → accepted**, `400 {"ok":false,"error":"Unknown store:
+    r2-probe-nonexistent"}`. The old key works, so later refusals on this URL
+    are attributable.
+- **1.7** (Claude): **T = unknown.** The API Keys page shows no created time
+  for the `default` secret key. `SUPABASE_SERVICE_ROLE_KEY` was written about
+  2026-09-12, the day the project was created. So the variable cannot be
+  shown to predate every secret key (C4.1), and C4.3 applies: the old key may
+  be either type. Consequences:
+  - 3.2 builds `D_tmpL` (legacy-captured) as well as `D_tmpS`;
+  - 6.5 deletes the `default` secret key, and `D_old`'s flip binds its type
+    after the fact.
+  - The build guard (`scripts/check-build-env.mjs`) requires only a
+    non-empty `VITE_SUPABASE_ANON_KEY` from the same source as the URL, so
+    1.8's publishable key cannot fail the next build.
+- **1.8** (Ryan, ≈ 2026-10-01T23:18Z): `VITE_SUPABASE_ANON_KEY` set to the
+  staging `default` publishable key,
+  `sb_publishable_DEDmndmu9xmhNFeXTCbO6A_HE0EBkZ6` (public, the value in
+  `docs/security/staging.md`). Still All scopes, same value in all five
+  contexts. It reaches every deploy built from 3.1 on, the client bundle
+  included. **C8 is fixed before any build or revocation.**
+- **2.1:** no change. The existing `CLEANUP_SECRET` already covers
+  Production and Branch deploys, and Ryan holds it.
+
+*Section 3 — builds (each a fresh build, never a republish):*
+- **3.1 `D_tmpS`** (Ryan): created secret key **`c3-temp`** (created time not
+  shown). Set `SUPABASE_SERVICE_ROLE_KEY`, same value in all contexts, to it,
+  then "Clear cache and deploy". Result: **`D_tmpS` =
+  `6abeeb750a7fa535a7d1d9e7`**, `d25d234`, production, built 19:23:34–19:26:31
+  EDT, published.
+
+  Claude, 23:41:10–12Z: CTX shows `deployId 6abeeb750a7fa535a7d1d9e7`,
+  `builtAt 2026-10-01T23:26:20.759Z`, production; the plain URL shows the
+  same id. **ROW-R(`D_tmpS`) → accepted**, `400 Unknown store:
+  r2-probe-nonexistent`. Its client bundle (`/assets/index-D94_TI5-.js`)
+  holds `sb_publishable_…` and no JWT, so 1.8 is in effect.
+- **3.2 `D_tmpL`** (Ryan): set `SUPABASE_SERVICE_ROLE_KEY`, same value in all
+  contexts, to the legacy `service_role` JWT, then "Clear cache and deploy".
+  Result: **`D_tmpL` = `6abef08bc64c5f216322a475`**, `d25d234`, production,
+  `builtAt 2026-10-01T23:47:52.564Z`, published. The id was read from the
+  plain URL's CTX, then bound on its unique URL.
+
+  Claude, 00:33:22Z: **ROW-R(`D_tmpL`) → accepted**, `400 Unknown store:
+  r2-probe-nonexistent`. Which key each temp deploy captured is shown by
+  behaviour, not only by this account: at 5, deleting `c3-temp` must refuse
+  `D_tmpS` and leave `D_tmpL` accepted; at 6.2, disabling legacy keys must
+  refuse `D_tmpL`.
+- **Pause and resume.** The session paused after 3.2 (2026-10-02) and
+  resumed 2026-10-06 ≈ 15:45Z.
+  - Ryan re-read the API Keys page: `default` (publishable), `default`
+    (secret), and **`c3_temp`** (secret). The dashboard name has an
+    underscore, so the runbook's `c3-temp` is this key. No created times are
+    shown. Legacy keys are enabled.
+  - Claude's resume check, 15:49–15:50Z:
+    - both remote branch heads are unchanged (`security/release-2-slice-2`
+      = `d25d234`, `security/release-2-stage-0` = `513b622`), so nothing was
+      pushed or built;
+    - the published deploy is still `D_tmpL`;
+    - **ROW-R → accepted** on `D_old`, `D_tmpS` and `D_tmpL`;
+    - READBACK, ad-hoc: `r2_probe_rows 0`, `probe_slug_rows 0`,
+      `pending_jobs_total 2`.
+- **Deviation in 3.1 and 3.2, found by Ryan before 3.3.** The runbook puts
+  each key in the **Production** value only, matching production's C5.3.
+  Claude's instructions for 3.1 and 3.2 said to keep "Same value for all
+  deploy contexts". So `c3_temp`, then the legacy `service_role` JWT, were
+  set for all five contexts. That is harmless only if no non-production
+  deploy was built while they were set. The branch heads were unchanged, so
+  no push triggered one, and Ryan checks the deploy list (below). From 3.3 the
+  variable is switched to "Different value for each deploy context",
+  Production only. F.2's expected state follows from that.
+  - Ryan's deploy-list check: every deploy since 2026-10-01 ≈ 19:20 EDT is
+    Production @`d25d234`, with no Deploy Preview or Branch deploy. There are
+    four rows: 19:23 `D_tmpS`; 19:44 **Canceled** `6abef06d28bedf508ec34b40`;
+    19:44 **Canceled** `6abef04f852cd34c2b685f28`; 19:45 Published `D_tmpL`.
+  - Claude, 16:19:29–30Z: both canceled deploys' unique URLs answer
+    **Netlify's 404 "Not Found"** for `/`, `deploy-context` and
+    `register-job`. **They serve nothing**, so they captured no reachable
+    key.
+- **3.3 `D_new`** (Ryan, 2026-10-06):
+  - created secret key **`release2_stage0_c3`** (created time not shown);
+  - switched `SUPABASE_SERVICE_ROLE_KEY` to **"Different value for each
+    deploy context"**: Production = `release2_stage0_c3`; Deploy Previews,
+    Branch deploys, Preview Server & Agent Runners and Local development
+    **empty**; scopes and the secret setting unchanged;
+  - "Clear cache and deploy" → **`D_new` = `6ac51ea0f33fada3d796bf4a`**,
+    published.
+
+  Claude, 16:19:31–33Z: CTX shows production, `d25d234`, `builtAt
+  2026-10-06T16:18:05.519Z`, and the plain URL shows the same id.
+  **ROW-R(`D_new`) → accepted**, `400 Unknown store: r2-probe-nonexistent`.
+  **C3.3: supabase-js's `createClient` on the legacy writer path accepts the
+  `sb_secret_` key.**
+- **3.3 CLEANUP** (Ryan, plain URL = `D_new`, ≈ 16:30Z):
+  `HTTP 200 | dryRun=True | error=`. **C3.2, valid half:** the authorized dry
+  run reached its SELECT with the new key and deleted nothing.
+- **3.4 control value** (Claude, 16:31Z): generated `sb_secret_` + 22 + `_` +
+  8 random base62 characters. It is not a key and exists in no project.
+  **md5 `2ce0f0f07cea819bca0b1d87fe0b6934`, length 41.** The value itself is
+  not recorded.
+- **3.4 `D_ctl`, the invalid-key control (C3.1a):**
+  - **Ryan:** put the control value in `SUPABASE_SERVICE_ROLE_KEY`'s
+    branch-specific value for `release-2-stage-0`. Production stays
+    `release2_stage0_c3`; the other contexts stay empty. `CLEANUP_SECRET` is
+    present for Branch deploys.
+  - **The build, by Claude in Ryan's Chrome at his request:** Netlify → the
+    last branch deploy `6ab53d545ba8250008cd98c1` → Options → **"Retry
+    without cache with latest branch commit"**, chosen by element reference,
+    not coordinates (the same menu holds "Delete deploy"). There was no
+    commit and no push; PR #48's production-site preview was not touched.
+    The environment-variable page was never opened.
+  - Result: **`D_ctl` = `6ac5292818287d21bbe8e1ba`**, Branch Deploy
+    `security/release-2-stage-0`, ready. CTX on the branch URL: `context
+    branch-deploy`, `commitRef 513b622…`, `builtAt
+    2026-10-06T17:01:05.221Z`, `contextAllowed false`.
+  - **ROW-R on the branch URL and on `D_ctl`'s unique URL (17:01:38–39Z) →
+    refused: `HTTP 500 {"ok":false,"error":"Store lookup failed: Invalid
+    API key"}`.** That is **the invalid-key control message**.
+  - The message also shows the branch value reached the branch build: an
+    empty value would have answered `500 Service role key not configured`.
+    The published deploy is still `D_new`.
+  - **Ryan, CLEANUP on the branch URL:** `HTTP 500 | dryRun= | error=Invalid
+    API key`. **C3.2, control half:** the same refusal message as row R.
+  - Ryan then removed the branch value. `SUPABASE_SERVICE_ROLE_KEY` is again
+    Production = `release2_stage0_c3`, with every other context empty.
+    `D_ctl` keeps the generated value, which grants nothing.
+
+*Section 4 — baseline BEFORE any revocation (Claude, 17:11:09–19Z):*
+- **ROW-R → accepted** (`400 Unknown store: r2-probe-nonexistent`) on all
+  four: `D_old` (17:11:09Z), `D_tmpS` (17:11:11Z), `D_tmpL` (17:11:13Z) and
+  `D_new` (17:11:15Z). The published deploy is `D_new`.
+- READBACK, ad-hoc: `r2_probe_rows 0`, `probe_slug_rows 0`,
+  `pending_jobs_total 2`.
+
+*Section 5 — revocation kind 1, a DELETED secret key:*
+- **Ryan** deleted secret key `c3_temp` at 13:16 EDT (17:16Z).
+- **Claude, 17:17:15–20Z:**
+  - **ROW-R(`D_tmpS`) → refused: `HTTP 500 {"ok":false,"error":"Store lookup
+    failed: Unregistered API key"}`.** That is **the kind-1 refusal
+    message**;
+  - ROW-R(`D_new`) → accepted, so the revocation missed the new key;
+  - ROW-R(`D_old`) → accepted, so `D_old` did not capture `c3_temp`;
+  - ROW-R(`D_tmpL`) → accepted, so `D_tmpL` did not either.
+- The two refusal messages differ. A key that never existed answers `Invalid
+  API key` (3.4). A deleted, once-valid secret key answers `Unregistered API
+  key`. Both are recorded; P5 accepts only recorded messages.
+
+*Section 6 — revocation kind 2, DISABLED legacy JWT keys:*
+- **6.1** (Ryan, 17:27Z): signed in to the staging app as `owner-t1`; the
+  access token is held in that tab only (`window.__c3t`).
+- **6.2** (Ryan, 13:29 EDT): "Disable JWT-based API keys". The gateway itself
+  records the time: **"disabled on 2026-10-06T17:29:01.178851+00:00"**.
+- **6.3 — DEVIATION, then a measured delay:**
+  - **17:29:35–41Z: ROW-R(`D_tmpL`) and ROW-R(`D_old`) were still accepted**
+    (`400 Unknown store`). `D_new` was accepted; `D_tmpS` was refused (kind 1).
+    6.4 was not run (STOP).
+  - Diagnostic, read-only, 17:30:09–10Z:
+    - the staging **legacy anon JWT** (public; taken from `D_old`'s bundle
+      into a shell variable, never printed) sent straight to
+      `/rest/v1/stores` was **refused**: `{"message":"Legacy API keys are
+      disabled","hint":"Your legacy API keys (anon, service_role) were
+      disabled on 2026-10-06T17:29:01…"}`;
+    - the `default` publishable key → `200`;
+    - ROW-R(`D_tmpL`) at 17:30:10Z → **still accepted**.
+  - **Edge logs** (C3.6 method: credential fields read only as the first 10
+    characters / length) show that every accepted `D_tmpL` and `D_old`
+    lookup — including **17:29:37, 17:29:41 and 17:30:11Z, after the
+    disable** — carried a **JWT apikey: issuer `supabase`, role
+    `service_role`, signature prefix `Gx7NWL`**, the same JWT for both
+    deploys.
+  - **17:33:03–04Z: ROW-R(`D_tmpL`) and ROW-R(`D_old`) → refused: `HTTP 500
+    {"ok":false,"error":"Store lookup failed: Legacy API keys are
+    disabled"}`.** That is **the kind-2 refusal message**.
+  - **Finding: the disable reached the legacy `service_role` JWT after a
+    delay.** It was last accepted 70 s after the disable (17:30:11Z) and
+    refused by 4 min 2 s (17:33:03Z). The anon JWT was refused within 68 s.
+  - **For production**, at C5.7/C5.8: after disabling legacy keys, a refusal
+    is expected within minutes, not at once. An acceptance in the first
+    minutes is not evidence that the disable failed; the historical proof
+    waits and re-probes, with every attempt and its time recorded.
+- **`D_old`'s type, bound by behaviour:** `D_old` captured the **legacy
+  `service_role` JWT** (signature prefix `Gx7NWL`, the same as `D_tmpL`) and
+  flipped with the legacy disable. So 6.5's binding step is unnecessary. The
+  `default` secret key is still deleted at F.1.
+- **Second finding, from the same logs: `D_new` does not send a secret
+  key.** Every `D_new` lookup (17:11:16, 17:17:18, 17:29:39Z) carried
+  **apikey and authorization prefix `sb_publish…`, hash `YgjsLqVVhw`**. That
+  is a publishable-type key, and **not** the `default` publishable key (hash
+  `15UYoe6X7p`, seen from the staging app and from Claude's direct check).
+  A secret key logs `sb_secret_` (`c3_temp`, hash `68C5sbIOUk`). So the
+  value 3.3 put in `SUPABASE_SERVICE_ROLE_KEY` is a second publishable key.
+  - Row R cannot tell a publishable key from a secret one, because the store
+    does not exist either way. So **3.3's ROW-R and CLEANUP results do NOT
+    establish C3.3, and they are withdrawn as C3.3 / C3.2-valid-half
+    evidence until redone with a secret key.** C3.4 on `D_new` would be
+    unsound for the same reason (enroll-list reads memberships with that key).
+- **Ryan confirmed (API Keys page): `release2_stage0_c3` is listed under
+  Publishable keys.** It was created in the wrong section at 3.3.
+  Corrective path, approved by Ryan:
+  - create a SECRET key `release2_stage0_c3s`;
+  - set it as the Production-only `SUPABASE_SERVICE_ROLE_KEY`;
+  - rebuild → `D_new2`;
+  - redo C3.3 and C3.2-valid on `D_new2`, with the logs required to show
+    `sb_secret_`;
+  - then C3.4;
+  - delete the stray publishable key at F.1.
+- **3.3 redone, `D_new2`** (Ryan, 2026-10-06 ≈ 23:08Z):
+  - created **`release2_stage0_c3s` under Secret keys**; its masked value
+    starts `sb_secret_`;
+  - set it as `SUPABASE_SERVICE_ROLE_KEY` **Production** (every other context
+    empty);
+  - "Clear cache and deploy" → **`D_new2` = `6ac57faf07de6bd95c407e36`**,
+    production, `d25d234`, `builtAt 2026-10-06T23:12:05.815Z`, published.
+
+  Claude: **ROW-R(`D_new2`) at 23:14:06Z → accepted** (`400 Unknown store`).
+  The edge-log row for that lookup (23:14:07.243Z) shows **apikey prefix
+  `sb_secret_` (len 15), hash `u7JJiAtlix`, authorization prefix
+  `sb_secret_`**, client `supabase-js/2.110.8; runtime=node`, status 200.
+  **C3.3 established.** It also shows that a valid secret key is logged with
+  its prefix and hash.
+- **6.4 / C3.4** (Ryan, ≈ 23:20Z; the 17:27Z token had expired). He signed
+  in afresh as `owner-t1` on the plain URL; the page's build stamp shows
+  `deploy 6ac57faf07de6bd95c407e36`, i.e. `D_new2`. The console check
+  returned **`[200, 200]`**:
+  - `GET /auth/v1/user` with the public publishable key → 200, so the token
+    is live;
+  - `GET /.netlify/functions/enroll-list` on `D_new2` → 200.
+
+  **C3.4 established:** with legacy JWT keys disabled, owner Auth validation
+  works through the Functions' `sb_publishable_` `VITE_SUPABASE_ANON_KEY`
+  (1.8), and the read through the `sb_secret_` service key succeeds.
+- **C3.2 valid half, redo on `D_new2`** (Ryan, ≈ 23:25Z): **`HTTP 401 |
+  dryRun= | error=Unauthorized`**, which is STOP. The handler refused the
+  presented `x-cleanup-key`. The same procedure answered 200 (`D_new`) and
+  500 (`D_ctl`) earlier the same day. The masked prompt showed 41 characters,
+  the length of an `sb_secret_` key Ryan had copied minutes before. Ryan is
+  asked what was pasted; the record continues with his answer.
+  - **Ryan: an input slip.** The clipboard still held `release2_stage0_c3s`,
+    so that key was sent as `x-cleanup-key` to the staging cleanup function,
+    over TLS.
+  - Where it went: the handler compares the value and logs only
+    `[cleanup] rejected: bad or missing x-cleanup-key`, never the value.
+    `$k` and `$s` were removed, and `Read-Host` input is not kept in
+    PowerShell history. So the value reached only Ryan's own staging function
+    and was not stored by this procedure. Rotating the key was judged
+    unnecessary for C3; it is noted here so the final state can be read with
+    this in mind.
+  - Re-run once with `CLEANUP_SECRET` (64 characters): **`HTTP 200 |
+    dryRun=True | error=`.** **C3.2 valid half established on `D_new2`.** The
+    earlier `D_new` result (a publishable key) is withdrawn as evidence, as
+    noted above.
+
+*Section 7 — C3.5, does re-enabling legacy keys restore the SAME keys?*
+
+The probe schedule is fixed BEFORE the action, because of the delay
+measured in 6.3: about 1 min after the action, then every 2 min up to 10
+min. The first acceptance of the legacy-captured deploys answers "yes".
+Refusal throughout answers "no, or slower than 10 min". Every probe is
+recorded.
+- **Ryan re-enabled the legacy JWT keys at 19:25 EDT (≈ 23:25Z).**
+- Claude's first scheduled probe: the +1 and +3 min slots had already passed
+  when the schedule started, so the first probe ran at **23:29:37Z (≈ T0+4½
+  min)** and was labelled with its real time. **ROW-R(`D_tmpL`) → accepted,
+  ROW-R(`D_old`) → accepted** (`400 Unknown store`), and `D_new2` →
+  accepted. The schedule stopped at that first acceptance, as declared.
+- The edge logs for those lookups (23:29:33.558Z and 23:29:35.371Z) show the
+  **same JWT apikey as before the disable: issuer `supabase`, role
+  `service_role`, signature prefix `Gx7NWL`**, status 200. `D_new2`'s
+  lookup (23:29:36.841Z) is `sb_secret_` `u7JJiAtlix`, 200.
+- **C3.5 answer: re-enabling legacy JWT keys restores the SAME keys.** Every
+  deploy that captured the legacy `service_role` JWT works again. C9's
+  break-glass therefore re-opens every such retained deploy, as the plan
+  assumed (it revokes G0 and requires retirement before anything else).
+  How fast the re-enable took effect is bounded only from above: the first
+  probe was at ≈ 4½ min.
+- **Re-disabled** by Ryan at 19:37 EDT. The gateway's own record (read with
+  the public legacy anon JWT, which was refused `401`): **"disabled on
+  2026-10-06T23:36:47.00604+00:00"**. The schedule (+1, +3, … +15 min,
+  declared beforehand) stopped at its first slot. **23:38:05Z (78 s after
+  the disable): ROW-R(`D_tmpL`) and ROW-R(`D_old`) → refused, `HTTP 500
+  {"ok":false,"error":"Store lookup failed: Legacy API keys are
+  disabled"}`**, the kind-2 message again. `D_new2` → accepted.
+- **Disable delay, two measurements:**
+  - 17:29:01Z disable: still accepted at 70 s, refused by 242 s;
+  - 23:36:47Z disable: refused at 78 s.
+
+  Production's C5.8 should expect seconds to a few minutes, and probe until
+  refused with every attempt timed.
+
+*Section 8 — C3.6, what the provider logs record* (Claude, `query_logs`
+ad-hoc, read-only; credential fields read ONLY as the first 10 characters /
+length; no raw credential was ever selected):
+- **The fields available** (`edge_logs`, Q1, names only):
+  - `request.sb.apikey.apikey.{prefix,hash,error}`;
+  - `request.sb.apikey.authorization.prefix`;
+  - `request.sb.jwt.apikey.payload.{issuer,role,signature_prefix,…}`;
+  - `unauthorized_hint.{error_code,message}`;
+  - `response.headers.sb_error_code`;
+  - `response.status_code`;
+  - `request.headers.x_client_info`.
+- **A row identifies WHICH key was used, not only its type:**
+  - **New-style keys:** `apikey.prefix` (type plus leading characters;
+    length 15 for `sb_secret_`, 20 for `sb_publishable_`) and `apikey.hash`.
+    Ten hash characters told every key apart: `c3_temp` `68C5sbIOUk`,
+    `release2_stage0_c3s` `u7JJiAtlix`, the `default` publishable
+    `15UYoe6X7p`, the stray publishable `release2_stage0_c3` `YgjsLqVVhw`, and
+    the generated control `nNH-VS7xpd`.
+  - **Legacy JWTs:** `jwt.apikey.payload.issuer`/`role`/`signature_prefix`.
+    The `service_role` JWT is `Gx7NWL`; the anon JWT is `ZLnycR`.
+- **Refusals carry a code** in `unauthorized_hint.error_code` (and
+  `sb_error_code` for the legacy kind), plus the key's identity:
+
+  | refusal | code | message |
+  |---|---|---|
+  | deleted secret key | `UNAUTHORIZED_UNREGISTERED_API_KEY` | `Unregistered API key` |
+  | disabled legacy JWT | `UNAUTHORIZED_DISABLED_LEGACY_KEY` | `Legacy API keys are disabled` |
+  | generated control | `UNAUTHORIZED_INVALID_API_KEY` | `Invalid API key` |
+
+  The generated control also carries `apikey.error` = `bad_checks…` (12
+  characters).
+- **Correction to C3.1a's premise.** The gateway checks a checksum inside
+  `sb_secret_` keys. The generated control has the right shape but FAILS the
+  checksum, so it was refused as malformed (`Invalid API key`), not as
+  unknown. The case C3.1a describes — syntactically valid but nonexistent —
+  is what the DELETED `c3_temp` produced: `Unregistered API key`. Both
+  refusals and their messages are recorded.
+- **Not every request has a row.** None was found for:
+  - `D_tmpS`'s accepted lookup at ≈ 17:11:12Z;
+  - the legacy-anon refusal at 17:30:09Z;
+  - one of the two 17:33:03–04Z refusals (one row at 17:33:05.595Z).
+
+  So a row is evidence of which key made a request, but a missing row proves
+  nothing.
+- **C3.6 answer:** the provider-side record CAN tie a refusal to the
+  credential:
+  - by its hash prefix for a secret key;
+  - by its signature prefix for a legacy JWT;
+  - plus the refusal code.
+
+  C6's provider-side column may rely on those fields per probe in
+  production, with two rules: probe more than once, and record whether each
+  probe's row exists.
+
+*Section 9 — C3.7, the SIZE-PROBE through the sender:*
+- **9.1** (Claude, 23:39:26Z, at `d25d234`): `stage0-send.mjs SIZE-PROBE
+  --target staging --dry-run` → `target staging = lboajqihpsfrokqvjgnl;
+  read_only true; request md5 64836acd787dc72bb0ad3e6564a66db4; 241149
+  bytes`, equal to the manifest.
+- **9.2** (Ryan): the dashboard's "Generate token" dialog offers more than
+  the plan assumed. A token can be **scoped to one project with
+  per-permission levels**; "Create legacy token" is the old full-access
+  kind. The token `stage0-c3-2026-10-06` was created with:
+  - Resource access: Project → organization "Sifuentes INC" → **only
+    `print-calculator-staging`**;
+  - Permissions: Custom, **Database → Database: Read** as the single
+    permission, every other row None;
+  - **expiry 1 day**.
+
+  So this token could not reach production at all, whatever the sender did.
+  (Plan §E1 calls a personal access token account-wide; that is true of the
+  legacy kind. Recommended for review: production steps use a token scoped
+  to production only, with the minimum Database permission each text
+  needs.)
+- **9.3, first attempt** (Ryan, ≈ 00:00Z on 2026-10-07): in the checkout at
+  `d25d234`, the prefix check `StartsWith("sbp_")` printed **`False`**. The
+  dry run matched 9.1. The live send was **refused by the sender before any
+  request**: `SUPABASE_ACCESS_TOKEN is not a Supabase personal access token
+  (sbp_…); refusing`. The variable was removed. Nothing reached Supabase,
+  and no results file was written. The token's prefix is being checked
+  (first 5 characters and length only) to tell a clipboard slip from a new
+  token format.
+- **9.3, second attempt** (Ryan): input error again.
+  - The command was entered as `Read-Host sbp_fc611 -AsSecureString`, so the
+    token's first 9 characters became the prompt label, and only 4
+    characters were typed at the masked prompt. `StartsWith("sbp_")` →
+    `False`, and the sender refused again before any request.
+  - What this shows: **project-scoped tokens use the `sbp_` prefix**, so the
+    sender accepts them unchanged.
+  - **Exposure:** the 9-character prefix `sbp_fc611` reached the chat and
+    PowerShell's history. That is not a usable token, but the rule is that no
+    part of a key enters the chat, so the token is deleted and replaced
+    (`stage0-c3-2026-10-06b`, same scope and 1-day expiry).
+- **9.3, the send** (Ryan, with `stage0-c3-2026-10-06b`; scope and expiry as
+  above):
+  - `StartsWith("sbp_")` → `True`, length → `44`;
+  - **`stage0-send.mjs SIZE-PROBE --target staging --confirm-ref
+    lboajqihpsfrokqvjgnl` → `HTTP 201`**, `2026-10-07T00:11:42.130Z →
+    00:11:43.419Z` (1.3 s);
+  - body `[{"probe_bytes":240951,"probe_md5":"79c453d9ccdc3a1b14eb34619ffe2cea"}]`;
+  - then `Remove-Item Env:SUPABASE_ACCESS_TOKEN`.
+- **9.4** (Claude, reading
+  `.stage0-send/2026-10-07T00-11-42-130Z_SIZE-PROBE_staging.json`; the file
+  is gitignored and transcribed here):
+  - `requestMd5 64836acd787dc72bb0ad3e6564a66db4` and `requestBytes 241149`
+    = the manifest's `outputs["SIZE-PROBE"]`;
+  - `ref lboajqihpsfrokqvjgnl`, `readOnly true`, endpoint
+    `https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query`;
+  - `httpStatus 201`, `error null`;
+  - the answer is one row, `probe_bytes 240951`, `probe_md5
+    79c453d9ccdc3a1b14eb34619ffe2cea` = the manifest's `sizeProbe.expect`;
+  - no token text in the file (`tokenRedactedFromResponse false`).
+
+  **C3.7 established:** the transport P1 will use carried the exact
+  241 149-byte pinned text, 1 KiB larger than P1, intact, through the pinned
+  sender, and the server's own measurement of what it received equals the
+  pin.
+- **9.5** (Ryan, ≈ 00:15Z): both access tokens deleted, `stage0-c3-2026-10-06`
+  and `stage0-c3-2026-10-06b`. No `stage0-c3-…` token remains.
+
+*Section F — final staging state:*
+- **F.1** (Ryan, 2026-10-07 ≈ 00:20Z): deleted the `default` **secret** key
+  (pre-existing; 1.4 found no other holders) and the stray **publishable**
+  key `release2_stage0_c3`. The API Keys page now lists only:
+  - secret: **`release2_stage0_c3s`**;
+  - publishable: **`default`** (used by the staging app and by the
+    Functions' `VITE_SUPABASE_ANON_KEY`);
+  - legacy JWT-based keys: **disabled** (since 2026-10-06T23:36:47Z).
+- **F.2** (Ryan): matches the expected state:
+  - `SUPABASE_SERVICE_ROLE_KEY` is "Different value for each deploy
+    context", Production = `release2_stage0_c3s`, every other context empty,
+    no branch-specific value;
+  - `VITE_SUPABASE_ANON_KEY` is the `default` publishable key in all
+    contexts;
+  - `CLEANUP_SECRET` is unchanged;
+  - no build hooks.
+- **F.3.** Ryan reported "new deploy published" early: CTX at 00:20:18Z and
+  a watch to 00:26:18Z still showed `D_new2`. Ryan then showed the deploy
+  page. The F.3 build had started at 20:25:57 EDT (00:25:57Z) and was still
+  running. **`D_final` = `6ac5918c43f0654ec970c8c1`**, production, `d25d234`,
+  `builtAt 2026-10-07T00:28:25.994Z`; the plain URL served it from 00:28:46Z.
+  Not a deviation: the report came before the build finished.
+- **F.4 probes already taken** (00:20:18–31Z; `D_final` pending F.3):
+
+  | deploy | result |
+  |---|---|
+  | `D_new2` (published) | accepted, `400 Unknown store` |
+  | `D_new` | refused, `500 Store lookup failed: Unregistered API key` (the stray publishable key is deleted) |
+  | `D_old` | refused, `500 … Legacy API keys are disabled` |
+  | `D_tmpS` | refused, `500 … Unregistered API key` |
+  | `D_tmpL` | refused, `500 … Legacy API keys are disabled` |
+  | `D_ctl` | refused, `500 … Invalid API key` |
+  | cleanup, no key, plain URL | `401 Unauthorized`, as expected: staging's own `CLEANUP_SECRET` is kept |
+  | published client bundle | `sb_publishable_…`, no JWT |
+- **F.4 on `D_final`** (00:28:57–29:02Z):
+  - CTX on its unique URL: production, `d25d234`;
+  - **ROW-R → accepted** (`400 Unknown store`). The edge-log row (00:28:59Z)
+    shows **`sb_secret_` `u7JJiAtlix`** (`release2_stage0_c3s`), status 200;
+  - cleanup with no key → `401`;
+  - the client bundle holds `sb_publishable_` and no JWT;
+  - READBACK, ad-hoc: **`r2_probe_rows 0`, `probe_slug_rows 0`,
+    `pending_jobs_total 2`**, the same as at 1.5. Every probe in C3 was
+    write-free.
+- **F.5:** Ryan's dashboard read-backs are F.1 (keys, legacy state), F.2
+  (variables, hooks) and 9.5 (access tokens). All were taken after the last
+  dashboard change; F.3 changed no setting.
+
+**Final staging state, 2026-10-07T00:29Z:**
+- **Supabase keys:**
+  - secret: `release2_stage0_c3s` only;
+  - publishable: `default` only;
+  - legacy JWT keys: **disabled** (since 23:36:47Z);
+  - no access tokens.
+- **Netlify `SUPABASE_SERVICE_ROLE_KEY`:** Production = `release2_stage0_c3s`,
+  every other context empty, no branch value.
+- **Netlify `VITE_SUPABASE_ANON_KEY`:** the `default` publishable key.
+- **Netlify `CLEANUP_SECRET`:** unchanged. No build hooks.
+- **Published:** `D_final`.
+- **Retained deploys and their state:**
+  - `D_new2`: the current key, accepted;
+  - `D_old`, `D_tmpL`: refused, legacy disabled;
+  - `D_tmpS`, `D_new`: refused, deleted keys;
+  - `D_ctl`: refused, the control value;
+  - the two canceled deploys serve nothing.
+
+**C3 results, items 1–7:**
+
+| C3 item | result |
+|---|---|
+| 1a invalid-key control | `500 Store lookup failed: Invalid API key` on `D_ctl`. The gateway: `UNAUTHORIZED_INVALID_API_KEY`, `apikey.error bad_checks…` — the generated value fails the key checksum |
+| 1b kind 1: deleted secret key | `500 Store lookup failed: Unregistered API key` (`D_tmpS`, `D_new`). Gateway: `UNAUTHORIZED_UNREGISTERED_API_KEY` |
+| 1b kind 2: disabled legacy JWT keys | `500 Store lookup failed: Legacy API keys are disabled` (`D_old`, `D_tmpL`). Gateway: `UNAUTHORIZED_DISABLED_LEGACY_KEY`. It takes effect after a delay: accepted at 70 s, refused by 242 s; on the second disable, refused at 78 s |
+| 2 cleanup read | `200 dryRun:true` on `D_new2` (secret key); `500 Invalid API key` on `D_ctl` |
+| 3 supabase-js takes `sb_secret_` | yes: ROW-R accepted on `D_new2` / `D_final`, and the log shows `sb_secret_` `u7JJiAtlix`. The first `D_new` evidence was withdrawn: it carried a publishable key |
+| 4 owner auth, legacy disabled | `[200, 200]` on `D_new2` |
+| 5 re-enable restores the same keys? | **yes**: the same `service_role` JWT (`Gx7NWL`) was accepted again within ≈ 4½ min |
+| 6 provider-side record | rows identify the key (new keys: prefix plus hash; legacy: signature prefix) and carry the refusal code. Not every request has a row |
+| 7 SIZE-PROBE | `201`; answer `probe_bytes 240951`, `probe_md5 79c453d9…` = `sizeProbe.expect`; request md5/bytes = the pin; through the sender |
+
+**Operator events, all recorded above:**
+- 3.1/3.2 set all contexts, not Production only (no non-production build
+  resulted);
+- 3.3 created the key under Publishable;
+- an `sb_secret_` key was pasted as `x-cleanup-key` once;
+- a token prefix (`sbp_fc611`) reached the chat (that token was deleted).
+
+Each was caught by a check, corrected, and recorded. No result above rests
+on one of them.
+- **Logging gaps** (relevant to C3.6): `D_tmpS`'s accepted lookup with the
+  then-valid `c3_temp` (≈ 17:11:12Z) and the refused legacy-anon request
+  (17:30:09Z) have **no edge_logs row**. The logs identify keys when a row
+  exists, but not every request has one.
 
 ---
 
@@ -1558,10 +2120,17 @@ Nothing ran on production.
 The review of `dc5a88b` round was repo-only: nothing ran on staging or
 production.
 
+**C3 has run on staging:** items 1–7, recorded in §E9, 2026-10-01 and
+2026-10-06/07. Codex accepted the runbook and the sender at `d25d234`.
+Production was not touched.
+
 **Remaining, each at its own stop point, none started:**
-1. Codex's review of the C3 runbook and the sender.
-2. C3 on staging, items 1–7, in one session with Ryan.
-3. P0 (read-only), then P1 onward. Every pinned text goes through the sender.
+1. Codex's review of the C3 record (§E9). It includes three findings that
+   bear on production:
+   - the legacy-disable delay (C5.8 must wait and re-probe);
+   - project-scoped access tokens (§E1's account-wide note);
+   - the generated control failing the key checksum (C3.1a's wording).
+2. P0 (read-only), then P1 onward. Every pinned text goes through the sender.
 
 ---
 
