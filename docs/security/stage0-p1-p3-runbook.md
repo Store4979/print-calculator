@@ -1,8 +1,14 @@
 # Stage 0 — P1 to P3 on production: runbook
 
-**Status: DRAFT. It needs review before use, and nothing below has run.** Three
-positions are Ryan's, for Codex to rule on (§R). Blocker PRE-0 is resolved in
-the repository and is shown green at every state by the record replay (§PRE-0).
+**Status: DRAFT. It needs review before use, and nothing below has run.**
+- Codex's review of `33c66f5` accepted the window, the token split, D-P2 =
+  Option A for SETTLED prefixes, the required P0 re-runs, the re-opening
+  rule, the no-cancel position, and PRE-0 (§R).
+- This revision fixes the one blocker, UO-1 (unresolved sends, §0.7 and
+  §A.0), and puts one new decision to Codex: BC, business continuity after
+  an unresolved stop (§A.0.1).
+- Blocker PRE-0 is resolved in the repository, and the record replay shows it
+  green at every state (§PRE-0).
 
 It turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
 **production**:
@@ -12,16 +18,25 @@ It turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
 It follows the C3 runbook's step style (`docs/security/stage0-c3-runbook.md`)
 and the C5 draft's paste checks (`docs/security/stage0-c5-runbook.md` §0.2).
 
-**Window: Sunday 2026-10-11, from 17:00 EDT (21:00Z).** Ryan confirmed that
-#4979 is closed on Sundays, and set the start at 5:00 PM.
-- The database part (§2–§9) runs 17:00–18:30 EDT, with a reserve to 19:00.
-- With an in-window recovery (D-P2 = A), it runs to about 19:45.
-- The repository part (§11) follows, with the counter open, until about
-  19:40, or about 20:25 after a recovery.
+**Window (accepted): Sunday 2026-10-11, 17:00–19:30 EDT (21:00–23:30Z),
+reserve to 20:15 EDT.** #4979 is closed on Sundays, and the owner is present.
+- **Expected:** §2–§9 take about 1 h 30 min, so the database part ends about
+  18:30.
+- **No forward step starts unless the remaining window covers its bounded
+  execution plus its checks** (§B):
+  - P1 by 18:40;
+  - P2-01, P2-02 and P2-0304 by 19:20;
+  - P2-05 by 19:10.
+- **The reserve (to 20:15)** is for what a stop needs:
+  - STATE and the diagnostics;
+  - an in-window recovery under D-P2 (no RB operation starts after 20:05);
+  - §A.0.1's wait and checks;
+  - the P0 re-check, the smoke test and §9.
+- **The repository record (§11)** may finish after the window, with the
+  counter open.
 
-The window is outside counter hours, with the owner present. A STOP leaves the
-evening and the night for review before Monday's opening, and E0 keeps the
-counter closed for P1 and P2.
+A STOP leaves the evening and the night for review before Monday's opening.
+E0 keeps the counter closed for P1 and P2.
 
 Each step is one of:
 - **RYAN** — an exact command or dashboard click-path. Ryan replies with the
@@ -35,22 +50,42 @@ Records go into plan §E11–E13 (template at the end).
 
 ---
 
-## §R — Ryan's positions, for Codex to rule on
+## §R — Rulings (Codex, review of `33c66f5`), and what is still open
 
-1. **D-P2 = Option A** (§A.2), the in-window recovery, with all of its
-   conditions, plus:
-   - **Ryan's explicit "go" in chat before each RB step**;
-   - **a P0 re-check after the recovery**: the schema equals the baseline
-     (P0-S identical to P0₀, `catalog_fingerprint` included), and the ledger
-     is only appended to (P0-L).
+**Accepted:**
+1. **The window:** Sunday 2026-10-11, 17:00–19:30 EDT, reserve to 20:15
+   (header, §B).
+2. **The token split:** window R holds the read token, for P0 and STATE;
+   window W holds the write token, for P1, P2-* and RB-* (§0.3).
+3. **D-P2 = Option A, for SETTLED recognized prefixes,** with its conditions
+   (§A.2), including:
+   - Ryan's explicit "go" in chat before each RB step;
+   - a P0 re-check after the recovery.
 
-   Option B stays written out.
-2. **The counter re-opens after §7 (the database read-back) and §8 (the
-   legacy smoke test) pass** (§10). The repository record (§11) follows with
-   the counter open. It records a database that is already verified, and it
-   changes only the repository: its commits stay local until §12, which
-   pushes only the branch that builds staging.
-3. **No second-session cancel.** The PG 17 time limits are the bound (§0.2).
+   A prefix reached through an UNRESOLVED send is never recovered in the
+   window (§A.0).
+4. **P0 is REQUIRED** at window start (§4), after P1 (§5.4), and after any
+   recovery (§A.2 point 6).
+5. **The counter re-opens** after the database read-back (§7), the legacy
+   smoke test (§8) and token cleanup (§9) (§10). The repository record (§11)
+   follows with the counter open. It changes only the repository: its
+   commits stay local until §12, which pushes only the branch that builds
+   staging.
+6. **No second-session cancel.** The PG 17 time limits are the bound (§0.2).
+7. **PRE-0:** the fixture fix, the record tool, the replay and the race fix
+   (§PRE-0).
+
+**Fixed in this revision: UO-1.**
+- A send is RESOLVED only with a server response: a success or a SQL error
+  (§0.7).
+- An UNRESOLVED writing send is STOP-and-review, with no retry and no
+  recovery. STATE is only a diagnostic there, and an unchanged prefix is
+  recorded as UNKNOWN (§A.0).
+
+**Open, for Codex to rule on: BC (§A.0.1).** It covers business continuity
+after an UNRESOLVED stop: when the counter may re-open while the migration
+stays STOP-and-review, and which caller can check for left-over stage-0
+backends and locks.
 
 ---
 
@@ -183,7 +218,7 @@ The pre-window step §1.2 re-runs it at H.
   checkout, and the sender reads the manifest at HEAD. Claude keeps snapshots
   and notes in its scratchpad until §11.
 - **No pushes from §1 until §12** (§12 has the rules).
-- **No cancel procedure (position 3, §R).** Every text is bounded by its own
+- **No cancel procedure (accepted, §R 6).** Every text is bounded by its own
   PG 17 timers:
   - P1: `statement_timeout` 90 s, `transaction_timeout` 110 s;
   - P2 and RB: 45 s and 45 s;
@@ -228,7 +263,7 @@ it:
 | **V-CLIP** | after every token paste | copy a harmless word (`cleared`) so the token leaves the clipboard |
 | **V-WIN** | before every send | the window's title matches §0.3's row for that text |
 | **V-SEND** | after every live send | Ryan pastes the sender's lines (they carry no secret): target and `read_only` as V-DRY, the same md5 and bytes, `HTTP 201`, the `body (first 300 chars)` line, and the results file name |
-| **V-FILE** | Claude, after every send | the results file has the expected `text`, `ref`, `readOnly`, `requestMd5`, `requestBytes`, `httpStatus 201`, `error null` and `tokenRedactedFromResponse false`, and its `body` is as expected. A `true` redaction flag means the token came back in a response: STOP, and delete that token now |
+| **V-FILE** | Claude, after every send | first, Claude classifies the send **RESOLVED or UNRESOLVED** (§0.7). Then the results file must have the expected `text`, `ref`, `readOnly`, `requestMd5`, `requestBytes`, `httpStatus 201`, `error null` and `tokenRedactedFromResponse false`, and its `body` must be as expected. A `true` redaction flag means the token came back in a response: STOP, and delete that token now |
 
 ### 0.5 Ryan's commands
 
@@ -421,14 +456,33 @@ LAST row-returning statement (plan §E8).
 | P2-01, P2-02, P2-0304, P2-05, RB-* | 201 | **`[{"set_config":"45s"}]`**: the `transaction_timeout` line; the `DO` block and `COMMIT` return no rows | staging, 2026-09-29 (B-POSITIVE, the same wrapper pattern, through the same endpoint); local PG 17 |
 | STATE | 201 | one row (table below) | local PG 17 |
 
-**A failure looks like this:**
-- any status other than 201, or `HTTP none | <error>` when no response came
-  (the client timeout or a network error);
-- the body of a refused text reads
-  `Failed to run sql query: ERROR:  <SQLSTATE>: <message>` (or `FATAL:` for a
-  `transaction_timeout`). That format was seen through `execute_sql` in N5. The
-  HTTP status of an error has not yet been observed through the sender;
-- the sender exits 0 only on 201.
+**Every send is RESOLVED or UNRESOLVED (UO-1).** Claude classifies each one
+from its results file (V-FILE) before anything else is decided.
+- **RESOLVED** means the sender recorded a server response that is one of:
+  - **success:** `httpStatus 201`;
+  - **a SQL error:** a `body` that reads
+    `Failed to run sql query: ERROR:  <SQLSTATE>: <message>`, or `FATAL:` for
+    a `transaction_timeout` that ended the session. That format was seen
+    through `execute_sql` in N5. The HTTP status of such a response has not
+    yet been observed through the sender, so the body decides, not the
+    status. An error or a FATAL aborts the text's transaction, so nothing of
+    it commits.
+- **UNRESOLVED** is everything else:
+  - `HTTP none | <error>`: the 150 s client timeout, a network error, an
+    aborted request;
+  - no results file at all (a dead window);
+  - any other status or body: a gateway error, an authentication refusal, a
+    rate limit, a page that is not a PostgreSQL error.
+
+  The server may have run the text, may still be running it, or may start
+  it later. An early client failure is NOT proof that the server-side work,
+  and its locks, have ended.
+- **What follows:**
+  - An unresolved READ (P0, STATE) changes nothing and proves nothing. It
+    may be sent again, and both sends are recorded.
+  - An unresolved WRITING send (P1, P2-*, RB-*) goes to §A.0: STOP-and-review,
+    no retry and no recovery.
+- The sender exits 0 only on 201.
 
 **STATE**, by prefix. This is the plan §A6 prefix → recovery map, the
 recovery being what STATE itself returns. Every row has `ledger_md5_ok true`.
@@ -619,7 +673,7 @@ is STOP with nothing run (§A.1).
 
 ---
 
-## 4. P0 at window start (window R)
+## 4. P0 at window start (window R; REQUIRED)
 
 **4.1 RYAN.** → **V-WIN** (R). Send `P0`. → **V-SEND**.
 
@@ -655,6 +709,11 @@ These values become **P0₀**, the baseline for §5.4 and §A.
 
 Bound: P1's `transaction_timeout` 110 s. Do nothing in window W until the
 sender prints its result (at most 150 s).
+- **Start no later than 18:40 EDT** (§B): P1 is useful only if P2 and §7 can
+  follow it inside the window.
+- **An UNRESOLVED P1** (§0.7) goes to §A.0. P1 contains no `COMMIT`, so it
+  cannot change data. But a client failure does not show that its ACCESS
+  EXCLUSIVE lock on `employees` has been released.
 
 **5.3 CLAUDE.** → **V-FILE**, then:
 
@@ -678,7 +737,7 @@ failure there would have aborted P1.
 On a difference, Claude lists the missing and extra ids. Any difference is
 STOP.
 
-**5.4 RYAN — P0 again (window R).** → **V-WIN**, **V-SEND**.
+**5.4 RYAN — P0 again (window R; REQUIRED after P1).** → **V-WIN**, **V-SEND**.
 **CLAUDE:** → **V-FILE**. **All 26 columns identical to P0₀**, `free_pins`
 included. P1 commits nothing, so P0-S and P0-L must both be unchanged (plan
 §E3).
@@ -688,9 +747,10 @@ production. → **V-WIN**, **V-SEND**. **CLAUDE:** → **V-FILE**. Expected
 `effective_prefix ""`, `ledger_md5_ok true`, `catalog_state "00"`,
 `recovery "none — nothing is applied"`.
 
-A permission error here is STOP before anything changes. STATE is the
-read-back that decides every later unknown outcome, so it must be known to
-work first.
+A permission error here is STOP before anything changes. STATE must be known
+to work first, because it serves two roles later:
+- it settles the prefix after every RESOLVED stop;
+- it is the recorded diagnostic after an UNRESOLVED one (§A.0).
 
 ---
 
@@ -724,13 +784,29 @@ LEDGER rows, 04's one second after 03's.
 **6.4 P2-05** (05: the revoke function). → state **05**, recovery
 `RB-5, RB-43, RB-2, RB-1`.
 
-**An unknown or failed step.** This covers any status other than 201, any
-other body, `HTTP none`, a dead window, or any read-back in d–h that differs:
-1. **STATE first** (window R), before anything else is chosen (plan §A6,
-   E4). If window R is gone, create a replacement read token (§3.2) for it.
-2. P2 stops at that step whatever STATE says. Continuing forward after a
-   stopped step is not offered (plan §E4).
-3. §A applies to the prefix STATE reports.
+**Latest starts (§B).** A step starts only if the remaining window covers its
+bounded execution (150 s, the client limit, above the 45 s server bound) and
+its checks (about 6 min):
+- P2-01, P2-02, P2-0304: **19:20 EDT**;
+- P2-05: **19:10 EDT**, because its checks include §7.
+
+A step not started by then is not started. The window then ends with a SETTLED
+prefix (§A.1).
+
+**A step that does not pass.** First, V-FILE classifies the send (§0.7).
+- **RESOLVED, as a SQL error,** or a `201` whose body or read-backs (b–h)
+  differ:
+  1. **STATE first** (window R), before anything else is chosen (plan §A6,
+     E4). If window R is gone, create a replacement read token (§3.2) for
+     it.
+  2. P2 stops at that step whatever STATE says. Continuing forward after a
+     stopped step is not offered (plan §E4).
+  3. §A.1 and §A.2 apply to the prefix STATE reports. It is SETTLED: every
+     writing send so far has a server response.
+- **UNRESOLVED** (`HTTP none`, no results file, any other status or body):
+  §A.0. STOP-and-review, with no retry and no recovery. STATE is read only
+  as a diagnostic, and an unchanged prefix is recorded as **UNKNOWN**, never
+  as "did not commit".
 
 ---
 
@@ -811,10 +887,15 @@ tokens under §3.
 
 ---
 
-## 10. RYAN — re-open the counter (position 2, §R)
+## 10. RYAN — re-open the counter (accepted, §R 5)
 
-Only after **§7** (the database half of P3, every read-back as expected) and
-**§8** (the legacy smoke test) have both passed. Report the time.
+Only after all three of these. Report the time.
+- **§7** passed: the database half of P3, every read-back as expected.
+- **§8** passed: the legacy smoke test.
+- **§9** is done: both tokens deleted, and none listed.
+
+On a stop, §A.1's counter column says when, and after an UNRESOLVED stop,
+§A.0.1.
 
 The repository record (§11) follows with the counter open. It touches only
 the repository, and its commits stay local until §12.
@@ -903,27 +984,130 @@ It touches no pinned file. Then, in a clean clone of that commit:
 
 ## A. Abort paths
 
+A state is **SETTLED** when every writing send so far is RESOLVED (§0.7).
+Only a settled state can lead anywhere but STOP-and-review.
+
+### A.0 An UNRESOLVED writing send (P1, P2-*, RB-*) — UO-1
+
+Whatever the step:
+1. **No retry, and no recovery.** Nothing is sent to the database but the
+   diagnostics below. The migration is **STOP-and-review**.
+2. **STATE, as a diagnostic only** (window R; re-sending an unresolved
+   STATE is allowed). It is recorded, and it decides nothing:
+   - **an unchanged prefix is recorded as UNKNOWN**, never as "did not
+     commit": the transaction may still be running, or may start later;
+   - **a committed marker for the attempted step** (its forward row, or its
+     `_rollback` row for an RB step) is positive evidence that the step
+     committed. It is recorded as such, and the migration is **still
+     STOP-and-review**;
+   - `STOP`, or any other combination, is recorded as it is.
+3. Claude also records, ad hoc, LEDGER and CATALOG as they stand. They are
+   diagnostics too.
+4. **The counter stays closed**, unless §A.0.1, a decision for Codex,
+   allows it to re-open.
+5. Then §9 (tokens deleted), and the plan record (§A.4).
+   - When §A.0.1 is followed, the read token is kept until its fresh STATE
+     (step 3) has been read, and §9 comes after that.
+   - The write token is never used again after an UNRESOLVED writing send.
+     It may be deleted at once.
+
+#### A.0.1 DECISION FOR CODEX — BC: business continuity after an UNRESOLVED stop
+
+**Proposed.** The counter may re-open after an UNRESOLVED stop, while the
+migration stays STOP-and-review, only when all of these hold, in this order:
+1. **Wait out every bound.** Wait until at least **210 s after the send's
+   `startedAt`**:
+   - 150 s is the sender's client limit, plus a 60 s margin;
+   - that is past every server bound: P2/RB `transaction_timeout` 45 s, P1
+     110 s, and `idle_in_transaction_session_timeout` 10 s;
+   - with no results file, measure from the time Ryan started the command, as
+     he reports it.
+2. **STAGE0-BACKENDS**, a fresh read-only check by Claude (ad-hoc
+   `execute_sql`, text below). It must show:
+   - `stage0_backends 0`: no backend whose `application_name` is
+     `release2-stage0-%`;
+   - `employees_locks 0`: no lock held or awaited on `public.employees`.
+
+   Anything else means waiting further and checking again: a read, not a
+   retry. A backend that does not go away is a reason to keep the counter
+   closed and escalate. A cancel is not used (§R 6).
+3. **A fresh diagnostic STATE** (window R), recorded. It decides nothing
+   (§A.0).
+4. **Tokens deleted** (§9).
+5. **Ryan's legacy smoke test passes** (§8).
+
+```sql
+select (select count(*) from pg_stat_activity a
+         where a.application_name like 'release2-stage0-%' and a.pid <> pg_backend_pid()) as stage0_backends,
+       (select coalesce(json_agg(json_build_object('pid', a.pid, 'application_name', a.application_name,
+                                                   'state', a.state, 'xact_start', a.xact_start) order by a.pid), '[]'::json)
+          from pg_stat_activity a
+         where a.application_name like 'release2-stage0-%' and a.pid <> pg_backend_pid()) as stage0_rows,
+       (select count(*) from pg_locks l
+         where l.relation = 'public.employees'::regclass and l.pid <> pg_backend_pid()) as employees_locks,
+       now() as read_at;
+```
+
+**Which caller can see those rows.** The question is whether the read token
+can see them.
+- **In PostgreSQL itself:**
+  - `pg_stat_activity` shows every backend's `pid` and `application_name` to
+    every role;
+  - columns such as `state`, `xact_start` and `backend_start` are shown only
+    for sessions of a role whose privileges the caller has, or to members of
+    `pg_read_all_stats`. Otherwise they read as null or
+    `<insufficient privilege>`;
+  - `pg_locks` is not filtered by role.
+
+  So the existence check above needs no special privilege.
+- **The read token cannot be used for it, as things stand:**
+  - the sender sends only pinned texts;
+  - the only pinned text that reads `pg_stat_activity` and `pg_locks` is
+    CANCEL-INSPECT, which the send policy (M-12) fixes at `read_only false`,
+    and §E1 assigns it to the write token;
+  - what the Management API's `read_only` role sees of other sessions has not
+    been observed on production;
+  - a new read-only pinned text would be a pin change, which this round
+    excludes.
+- **What can:** Claude's ad-hoc `execute_sql`.
+  - It runs as `postgres` (§E8 N6), through the same `/database/query`
+    endpoint that the sender's writing texts use.
+  - On staging (§E8, N5 2c), an `execute_sql` session found another session
+    by its `application_name` and saw its AccessExclusiveLock.
+  - The text above was run in the local PG 17 harness, where it parsed and
+    returned `0 / [] / 0`.
+- **What it cannot exclude:** a request that the API still holds and starts
+  only later. The check is evidence at the time it runs. The API's own bound
+  on that has not been observed, which is why step 1 waits first.
+
 ### A.1 Where it stops, and what follows
+
+Every row below assumes the send was RESOLVED, except where it says UNRESOLVED.
+The counter re-opens only after §9's token cleanup too.
 
 | stop | database | what is sent next | counter |
 |---|---|---|---|
-| before §5 (§1–§4: identifiers, tokens, P0₀ ≠ §E10) | unchanged | nothing | re-opens; nothing happened |
-| P1 refused, failed or no response; or 5.3/5.4 differs | unchanged: P1 always ends in `ROLLBACK`, an error or a lost connection rolls it back, and P1 holds no lock afterwards | P0 (R) must equal P0₀; STATE `00` | re-opens after that P0 and the smoke test (§8) |
-| 5.5 STATE fails | unchanged | nothing | re-opens after the smoke test |
-| P2-01 stopped, STATE `""` / `00` | unchanged | P0 (R) = P0₀ | re-opens after that P0 and the smoke test |
-| **P2 stopped with prefix 01, 01–02 or 01–04; or §8 fails after a complete P2** | a reviewed prefix, with read-backs as §0.7 for it | **decision D-P2 (A.2)** | **D-P2** |
+| before §5 (§1–§4: identifiers, tokens, P0₀ ≠ §E10) | unchanged | nothing | re-opens after §9; nothing happened |
+| P1 RESOLVED as a SQL error (or refused with a PostgreSQL error); or 5.3/5.4 differs | unchanged: P1 contains no `COMMIT`, ends in `ROLLBACK`, and an error aborts it. The server responded, so the transaction has ended and its locks are released | P0 (R) must equal P0₀ (REQUIRED); STATE `00` | re-opens after that P0, the smoke test (§8) and §9 |
+| **P1 UNRESOLVED** (`HTTP none`, no results file, any other status or body) | **no data change is possible** (no `COMMIT` in P1), **but an early client failure is not proof that P1's server-side work and its ACCESS EXCLUSIVE lock on `employees` have ended** | §A.0 only: diagnostics, no P2 | closed, unless §A.0.1 (BC) is accepted and met |
+| 5.5 STATE fails | unchanged | nothing | re-opens after the smoke test and §9 |
+| P2-01 RESOLVED as a SQL error, or not started by its latest start (§B); STATE `""` / `00` | unchanged (SETTLED) | P0 (R) = P0₀ (REQUIRED) | re-opens after that P0, the smoke test and §9 |
+| **P2 stopped at a settled prefix 01, 01–02 or 01–04**: a SQL error, a deviation after a `201`, or the next step not started by its latest start; **or §8 fails after a complete P2** | a reviewed prefix, with read-backs as §0.7 for it | **D-P2 = Option A (A.2)** | after the recovery's P0 re-check, the smoke test and §9 (A.2 point 6) |
+| **any writing send UNRESOLVED** (P2-*, RB-*) | **UNKNOWN** | §A.0 only: diagnostics, no retry, no recovery | closed, unless §A.0.1 (BC) is accepted and met |
 | any read-back that STATE does not explain: STATE `STOP`, `ledger_md5_ok false`, a LEDGER/CATALOG difference for the prefix STATE names, or §7.2's fingerprint | not a reviewed state | only reads (STATE, P0, LEDGER, CATALOG, R2COUNTS, CONSUMERS), then §9 | stays closed until review. Ryan may re-open after the smoke test passes, and records why |
-| §11 only: a repository record is red, or `stage0-record.mjs` refuses, but §7 and §8 passed | A2, verified | nothing; no push, and the red or refused record stays local for review | already open (§10). It is a record problem, not production's |
+| §11 only: a repository record is red, or `stage0-record.mjs` refuses, but §7, §8 and §9 passed | A2, verified | nothing; no push, and the red or refused record stays local for review | already open (§10). It is a record problem, not production's |
 
 Every path runs §9. Then come the records (§A.4).
 
-### A.2 DECISION FOR CODEX — D-P2: a partial P2 inside the window
+### A.2 D-P2: a partial P2 inside the window — RULED: Option A, for SETTLED prefixes
 
-When P2 stops at a prefix STATE recognizes, and every read-back of that
-prefix matches §0.7, may the window run the recovery STATE returns, or is
-every partial state STOP-and-review?
+When P2 stops at a SETTLED prefix that STATE recognizes, and every read-back
+of that prefix matches §0.7, the window runs the recovery STATE returns.
+Codex accepted Option A for settled recognized prefixes, with the conditions
+below. A prefix reached through an UNRESOLVED send is never recovered in the
+window (§A.0).
 
-**Option A — pre-authorized in-window recovery (Ryan's position, §R 1).**
+**Option A — in-window recovery (accepted).**
 Ryan sends exactly the sequence STATE returns, one operation at a time, from
 window W. Before each operation:
 - Claude states the operation, its md5 and bytes (§0.7), and the
@@ -934,6 +1118,8 @@ window W. Before each operation:
 
 **All** of these must hold, checked by Claude just before the first
 operation, with STATE re-read before each later one:
+0. **The state is SETTLED:** every writing send so far, the recovery's own
+   included, is RESOLVED (§0.7).
 1. STATE returns a `recovery` sequence (not `STOP`), with
    `ledger_md5_ok true`, and LEDGER and CATALOG match that prefix exactly.
 2. **The Release 2 tables are empty:** R2COUNTS all 0. RB-1's own guard also
@@ -946,12 +1132,21 @@ operation, with STATE re-read before each later one:
 4. P1 passed in this same window. So each RB wrapper body already ran against
    production's catalog in this window, and P1's section 4 proved the result
    equal to the pre-state, row for row.
-5. **Each operation is sent at most once.**
-   - A non-201 or lost response → STATE.
-   - If STATE names the same operation again, it did not commit: STOP.
-   - If STATE names the next operation, it committed: continue after the
-     read-backs.
-6. **At the end, the P0 re-check (window R):**
+5. **Each operation is sent at most once**, and only if the reserve covers it
+   and its checks: **no RB operation starts after 20:05 EDT** (§B).
+   - **RESOLVED, `201`:** read back (§A.3), then the next operation, if any.
+   - **RESOLVED, as a SQL error:** the operation's transaction aborted, and
+     nothing of it committed.
+     - STATE then names the same operation again.
+     - That is a settled STOP-and-review. It is never re-sent.
+   - **UNRESOLVED:** §A.0.
+     - The recovery ends there: no further operation, and STATE only as a
+       diagnostic.
+     - If STATE shows the operation's `_rollback` row, that is evidence it
+       committed, and it is still STOP-and-review.
+   - A prefix left when the reserve ends is a settled prefix:
+     STOP-and-review.
+6. **At the end, the P0 re-check (window R; REQUIRED after any recovery):**
    - STATE shows `""` / `00` / `none — nothing is applied`;
    - **the schema equals the baseline:** P0-S identical to P0₀, column by
      column (`catalog_fingerprint` `8b3c9eadf9eb8a98cb8cc6dca996663e`
@@ -963,7 +1158,7 @@ operation, with STATE re-read before each later one:
      - `ledger_head` = the last rollback row;
      - `ledger_matches_repo false`;
      - LEDGER lists the k forward rows, then the k rollback rows, in RB order;
-   - then the smoke test (§8), and the counter re-opens (§10).
+   - then the smoke test (§8) and §9, and the counter re-opens (§10).
 
    The repository record (§A.4) follows with the counter open: the database is
    back at the reviewed pre-window state. A failed P0 re-check is STOP-and-review,
@@ -986,7 +1181,8 @@ Why A:
   recovery in a later window, with the same texts, after an overnight
   intermediate state and a second pair of tokens.
 
-**Option B — every partial state is STOP-and-review.**
+**Option B — every partial state is STOP-and-review (not chosen; kept for
+the record).**
 - After STATE, only reads are sent; then §9.
 - The database stays at the prefix until review decides, for a later window.
 - Every reviewed prefix is inert for the legacy app:
@@ -997,14 +1193,18 @@ Why A:
   recorded.
 
 **Under both options:**
-- anything A.1's last row names is STOP-and-review;
+- an UNRESOLVED writing send is §A.0, never a recovery;
+- anything A.1's "STATE does not explain" row names is STOP-and-review;
 - continuing forward after a stopped step is not offered (plan §E4);
 - if the smoke test still fails after a full recovery, the cause is not
   Release 2: STOP, and it becomes an incident outside this runbook.
 
-### A.3 The in-window recovery (only if D-P2 = A)
+### A.3 The in-window recovery (D-P2 = A, SETTLED prefixes only)
 
-For each operation STATE names, in order:
+For each operation STATE names, in order. Step c's V-FILE classifies the
+send first:
+- an UNRESOLVED send ends the recovery: §A.0, and A.2 point 5;
+- a send RESOLVED as a SQL error is a settled STOP-and-review.
 
 | | who | what | expected |
 |---|---|---|---|
@@ -1018,9 +1218,16 @@ Then point 6 of A.2.
 ### A.4 The repository record after a stop
 
 - **Nothing applied:** the plan record only.
-- **A prefix left applied (D-P2 = B):**
-  - §11's per-step commits for the steps that committed;
+- **A settled prefix left applied** (the reserve ended, a recovery operation
+  was refused, or a P0 re-check failed):
+  - §11's per-step commits for the steps that committed and were read back;
   - each needs its own snapshot (§6 h).
+- **After an UNRESOLVED stop (§A.0):**
+  - §11's per-step commits only for the earlier steps that were RESOLVED,
+    passed, and were read back;
+  - **none for the unresolved step**, whatever the diagnostic STATE showed;
+  - the plan record states its outcome as UNKNOWN, or as committed-by-marker,
+    until review decides.
 - **After a recovery:**
   - §11's per-step commits for the forward steps;
   - then one commit per RB operation, RB-43's two records together (M-8):
@@ -1056,14 +1263,35 @@ Then point 6 of A.2.
 | 11 | 4 + 1 record commits, a full suite on each (about 5 min, measured), build | C | 35 (counter open) | — |
 | 12 | push and staging check | C + R | 10 | — |
 
-- **To the counter's re-opening: about 1 h 30 min** (§2–§9), so
-  17:00–18:30 EDT, with a reserve to 19:00.
-- **With an in-window recovery (D-P2 = A):** about 45 min more, to about
-  19:45 EDT. That covers the preconditions, up to four operations at about
-  7 min each with Ryan's go before each, then the P0 re-check and the smoke
-  test.
-- **The repository record (§11)** then takes about 35 min with the counter
-  open: until about 19:40 EDT, or 20:25 after a recovery.
+**The approved window is 17:00–19:30 EDT, with the reserve to 20:15.**
+
+**Expected timeline:** §2–§4 by 17:25; P1 (§5) by 17:37; P2 (§6) by 18:05;
+§7 by 18:13; §8 by 18:23; §9 by 18:28. The counter re-opens at **about
+18:30**.
+
+**Latest starts.** A forward step starts only if the remaining window covers
+its bounded execution plus its checks. The bounded execution is the sender's
+150 s client limit, which is above every server bound.
+
+| step | needs, from its start | latest start (EDT) |
+|---|---|---|
+| P1 | §5 (12 min), plus all of §6 (28) and §7 (8): P1 is useful only if P2 can follow it in the window, because E0 requires P1 again after a day | **18:40** |
+| P2-01, P2-02, P2-0304 | 150 s, plus about 6 min of checks (§6 c–h) | **19:20** |
+| P2-05 | the same, plus §7 (8 min) | **19:10** |
+| an RB operation (§A.2, the reserve) | 150 s, plus about 5 min of checks (§A.3) | **20:05** |
+
+- A forward step not started by its time is not started. The window then
+  ends with a SETTLED prefix (§A.1, §A.2).
+- **After a stop, the reserve (to 20:15) covers:**
+  - a recovery: up to four RB operations at about 7 min each, with Ryan's go
+    before each;
+  - or §A.0.1's wait (3½ min) and checks;
+  - then the P0 re-check, the smoke test and §9.
+
+  Those last three may finish after 20:15. They change nothing in the
+  database.
+- **The repository record (§11)** takes about 35 min, with the counter open,
+  and may finish after the window: about 19:05 on the expected timeline.
 
 ---
 
@@ -1084,8 +1312,15 @@ Then point 6 of A.2.
 
 **§E12 — P2**, one row per step:
 
-| step | sent → finished (UTC) | HTTP / body | STATE | ledger row(s): version — md5 / bytes | catalog | R2COUNTS | snapshot `ledgerVersion` |
-|---|---|---|---|---|---|---|---|
+| step | sent → finished (UTC) | RESOLVED / UNRESOLVED (§0.7) | HTTP / body | STATE | ledger row(s): version — md5 / bytes | catalog | R2COUNTS | snapshot `ledgerVersion` |
+|---|---|---|---|---|---|---|---|---|
+
+Every send, P1's and every RB's included, is recorded as RESOLVED or
+UNRESOLVED. After an UNRESOLVED stop, the record also holds:
+- §A.0's diagnostics: STATE, with an unchanged prefix written as UNKNOWN;
+  LEDGER; CATALOG;
+- if §A.0.1 is followed: the wait's start and end, each STAGE0-BACKENDS
+  read, the fresh STATE, the token deletion and the smoke test.
 
 **§E13 — P3:**
 - A2 (CATALOG);

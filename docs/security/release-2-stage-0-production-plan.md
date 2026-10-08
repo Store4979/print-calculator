@@ -294,6 +294,19 @@ by hand. STATE selects the sequence. Each RB operation's own guards still
 re-check the full A1a state (tables, constraint, bodies, ACLs) before it
 changes anything.
 
+**Narrowed by UO-1 (Codex, review of `33c66f5`;
+`docs/security/stage0-p1-p3-runbook.md` §0.7 and §A.0).** STATE selects a
+recovery only for a SETTLED state, where every writing send got a server
+response (a success or a SQL error).
+- After an UNRESOLVED writing send (no response, a client timeout, a network
+  error, or any response that is neither), the server may still be running
+  the text, or may start it later.
+- STATE is then read only as a diagnostic, and an unchanged prefix is
+  recorded as UNKNOWN.
+- There is no retry and no recovery: STOP-and-review.
+- The paragraph above, and "Unknown outcomes" in §E1 and §E4, apply only
+  within that limit.
+
 **A7. The manifest is REQUIRED (F5 ruling 1).**
 `docs/security/stage0-production-manifest.json` holds:
 - A1 (paths, blob ids, md5, bytes);
@@ -934,7 +947,8 @@ STATE's recovery table around them.
 - **Unknown outcomes.** The client timeout is 150 s, above P1's 110 s
   `transaction_timeout`. A timeout, a dropped connection or a missing
   response decides nothing: STATE (through the sender) is read back first, as
-  in §A6.
+  in §A6. After a WRITING send, that read is a diagnostic only, and the
+  outcome is STOP-and-review (UO-1, §A6).
 - **What `execute_sql` is still for.** Small **ad-hoc, unpinned, read-only**
   read-backs, such as C3's R2-PROBE count or a ledger row's md5. Each is
   labelled "ad-hoc (not pinned)" in the record. A decision that must rest
@@ -1099,8 +1113,9 @@ The ledger-row and catalog read-backs are ad-hoc and unpinned, so they may use
 decides.
 
 Anything else stops P2 at that step. So does a response that never arrives:
-STATE is read back first, and §A6's table names the recovery for the prefix
-it reports. F4 applies. The `git mv` of each file and its companion to the
+STATE is read back first. For a SETTLED state, §A6's table names the recovery
+for the prefix it reports, and F4 applies. A response that never arrives is
+not settled: STOP-and-review, with STATE as a diagnostic only (UO-1, §A6). The `git mv` of each file and its companion to the
 production-version name happens in the commit that records that read-back.
 For P2-0304 that is one commit for both.
 
@@ -2335,13 +2350,23 @@ until approved:**
        pending, each P2 record, fully applied, each RB record, and the
        recovery from every shorter prefix. The results are in the runbook's
        §PRE-0.
-   - **Ryan's positions, for Codex to rule on (runbook §R):**
-     - D-P2 = Option A, the in-window recovery, with Ryan's explicit "go"
-       before each RB step and a P0 re-check after it (schema = baseline,
-       ledger appended);
-     - the counter re-opens after the database read-back and the legacy smoke
-       test, with the repository record following;
-     - no second-session cancel.
+   - **Codex's review of `33c66f5` (AMEND, one blocker):**
+     - **Accepted:**
+       - the window: Sunday 2026-10-11, 17:00–19:30 EDT, reserve to 20:15;
+       - the token split;
+       - D-P2 = Option A for SETTLED recognized prefixes;
+       - P0 REQUIRED at window start, after P1 and after any recovery;
+       - re-opening after the database read-back, the smoke test and token
+         cleanup;
+       - no second-session cancel;
+       - PRE-0.
+     - **UO-1 is fixed in the runbook** (§0.7, §A.0; §A6 above notes the
+       narrowing). A writing send without a server response is
+       STOP-and-review: no retry, no recovery, STATE diagnostic only.
+     - **Open for Codex: BC** (runbook §A.0.1). It proposes when the counter
+       may re-open after an UNRESOLVED stop while the migration stays
+       STOP-and-review: a 210 s wait, an ad-hoc STAGE0-BACKENDS check, a
+       diagnostic STATE, token cleanup, and the smoke test.
 3. P5 (C5), after P4 and before P6 (C10), from the reviewed C5 runbook.
 
 ---

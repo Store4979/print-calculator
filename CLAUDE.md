@@ -338,10 +338,18 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     P2-01, P2-02, P2-0304 (one transaction, two ledger rows one second
     apart), P2-05. The repo records P2-0304 and RB-43 as ONE commit each, and
     M-8 fails if 03/04 are recorded apart. P1 alone visits "after 03", inside
-    a savepoint. After any unknown outcome (lost response, dropped
-    connection), run the pinned read-only STATE text FIRST. It names the
-    committed prefix and the one reviewed recovery, or STOP. Never pick an
-    operation from memory.
+    a savepoint. After a stop, run the pinned read-only STATE text FIRST.
+    For a SETTLED state, where every writing send got a server response (201
+    or a SQL-error body), it names the committed prefix and the one
+    reviewed recovery, or STOP. An UNRESOLVED writing send means no
+    response: a client timeout, a network error, or any other status or
+    body. It is STOP-and-review (UO-1):
+    - no retry and no recovery;
+    - STATE is a diagnostic only, and an unchanged prefix is UNKNOWN, never
+      "did not commit";
+    - an early client failure does not prove the server-side transaction, or
+      its employees lock, has ended.
+    Never pick an operation from memory.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only
