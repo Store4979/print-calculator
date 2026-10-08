@@ -1,14 +1,16 @@
 # Stage 0 — P1 to P3 on production: runbook
 
-**Status: DRAFT. It needs review before use, and nothing below has run.**
-- Codex's review of `33c66f5` accepted the window, the token split, D-P2 =
-  Option A for SETTLED prefixes, the required P0 re-runs, the re-opening
-  rule, the no-cancel position, and PRE-0 (§R).
-- This revision fixes the one blocker, UO-1 (unresolved sends, §0.7 and
-  §A.0), and puts one new decision to Codex: BC, business continuity after
-  an unresolved stop (§A.0.1).
-- Blocker PRE-0 is resolved in the repository, and the record replay shows it
-  green at every state (§PRE-0).
+**Status: APPROVED by Codex (review of `0bbf598`) for Sunday 2026-10-11 from
+17:00 EDT, with BC REJECTED. Nothing below has run yet.**
+- This revision makes the four docs-only edits that approval required:
+  - §0.7: the classification precedence;
+  - §A.0.1: BC rejected, with its consequence;
+  - §B: which closing steps touch the database;
+  - the time rule (header, §B).
+- **The pre-window suite and the 15-state record replay run at this head**
+  (§1.2).
+- Earlier rulings, from the reviews of `33c66f5` and `0bbf598`, are in §R.
+- Blocker PRE-0 is resolved in the repository (§PRE-0).
 
 It turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
 **production**:
@@ -18,25 +20,34 @@ It turns plan §E0–E5 (with §A6, F4 and E6) into one ordered window on
 It follows the C3 runbook's step style (`docs/security/stage0-c3-runbook.md`)
 and the C5 draft's paste checks (`docs/security/stage0-c5-runbook.md` §0.2).
 
-**Window (accepted): Sunday 2026-10-11, 17:00–19:30 EDT (21:00–23:30Z),
+**Window (approved): Sunday 2026-10-11, 17:00–19:30 EDT (21:00–23:30Z),
 reserve to 20:15 EDT.** #4979 is closed on Sundays, and the owner is present.
 - **Expected:** §2–§9 take about 1 h 30 min, so the database part ends about
   18:30.
-- **No forward step starts unless the remaining window covers its bounded
-  execution plus its checks** (§B):
-  - P1 by 18:40;
-  - P2-01, P2-02 and P2-0304 by 19:20;
-  - P2-05 by 19:10.
-- **The reserve (to 20:15)** is for what a stop needs:
-  - STATE and the diagnostics;
-  - an in-window recovery under D-P2 (no RB operation starts after 20:05);
-  - §A.0.1's wait and checks;
-  - the P0 re-check, the smoke test and §9.
+- **The time rule (§B).** Before ANY forward or RB step, the remaining time
+  to **20:15** must cover the WHOLE remaining required path:
+  - the step itself, with its checks;
+  - the full recovery sequence it could leave behind;
+  - the final P0 and read-backs;
+  - the smoke test and token cleanup.
+
+  The latest-start times are ceilings only:
+  - P1 18:40;
+  - P2-01, P2-02 and P2-0304 19:20;
+  - P2-05 19:10;
+  - RB 20:05.
+
+  The path rule usually binds earlier. **Out of time means no more writes are
+  started.**
 - **The repository record (§11)** may finish after the window, with the
   counter open.
 
 A STOP leaves the evening and the night for review before Monday's opening.
 E0 keeps the counter closed for P1 and P2.
+- **After an UNRESOLVED writing send, the counter stays closed until a
+  separate reviewed incident decision** (§A.0.1, BC rejected).
+- If that decision is not made before Monday's opening, **the counter does
+  not open on Monday morning.**
 
 Each step is one of:
 - **RYAN** — an exact command or dashboard click-path. Ryan replies with the
@@ -50,7 +61,10 @@ Records go into plan §E11–E13 (template at the end).
 
 ---
 
-## §R — Rulings (Codex, review of `33c66f5`), and what is still open
+## §R — Rulings (Codex, reviews of `33c66f5` and `0bbf598`)
+
+**P1–P3 APPROVED (review of `0bbf598`)** for Sunday 2026-10-11 from 17:00 EDT,
+with the four edits this revision makes.
 
 **Accepted:**
 1. **The window:** Sunday 2026-10-11, 17:00–19:30 EDT, reserve to 20:15
@@ -75,17 +89,24 @@ Records go into plan §E11–E13 (template at the end).
 7. **PRE-0:** the fixture fix, the record tool, the replay and the race fix
    (§PRE-0).
 
-**Fixed in this revision: UO-1.**
-- A send is RESOLVED only with a server response: a success or a SQL error
-  (§0.7).
+**UO-1 (fixed at `0bbf598`, sharpened here).**
+- A send is RESOLVED only with a complete server response: the expected
+  success, or a recognized PostgreSQL error. Anything else is UNRESOLVED,
+  even with `httpStatus 201` (§0.7).
 - An UNRESOLVED writing send is STOP-and-review, with no retry and no
   recovery. STATE is only a diagnostic there, and an unchanged prefix is
   recorded as UNKNOWN (§A.0).
 
-**Open, for Codex to rule on: BC (§A.0.1).** It covers business continuity
-after an UNRESOLVED stop: when the counter may re-open while the migration
-stays STOP-and-review, and which caller can check for left-over stage-0
-backends and locks.
+**Rejected: BC (§A.0.1).** It proposed re-opening the counter after an
+UNRESOLVED stop. A request the Management API holds upstream may start later,
+so no wait and no read can show that it never will. After an UNRESOLVED
+writing send:
+- the counter stays closed;
+- the migration is STOP-and-review;
+- re-opening needs a separate reviewed incident decision.
+
+**The time rule (§B).** The whole remaining path must fit before 20:15, and
+out of time means no more writes are started.
 
 ---
 
@@ -457,26 +478,71 @@ LAST row-returning statement (plan §E8).
 | STATE | 201 | one row (table below) | local PG 17 |
 
 **Every send is RESOLVED or UNRESOLVED (UO-1).** Claude classifies each one
-from its results file (V-FILE) before anything else is decided.
-- **RESOLVED** means the sender recorded a server response that is one of:
-  - **success:** `httpStatus 201`;
-  - **a SQL error:** a `body` that reads
-    `Failed to run sql query: ERROR:  <SQLSTATE>: <message>`, or `FATAL:` for
-    a `transaction_timeout` that ended the session. That format was seen
-    through `execute_sql` in N5. The HTTP status of such a response has not
-    yet been observed through the sender, so the body decides, not the
-    status. An error or a FATAL aborts the text's transaction, so nothing of
-    it commits.
-- **UNRESOLVED** is everything else:
-  - `HTTP none | <error>`: the 150 s client timeout, a network error, an
-    aborted request;
-  - no results file at all (a dead window);
-  - any other status or body: a gateway error, an authentication refusal, a
-    rate limit, a page that is not a PostgreSQL error.
+from its results file (V-FILE) before anything else is decided. The rules
+apply **in this order of precedence**. The first that matches decides.
 
-  The server may have run the text, may still be running it, or may start
-  it later. An early client failure is NOT proof that the server-side work,
-  and its locks, have ended.
+1. **UNRESOLVED, whatever `httpStatus` says**, if any of these holds:
+   - **the results file is missing or unreadable:** no file (a dead window),
+     not valid JSON, or missing any of the sender's record fields (`text`,
+     `ref`, `readOnly`, `requestMd5`, `requestBytes`, `startedAt`,
+     `finishedAt`, `httpStatus`, `body`, `error`,
+     `tokenRedactedFromResponse`);
+   - **`error` is not null.** Any sender-side error counts: the 150 s client
+     timeout, a network error, an aborted request, a body that could not be
+     read.
+     - **Codex's mock is the case to remember:**
+       `{"httpStatus": 201, "body": null, "error": "TypeError: response body connection reset"}`
+       is **UNRESOLVED**.
+     - The sender records the status from the response headers before it
+       reads the body (`send()` in `scripts/manual/stage0-send.mjs`). So a
+       connection lost mid-body leaves a `201` with no body.
+   - **`body` is null, empty or incomplete:** it does not parse completely
+     as the expected JSON, and it is not a complete recognized PostgreSQL
+     error (rule 3);
+   - **`tokenRedactedFromResponse` is true.** That is also an immediate STOP
+     and a token deletion (V-FILE).
+2. **RESOLVED success** needs all of these:
+   - `httpStatus 201`;
+   - `error null`;
+   - a complete `body`;
+   - and that body is **V-FILE's expected body** for the text:
+
+   | text | expected body (exactly) |
+   |---|---|
+   | P2-01, P2-02, P2-0304, P2-05, RB-* | `[{"set_config":"45s"}]` |
+   | P1 | 45 rows `{n, what}`. §5.3's command prints its expected line exactly: status, ref, read_only, md5, bytes, count and digest |
+   | P0 | an array of exactly one object with exactly the 26 named columns of §4. Their VALUES are §4, §5.4 and §7.2's comparison, where a difference is STOP |
+   | STATE | an array of exactly one object with exactly `effective_prefix`, `ledger_md5_ok`, `catalog_state`, `ledger_rows`, `recovery`. Their values are read against §0.7's STATE table |
+3. **RESOLVED SQL error** needs all of these:
+   - `error null`;
+   - `httpStatus` not 201;
+   - a **complete, recognized PostgreSQL error response**: the whole `body`,
+     or the `message` string of a `body` that is a JSON object, matches
+     exactly:
+
+     ```text
+     ^Failed to run sql query: (ERROR|FATAL):  [0-9A-Z]{5}: .+$
+     ```
+
+     That is the prefix, the severity, two spaces, a five-character SQLSTATE
+     and a colon. N5 saw this format through `execute_sql`. Its raw shape
+     through the sender has not yet been observed, so a body that does not
+     match exactly is not recognized.
+   - **Gateway text that merely contains "ERROR" is NOT a SQL error.** That
+     includes a proxy page, an HTML error, or a JSON error without that
+     message.
+
+   An ERROR or a FATAL aborts the text's transaction, so nothing of it
+   commits.
+4. **UNRESOLVED:** everything else. That includes:
+   - a `201` with any other body;
+   - any other status: a gateway error, an authentication refusal, a rate
+     limit.
+
+**What UNRESOLVED means.** The server may have run the text, may still be
+running it, or may start it later. A request the API holds upstream may start
+after the client has given up. An early client failure is NOT proof that the
+server-side work, and its locks, have ended.
 - **What follows:**
   - An unresolved READ (P0, STATE) changes nothing and proves nothing. It
     may be sent again, and both sends are recorded.
@@ -709,8 +775,10 @@ These values become **P0₀**, the baseline for §5.4 and §A.
 
 Bound: P1's `transaction_timeout` 110 s. Do nothing in window W until the
 sender prints its result (at most 150 s).
-- **Start no later than 18:40 EDT** (§B): P1 is useful only if P2 and §7 can
-  follow it inside the window.
+- **The time rule (§B) is applied before sending.** P1's ceiling is 18:40
+  EDT, because P1 is useful only if P2 and §7 can follow it inside the
+  window. And the remaining path (§5, the smoke test, §9) must fit before
+  20:15.
 - **An UNRESOLVED P1** (§0.7) goes to §A.0. P1 contains no `COMMIT`, so it
   cannot change data. But a client failure does not show that its ACCESS
   EXCLUSIVE lock on `employees` has been released.
@@ -734,8 +802,10 @@ Section 1b's `S1.0` and `S1.3` (03 alone, its 42702) run inside the savepoint
 that P1 rolls back, so their rows go with it. Their absence is expected: a
 failure there would have aborted P1.
 
-On a difference, Claude lists the missing and extra ids. Any difference is
-STOP.
+On a difference, Claude lists the missing and extra ids. Any difference
+means this is not V-FILE's expected body, so the send is not a RESOLVED
+success. Unless it is a recognized SQL error (§0.7 rule 3), it is UNRESOLVED:
+§A.0, and the counter stays closed.
 
 **5.4 RYAN — P0 again (window R; REQUIRED after P1).** → **V-WIN**, **V-SEND**.
 **CLAUDE:** → **V-FILE**. **All 26 columns identical to P0₀**, `free_pins`
@@ -784,18 +854,25 @@ LEDGER rows, 04's one second after 03's.
 **6.4 P2-05** (05: the revoke function). → state **05**, recovery
 `RB-5, RB-43, RB-2, RB-1`.
 
-**Latest starts (§B).** A step starts only if the remaining window covers its
-bounded execution (150 s, the client limit, above the 45 s server bound) and
-its checks (about 6 min):
+**The time rule (§B), before every step.** Claude states three things:
+- the time now;
+- the remaining required path if this step is sent: the step and its checks,
+  the full recovery it could leave, the final P0 and read-backs, the smoke
+  test and §9;
+- whether that path fits before **20:15 EDT**.
+
+The step is sent only if it fits AND the step's ceiling has not passed:
 - P2-01, P2-02, P2-0304: **19:20 EDT**;
 - P2-05: **19:10 EDT**, because its checks include §7.
 
-A step not started by then is not started. The window then ends with a SETTLED
-prefix (§A.1).
+The ceilings are only ceilings. On the budgeted times, the path rule binds
+earlier for P2-0304 (19:17) and P2-05 (19:08). A step that does not fit is not
+started: out of time means no more writes are started. The window then ends
+with a SETTLED prefix (§A.1).
 
 **A step that does not pass.** First, V-FILE classifies the send (§0.7).
-- **RESOLVED, as a SQL error,** or a `201` whose body or read-backs (b–h)
-  differ:
+- **RESOLVED, as a SQL error,** or a RESOLVED success (a complete `201` with
+  exactly the expected body) whose later read-backs (c–h) differ:
   1. **STATE first** (window R), before anything else is chosen (plan §A6,
      E4). If window R is gone, create a replacement read token (§3.2) for
      it.
@@ -803,8 +880,9 @@ prefix (§A.1).
      stopped step is not offered (plan §E4).
   3. §A.1 and §A.2 apply to the prefix STATE reports. It is SETTLED: every
      writing send so far has a server response.
-- **UNRESOLVED** (`HTTP none`, no results file, any other status or body):
-  §A.0. STOP-and-review, with no retry and no recovery. STATE is read only
+- **UNRESOLVED** (§0.7's precedence): a sender-side `error`, even with
+  `201`; no results file, or an unreadable one; an incomplete body; a `201`
+  with any other body; any other status or body. That is §A.0. STOP-and-review, with no retry and no recovery. STATE is read only
   as a diagnostic, and an unchanged prefix is recorded as **UNKNOWN**, never
   as "did not commit".
 
@@ -856,6 +934,10 @@ prefix (§A.1).
 
 ## 8. RYAN — the legacy smoke test (the counter is still closed)
 
+This step **writes one real order** (`STAGE0 SMOKE`). That is authorized as
+part of this runbook. It is the one intended database write outside the
+pinned texts (§B).
+
 On a counter PC, at `https://printcalculator2.netlify.app` (hard refresh
 first):
 1. **PIN sign-in** with a real staff PIN → signed in. This is the
@@ -894,8 +976,9 @@ Only after all three of these. Report the time.
 - **§8** passed: the legacy smoke test.
 - **§9** is done: both tokens deleted, and none listed.
 
-On a stop, §A.1's counter column says when, and after an UNRESOLVED stop,
-§A.0.1.
+On a stop, §A.1's counter column says when. After an UNRESOLVED writing
+send, the counter stays closed until a separate reviewed incident decision
+(§A.0.1).
 
 The repository record (§11) follows with the counter open. It touches only
 the repository, and its commits stay local until §12.
@@ -1001,40 +1084,50 @@ Whatever the step:
      committed. It is recorded as such, and the migration is **still
      STOP-and-review**;
    - `STOP`, or any other combination, is recorded as it is.
-3. Claude also records, ad hoc, LEDGER and CATALOG as they stand. They are
-   diagnostics too.
-4. **The counter stays closed**, unless §A.0.1, a decision for Codex,
-   allows it to re-open.
-5. Then §9 (tokens deleted), and the plan record (§A.4).
-   - When §A.0.1 is followed, the read token is kept until its fresh STATE
-     (step 3) has been read, and §9 comes after that.
+3. Claude also records, ad hoc and with their times, LEDGER, CATALOG and
+   STAGE0-BACKENDS (§A.0.1) as they stand. They are diagnostics too, and
+   material for the incident review.
+4. **The counter stays closed until a separate reviewed incident decision**
+   (§A.0.1: BC was rejected). No wait, read or smoke test in this window
+   re-opens it.
+5. Then §9 (both tokens deleted), and the plan record (§A.4).
    - The write token is never used again after an UNRESOLVED writing send.
-     It may be deleted at once.
+     It is deleted at once.
+   - The read token is deleted after the diagnostic STATE.
+   - The incident review creates new tokens if it needs any.
 
-#### A.0.1 DECISION FOR CODEX — BC: business continuity after an UNRESOLVED stop
+#### A.0.1 BC — REJECTED by Codex (review of `0bbf598`)
 
-**Proposed.** The counter may re-open after an UNRESOLVED stop, while the
-migration stays STOP-and-review, only when all of these hold, in this order:
-1. **Wait out every bound.** Wait until at least **210 s after the send's
-   `startedAt`**:
-   - 150 s is the sender's client limit, plus a 60 s margin;
-   - that is past every server bound: P2/RB `transaction_timeout` 45 s, P1
-     110 s, and `idle_in_transaction_session_timeout` 10 s;
-   - with no results file, measure from the time Ryan started the command, as
-     he reports it.
-2. **STAGE0-BACKENDS**, a fresh read-only check by Claude (ad-hoc
-   `execute_sql`, text below). It must show:
-   - `stage0_backends 0`: no backend whose `application_name` is
-     `release2-stage0-%`;
-   - `employees_locks 0`: no lock held or awaited on `public.employees`.
+**What was proposed.** After an UNRESOLVED stop, the counter would re-open,
+with the migration still STOP-and-review, after five steps:
+- a 210 s wait from the send's `startedAt`: the 150 s client limit, plus a
+  60 s margin past every server bound;
+- a fresh STAGE0-BACKENDS read showing no `release2-stage0-%` backend and no
+  lock on `public.employees`;
+- a fresh diagnostic STATE;
+- token cleanup;
+- Ryan's smoke test.
 
-   Anything else means waiting further and checking again: a read, not a
-   retry. A backend that does not go away is a reason to keep the counter
-   closed and escalate. A cancel is not used (§R 6).
-3. **A fresh diagnostic STATE** (window R), recorded. It decides nothing
-   (§A.0).
-4. **Tokens deleted** (§9).
-5. **Ryan's legacy smoke test passes** (§8).
+**Why it was rejected.** A request that the Management API holds upstream
+may start later. No wait and no read can show that an unresolved writing
+send will never run. So a clean STAGE0-BACKENDS read is evidence about one
+moment, not that the danger has passed.
+
+**The consequence. After an UNRESOLVED writing send:**
+- **the counter stays closed;**
+- the migration is STOP-and-review;
+- re-opening needs a **separate reviewed incident decision**.
+
+Nothing in this runbook makes that decision.
+
+**On Monday morning.** If the incident decision has not been made before
+Monday 2026-10-12's opening, **the counter does not open on Monday
+morning.** It stays closed until the decision is made. The window is on a
+Sunday evening so that the night is there for that review (header). Ryan
+plans the store's Monday accordingly.
+
+**STAGE0-BACKENDS** stays as an ad-hoc DIAGNOSTIC (§A.0 step 3): material
+for the incident review, never a re-opening rule.
 
 ```sql
 select (select count(*) from pg_stat_activity a
@@ -1077,8 +1170,9 @@ can see them.
   - The text above was run in the local PG 17 harness, where it parsed and
     returned `0 / [] / 0`.
 - **What it cannot exclude:** a request that the API still holds and starts
-  only later. The check is evidence at the time it runs. The API's own bound
-  on that has not been observed, which is why step 1 waits first.
+  only later. The check is evidence at the time it runs, and the API's own
+  bound on such a request has not been observed. That is Codex's reason for
+  rejecting BC.
 
 ### A.1 Where it stops, and what follows
 
@@ -1088,12 +1182,13 @@ The counter re-opens only after §9's token cleanup too.
 | stop | database | what is sent next | counter |
 |---|---|---|---|
 | before §5 (§1–§4: identifiers, tokens, P0₀ ≠ §E10) | unchanged | nothing | re-opens after §9; nothing happened |
-| P1 RESOLVED as a SQL error (or refused with a PostgreSQL error); or 5.3/5.4 differs | unchanged: P1 contains no `COMMIT`, ends in `ROLLBACK`, and an error aborts it. The server responded, so the transaction has ended and its locks are released | P0 (R) must equal P0₀ (REQUIRED); STATE `00` | re-opens after that P0, the smoke test (§8) and §9 |
-| **P1 UNRESOLVED** (`HTTP none`, no results file, any other status or body) | **no data change is possible** (no `COMMIT` in P1), **but an early client failure is not proof that P1's server-side work and its ACCESS EXCLUSIVE lock on `employees` have ended** | §A.0 only: diagnostics, no P2 | closed, unless §A.0.1 (BC) is accepted and met |
+| P1 RESOLVED as a SQL error (§0.7 rule 3); or a RESOLVED P1 (5.3 exact) followed by a 5.4 P0 that differs | unchanged: P1 contains no `COMMIT`, ends in `ROLLBACK`, and an error aborts it. The server responded, so the transaction has ended and its locks are released | P0 (R) must equal P0₀ (REQUIRED); STATE `00` | re-opens after that P0, the smoke test (§8) and §9 |
+| **P1 UNRESOLVED** (§0.7's precedence: a sender-side `error` even with `201`; no or an unreadable results file; an incomplete body; a `201` whose rows are not exactly 5.3's; any other status or body) | **no data change is possible** (no `COMMIT` in P1), **but an early client failure is not proof that P1's server-side work and its ACCESS EXCLUSIVE lock on `employees` have ended** | §A.0 only: diagnostics, no P2 | **closed until a separate reviewed incident decision** (§A.0.1: BC rejected). Monday morning stays closed without it |
 | 5.5 STATE fails | unchanged | nothing | re-opens after the smoke test and §9 |
 | P2-01 RESOLVED as a SQL error, or not started by its latest start (§B); STATE `""` / `00` | unchanged (SETTLED) | P0 (R) = P0₀ (REQUIRED) | re-opens after that P0, the smoke test and §9 |
-| **P2 stopped at a settled prefix 01, 01–02 or 01–04**: a SQL error, a deviation after a `201`, or the next step not started by its latest start; **or §8 fails after a complete P2** | a reviewed prefix, with read-backs as §0.7 for it | **D-P2 = Option A (A.2)** | after the recovery's P0 re-check, the smoke test and §9 (A.2 point 6) |
-| **any writing send UNRESOLVED** (P2-*, RB-*) | **UNKNOWN** | §A.0 only: diagnostics, no retry, no recovery | closed, unless §A.0.1 (BC) is accepted and met |
+| **P2 stopped at a settled prefix 01, 01–02 or 01–04**: a RESOLVED SQL error; or the next step not sent because the time rule (§B) left no room for it; **or §8 fails after a complete P2** | a reviewed prefix, with read-backs as §0.7 for it | **D-P2 = Option A (A.2)**, under the time rule | after the recovery's P0 re-check, the smoke test and §9 (A.2 point 6) |
+| **a recovery cut short by the time rule** (§B: no further RB operation fits before 20:15) | a settled, recognized prefix, still applied; nothing in flight (every write RESOLVED) | only reads: STATE, P0, LEDGER, CATALOG; then §9 | stays closed until review |
+| **any writing send UNRESOLVED** (P2-*, RB-*) | **UNKNOWN** | §A.0 only: diagnostics, no retry, no recovery | **closed until a separate reviewed incident decision** (§A.0.1: BC rejected). Monday morning stays closed without it |
 | any read-back that STATE does not explain: STATE `STOP`, `ledger_md5_ok false`, a LEDGER/CATALOG difference for the prefix STATE names, or §7.2's fingerprint | not a reviewed state | only reads (STATE, P0, LEDGER, CATALOG, R2COUNTS, CONSUMERS), then §9 | stays closed until review. Ryan may re-open after the smoke test passes, and records why |
 | §11 only: a repository record is red, or `stage0-record.mjs` refuses, but §7, §8 and §9 passed | A2, verified | nothing; no push, and the red or refused record stays local for review | already open (§10). It is a record problem, not production's |
 
@@ -1132,8 +1227,15 @@ operation, with STATE re-read before each later one:
 4. P1 passed in this same window. So each RB wrapper body already ran against
    production's catalog in this window, and P1's section 4 proved the result
    equal to the pre-state, row for row.
-5. **Each operation is sent at most once**, and only if the reserve covers it
-   and its checks: **no RB operation starts after 20:05 EDT** (§B).
+5. **Each operation is sent at most once**, and only under the time rule
+   (§B). Before each one, the time left to 20:15 must cover:
+   - every RB operation still to come, this one included;
+   - the final P0 and read-backs;
+   - the smoke test and §9.
+
+   The ceiling is 20:05, but the path rule binds earlier: for four
+   operations, by 19:20 on the budgeted times. **Out of time means no further
+   RB operation is started.**
    - **RESOLVED, `201`:** read back (§A.3), then the next operation, if any.
    - **RESOLVED, as a SQL error:** the operation's transaction aborted, and
      nothing of it committed.
@@ -1269,27 +1371,55 @@ Then point 6 of A.2.
 §7 by 18:13; §8 by 18:23; §9 by 18:28. The counter re-opens at **about
 18:30**.
 
-**Latest starts.** A forward step starts only if the remaining window covers
-its bounded execution plus its checks. The bounded execution is the sender's
-150 s client limit, which is above every server bound.
+**The time rule (Codex, review of `0bbf598`).** Before ANY forward or RB step,
+Claude computes **the WHOLE remaining required path** if that step is sent,
+and the step is sent only if the path ends by **20:15 EDT**:
+- the step itself, with its checks;
+- **the full recovery sequence** it could leave behind: the precondition
+  reads, then every RB operation for the prefix the step would reach;
+- the **final P0 and read-backs**;
+- the **smoke test** (§8);
+- **token cleanup** (§9).
 
-| step | needs, from its start | latest start (EDT) |
-|---|---|---|
-| P1 | §5 (12 min), plus all of §6 (28) and §7 (8): P1 is useful only if P2 can follow it in the window, because E0 requires P1 again after a day | **18:40** |
-| P2-01, P2-02, P2-0304 | 150 s, plus about 6 min of checks (§6 c–h) | **19:20** |
-| P2-05 | the same, plus §7 (8 min) | **19:10** |
-| an RB operation (§A.2, the reserve) | 150 s, plus about 5 min of checks (§A.3) | **20:05** |
+The ceilings in the table below are only ceilings. The step is not sent after
+its ceiling even when the path would fit. **Out of time means no more writes
+are started**: no forward step and no RB operation (§A.1's row for a recovery
+cut short).
 
-- A forward step not started by its time is not started. The window then
-  ends with a SETTLED prefix (§A.1, §A.2).
-- **After a stop, the reserve (to 20:15) covers:**
-  - a recovery: up to four RB operations at about 7 min each, with Ryan's go
-    before each;
-  - or §A.0.1's wait (3½ min) and checks;
-  - then the P0 re-check, the smoke test and §9.
+**The budget units.** They are the planning values. At the moment of
+deciding, Claude uses the larger of each unit and the slowest time actually
+seen for it in this window.
 
-  Those last three may finish after 20:15. They change nothing in the
-  database.
+| unit | minutes |
+|---|---|
+| a P2 step: send (150 s bound) and checks (§6 c–h) | 9 |
+| the recovery's precondition reads (STATE, R2COUNTS, CONSUMERS) | 3 |
+| one RB operation: Ryan's go, send (150 s bound) and checks (§A.3) | 9 |
+| the final P0 and read-backs (P0, LEDGER) | 4 |
+| the smoke test (§8) | 10 |
+| token cleanup (§9) | 5 |
+| §7, after P2-05 succeeds | 8 |
+
+**What each step needs, and its latest start, on the budgeted times:**
+
+| step | the whole remaining path if sent (min) | path rule: start by (EDT) | ceiling (EDT) | binding |
+|---|---|---|---|---|
+| P1 | §5 (12, its P0 included) + smoke 10 + §9 5 = 27 | 19:48 | 18:40: P1 is useful only if P2 and §7 can follow it in the window (E0) | **18:40** |
+| P2-01 | 9 + 3 + 1 RB × 9 + 4 + 10 + 5 = 40 | 19:35 | 19:20 | **19:20** |
+| P2-02 | 9 + 3 + 2 × 9 + 19 = 49 | 19:26 | 19:20 | **19:20** |
+| P2-0304 | 9 + 3 + 3 × 9 + 19 = 58 | **19:17** | 19:20 | **19:17** |
+| P2-05 | the larger of success (9 + 8 + 10 + 5 = 32) and unwind (9 + 3 + 4 × 9 + 19 = 67) = 67 | **19:08** | 19:10 | **19:08** |
+| an RB operation, with n operations left (this one included) | n × 9 + 4 + 10 + 5: 55 / 46 / 37 / 28 for n = 4 / 3 / 2 / 1 | 19:20 / 19:29 / 19:38 / 19:47 | 20:05 | **the path rule** |
+
+**Which closing steps touch the database:**
+- **the final P0** (§5.4, §7.2, A.2 point 6) is a pinned **read-only** text
+  (`read_only true`, the read token). It changes nothing;
+- **token cleanup** (§9) touches **no database**: it is environment variables
+  and the dashboard's token list;
+- **the legacy smoke test** (§8) **writes one real order**, `STAGE0 SMOKE`,
+  through the app's normal Save Order path. Ryan authorizes it as part of
+  this runbook. Its PIN sign-in reads `employees`, and its queue tab reads
+  the upload queue.
 - **The repository record (§11)** takes about 35 min, with the counter open,
   and may finish after the window: about 19:05 on the expected timeline.
 
@@ -1316,11 +1446,14 @@ its bounded execution plus its checks. The bounded execution is the sender's
 |---|---|---|---|---|---|---|---|---|
 
 Every send, P1's and every RB's included, is recorded as RESOLVED or
-UNRESOLVED. After an UNRESOLVED stop, the record also holds:
-- §A.0's diagnostics: STATE, with an unchanged prefix written as UNKNOWN;
-  LEDGER; CATALOG;
-- if §A.0.1 is followed: the wait's start and end, each STAGE0-BACKENDS
-  read, the fresh STATE, the token deletion and the smoke test.
+UNRESOLVED, by §0.7's precedence. The record quotes the `httpStatus`, the
+`error` and the body's completeness. After an UNRESOLVED stop, the record
+also holds:
+- §A.0's diagnostics, each with its time: STATE, with an unchanged prefix
+  written as UNKNOWN; LEDGER; CATALOG; STAGE0-BACKENDS;
+- the token deletion times;
+- that the counter stayed closed, pending the separate reviewed incident
+  decision (§A.0.1, BC rejected).
 
 **§E13 — P3:**
 - A2 (CATALOG);

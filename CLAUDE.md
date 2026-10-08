@@ -295,8 +295,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       disabled` count as revocation proof; `Invalid API key` is the
       malformed-key control. Each pushed record commit rebuilds staging once
       more.
-  - P1–P3 run in one window from docs/security/stage0-p1-p3-runbook.md (a
-    DRAFT until reviewed):
+  - P1–P3 run in one window from docs/security/stage0-p1-p3-runbook.md
+    (APPROVED by Codex at 0bbf598 for Sun 2026-10-11 from 17:00 EDT):
     - two windows, each with its own project-scoped token: window R holds the
       read token, for P0 and STATE; window W holds the write token, for P1,
       P2-* and RB-*;
@@ -341,15 +341,30 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     a savepoint. After a stop, run the pinned read-only STATE text FIRST.
     For a SETTLED state, where every writing send got a server response (201
     or a SQL-error body), it names the committed prefix and the one
-    reviewed recovery, or STOP. An UNRESOLVED writing send means no
-    response: a client timeout, a network error, or any other status or
-    body. It is STOP-and-review (UO-1):
+    reviewed recovery, or STOP. Classify every send by precedence (runbook
+    §0.7):
+    - UNRESOLVED first, whatever httpStatus says: a sender-side `error`, a
+      missing or unreadable results file, or an incomplete body. A `201`
+      with `error: "TypeError: response body connection reset"` and
+      `body: null` is UNRESOLVED;
+    - RESOLVED success needs a complete 201, `error null` and EXACTLY the
+      expected body;
+    - RESOLVED SQL error needs a complete, recognized
+      `Failed to run sql query: ERROR|FATAL:  <SQLSTATE>:` response. Gateway
+      text that merely contains "ERROR" is not one.
+    An UNRESOLVED writing send is STOP-and-review (UO-1):
     - no retry and no recovery;
     - STATE is a diagnostic only, and an unchanged prefix is UNKNOWN, never
       "did not commit";
     - an early client failure does not prove the server-side transaction, or
-      its employees lock, has ended.
-    Never pick an operation from memory.
+      its employees lock, has ended;
+    - the counter stays CLOSED until a separate reviewed incident decision.
+      BC was rejected: a request held upstream may start later, so no wait
+      or read re-opens it, and Monday morning stays closed without that
+      decision.
+    Before ANY forward or RB step, the whole remaining path must fit before
+    the reserve's end. Latest-start times are only ceilings. Out of time
+    means no more writes are started. Never pick an operation from memory.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only

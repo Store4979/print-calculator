@@ -2363,10 +2363,20 @@ until approved:**
      - **UO-1 is fixed in the runbook** (§0.7, §A.0; §A6 above notes the
        narrowing). A writing send without a server response is
        STOP-and-review: no retry, no recovery, STATE diagnostic only.
-     - **Open for Codex: BC** (runbook §A.0.1). It proposes when the counter
-       may re-open after an UNRESOLVED stop while the migration stays
-       STOP-and-review: a 210 s wait, an ad-hoc STAGE0-BACKENDS check, a
-       diagnostic STATE, token cleanup, and the smoke test.
+     - **BC was proposed** (runbook §A.0.1): re-opening the counter after an
+       UNRESOLVED stop.
+   - **Codex's review of `0bbf598`: P1–P3 APPROVED for Sunday 2026-10-11
+     from 17:00 EDT, with BC REJECTED.**
+     - The reason: a request held upstream may start later.
+     - So after an UNRESOLVED writing send, the counter stays closed until a
+       separate reviewed incident decision, Monday morning included.
+     - The runbook has the four required docs-only edits:
+       - §0.7's classification precedence: a sender-side error, a missing
+         result or an incomplete body is UNRESOLVED even with `201`;
+       - BC marked rejected;
+       - §B's note on which closing steps touch the database;
+       - the time rule: the whole remaining path must fit before 20:15.
+     - The pre-window suite and the 15-state replay run at that head.
 3. P5 (C5), after P4 and before P6 (C10), from the reviewed C5 runbook.
 
 ---
