@@ -192,9 +192,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - SECURITY RELEASE 2 is planned in docs/security/release-2-plan.md (slices 1–2 MERGED
   2026-09-15: the four endpoints ship DARK on production — the kill switch in
   netlify/lib/release2.js refuses on the production ref, observed for real —
-  and migrations 01–04 are applied to STAGING ONLY, in
-  supabase/migrations/pending/; production's database has nothing from
-  Release 2). It replaces the anon-key client paths with server-verifiable
+  and the Release 2 migrations were applied to STAGING first;
+  supabase/migrations/pending/ holds what production does NOT have.
+  Production's database holds ONLY 01 (release2_01_identity_schema, ledger
+  version 20261009151706, applied 2026-10-09 OUTSIDE its cleared window:
+  docs/security/stage0-incident-2026-10-09.md), recorded under
+  supabase/migrations/; 02–05 are not on production). It replaces the anon-key client paths with server-verifiable
   identity: owner-issued single-use pairing tickets -> revocable device
   enrollments -> opaque server-owned staff sessions (token HASHES only, in
   tables with RLS on and ZERO policies, reachable only by service_role). The
@@ -295,8 +298,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       disabled` count as revocation proof; `Invalid API key` is the
       malformed-key control. Each pushed record commit rebuilds staging once
       more.
-  - P1–P3 run in one window from docs/security/stage0-p1-p3-runbook.md
-    (APPROVED by Codex at 0bbf598 for Sun 2026-10-11 from 17:00 EDT):
+  - docs/security/stage0-p1-p3-runbook.md was approved at 7181b42 and
+    executed Thu 2026-10-08 to P1 PASS (plan §E11). It clears NO further
+    window: its P1 and P2-01 refuse over the applied 01. What it
+    established still holds:
     - two windows, each with its own project-scoped token: window R holds the
       read token, for P0 and STATE; window W holds the write token, for P1,
       P2-* and RB-*;
@@ -365,6 +370,42 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     Before ANY forward or RB step, the whole remaining path must fit before
     the reserve's end. Latest-start times are only ceilings. Out of time
     means no more writes are started. Never pick an operation from memory.
+- STAGE-0 INCIDENT, 2026-10-09 (docs/security/stage0-incident-2026-10-09.md;
+  Codex's incident review, 2026-10-12, is its Appendix A). NO production
+  migration window is cleared until Codex items 2, 3, 4(c) and 6 are
+  reviewed. The lessons:
+  - **Every pause ends the session.** Before stepping away or ending a
+    window: delete both tokens and close both windows (runbook §9). A
+    clearance never survives a stop, and no loaded production token stays
+    overnight. On 2026-10-08 the window lapsed right after P2-01's
+    clearance with §9 skipped. P2-01 was sent 13 h later from W, and then
+    again from R. A clearance message must state its own expiry, and must
+    never pair near-identical commands across two windows "back to back".
+  - **§0.7 rule 3's single-line regex rejected a real refusal.** A complete
+    DO-block guard refusal carries a `CONTEXT:` line (and a trailing `\n`),
+    and the regex failed it. Every P2/RB error after the `set_config`
+    preamble is raised inside PL/pgSQL (the guards AND `execute f`), so it
+    carries that line. The classifier fix, with a real-refusal fixture, is
+    Codex item 2.
+  - **A Database Read PAT is NOT refused by `/database/query` for a text
+    sent without `read_only`.** That is route access, not a write
+    boundary. That request logged in as `supabase_read_only_user`
+    (postgres_logs), which is supporting evidence only. Whether a Read PAT
+    can write is unverified until Codex item 3's staging experiment, and
+    until then the PAT split is never to be called server-enforced.
+  - **Successful Management API queries leave NO postgres_logs line on
+    production.** Only failures are logged, since pgaudit is not
+    configured. A log query can name a failed send's login role, never a
+    successful one's.
+  - **No rollback-then-re-apply path exists with the current texts.** RB-1
+    appends a `_rollback` ledger row and KEEPS the forward row, and P1 and
+    P2-01 refuse while it exists (Codex 4(b)). The record tool refuses a
+    forward step after rollback records. Never delete ledger history to
+    get round this.
+  - **This checkout is CRLF** (core.autocrlf=true in Git's SYSTEM config).
+    md5 a migration from its blob (`git cat-file blob <id>`), never from
+    the working-tree file. 01's working copy reads 13978 bytes; its blob
+    and the ledger read 13720.
 - RLS EVIDENCE STANDARD: report permissive mode, command, roles, USING and
   WITH CHECK separately, plus the table's RLS state AND its table-level grants.
   On an INSERT policy `qual` is null BY DEFINITION — WITH CHECK is the only

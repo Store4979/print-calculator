@@ -2129,6 +2129,94 @@ stays held.** Nothing was pushed until this record.
 - §E0's rule is unchanged: a gap of more than a day between P1 and P2 means
   P0 and P1 are re-run.
 
+**E11. The P1–P3 window, Thu 2026-10-08 — RECORD: window start and P1.**
+Codex's window amendment: ACCEPT, at H =
+`7181b42ce4cfe891ea0aa4a1f9adc70e29797d8e`, from T to T+2:30, with the
+reserve to T+3:15.
+- **The window:** Ryan recorded T = 20:00 EDT, so the normal end was 22:30
+  and the reserve end 23:15.
+- **Latest starts:** P1 21:40; P2-01 and P2-02 22:20; P2-0304 22:17; P2-05
+  22:08.
+- **Record-only overrides, the cleared checkout NOT edited:**
+  - Ryan's Thursday after-close confirmation replaced §2.1's Sunday
+    closure;
+  - the token names became `-20261008`;
+  - the unresolved-stop consequence moved to the Friday opening (Ryan
+    accepted);
+  - Codex's 7181b42 settled-prefix re-open ruling, for a solely time-forced
+    stop with every writing send RESOLVED (Ryan adopted).
+
+Every read-back below marked ad-hoc (not pinned) ran through the session's
+`execute_sql`.
+
+- **Pre-window §1.2** (Claude, 2026-10-07 22:25–22:56 EDT, at H):
+  - clean-clone `yarn test`: 374/374;
+  - the 15-state record replay: 374/374 at every state;
+  - the eleven dry runs: all 44 lines equal the manifest.
+- **§1.1** (Ryan, checked 20:20 EDT):
+  - branch `security/release-2-slice-2`;
+  - HEAD = H, and only `?? AGENTS.md`;
+  - `ls-remote` = H;
+  - the 44 dry-run lines equal the manifest.
+- **§1.3** (Ryan, 14:46 EDT): production → Integrations: GitHub NOT
+  connected; Vercel not installed.
+- **§2.1** (Ryan, 20:26 EDT): the counter closed for the whole window; no
+  staff signed in; nobody in the admin panel; the owner present.
+- **§2.2** (Ryan, read-only): the latest automatic backup was 2026-10-08
+  10:25:15 +0000; PITR off.
+- **§2.3** (Ryan, 20:46 EDT): the published deploy is
+  `6ab020c50a788b0008d430c9`, "Production: main@7ec5af4".
+  - The first report (20:28) had read PR #48's Deploy Preview row
+    (`6ab53d56…`).
+  - The ad-hoc diagnostics showed the live site serving exactly
+    `6ab020c5`'s files, with no deploy-context function.
+- **§2.4** (Claude, ad-hoc (not pinned), 20:59–21:00 EDT):
+  - `get_project_url` → `https://gmxyisjjaxtpycsmmzef.supabase.co`;
+  - CONSUMERS: four 404;
+  - LOCKS: 0 / 0;
+  - LEDGER: 20 rows, head `20260909232836`, no Release 2 row;
+  - CATALOG: state 00;
+  - TABLES-SNAPSHOT: equal to the committed capture, except `capturedAt`.
+- **§3, the tokens** (Ryan, ~21:02–21:25 EDT). Both are project-scoped to
+  `print-calculator` only and expire "in a day":
+  - **`stage0-p1p3-read-20261008`:** Database **READ**, in window
+    `STAGE0 R - read token`;
+  - **`stage0-p1p3-write-20261008`:** first created at Database READ.
+    V-SCOPE FAILED (not the cleared split). It was never used, and was
+    deleted. It was re-created at **Database READ-WRITE** ("High risk,
+    Read-write on 1 capability, across 1 project", 8 endpoints), in window
+    `STAGE0 W - write token`;
+  - both were pasted through the PS 5.1 `-AsSecureString` path with the
+    label unedited: 44 asterisks; `True` / `44`; V-HEAD = H in both windows;
+    V-CLIP.
+- **§4, P0₀** (window R), 2026-10-09 01:24:24.192Z → 01:24:27.895Z:
+  - `HTTP 201`, RESOLVED success;
+  - **26/26 columns equal to §E10:** `catalog_fingerprint
+    8b3c9eadf9eb8a98cb8cc6dca996663e`, 20 ledger rows, head
+    `20260909232836`, `free_pins 8999`, `server_version_num 170006`.
+- **§5.1, LOCKS** (ad-hoc, not pinned): 0 / 0.
+- **§5.2, P1** (window W), 01:30:25.743Z → 01:30:30.235Z:
+  - `HTTP 201`, RESOLVED success;
+  - §5.3 exactly: `201 gmxyisjjaxtpycsmmzef false
+    2546a4a45a79cb2ec8a986df84396a9c 240125 45
+    5983d4a7f104692cc90e0004da21efa9`;
+  - 4.5 s, ROLLBACK by construction. **P1 PASS.**
+- **§5.4, P0 after P1** (R), 01:32:00.580Z → 01:32:01.514Z: 26/26 equal to
+  P0₀. P1 committed nothing.
+- **§5.5, STATE** (R), 01:32:05.922Z → 01:32:06.381Z: `effective_prefix ""`,
+  `ledger_md5_ok true`, `catalog_state "00"`, `recovery "none — nothing is
+  applied"`.
+- **§6 a, LOCKS** (ad-hoc, not pinned), 01:33:58Z: 0 / 0.
+- **21:34 EDT, the time rule for P2-01:**
+  - the whole path needed 40 min, ending about 22:14, before 23:15;
+  - **P2-01 was cleared.**
+- **What followed:**
+  - the operator then ran out of time (a scheduling conflict);
+  - nothing was sent that night;
+  - the window lapsed at its latest start and reserve end without §9 or the
+    A.1 close-out;
+  - the rest is §E12 and §E13.
+
 **E12. P2 on production — RECORD: P2-01 only, sent OUTSIDE the cleared
 window.**
 - **The clearance.** P2-01 was cleared at 21:34 EDT in the Thursday
@@ -2160,6 +2248,46 @@ window.**
 - **What is not applied.** 02–05 are not applied. Thursday's P1 authorizes
   no continuation (Codex §4). No P2 or RB runs before a newly cleared window
   at a reviewed head.
+
+**E13. The incident, the re-opening and the record — RECORD, 2026-10-09 to
+2026-10-13.**
+- **The incident record.** The incident (P2-01 outside the window, and the
+  duplicate send from window R with the read token) is recorded in full in
+  `docs/security/stage0-incident-2026-10-09.md`. That covers the chronology,
+  the departures, the classification history and its disposition, the
+  re-opening evidence and the supporting log evidence. Codex's incident
+  review (2026-10-12) is its Appendix A, verbatim, and §I summarizes the
+  decisions.
+- **The re-opening (Codex §1): every condition PASS** (incident record §6).
+  - **The receipts:** both P2-01 results files are complete, with
+    `error null`. No other writing send.
+  - **The stored bytes:** the ledger equals 01's pinned blob.
+  - **A fresh STATE through the sender** on Tue 2026-10-13, 16:02:46.359Z →
+    16:02:46.996Z: `01` / `ledger_md5_ok true` / `01` / `RB-1`. It used the
+    temporary token `stage0-verify-read-20261012` (production only,
+    Database: Read), which was deleted after use.
+  - **LEDGER, CATALOG, R2COUNTS and STAGE0-BACKENDS** (ad-hoc, not pinned),
+    Tue 16:05:45–50Z: unchanged at 01; all six tables 0; no stage-0 session
+    and no lock on `employees`.
+  - **CONSUMERS:** four 404. **The live site:** deploy `6ab020c5`'s build,
+    its JS naming no Release 2 table, function or endpoint (Tue
+    16:05:50–16:06:00Z).
+  - **The incident tokens:** deleted Mon 2026-10-12 09:30 EDT, already
+    expired.
+  - **The legacy smoke test:** PASS (Ryan: "PASSED AND VERIFIED.").
+- **Ryan re-opened the counter on Tue 2026-10-13 at 12:20:46 EDT
+  (16:20:46Z)**, at verified 01. This authorizes no migration or rollback.
+- **Not run:** P3's A2 and the P0 after a complete apply. P2 did not
+  complete, and no window is cleared. Codex 4(c) requires a fresh baseline
+  before any new window.
+- **The record commits:**
+  - `bf5e8dc`, P2-01 RECORD (§E12): the full suite in a scratch clone of
+    exactly that commit: **374/374** (0 failed, 0 cancelled, 0 skipped),
+    the same count as H;
+  - this commit (§E11, §E13, §I, the incident record, `CLAUDE.md`): its
+    suite and `yarn build` results are in its commit message.
+
+  Neither is pushed before Codex reviews them.
 
 ---
 
@@ -2358,6 +2486,26 @@ Production was not touched.
 the sender, with a project-scoped Database: Read token that was deleted
 afterwards. Every column matches §E2.
 
+**P1 ran on production in the Thursday 2026-10-08 window (§E11): PASS.**
+
+**P2-01 was applied OUTSIDE that window,** on Fri 2026-10-09 at 11:17 EDT,
+12 h 02 min after its reserve end (§E12). It was then sent a second time,
+from window R with the read token, and its guard refused. The full record
+is `docs/security/stage0-incident-2026-10-09.md`.
+- **Codex's incident review (2026-10-12)**, its Appendix A and §5:
+  - the counter: a conditional re-opening at verified 01;
+  - send 2: a RESOLVED SQL guard refusal, with the §0.7 UNRESOLVED label
+    kept as history;
+  - rule 3 and the read-token split: AMEND, both blocking a new window;
+  - the path: stay at 01, (a); RB-1 with the existing texts rejected, (b);
+    a rehearsal from 01 preferred, (c);
+  - recording 01 now: ACCEPT;
+  - the process corrections: accepted in principle, blocking.
+- **The counter re-opened on Tue 2026-10-13 at 12:20:46 EDT** at verified
+  01, after every re-opening check passed (§E13).
+- **Production holds 01 only**, at `20261009151706`. **No production
+  migration window is cleared.**
+
 **Remaining, each at its own stop point, none started; everything is held
 until approved:**
 1. Review of the production C5 runbook,
@@ -2365,10 +2513,20 @@ until approved:**
    (a wall-clock deadline, an exact HTTP 500 / JSON match per revocation
    kind) and the step-1.7 gateway-log question. It is not used before that
    review.
-2. P1 onward, each when approved. Every pinned text goes through the sender,
-   with the read token or the write token as §E1 assigns. P1–P3 run in one
-   window from `docs/security/stage0-p1-p3-runbook.md` (DRAFT, needs review),
-   on Sunday 2026-10-11 from 17:00 EDT.
+2. 02–05, the rest of P2, and P3. **Held: no window is cleared** (Codex's
+   incident review, §4 and §6).
+   - **Before any new window, each of these is reviewed:**
+     - Codex item 2: the SQL-error classifier and its fixtures;
+     - item 3: the staging read-token experiment, and a protocol revision
+       if a Read PAT can write;
+     - item 4(c): a rehearsal from the committed 01 state, with new pins, a
+       fresh baseline, the recovery mapping, a revised runbook and the
+       exact head;
+     - item 6: the sender's deadline and window guards, with their tests.
+   - **The P1–P3 runbook cannot be used again.**
+     `docs/security/stage0-p1-p3-runbook.md` was executed at H to P1 (§E11).
+     Its P1 and P2-01 refuse over 01.
+   - Its review history follows.
    - **Blocker PRE-0 is resolved.** With the record commits made as that
      runbook writes them, `yarn test` had gone red: 349/372 after P2-01's
      record, 347/372 after all four. The fix:
