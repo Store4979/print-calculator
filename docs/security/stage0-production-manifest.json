@@ -144,7 +144,7 @@
       "n": "01",
       "name": "release2_01_identity_schema",
       "pendingPath": "supabase/migrations/pending/release2_01_identity_schema.sql",
-      "productionVersion": null,
+      "productionVersion": "20261009151706",
       "blob": "3ea8abb32838a74129e52cfed5abc7b0a9aed33b",
       "md5": "e97a5fd7c346a3b0a39bc6180dcfde46",
       "bytes": 13720,

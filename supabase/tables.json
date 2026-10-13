@@ -1,16 +1,19 @@
 {
   "project": "gmxyisjjaxtpycsmmzef",
-  "capturedBy": "Claude Code session dfd2fde4 via Supabase MCP execute_sql, authorized by Ryan 2026-09-23; read-only",
+  "capturedBy": "Claude Code session dfd2fde4-0a73-42a2-bbdf-a1da0e3c2634 via Supabase MCP execute_sql (read-only, ad-hoc), authorized by Ryan, 2026-10-13 (Codex incident review 2026-10-12, item 5)",
   "query": "scripts/manual/tables-snapshot.sql",
-  "capturedAt": "2026-09-23T14:59:46Z",
+  "capturedAt": "2026-10-13T16:22:40Z",
   "database": "postgres",
   "role": "postgres",
-  "ledgerVersion": "20260909232836",
+  "ledgerVersion": "20261009151706",
   "tables": [
     "_archive_commission_columns",
     "addons",
+    "auth_attempts",
+    "device_enrollments",
     "discounts",
     "employees",
+    "enrollment_tickets",
     "memberships",
     "orders",
     "organizations",
@@ -20,7 +23,10 @@
     "print_jobs",
     "settings",
     "sheet_prices",
-    "stores"
+    "staff_sessions",
+    "stores",
+    "upload_capabilities",
+    "upload_capability_files"
   ],
   "views": [],
   "buckets": [

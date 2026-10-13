@@ -2129,6 +2129,38 @@ stays held.** Nothing was pushed until this record.
 - §E0's rule is unchanged: a gap of more than a day between P1 and P2 means
   P0 and P1 are re-run.
 
+**E12. P2 on production — RECORD: P2-01 only, sent OUTSIDE the cleared
+window.**
+- **The clearance.** P2-01 was cleared at 21:34 EDT in the Thursday
+  2026-10-08 window (T 20:00 EDT, reserve end 23:15 EDT), but was not sent
+  then.
+- **The send.** It was sent on **Fri 2026-10-09 at 11:17 EDT, 12 h 02 min
+  after the reserve end**, from window W. It was then sent a second time,
+  from window R with the read token.
+- **Where the rest is.** The incident, Codex's decisions (incident review,
+  2026-10-12) and the counter's re-opening are §E13.
+- **Classification.** Each send is classified by runbook §0.7 at H. Send 2
+  also carries its disposition (Codex §2).
+
+| step | sent → finished (UTC) | RESOLVED / UNRESOLVED (§0.7) | HTTP / body | STATE | ledger row(s): version — md5 / bytes | catalog | R2COUNTS | snapshot `ledgerVersion` |
+|---|---|---|---|---|---|---|---|---|
+| P2-01, send 1 (window W, write token) | 2026-10-09 15:17:05.343Z → 15:17:06.921Z | **RESOLVED success**: `error null`, a complete 201, exactly the expected body | 201 / `[{"set_config":"45s"}]` | Not read right after: window R sent P2-01 in its place (next row). Fresh STATE, Tue 2026-10-13 16:02:46Z: `01` / `ledger_md5_ok true` / `01` / `RB-1`; ledger rows 01 forward `20261009151706`, all else null | `20261009151706` `release2_01_identity_schema` — `e97a5fd7c346a3b0a39bc6180dcfde46` / 13720. Final LF, 1 element `[1:1]`, `created_by store4979@theupsstore.com`, `idempotency_key` and `rollback` null. 21 rows | State 01 (ad-hoc, not pinned): Fri 15:20:31Z; Mon 2026-10-12 13:35:58Z and 14:43:30Z; Tue 16:05:48Z | All six 0 (ad-hoc, not pinned): Fri 15:20:32Z; Mon 13:35:58Z and 14:43:30Z; Tue 16:05:50Z | `20261009151706`, captured Tue 2026-10-13T16:22:40Z (ad-hoc, not pinned). Codex §5: the current snapshot at that ledger version |
+| P2-01, send 2 (window R, **read** token) | 2026-10-09 15:17:50.900Z → 15:17:52.228Z | **UNRESOLVED under §0.7 as written.** Rule 3's single-line expression rejects the `CONTEXT:` line; this is kept as history. **Disposition (Codex §2): a RESOLVED SQL guard refusal, with no second application of 01.** It is final after the receipt check: `error null`, and a complete JSON body whose only key is `message` | 400 / `{"message":"Failed to run sql query: ERROR:  P0001: stage0 P2-01: release2_01_identity_schema is already in the ledger\nCONTEXT:  PL/pgSQL function inline_code_block line 312 at RAISE\n"}`. The guard runs before `execute f` | — | None added: still 21 rows | Unchanged: 01 | 0 | — |
+
+- **Stored bytes.** The ledger's `statements[1]` equals the manifest's 01
+  pin, blob `3ea8abb32838a74129e52cfed5abc7b0a9aed33b` (LF only). This
+  record moves that blob, unchanged, to
+  `supabase/migrations/20261009151706_release2_01_identity_schema.sql`. It
+  moves the companion (blob `88fe6677d221404efe455e70f67ac90e50c95f0b`) to
+  `…_release2_01_identity_schema.rollback.sql`.
+- **No other writing send.** Since P1, the results files are:
+  - P0 and STATE (reads, Fri 01:32Z);
+  - the two P2-01 sends;
+  - Tuesday's STATE (a read).
+- **What is not applied.** 02–05 are not applied. Thursday's P1 authorizes
+  no continuation (Codex §4). No P2 or RB runs before a newly cleared window
+  at a reviewed head.
+
 ---
 
 ## F. Acceptance and rollback
