@@ -393,10 +393,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     (postgres_logs), which is supporting evidence only. Whether a Read PAT
     can write is unverified until Codex item 3's staging experiment, and
     until then the PAT split is never to be called server-enforced.
-  - **Successful Management API queries leave NO postgres_logs line on
-    production.** Only failures are logged, since pgaudit is not
-    configured. A log query can name a failed send's login role, never a
-    successful one's.
+  - **A missing log line proves nothing.** The postgres_logs windows queried
+    for the 2026-10-09 sends held a line for the FAILED send 2, and none for
+    the successful send 1 or for the successful STATE of 2026-10-13. Those
+    successful requests' login roles are unproven. This project's logging
+    settings are not established, so never infer a role, or a guarantee
+    that a request is or is not logged, from an absence.
   - **No rollback-then-re-apply path exists with the current texts.** RB-1
     appends a `_rollback` ledger row and KEEPS the forward row, and P1 and
     P2-01 refuse while it exists (Codex 4(b)). The record tool refuses a

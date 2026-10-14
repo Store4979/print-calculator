@@ -67,6 +67,7 @@ through the session's own Supabase MCP `execute_sql` connection (role
 | Tue by 12:19 | by 16:19Z | The smoke test: "PASSED AND VERIFIED." | Ryan |
 | **Tue 12:20:46** | **16:20:46Z** | **Ryan re-opens the counter at verified 01** | Ryan |
 | Tue 12:22:40 | 16:22:40Z | TABLES-SNAPSHOT for the 01 record, ad-hoc (not pinned) (plan §E12) | |
+| Wed 2026-10-14 12:40 | 16:40Z | Supabase GitHub integration checked on production AND staging: none (§8) | Ryan |
 
 The results files (`.stage0-send/`, gitignored, local to the checkout) do not
 record which window or token sent them. Sends 1 and 2 are attributed to a
@@ -86,7 +87,7 @@ Codex: "the late production write, skipped cleanup and wrong command in R".
 | Writes only inside the cleared window; "start no further write" once the path no longer fits before T+3:15 | the window amendment | Both sends came 12 h after T+3:15 |
 | P2-01's latest start, 22:20 | runbook §B, as the amendment converted it | Passed by 12 h 57 min |
 | §9, "Tokens deleted (always, on every path)" | runbook §9 | Not run Thursday: the operator ran out of time right after the 21:34 clearance. Both tokens were accepted at Fri 11:17. By Mon 09:30 the list showed both as already expired; their exact expiry ("in a day" from Thu ~21:0x / ~21:2x EDT) is not recorded |
-| Window R holds the read token, for P0 and STATE only | runbook §0.3 | Window R sent P2-01. **How P2-01 got into window R: not provided.** Ryan says the "ran out of time" answers explain the Friday delay, not this |
+| Window R holds the read token, for P0 and STATE only | runbook §0.3 | Window R sent P2-01. **How P2-01 got into window R:** Ryan, 2026-10-14: "I don't remember how P2-01 got into window R". The "ran out of time" answers explain the Friday delay, not this (Ryan) |
 | One send per writing text | Claude's 21:34 instruction. The runbook itself forbids re-sending only after an UNRESOLVED send (§A.0) or a settled stop (A.2) | Send 2 repeated send 1, 45 s later |
 | The lapsed window's close-out | runbook A.1 | Not run |
 
@@ -160,7 +161,7 @@ Nothing failed or contradicted it.
 | | **2 / 2′.** LEDGER, CATALOG, R2COUNTS, STAGE0-BACKENDS, ad-hoc (not pinned) | **PASS**, Mon 14:43:28–30Z and again **Tue 16:05:45–50Z**: 21 rows, head `20261009151706`, the 01 row unchanged; exactly state 01; all six tables 0; `0` / `[]` / 0 locks on `employees` |
 | | **3.** One fresh STATE through the sender (window R, temporary token `stage0-verify-read-20261012`: production only, Database: Read) | **PASS**, Tue 16:02:46.359Z → 16:02:46.996Z. V-DRY first (`read_only true`, `41dd91021512640818cf80cc7c8ee0f9`, 10781 bytes). `HTTP 201`, `error null`, `tokenRedactedFromResponse false`, 14 fields, no token text. **`effective_prefix "01"`, `ledger_md5_ok true`, `catalog_state "01"`, `recovery "RB-1"`; the ledger rows 01 forward `20261009151706`, all else null** |
 | The client still uses the legacy paths; four endpoints dark; no Release 2 consumer enabled | **2 / 2′.** CONSUMERS; the live site against deploy `6ab020c5`; the live JS scanned | **PASS**, Mon 14:43:31–38Z and again **Tue 16:05:50–16:06:00Z**. CONSUMERS: four `{"ok":false,"error":"Not Found"} HTTP 404`. The live site serves deploy `6ab020c50a788b0008d430c9`'s files (`main-DZt0oGiJ.js` md5 `47ab9406ff3e141bd9c96850732c6bf0`, `index-ftBg9V1i.js` md5 `57fb08e6ac5ddc5764e3568ff9150f6d`, identical live and on the deploy). There is no deploy-context function. The live JS (780,229 bytes) names none of the six tables, `redeem_enrollment_ticket`, the four endpoints, or `release2` |
-| Both incident PATs deleted or revoked, their status recorded; shell values removed; old windows closed; the temporary PAT deleted after use | Ryan | **PASS.** `stage0-p1p3-read-20261008` and `stage0-p1p3-write-20261008` were deleted Mon 09:30 EDT, **already expired**, with both windows closed. `stage0-verify-read-20261012` was created and pasted Tue just before STATE (never loaded overnight). It was deleted with `Remove-Item` + `exit` by 12:20 EDT Tue; the exact time was not given |
+| Both incident PATs deleted or revoked, their status recorded; shell values removed; old windows closed; the temporary PAT deleted after use | Ryan | **PASS.** `stage0-p1p3-read-20261008` and `stage0-p1p3-write-20261008` were deleted Mon 09:30 EDT, **already expired**, with both windows closed. `stage0-verify-read-20261012` was created on Mon 2026-10-12. It was pasted into a shell only on Tue 2026-10-13, just before the STATE send, and was never loaded in a shell overnight (Ryan, 2026-10-14). This makes his 2026-10-13 answer "Today, just before STATE" precise: it describes the paste, not the creation. It was deleted with `Remove-Item` + `exit` by 12:20 EDT Tue; the exact time was not given |
 | Legacy PIN sign-in, a real authorized smoke order, the existing queue workflow | **4.** The smoke test (runbook §8: PIN sign-in, a `STAGE0 SMOKE` order saved and not queued, the queue tab, sign out) | **PASS** by Ryan's report, "PASSED AND VERIFIED." (Tue ~12:19 EDT). The four results and the order's time were not itemized |
 | Ryan's explicit re-opening decision and its time; the counter closed until then | Ryan | **"Yes, reopen now": Tue 2026-10-13 12:20:46 EDT (16:20:46Z).** Ryan confirmed the counter was closed throughout, from Fri 11:17 |
 
@@ -189,10 +190,13 @@ the first 300 characters of the message.
 **Reading:**
 - **What the logs show.** The Database Read PAT's request, sent **without**
   `read_only`, logged in as **`supabase_read_only_user`**.
-- **What they cannot show.** Successful requests leave no Postgres line on
-  this project, because only failed queries are logged without pgaudit. So
-  a read-token `read_only=true` request cannot be compared from the logs. A
-  short ingestion delay for Tuesday's window is not excluded.
+- **What they cannot show.** The queried windows held no line for send 1
+  or for Tuesday's STATE. Both requests succeeded, so their login roles are
+  **unproven**. The comparison with a read-token `read_only=true` request
+  could not be made from these logs. This record does not say why there is
+  no line: this project's logging settings were not established, and a
+  short ingestion delay for Tuesday's window is not excluded (Codex's
+  review of `76883c6`, §3).
 - **Its limits.** `user_name` is the login role. It cannot show what that
   role may do, nor a later `SET ROLE` or transaction mode.
 - **Codex §3's staging experiment is still required.**
@@ -217,11 +221,25 @@ the first 300 characters of the message.
   `supabase/migrations/20261009151706_release2_01_identity_schema{,.rollback}.sql`,
   and the manifest records `productionVersion 20261009151706` (plan §E12).
   02–05 stay in `supabase/migrations/pending/`.
+- **Supabase's GitHub integration, before any push** (Codex's question,
+  2026-10-14). Ryan checked it on Wed 2026-10-14 at 12:40 EDT, read-only,
+  with nothing clicked:
+  - production `gmxyisjjaxtpycsmmzef` → Project Settings → Integrations:
+    GitHub not connected, only "Connect GitHub"; Vercel not installed;
+  - staging `lboajqihpsfrokqvjgnl` → Project Settings → Integrations:
+    GitHub not connected, only "Connect GitHub"; Vercel not installed.
 
-## 9. Open item
+  The earlier record held only production's 2026-10-08 check (plan §E11).
+  Staging had not been checked before 2026-10-14.
 
-- **How P2-01 got into window R.** It was asked on 2026-10-12 and 13, and
-  not provided.
+## 9. Ryan's answers recorded after the first draft (2026-10-14)
+
+- **How P2-01 got into window R:** "I don't remember how P2-01 got into
+  window R".
+- **The temporary token `stage0-verify-read-20261012`:** "I created
+  stage0-verify-read-20261012 on Monday 12 Oct and pasted it into a shell
+  only on Tuesday, just before the STATE send. It was never loaded in a
+  shell overnight." §6 is corrected to match.
 
 ---
 

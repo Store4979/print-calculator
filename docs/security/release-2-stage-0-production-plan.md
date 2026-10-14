@@ -2288,6 +2288,25 @@ window.**
     suite and `yarn build` results are in its commit message.
 
   Neither is pushed before Codex reviews them.
+- **Before the push** (Codex's question, 2026-10-14), Supabase's GitHub
+  integration was checked by Ryan on Wed 2026-10-14 at 12:40 EDT,
+  read-only. Neither project has one: production `gmxyisjjaxtpycsmmzef` and
+  staging `lboajqihpsfrokqvjgnl` both show GitHub not connected (only
+  "Connect GitHub"), and Vercel not installed. Staging had not been checked
+  before; production's earlier check was 2026-10-08 (§E11 §1.3). Codex
+  accepts it as operator evidence for the integration-status check. It does
+  not make a top-level companion ineligible for CLI discovery.
+- **Codex reviewed `bf5e8dc` and `76883c6`: AMEND, push held.**
+  - Item 1, blocking: an unexecuted `.rollback.sql` companion at the top
+    level of `supabase/migrations/` is eligible for Supabase CLI discovery,
+    under its rule `^([0-9]+)_(.*)\.sql$`.
+  - Items 2 (snapshot, manifest, ledger) and 3 (the incident history and
+    re-opening) are ACCEPTED.
+  - The commits are not amended:
+    - the next commit records Ryan's corrections, the GitHub check, and
+      Codex's wording fix on logging;
+    - the one after it moves the unexecuted companions out of the
+      discovery directory (item 1).
 
 ---
 
