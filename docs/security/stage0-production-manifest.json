@@ -610,7 +610,8 @@
       "scripts/write-deploy-context.mjs": "6f29742d966a63533a65e77791196248de73222d",
       "scripts/inject-sw-manifest.mjs": "7b63b613eb336ab8966fc9aa8b782a8492af3f26",
       "scripts/tests/inventory-check.mjs": "2bf2931e8b53f8de22e1c5e88033eee8b7044c37",
-      "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a"
+      "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a",
+      "scripts/tests/supabase-migration-discovery.mjs": "90e5603bb6e1ddb5984acd09892034c35954fe5f"
     }
   },
   "rollbackTargets": {

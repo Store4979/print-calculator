@@ -203,3 +203,32 @@ test("LC-4 03 and 04 are one transaction in the record too: 03 recorded without 
     assert.match(failures(checkManifest(s.dir, M4)).join("\n"), /M-8: 03 and 04 have different rollback records/);
   } finally { s.clean(); }
 });
+
+test("LC-5 A3 binds the inventory's helper (Codex's review of 799cc2e, item 3): an edit to supabase-migration-discovery.mjs without a re-pin fails M-7, the reviewed re-pin passes, and a dropped pin fails M-7b", () => {
+  const HELPER = "scripts/tests/supabase-migration-discovery.mjs";
+  const s = scratch({ atPending: false });
+  try {
+    assert.ok(HELPER in s.M.a3.blobs, "the helper is pinned in A3");
+    assert.deepEqual(failures(checkManifest(s.dir, s.M)), [], "HEAD, exactly as recorded");
+
+    // An edit with no re-pin: A3 drift at HEAD.
+    writeFileSync(join(s.dir, HELPER), readFileSync(join(s.dir, HELPER), "utf8") + "// an unreviewed edit\n");
+    s.commit("helper edit, no re-pin");
+    const esc = HELPER.replace(/[./]/g, "\\$&");
+    assert.match(failures(checkManifest(s.dir, s.M)).join("\n"), new RegExp(`M-7: .*A3 drift at HEAD: ${esc} is [0-9a-f]{40}, pinned ${s.M.a3.blobs[HELPER]}`));
+
+    // The reviewed re-pin: the generator, run after the change is staged, records the new blob.
+    execFileSync(process.execPath, [join(s.dir, "scripts", "manual", "stage0-manifest-generate.mjs")], { cwd: s.dir, stdio: "pipe" });
+    const M2 = JSON.parse(readFileSync(join(s.dir, MANIFEST_PATH), "utf8"));
+    assert.notEqual(M2.a3.blobs[HELPER], s.M.a3.blobs[HELPER], "the helper is re-pinned");
+    s.commit("re-pin");
+    assert.deepEqual(failures(checkManifest(s.dir, M2)), [], "after the reviewed re-pin");
+
+    // Dropping the pin: the binding check names the unpinned import.
+    const M3 = JSON.parse(JSON.stringify(M2));
+    delete M3.a3.blobs[HELPER];
+    s.save(M3);
+    s.commit("pin dropped");
+    assert.match(failures(checkManifest(s.dir, M3)).join("\n"), new RegExp(`M-7b: .*the inventory's ${esc} is a build input that A3 does not pin`));
+  } finally { s.clean(); }
+});

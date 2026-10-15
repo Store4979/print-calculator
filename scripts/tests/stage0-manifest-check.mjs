@@ -16,7 +16,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { createRequire } from "node:module";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, eligibleMigrations, duplicateVersions } from "./supabase-migration-discovery.mjs";
@@ -57,6 +58,49 @@ export function gitIn(repo) {
       .filter(([p]) => p.startsWith(dir + "/") && !p.slice(dir.length + 1).includes("/"))
       .map(([p, o]) => ({ name: p.slice(dir.length + 1), isDirectory: o.type === "tree" })),
   };
+}
+
+// ── the inventory's own code, for M-7b ───────────────────────────────────────
+export const INVENTORY = "scripts/tests/inventory-check.mjs";
+/**
+ * `entry` and every module it imports by a relative path, transitively, as
+ * read from HEAD. Each module is PARSED (acorn, the inventory's own parser),
+ * so comments and strings cannot hide or fake an import: a text scan
+ * missed both of inventory-check.mjs's local imports, because a `/*` inside
+ * a line comment swallowed them. Static imports, re-exports and literal
+ * import() count. A module that does not parse, or a non-literal import(),
+ * is returned in `unbound`. acorn is loaded only when this runs, so the
+ * tools that import this module for its path helpers need no node_modules.
+ */
+export function localImportClosure(g, entry) {
+  const { Parser } = createRequire(import.meta.url)("acorn");
+  const seen = new Set(), unbound = [], queue = [entry];
+  while (queue.length) {
+    const p = queue.shift();
+    if (seen.has(p)) continue;
+    seen.add(p);
+    const src = g.tryTxt("show", `HEAD:${p}`);
+    if (src === null) continue;
+    let ast;
+    try { ast = Parser.parse(src, { ecmaVersion: "latest", sourceType: "module" }); } catch (e) { unbound.push(`${p} does not parse (${e.message})`); continue; }
+    const specs = [];
+    const visit = (n) => {
+      if (!n || typeof n.type !== "string") return;
+      if ((n.type === "ImportDeclaration" || n.type === "ExportAllDeclaration" || n.type === "ExportNamedDeclaration") && n.source) specs.push(n.source.value);
+      if (n.type === "ImportExpression") {
+        if (n.source.type === "Literal" && typeof n.source.value === "string") specs.push(n.source.value);
+        else unbound.push(`${p} has an import() whose source is not a string literal`);
+      }
+      for (const k of Object.keys(n)) {
+        const v = n[k];
+        if (Array.isArray(v)) v.forEach(visit);
+        else if (v && typeof v.type === "string") visit(v);
+      }
+    };
+    visit(ast);
+    for (const s of specs) if (/^\.\.?\//.test(s)) queue.push(posix.normalize(posix.join(posix.dirname(p), s)));
+  }
+  return { modules: [...seen], unbound };
 }
 
 // ── where each file must be in the recorded state ────────────────────────────
@@ -286,6 +330,14 @@ export function checkManifest(repo, M) {
     if (!(p in M.a3.blobs)) say("M-7b", `build input ${p} is not pinned`);
   }
   for (const t of ["netlify", "src", "public"]) if (!(t in M.a3.trees)) say("M-7b", `tree ${t} is not pinned`);
+  // The inventory is a build input (Netlify runs `yarn test`, and the
+  // inventory gates src/). inventory-check.mjs and every LOCAL module it
+  // imports, transitively, read from HEAD, must be pinned in A3, so an
+  // unreviewed edit to any of them is A3 drift under M-7 (Codex's review of
+  // 799cc2e, item 3).
+  const closure = localImportClosure(g, INVENTORY);
+  for (const p of closure.modules) if (!(p in M.a3.blobs)) say("M-7b", `the inventory's ${p} is a build input that A3 does not pin`);
+  for (const u of closure.unbound) say("M-7b", `the inventory's imports cannot be bound: ${u}`);
   const env = (g.tryTxt("show", "HEAD:.env") || "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
   const keys = env.map((l) => l.split("=")[0]);
   if (JSON.stringify(keys) !== JSON.stringify(["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"])) say("M-7b", `.env keys ${JSON.stringify(keys)}: only VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY may be tracked`);

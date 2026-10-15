@@ -101,6 +101,8 @@ const A3_BLOBS = [
   "netlify.toml", "package.json", ".npmrc", ".nvmrc", ".env", "vite.config.js", "postcss.config.js", "tailwind.config.js",
   "index.html", "upload.html", "scripts/check-build-env.mjs", "scripts/write-deploy-context.mjs", "scripts/inject-sw-manifest.mjs",
   "scripts/tests/inventory-check.mjs", "scripts/tests/inventory-allowlist.mjs",
+  // imported by inventory-check.mjs; M-7b requires every local module it imports
+  "scripts/tests/supabase-migration-discovery.mjs",
 ];
 for (const p of [...A3_TREES, ...A3_BLOBS]) if (!existsSync(join(ROOT, p))) throw new Error(`A3 input ${p} is missing`);
 const a3trees = Object.fromEntries(A3_TREES.map((p) => [p, txt("rev-parse", `${index}:${p}`)]));

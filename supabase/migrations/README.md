@@ -37,8 +37,14 @@ ledger row.
 **`main` still carries the old layout.** On this branch the nine companions
 were moved to `../rollbacks/` (plan §E13). `main` keeps the eight older ones
 at the top level until this release reaches it. A push to `main` triggers a
-production Netlify build, so `main` is not changed separately unless Codex
-rules otherwise.
+production Netlify build, so `main` is not changed separately (Codex accepted
+leaving it, in its review of `799cc2e`, item 4). **While that debt remains:**
+- no Supabase CLI migration discovery or apply workflow is run against
+  `main`'s layout;
+- automatic migration application is not enabled on either project. Both had
+  no GitHub integration and no Vercel integration at Ryan's check of
+  2026-10-14, 12:40 EDT;
+- the production ledger is not repaired to suit `main`'s layout.
 
 ## Why this exists (2026-09-09 reconciliation)
 

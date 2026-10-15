@@ -52,7 +52,7 @@ const NAMES = {
   "M-6": "every output re-assembled from the frozen inputs has its pinned md5",
   "M-6b": "SIZE-PROBE: one read-only SELECT larger than P1, with its pinned answer",
   "M-7": "A3: the pinned commit, and HEAD while enforced, hold the pinned trees and blobs",
-  "M-7b": "the build-input binding: build scripts and .env",
+  "M-7b": "the build-input binding: build scripts, the inventory's local import closure, and .env",
   "M-8": "the recorded repository state: baseline, apply order, rollback records, exact file set",
   "M-10": "every approved fresh-build rollback target carries the queue fix (orderQueue.js f99d16a9)",
   "M-12": "the send policy: every output once, targets and read_only fixed, the sender pinned",

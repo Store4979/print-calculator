@@ -2370,8 +2370,63 @@ window.**
     - **`main` still carries the eight older companions at the top level**
       until this release reaches it. A push to `main` triggers a production
       Netlify build, so `main` is not changed here unless Codex rules
-      otherwise. Neither project has the GitHub integration (2026-10-14
-      check), so nothing applies migrations from a push.
+      otherwise. At the 2026-10-14 check neither project had the GitHub
+      integration, so as of then no integration applied migrations from a
+      push.
+- **Codex reviewed `e531d6c` and `799cc2e`: C ACCEPT, D AMEND, push held.**
+  - Accepted: the companion moves (all nine blobs preserved; 21 eligible
+    files, no companion, no duplicate version) and the MUT-18/27/33 fixture
+    relocations.
+  - Two blocking corrections:
+    - (1) the replay had 13 states, not 14. The recovery from HEAD's own
+      prefix (01 → RB-1) was skipped, because the builder started
+      recoveries only from forward records it made itself;
+    - (3) the new helper `supabase-migration-discovery.mjs`, imported by
+      `inventory-check.mjs`, was missing from A3, so M-7 could not catch
+      an edit to it.
+  - Non-blocking: name the upstream revision and the verification date, and
+    call the test a filename-eligibility check.
+  - **Item 4, `main`, accepted as unchanged. While its companion debt
+    remains:**
+    - NO Supabase CLI migration discovery or apply workflow against
+      `main`'s layout;
+    - NO automatic migration application on either project;
+    - NO ledger repair to suit `main`'s layout.
+
+    Clearance after the corrections would cover only pushing this branch
+    and its staging build. It would not cover merging `main`, changing
+    integrations, using a migration CLI, or continuing stage 0.
+- **The corrections (the commit after `799cc2e`, not an amendment):**
+  - **Replay:**
+    - the builder starts a recovery from HEAD when the recovery's prefix
+      is exactly HEAD's recorded prefix, and still omits earlier prefixes;
+    - the replay asserts its state labels against
+      `scripts/tests/stage0-replay-labels.mjs`, which derives them from the
+      recorded state alone. RL-1…3 run on every build: 15 from pending, 14
+      from 01 (01 → RB-1 included), 12 from 01–02, 9 from 01–04, 5 fully
+      applied, 1 after a recorded rollback;
+    - the full-suite replay from the 01 head is recorded with the commit.
+  - **A3:**
+    - `scripts/tests/supabase-migration-discovery.mjs` is pinned;
+    - M-7b now requires `inventory-check.mjs` and its whole local import
+      closure (read from HEAD) to be pinned.
+      - The closure is PARSED with `acorn`. A first, text-based version
+        found no imports at all: a `/*` inside a `//` comment of
+        `inventory-check.mjs` made the comment stripper swallow both import
+        lines, so the check passed vacuously.
+      - LC-5's dropped-pin control caught that before this commit;
+    - LC-5 shows that an edit to the helper without a re-pin fails M-7,
+      that the generator's re-pin passes, and that a dropped pin fails M-7b.
+  - **The rule module:**
+    - it names the source read: `supabase/cli` develop
+      `5806448112af182a11d3dc73a573e5a9901fd2a3` and release `v2.121.0`.
+      `apps/cli-go/pkg/migration/list.go` and `file.go` were byte-identical
+      at both. Read 2026-10-14 EDT;
+    - it now also models that source's one other skip, a legacy
+      `<14 digits>_init.sql` before `20211209000000` as the first entry
+      (DISC-4). This repository has none;
+    - the module and `migration-discovery.test.js` describe themselves as
+      a filename-eligibility check, not a CLI simulation.
 
 ---
 

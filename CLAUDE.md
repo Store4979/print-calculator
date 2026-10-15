@@ -57,9 +57,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 - scripts/tests/*.test.js — `yarn test` (node --test). The kiosk leak guard
   lives here; keep it green before any PR. Two devDependencies and no more,
   both PINNED EXACTLY (no lockfile is committed — the supabase-js lesson):
-  `acorn` + `acorn-jsx`, used only by scripts/tests/inventory-check.mjs, the
+  `acorn` + `acorn-jsx`, used by scripts/tests/inventory-check.mjs, the
   Release 2 reach inventory (release2-inventory.test.js + its mutation
-  companion). It PARSES src/ and classifies every table/bucket/rpc/channel/
+  companion). `acorn` alone is also used by stage0-manifest-check.mjs's
+  M-7b, loaded lazily, to parse the inventory's own imports for the A3
+  binding. Never use a text scan for that: stripComments treats a `/*`
+  inside a `//` line as a block comment, and it swallowed both imports. It PARSES src/ and classifies every table/bucket/rpc/channel/
   function the client names against supabase/tables.json (captured by
   scripts/manual/tables-snapshot.sql — never edit by hand) and
   netlify/functions/*.js + _retired.json; a new reach site fails until it is
@@ -419,7 +422,17 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     supabase/rollbacks/. scripts/tests/supabase-migration-discovery.mjs
     models the rule, with nothing exempted, and
     migration-discovery.test.js plus M-8 enforce it. `main` still carries
-    the eight older companions until this release reaches it.
+    the eight older companions until this release reaches it. While it does
+    (Codex's review of 799cc2e, item 4):
+    - NO Supabase CLI migration discovery or apply workflow against `main`'s
+      layout;
+    - NO automatic migration application on either project;
+    - NO ledger repair to suit `main`'s layout.
+
+    The model is a FILENAME-ELIGIBILITY check of ListLocalMigrations at a
+    named CLI revision, not a CLI simulation. Re-read the source before
+    relying on it for a newer CLI. The helper is pinned in A3, and M-7b
+    requires the inventory's whole local import closure to be pinned.
   - **This checkout is CRLF** (core.autocrlf=true in Git's SYSTEM config).
     md5 a migration from its blob (`git cat-file blob <id>`), never from
     the working-tree file. 01's working copy reads 13978 bytes; its blob
