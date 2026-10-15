@@ -11,8 +11,11 @@
 // 04=20261011211006 for P2-0304, each the version LEDGER read back.
 // <snapshot.json> is TABLES-SNAPSHOT's tables_json output, saved verbatim.
 //
-// forward:  git mv each file of the step and its .rollback.sql companion from
-//           pending/ to supabase/migrations/<version>_<name>…, and record
+// forward:  git mv each file of the step from pending/ to
+//           supabase/migrations/<version>_<name>.sql, and its UNEXECUTED
+//           .rollback.sql companion to supabase/rollbacks/<version>_<name>.rollback.sql,
+//           outside the directory the Supabase CLI discovers migrations in
+//           (Codex's review of 76883c6, item 1); record
 //           migrations[].productionVersion.
 // rollback: write each rollback file's pinned bytes (the manifest's blob) as
 //           supabase/migrations/<version>_<name>_rollback.sql, and append
@@ -145,6 +148,7 @@ export function recordStep({ root = ROOT_DEFAULT, kind, name, snapshotPath, vers
       const r = M.rollbacks.find((x) => x.n === n);
       const moved = { ...m, productionVersion: versions[n] };
       for (const [from, to] of [[m.pendingPath, forwardPath(moved)], [r.pendingPath, companionPath(moved, r)]]) {
+        mkdirSync(dirname(join(root, to)), { recursive: true });
         git("mv", from, to);
         expected.push(from, to);
       }

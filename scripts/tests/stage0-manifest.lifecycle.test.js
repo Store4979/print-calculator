@@ -3,8 +3,9 @@
 //
 // A scratch `git clone --shared` of this repository's HEAD is walked through
 // what the plan's commits will do:
-//   pending → P2-01, P2-02, P2-0304, P2-05 (each forward and its companion
-//   git-mv'd to supabase/migrations/<version>_…, productionVersion recorded;
+//   pending → P2-01, P2-02, P2-0304, P2-05 (each forward git-mv'd to
+//   supabase/migrations/<version>_…, its unexecuted companion to
+//   supabase/rollbacks/<version>_…, productionVersion recorded;
 //   P2-0304 moves 03 and 04 in ONE commit, as it applies them in one
 //   transaction — review of dc5a88b, N7) → fully applied → RB-5, RB-43, RB-2,
 //   RB-1 committed (each operation one commit; each rollback's bytes under its
@@ -36,6 +37,7 @@ import { fileURLToPath } from "node:url";
 import { checkManifest, MANIFEST_PATH, forwardPath, companionPath, recordPath } from "./stage0-manifest-check.mjs";
 import { P2_STEPS, RECOVERY } from "../manual/assemble-stage0.mjs";
 import { commitBackToPending } from "./stage0-recorded-state.mjs";
+import { eligibleMigrations } from "./supabase-migration-discovery.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ID = ["-c", "user.name=stage0-lifecycle-test", "-c", "user.email=stage0-lifecycle@example.invalid", "-c", "commit.gpgsign=false"];
@@ -85,8 +87,10 @@ function recordOperation(s, op, commit = true) {
   s.save(s.M);
   if (commit) s.commit(`${op} record`);
 }
-const topFiles = (s) => s.git("ls-tree", "--name-only", "HEAD", "supabase/migrations/").split("\n")
-  .filter((p) => /\/\d{14}_.*\.sql$/.test(p) && !/\.rollback\.sql$/.test(p));
+/** The migration files the Supabase CLI would discover at HEAD, with nothing exempted. */
+const topFiles = (s) => eligibleMigrations(s.git("ls-tree", "HEAD", "supabase/migrations/").split("\n").filter(Boolean)
+  .map((l) => { const [meta, path] = l.split("\t"); return { name: path.split("/").pop(), isDirectory: meta.split(" ")[1] === "tree" }; }))
+  .map((e) => e.file);
 
 test("LC-1 pending → each P2 step → fully applied → committed rollback: every manifest check passes in every state, outputs byte-identical", () => {
   const head = scratch({ atPending: false });
@@ -137,6 +141,16 @@ test("LC-2 the moved layout still bites: a changed byte, a recorded-but-unmoved 
     writeFileSync(join(s.dir, "supabase/migrations/20261001120099_stray.sql"), "select 1;\n");
     s.commit("stray");
     assert.match(failures(checkManifest(s.dir, s.M)).join("\n"), /M-8: unexpected applied migration file supabase\/migrations\/20261001120099_stray\.sql/);
+    s.git("reset", "--quiet", "--hard", "HEAD~1");
+
+    // An unexecuted companion back among the discoverable files (Codex's
+    // review of 76883c6, item 1): no exemption hides it from M-8.
+    const m01 = s.M.migrations[0], r01 = s.M.rollbacks.find((x) => x.n === m01.n);
+    s.git("mv", companionPath(m01, r01), `supabase/migrations/${m01.productionVersion}_${m01.name}.rollback.sql`);
+    s.commit("companion at the top level");
+    const f3 = failures(checkManifest(s.dir, s.M)).join("\n");
+    assert.match(f3, new RegExp(`M-8: version ${m01.productionVersion} is carried by more than one discoverable migration file`));
+    assert.match(f3, new RegExp(`M-8: .*unexpected applied migration file supabase/migrations/${m01.productionVersion}_release2_01_identity_schema\\.rollback\\.sql`));
     s.git("reset", "--quiet", "--hard", "HEAD~1");
 
     for (const stp of P2_STEPS.slice(1)) applyStep(s, stp);

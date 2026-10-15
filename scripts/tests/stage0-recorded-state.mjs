@@ -6,8 +6,9 @@
 // stage0-manifest.lifecycle) each start from the PENDING layout and then make
 // their own moves. Before P2 that layout is simply HEAD. After a P2 record
 // commit it is not:
-//   - an applied forward file and its companion sit at
-//     supabase/migrations/<productionVersion>_<name>[.rollback].sql;
+//   - an applied forward file sits at
+//     supabase/migrations/<productionVersion>_<name>.sql, and its unexecuted
+//     companion at supabase/rollbacks/<productionVersion>_<name>.rollback.sql;
 //   - an applied rollback sits at supabase/migrations/<version>_<name>_rollback.sql.
 // The recorded state (migrations[].productionVersion, rollbackRecords) says
 // which, and the paths come from the same functions the manifest checks use
@@ -61,7 +62,9 @@ export function resetToPending(root, M) {
       if (!existsSync(join(root, p))) throw new Error(`resetToPending: ${p} is missing after the reset`);
     }
   }
-  const stray = readdirSync(join(root, "supabase", "migrations")).filter((x) => /^\d{14}_release2_/.test(x));
+  const stray = [join(root, "supabase", "migrations"), join(root, "supabase", "rollbacks")]
+    .flatMap((d) => (existsSync(d) ? readdirSync(d) : []))
+    .filter((x) => /^\d{14}_release2_/.test(x));
   if (stray.length) throw new Error(`resetToPending: release2 files outside the recorded state: ${stray.join(", ")}`);
 }
 

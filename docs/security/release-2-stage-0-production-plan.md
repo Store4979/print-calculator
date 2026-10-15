@@ -169,8 +169,14 @@ dashboard by Ryan:
 | Functions `VITE_SUPABASE_ANON_KEY` | verified `sb_publishable_…` by prefix in C8 before anything legacy is disabled | — | — |
 
 **A5. Repository moves** in the P2/P3 commits:
-- each migration and its `.rollback.sql` companion is `git mv`'d from
-  `pending/` to `supabase/migrations/<production version>_<name>…`;
+- each migration is `git mv`'d from `pending/` to
+  `supabase/migrations/<production version>_<name>.sql`. Its unexecuted
+  `.rollback.sql` companion goes to
+  `supabase/rollbacks/<production version>_<name>.rollback.sql`, outside the
+  directory the Supabase CLI discovers migrations in. This rule was changed
+  by Codex's review of `76883c6`, item 1: before it, the companion went
+  beside the forward file, where the CLI's rule `^([0-9]+)_(.*)\.sql$`
+  lists it;
 - `supabase/tables.json` is recaptured;
 - the manifest gains the production versions (`migrations[].productionVersion`);
   after an applied rollback it gains `rollbackRecords`;
@@ -2240,7 +2246,9 @@ window.**
   record moves that blob, unchanged, to
   `supabase/migrations/20261009151706_release2_01_identity_schema.sql`. It
   moves the companion (blob `88fe6677d221404efe455e70f67ac90e50c95f0b`) to
-  `…_release2_01_identity_schema.rollback.sql`.
+  `…_release2_01_identity_schema.rollback.sql`. A later commit moved it on,
+  unchanged, to `supabase/rollbacks/` (§E13; Codex's review of `76883c6`,
+  item 1).
 - **No other writing send.** Since P1, the results files are:
   - P0 and STATE (reads, Fri 01:32Z);
   - the two P2-01 sends;
@@ -2307,6 +2315,63 @@ window.**
       Codex's wording fix on logging;
     - the one after it moves the unexecuted companions out of the
       discovery directory (item 1).
+- **Item 1: the companions moved (this record's second correction
+  commit).**
+  - **The inventory at `7181b42`.** It found nine unexecuted companions at
+    the top level of `supabase/migrations/`, each duplicating its forward
+    file's version under the CLI's rule:
+    - 01's, at `20261009151706` (added by `bf5e8dc`);
+    - eight older ones, at `20260729171101`, `20260908180945`,
+      `20260909160307`, `20260909160312`, `20260909164923`,
+      `20260909224658`, `20260909225652` and `20260909232836`.
+  - **Unexecuted on both projects.** `list_migrations`, read-only, Wed
+    2026-10-14:
+    - production: 21 rows. Each of the nine versions carries only its
+      forward name, and no row names a rollback;
+    - staging: 31 rows, under staging's own versions. No row names a
+      rollback. The one reset row, `release2_00_reconciliation_reset`
+      (`20260928160606`), is a separately named reconciliation migration,
+      not one of these files.
+  - **What a ledger can and cannot show.** It records applications through
+    `apply_migration` or the wrapper. It cannot show an ad-hoc run with no
+    ledger row. For production, the 01 catalog state read back on
+    2026-10-13 shows that 01's companion did not run.
+  - **The move.** All nine were `git mv`'d, bytes and history kept, to
+    `supabase/rollbacks/`. 02–05's companions stay in `pending/`, a
+    subdirectory the CLI does not list, until their forward files are
+    recorded.
+  - **What changed with it:**
+    - `companionPath` and the record tool (which creates the folder);
+    - state normalization (its stray check covers `supabase/rollbacks/`);
+    - M-8, which compares the CLI's eligible set with nothing exempted and
+      reports duplicate versions;
+    - the inventory, which reads reviewed rollbacks from `pending/` and
+      `supabase/rollbacks/`, and no longer skips a top-level `.rollback.sql`;
+    - `scripts/migration-md5.sh`, which no longer skips `*.rollback`;
+    - the fixtures, and the docs;
+    - the manifest, regenerated: A3's pin of
+      `scripts/tests/inventory-check.mjs`, a build input, moves from
+      `b1907622…` to `2bf2931e…`. That is the only manifest change: no
+      migration, rollback, sender, assembler or output pin moves, because
+      every moved file keeps its blob.
+  - **The new regression,** `scripts/tests/migration-discovery.test.js`
+    (DISC-1…3), on the shared rule `scripts/tests/supabase-migration-discovery.mjs`:
+    - no unexecuted companion is discoverable, by name or by content;
+    - every discoverable version is unique;
+    - every file in `supabase/rollbacks/` pairs with a discoverable forward
+      file;
+    - the rule lists a top-level companion when one is planted.
+  - **LC-2** plants 01's companion back at the top level, and M-8 must
+    report it.
+  - **What is not changed:**
+    - `20260729171101_phase_b_03b_employees_lockdown.sql`'s header still
+      names its companion's old path. The file stays byte-identical to the
+      ledger;
+    - **`main` still carries the eight older companions at the top level**
+      until this release reaches it. A push to `main` triggers a production
+      Netlify build, so `main` is not changed here unless Codex rules
+      otherwise. Neither project has the GitHub integration (2026-10-14
+      check), so nothing applies migrations from a push.
 
 ---
 

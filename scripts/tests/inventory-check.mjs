@@ -146,6 +146,7 @@ import { join, relative, sep, basename } from "node:path";
 import { Parser } from "acorn";
 import jsx from "acorn-jsx";
 import { DISPATCHERS, INTERNAL_FORWARDING, ASSET_TRANSPORT } from "./inventory-allowlist.mjs";
+import { eligibleOnDisk } from "./supabase-migration-discovery.mjs";
 
 const JSXParser = Parser.extend(jsx());
 
@@ -298,9 +299,10 @@ function dupes(arr) {
 export function appliedBaselineVersion(root) {
   const dir = join(root, "supabase", "migrations");
   if (!existsSync(dir)) return null;
-  const versions = readdirSync(dir)
-    .filter((f) => /^\d{14}_.*\.sql$/.test(f) && !/\.rollback\.sql$/.test(f))
-    .map((f) => f.slice(0, 14))
+  // The files the Supabase CLI would discover, with nothing exempted.
+  const versions = eligibleOnDisk(root)
+    .map((e) => e.version)
+    .filter((v) => /^\d{14}$/.test(v))
     .sort();
   return versions.length ? versions[versions.length - 1] : null;
 }
@@ -384,15 +386,20 @@ export function appliedReleaseState(root) {
   const dir = join(root, "supabase", "migrations");
   const out = { present: new Set(), dropped: new Map(), errors: [] };
   if (!existsSync(dir)) return out;
-  // Reviewed rollbacks: the committed release2 .rollback.sql companions,
-  // wherever they sit (pending/ before P2, beside the forward file after).
+  // Reviewed rollbacks: the committed release2 .rollback.sql companions, in
+  // pending/ before P2 and in supabase/rollbacks/ after (never among the
+  // discoverable migration files: Codex's review of 76883c6, item 1).
   const reviewed = new Set();
-  for (const d of [dir, join(dir, "pending")]) {
+  for (const d of [join(dir, "pending"), join(root, "supabase", "rollbacks")]) {
     if (!existsSync(d)) continue;
     for (const f of readdirSync(d)) if (/(^|_)release2_.*\.rollback\.sql$/i.test(f)) reviewed.add(lfMd5(readFileSync(join(d, f))));
   }
-  const applied = readdirSync(dir)
-    .filter((f) => /^\d{14}_.*\.sql$/.test(f) && !/\.rollback\.sql$/i.test(f) && /(^|_)release2_/i.test(f))
+  // The applied release2 files: every discoverable migration file naming
+  // release2, with nothing exempted. A companion left among them is treated
+  // as an applied file, not skipped.
+  const applied = eligibleOnDisk(root)
+    .map((e) => e.file)
+    .filter((f) => /^\d{14}_/.test(f) && /(^|_)release2_/i.test(f))
     .sort();
   for (const f of applied) {
     const raw = readFileSync(join(dir, f));

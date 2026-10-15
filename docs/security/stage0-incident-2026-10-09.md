@@ -217,9 +217,13 @@ the first 300 characters of the message.
 **The other state:**
 - **P0₀ (§E10) no longer describes production**, which has 21 ledger rows.
   Codex 4(c) requires a fresh baseline.
-- **Repository:** 01 and its companion are recorded at
-  `supabase/migrations/20261009151706_release2_01_identity_schema{,.rollback}.sql`,
-  and the manifest records `productionVersion 20261009151706` (plan §E12).
+- **Repository:** 01 is recorded at
+  `supabase/migrations/20261009151706_release2_01_identity_schema.sql`, and
+  the manifest records `productionVersion 20261009151706` (plan §E12). Its
+  unexecuted companion is at
+  `supabase/rollbacks/20261009151706_release2_01_identity_schema.rollback.sql`,
+  outside the Supabase CLI's discovery directory (Codex's review of
+  `76883c6`, item 1; plan §E13).
   02–05 stay in `supabase/migrations/pending/`.
 - **Supabase's GitHub integration, before any push** (Codex's question,
   2026-10-14). Ryan checked it on Wed 2026-10-14 at 12:40 EDT, read-only,

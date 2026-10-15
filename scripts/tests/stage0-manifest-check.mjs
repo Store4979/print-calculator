@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as S from "../manual/stage0-send.mjs";
+import { MIGRATIONS_DIR, ROLLBACKS_DIR, eligibleMigrations, duplicateVersions } from "./supabase-migration-discovery.mjs";
 
 export const MANIFEST_PATH = "docs/security/stage0-production-manifest.json";
 const md5 = (b) => createHash("md5").update(b).digest("hex");
@@ -51,13 +52,22 @@ export function gitIn(repo) {
     objAt: (rev, p) => treeOf(rev).get(p)?.id ?? null,
     blob: (id) => out("cat-file", "blob", id),
     lsTree: (rev, dir) => [...treeOf(rev)].filter(([p, o]) => o.type === "blob" && p.startsWith(dir + "/")).map(([p]) => p),
+    /** The entries directly inside `dir` at `rev`, files and directories alike. */
+    lsTop: (rev, dir) => [...treeOf(rev)]
+      .filter(([p]) => p.startsWith(dir + "/") && !p.slice(dir.length + 1).includes("/"))
+      .map(([p, o]) => ({ name: p.slice(dir.length + 1), isDirectory: o.type === "tree" })),
   };
 }
 
 // ── where each file must be in the recorded state ────────────────────────────
-const MIG = "supabase/migrations";
+// An applied forward file sits at its ledger version in supabase/migrations/.
+// Its UNEXECUTED rollback companion sits in supabase/rollbacks/, outside the
+// directory the Supabase CLI discovers migrations in (Codex's review of
+// 76883c6, item 1). An EXECUTED rollback has its own ledger version and is a
+// migration file like any other (recordPath).
+const MIG = MIGRATIONS_DIR;
 export const forwardPath = (m) => (m.productionVersion ? `${MIG}/${m.productionVersion}_${m.name}.sql` : m.pendingPath);
-export const companionPath = (m, r) => (m.productionVersion ? `${MIG}/${m.productionVersion}_${m.name}.rollback.sql` : r.pendingPath);
+export const companionPath = (m, r) => (m.productionVersion ? `${ROLLBACKS_DIR}/${m.productionVersion}_${m.name}.rollback.sql` : r.pendingPath);
 export const recordPath = (m, rec) => `${MIG}/${rec.version}_${m.name}_rollback.sql`;
 
 /** Every pinned file with the path the recorded state puts it at. */
@@ -337,8 +347,12 @@ export function checkManifest(repo, M) {
     if (!/^\d{14}$/.test(rec.version) || !(rec.version > prev)) say("M-8", `rollback record ${rec.n}: version ${rec.version} is not after ${prev}`);
     prev = rec.version;
   });
-  // exactly the top-level migration files this state implies — no more, no fewer
-  const top = g.lsTree("HEAD", MIG).filter((p) => !p.includes("/pending/") && /^supabase\/migrations\/\d{14}_.*\.sql$/.test(p) && !/\.rollback\.sql$/.test(p));
+  // exactly the migration files this state implies — no more, no fewer. The
+  // set compared is the one the Supabase CLI would discover, with no file
+  // exempted (supabase-migration-discovery.mjs).
+  const eligible = eligibleMigrations(g.lsTop("HEAD", MIG));
+  for (const d of duplicateVersions(eligible)) say("M-8", `version ${d.version} is carried by more than one discoverable migration file: ${d.files.join(", ")}`);
+  const top = eligible.map((e) => `${MIG}/${e.file}`);
   const expect = new Set([
     ...L.map((r) => `${MIG}/${r.version}_${r.name}.sql`),
     ...M.migrations.filter((m) => m.productionVersion).map((m) => forwardPath(m)),
@@ -347,7 +361,7 @@ export function checkManifest(repo, M) {
   for (const p of top) if (!expect.has(p)) say("M-8", `unexpected applied migration file ${p}`);
   for (const p of expect) if (!top.includes(p)) say("M-8", `missing applied migration file ${p}`);
   // every release2 file sits exactly where the state puts it
-  const r2 = g.lsTree("HEAD", MIG).filter((p) => /release2_0[1-5]_/.test(p));
+  const r2 = [...g.lsTree("HEAD", MIG), ...g.lsTree("HEAD", ROLLBACKS_DIR)].filter((p) => /release2_0[1-5]_/.test(p));
   const expectR2 = new Set(files.filter((f) => /release2_0[1-5]_/.test(f.path)).map((f) => f.path));
   for (const p of r2) if (!expectR2.has(p)) say("M-8", `release2 file ${p} is not where the recorded state puts it`);
   for (const p of expectR2) if (!r2.includes(p)) say("M-8", `release2 file ${p} is missing`);

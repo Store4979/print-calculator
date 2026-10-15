@@ -101,8 +101,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   are whitelisted to ORDER_COLUMNS (11 since Phase E) before insert
 - supabase/migrations/ — THE source of truth for schema. One file per applied
   migration, named <ledger version>_<name>.sql and byte-identical to
-  supabase_migrations.schema_migrations.statements[1]; .rollback.sql companions
-  sit alongside; NOT-yet-applied work lives in supabase/migrations/pending/.
+  supabase_migrations.schema_migrations.statements[1]. UNEXECUTED .rollback.sql
+  companions live in supabase/rollbacks/, NEVER beside the forward file: the
+  Supabase CLI discovers every top-level ^([0-9]+)_(.*)\.sql$ file,
+  .rollback.sql included (Codex's review of 76883c6;
+  scripts/tests/migration-discovery.test.js). NOT-yet-applied work lives in
+  supabase/migrations/pending/, with its companions.
   Check drift with supabase/drift-check.sql (ledger) vs scripts/migration-md5.sh
   (repo) — see supabase/migrations/README.md
 - src/barcode128.js — Code 128B generator drawn on order PDFs via jsPDF rects
@@ -247,7 +251,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   - Every SQL text stage 0 runs on production is EMITTED by
     scripts/manual/assemble-stage0.mjs from git blobs and pinned (md5) in
     docs/security/stage0-production-manifest.json. Never hand-edit or retype
-    one. The rollbacks are .rollback.sql companions in pending/. INV-6 counts a
+    one. The unexecuted rollbacks are .rollback.sql companions: in pending/
+    while their forward is pending, in supabase/rollbacks/ once it is
+    applied (the record tool moves them there). INV-6 counts a
     DROP of a Release 2 table only from an applied file byte-identical to one
     (scripts/tests/release2-inventory.rollback.test.js).
     scripts/manual/stage0-local-pglite.mjs runs all of it in a local PG 17
@@ -404,6 +410,16 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     P2-01 refuse while it exists (Codex 4(b)). The record tool refuses a
     forward step after rollback records. Never delete ledger history to
     get round this.
+  - **A file at the top level of supabase/migrations/ IS a migration to the
+    Supabase CLI.** Its Go loader lists every non-directory entry there
+    matching `^([0-9]+)_(.*)\.sql$`, with no `.rollback.sql` exemption.
+    Until Codex's review of 76883c6, nine unexecuted companions sat there,
+    each duplicating its forward's version, and the repo's own checks
+    filtered them out, so green proved nothing. They now live in
+    supabase/rollbacks/. scripts/tests/supabase-migration-discovery.mjs
+    models the rule, with nothing exempted, and
+    migration-discovery.test.js plus M-8 enforce it. `main` still carries
+    the eight older companions until this release reaches it.
   - **This checkout is CRLF** (core.autocrlf=true in Git's SYSTEM config).
     md5 a migration from its blob (`git cat-file blob <id>`), never from
     the working-tree file. 01's working copy reads 13978 bytes; its blob

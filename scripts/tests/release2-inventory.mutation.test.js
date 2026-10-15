@@ -65,7 +65,8 @@ const FIXTURE_TABLES = {
 const TOMBSTONE = "// TOMBSTONE\nexport const TOMBSTONE = true;\nexport const handler = async () => ({ statusCode: 410, body: \"Gone\" });\n";
 
 /**
- * A working copy: src/, netlify/functions/, supabase/migrations.
+ * A working copy: src/, netlify/functions/, supabase/migrations, and
+ * supabase/rollbacks (where an applied migration's unexecuted companion is).
  * - asRecorded false (mutate): the migrations in the PENDING layout, derived
  *   from the recorded state, with the fixture snapshot.
  * - asRecorded true (mutateReal): the migrations exactly as HEAD records them;
@@ -76,6 +77,7 @@ function copyTree({ asRecorded = false } = {}) {
   cpSync(join(ROOT, "src"), join(root, "src"), { recursive: true });
   cpSync(join(ROOT, "netlify", "functions"), join(root, "netlify", "functions"), { recursive: true });
   cpSync(join(ROOT, "supabase", "migrations"), join(root, "supabase", "migrations"), { recursive: true });
+  cpSync(join(ROOT, "supabase", "rollbacks"), join(root, "supabase", "rollbacks"), { recursive: true });
   if (!asRecorded) resetToPending(root, RECORDED);
   writeFileSync(join(root, "supabase", "tables.json"), JSON.stringify(FIXTURE_TABLES, null, 2));
   return root;
@@ -100,6 +102,24 @@ function mutate(apply, opts = {}, tree = {}) {
     rmSync(root, { recursive: true, force: true });
   }
 }
+/**
+ * Stage 0's repository move, as the record tool makes it: each pending
+ * release2 forward file to supabase/migrations/<version>_<name>.sql, and each
+ * unexecuted .rollback.sql companion to supabase/rollbacks/<version>_<name>.rollback.sql,
+ * never among the discoverable migration files (Codex's review of 76883c6,
+ * item 1).
+ */
+function applyRelease2(root, version) {
+  const pending = join(root, "supabase", "migrations", "pending");
+  const rollbacks = join(root, "supabase", "rollbacks");
+  mkdirSync(rollbacks, { recursive: true });
+  for (const f of readdirSync(pending)) {
+    if (!/^release2_/.test(f)) continue;
+    const to = f.endsWith(".rollback.sql") ? rollbacks : join(root, "supabase", "migrations");
+    renameSync(join(pending, f), join(to, `${version}_${f}`));
+  }
+}
+
 /** Edit a file in the copy by exact replacement (asserts the anchor is unique). */
 function edit(root, rel, from, to) {
   const p = join(root, rel);
@@ -280,9 +300,7 @@ test("MUT-18 a Release 2 table named in src/ fails; still fails when the snapsho
   }).joined, /names the Release 2 table "device_enrollments"/, "the snapshot listing it changes nothing");
   // Stage 0: 01 leaves pending/ under a ledger version; the snapshot is refreshed to include the new tables.
   const r = mutate((root) => {
-    const pending = join(root, "supabase", "migrations", "pending");
-    const applied = join(root, "supabase", "migrations");
-    for (const f of readdirSync(pending)) if (/^release2_/.test(f)) renameSync(join(pending, f), join(applied, `20260930120000_${f}`));
+    applyRelease2(root, "20260930120000");
     write(root, "supabase/tables.json", { ...FIXTURE_TABLES, ledgerVersion: "20260930120000", tables: [...FIXTURE_TABLES.tables, "staff_sessions", "device_enrollments", "enrollment_tickets", "auth_attempts", "upload_capabilities", "upload_capability_files"] });
     write(root, "src/mutant.js", IMPORT + "export const f = () => supabase.from(\"enrollment_tickets\").select(\"*\");\n");
   });
@@ -395,10 +413,7 @@ test("MUT-26 (I4) capturedAt, capturedBy, database and query: missing, empty and
 
 test("MUT-27 (INV-6) Release 2 table presence follows applied state: apply + refresh passes; refresh alone fails; apply alone fails; the browser prohibition holds in every case", () => {
   const R2 = ["auth_attempts", "device_enrollments", "enrollment_tickets", "staff_sessions", "upload_capabilities", "upload_capability_files"];
-  const applyAll = (root) => {
-    const pending = join(root, "supabase", "migrations", "pending"), applied = join(root, "supabase", "migrations");
-    for (const f of readdirSync(pending)) if (/^release2_/.test(f)) renameSync(join(pending, f), join(applied, `20260930120000_${f}`));
-  };
+  const applyAll = (root) => applyRelease2(root, "20260930120000");
   const refreshed = { ...FIXTURE_TABLES, ledgerVersion: "20260930120000", tables: [...FIXTURE_TABLES.tables, ...R2] };
 
   const both = mutate((root) => { applyAll(root); write(root, "supabase/tables.json", refreshed); });
@@ -483,8 +498,7 @@ test("MUT-33 Codex lifecycle note: a stage-0 apply with the REAL snapshot refres
   // apply is replayed whatever HEAD records (in the pending state the view IS
   // the committed capture).
   const r = mutateRealPending((root) => {
-    const pending = join(root, "supabase", "migrations", "pending"), applied = join(root, "supabase", "migrations");
-    for (const f of readdirSync(pending)) if (/^release2_/.test(f)) renameSync(join(pending, f), join(applied, `20261001000000_${f}`));
+    applyRelease2(root, "20261001000000");
     const p = join(root, "supabase", "tables.json");
     const j = JSON.parse(readFileSync(p, "utf8"));
     j.ledgerVersion = "20261001000000";

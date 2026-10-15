@@ -2,8 +2,9 @@
 // state (review of 8913a69, B3; docs/security/release-2-stage-0-production-plan.md
 // §E6). Walks the repository through the moves stage 0 would make:
 //
-//   apply     the five release2 files and their .rollback.sql companions move
-//             from pending/ to supabase/migrations/<version>_… (P2)
+//   apply     the five release2 files move from pending/ to
+//             supabase/migrations/<version>_…, and their unexecuted
+//             .rollback.sql companions to supabase/rollbacks/<version>_… (P2)
 //   rollback  each applied rollback's bytes are committed as
 //             supabase/migrations/<rb version>_<name>_rollback.sql (F4)
 //   snapshot  tables.json recaptured at the rollback's ledger version
@@ -73,18 +74,20 @@ function tree({ asRecorded = false } = {}) {
 }
 const MIG = (root) => join(root, "supabase", "migrations");
 const PEND = (root) => join(MIG(root), "pending");
+const RBK = (root) => join(root, "supabase", "rollbacks");
 
 /** P2's repository move: forward files and companions out of pending/ (the first `count` of them). */
 function apply(root, count = NAMES.length) {
+  mkdirSync(RBK(root), { recursive: true });
   NAMES.slice(0, count).forEach((n, i) => {
     renameSync(join(PEND(root), `${n}.sql`), join(MIG(root), `${FWD(i)}_${n}.sql`));
-    renameSync(join(PEND(root), `${n}.rollback.sql`), join(MIG(root), `${FWD(i)}_${n}.rollback.sql`));
+    renameSync(join(PEND(root), `${n}.rollback.sql`), join(RBK(root), `${FWD(i)}_${n}.rollback.sql`));
   });
 }
 /** F4's repository record: each applied rollback's bytes under its own version. */
 function rollBack(root, { order = RB_ORDER, version = RBV } = {}) {
   order.forEach((i, k) => {
-    const bytes = readFileSync(join(MIG(root), `${FWD(i)}_${NAMES[i]}.rollback.sql`));
+    const bytes = readFileSync(join(RBK(root), `${FWD(i)}_${NAMES[i]}.rollback.sql`));
     writeFileSync(join(MIG(root), `${version(k)}_${NAMES[i]}_rollback.sql`), bytes);
   });
 }

@@ -21,6 +21,7 @@ import { md5 } from "../manual/assemble-stage0.mjs";
 import { checkManifest, MANIFEST_PATH, recordPath } from "./stage0-manifest-check.mjs";
 import { readTablesSnapshot } from "./inventory-check.mjs";
 import { commitBackToPending, syntheticSnapshot } from "./stage0-recorded-state.mjs";
+import { eligibleOnDisk, duplicateVersions } from "./supabase-migration-discovery.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ID = ["-c", "user.name=stage0-record-test", "-c", "user.email=stage0-record@example.invalid", "-c", "commit.gpgsign=false"];
@@ -54,9 +55,12 @@ test("REC-1 forward P2-01, then rollback RB-1: exactly the record is staged; eac
   try {
     const m01 = s.M.migrations.find((m) => m.n === "01");
     const r01 = s.M.rollbacks.find((r) => r.n === "01");
-    const fwd = `supabase/migrations/${V1}_${m01.name}.sql`, comp = `supabase/migrations/${V1}_${m01.name}.rollback.sql`;
+    const fwd = `supabase/migrations/${V1}_${m01.name}.sql`, comp = `supabase/rollbacks/${V1}_${m01.name}.rollback.sql`;
     const staged = recordStep({ root: s.dir, kind: "forward", name: "P2-01", snapshotPath: s.snapshot({ ledgerVersion: V1, r2: true }), versions: { "01": V1 }, capturedBy: "REC-1 fixture" });
     assert.deepEqual(staged, [MANIFEST_PATH, m01.pendingPath, r01.pendingPath, fwd, comp, "supabase/tables.json"].sort());
+    const eligible = eligibleOnDisk(s.dir);
+    assert.deepEqual(eligible.filter((e) => e.file.endsWith(".rollback.sql")), [], "the unexecuted companion is not discoverable by the Supabase CLI's rule");
+    assert.deepEqual(duplicateVersions(eligible), [], "every discoverable version is unique");
     const t1 = JSON.parse(readFileSync(join(s.dir, "supabase", "tables.json"), "utf8"));
     assert.equal(t1.project, s.M.productionRef, "project filled");
     assert.equal(t1.capturedBy, "REC-1 fixture", "capturedBy filled");
