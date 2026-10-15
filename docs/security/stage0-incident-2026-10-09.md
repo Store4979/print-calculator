@@ -147,6 +147,13 @@ checked. That is §6 rows 1–1c.
 
 Each is planned after this record, for Codex review.
 
+**Added after the incident review.** Codex's review of `41153b8`
+(2026-10-15) added the comment-stripping correction. The test suite's
+source-reading checks must move to JavaScript/JSX-aware and SQL-aware
+handling, with explicit behaviour on parse failure. It is not an incident
+ruling. It is required before any new production-window or security
+clearance that relies on those checks.
+
 ## 6. Re-opening evidence (Codex §1)
 
 The stop rule throughout: "If anything fails or contradicts the incident as

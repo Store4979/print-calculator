@@ -381,8 +381,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     means no more writes are started. Never pick an operation from memory.
 - STAGE-0 INCIDENT, 2026-10-09 (docs/security/stage0-incident-2026-10-09.md;
   Codex's incident review, 2026-10-12, is its Appendix A). NO production
-  migration window is cleared until Codex items 2, 3, 4(c) and 6 are
-  reviewed. The lessons:
+  migration window is cleared until Codex items 2, 3, 4(c) and 6 AND the
+  comment-stripping correction (Codex's review of 41153b8) are reviewed.
+  The comment-stripping correction also comes before any security
+  clearance that relies on a source-reading test. The lessons:
   - **Every pause ends the session.** Before stepping away or ending a
     window: delete both tokens and close both windows (runbook §9). A
     clearance never survives a stop, and no loaded production token stays
@@ -561,6 +563,18 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    forbidding it. A comment that explains why a pattern is forbidden contains
    the pattern. The helper also normalises CRLF, without which `//.*$` never
    reaches `$` on a Windows checkout and the comment survives.
+   **BUT the helper is two regexes, not a lexer.** It deletes real code from
+   the TEST'S VIEW of a file; the deployed bundle is not affected (Codex's
+   audit at 41153b8). A `/*` inside a string or a `//` comment opens a
+   "comment" that runs to the next `*/`. A `//` inside a string (any URL)
+   deletes the rest of its line.
+   - At 41153b8 the view loses code from 22 of the 68 files its consumers
+     read. That includes about 200 lines of src/App.jsx, each span opened
+     by an `image/*` inside a string.
+   - A negative-only check on its output can pass on erased code.
+   - Build no new check on it, and none on the regex SQL stripping in
+     inventory-check.mjs or the manifest checker's M-6/M-6b. The
+     replacement is a reviewed prerequisite.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

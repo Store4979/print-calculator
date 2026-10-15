@@ -2427,6 +2427,89 @@ window.**
       (DISC-4). This repository has none;
     - the module and `migration-discovery.test.js` describe themselves as
       a filename-eligibility check, not a CLI simulation.
+- **Codex reviewed `41153b8` (E): ACCEPT, 2026-10-15.**
+  - **Its clearance, verbatim:** "A–E may be pushed to
+    `security/release-2-slice-2` for its staging Netlify build only. ...
+    This does not clear merging or pushing main, changing integrations, any
+    migration CLI operation, or any production stage-0 operation."
+  - **What it checked:**
+    - the replay summary (14 states, each 382/382; its starting commit has
+      E's tree);
+    - the A3 pin and LC-5;
+    - the upstream attribution. It checked the release's filename parser
+      itself; the source hashes remain Claude's evidence;
+    - its own targeted run, 27/27.
+  - **Its comment-stripping audit is a separate corrective change.** It
+    does not block this push. It is required before any new
+    production-window or security clearance that relies on those checks.
+    - The scope: the shared JavaScript stripper
+      (`scripts/tests/source-util.mjs`, six consumer files), its inline
+      copy in `sw-clear-caches.test.js`, and two SQL pipelines (the
+      inventory's `sqlWithoutComments`; the manifest checker's M-6/M-6b).
+    - Codex reproduced false passes in JavaScript and in SQL. The SQL one
+      is a snapshot that omits a table an applied migration creates.
+    - It is now a prerequisite with items 2, 3, 4(c) and 6 (§I).
+- **The push, Thu 2026-10-15, under that clearance only** (runbook §12):
+  - **Before:** local HEAD `41153b8`, and the remote branch `7181b42`
+    (`ls-remote`), so a fast-forward. The untracked files (the item 2
+    plan, `AGENTS.md`) stayed untracked.
+  - **The push, 22:26:54–57Z:** `security/release-2-slice-2` only,
+    `7181b42..41153b8`, with no force and no tags.
+  - **After (`ls-remote`):**
+    - the branch is at `41153b8`;
+    - `main` is still at `7ec5af4`;
+    - `security/release-2-stage-0` is still at `513b622`;
+    - no tag points at A–E.
+  - **Staging (`printcalculator2-staging`), from `deploy-context`:**
+    - **before, 22:26:31Z:** deploy `6ac6f965243687000772cbac` at
+      `7181b42`, built 2026-10-08T02:03:43.451Z. That is the staging
+      rebuild from `7181b42`'s push, not recorded until now;
+    - **after, 22:29:59Z:** deploy **`6ad15335cb5047ded55c4b8a`**, context
+      `production`, commitRef
+      `41153b834dfa5fe3b1e4bba6a8eeb1524e75fb5a`, built
+      2026-10-15T22:29:38.841Z. The deploy's own permalink reports the
+      same. `contextAllowed true`, `flagPresent true`, `flagEnabled true`;
+    - **what this proves about the tests:** the build command runs
+      `write-deploy-context.mjs` after `yarn test`, joined by `&&`. So a
+      published deploy at `41153b8` means `yarn test` exited 0 on Netlify.
+      The deploy log, and so its test count, was not read.
+  - **Production is unchanged, 22:30:38–51Z:**
+    - the live site serves the same three files as deploy `6ab020c5`'s
+      permalink;
+    - `main-DZt0oGiJ.js` (md5 `47ab9406ff3e141bd9c96850732c6bf0`) and
+      `index-ftBg9V1i.js` (md5 `57fb08e6ac5ddc5764e3568ff9150f6d`) are
+      identical live and on the deploy, with the same md5s as on
+      2026-10-13;
+    - there is no deploy-context function.
+
+    **Ryan's §12 dashboard read, read-only, nothing clicked**, reported by
+    about 18:49 EDT (22:49Z); the time of the read was not given:
+    - Netlify → `printcalculator2` shows no new production deploy since the
+      push;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site check above.
+- **Codex reviewed the CS and item 2 plans: both AMEND, direction
+  accepted, 2026-10-15** (`reviews/2026-10-15-cs-and-item2-plan-review.md`,
+  Codex's workspace). No further plan-only round is needed once its rulings
+  are folded in, and this commit folds them into both plans:
+  - `docs/security/stage0-comment-stripping-plan.md` §0;
+  - `docs/security/stage0-item2-classifier-plan.md` §0.
+  - **The order is accepted: CS → 2 → 6 → 3 → 4(c).**
+  - **Codex's independent measurement:** 68 files, all parse, and 22 lose
+    code. These are losses from the test VIEWS, not from the deployed
+    bundle. "No current conclusion is wrong" holds only for the named
+    forbidden-pattern and anchor checks read against raw source.
+  - **Ryan's scope (2026-10-15):**
+    - CS may be implemented now, as local commits, with all of Codex's
+      corrections;
+    - item 2 starts only after Codex accepts CS;
+    - **not cleared:** pushing either implementation, or any staging
+      capture session. The A–E push clearance does not extend to new
+      commits;
+    - item 2's capture runbook, exact probe pins and stop rules go to
+      Codex before any staging send.
 
 ---
 
@@ -2661,7 +2744,12 @@ until approved:**
      - item 4(c): a rehearsal from the committed 01 state, with new pins, a
        fresh baseline, the recovery mapping, a revised runbook and the
        exact head;
-     - item 6: the sender's deadline and window guards, with their tests.
+     - item 6: the sender's deadline and window guards, with their tests;
+     - the comment-stripping correction (Codex's review of `41153b8`,
+       2026-10-15). The source-reading checks must use JavaScript/JSX-aware
+       and SQL-aware handling, with explicit behaviour on parse failure.
+       It is required before any new production-window or security
+       clearance that relies on those checks.
    - **The P1–P3 runbook cannot be used again.**
      `docs/security/stage0-p1-p3-runbook.md` was executed at H to P1 (§E11).
      Its P1 and P2-01 refuse over 01.
