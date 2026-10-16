@@ -59,10 +59,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
   both PINNED EXACTLY (no lockfile is committed — the supabase-js lesson):
   `acorn` + `acorn-jsx`, used by scripts/tests/inventory-check.mjs, the
   Release 2 reach inventory (release2-inventory.test.js + its mutation
-  companion). `acorn` alone is also used by stage0-manifest-check.mjs's
-  M-7b, loaded lazily, to parse the inventory's own imports for the A3
-  binding. Never use a text scan for that: stripComments treats a `/*`
-  inside a `//` line as a block comment, and it swallowed both imports. It PARSES src/ and classifies every table/bucket/rpc/channel/
+  companion). Both also power scripts/tests/source-util.mjs's `jsCode`, the
+  view every source-reading test uses. `acorn` alone is also used by
+  stage0-manifest-check.mjs's M-7b, loaded lazily, to parse the inventory's
+  own imports for the A3 binding. Never use a text scan for that: the old
+  stripComments treated a `/*` inside a `//` line as a block comment, and
+  it swallowed both imports. The inventory PARSES src/ and classifies every table/bucket/rpc/channel/
   function the client names against supabase/tables.json (captured by
   scripts/manual/tables-snapshot.sql — never edit by hand) and
   netlify/functions/*.js + _retired.json; a new reach site fails until it is
@@ -555,26 +557,37 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    release2_04). A `returns table (...)` OUT column name that matches any table
    column in the body is a collision waiting to happen: alias every table and
    qualify every column.
-   SOURCE-STRING ASSERTIONS STRIP COMMENTS FIRST — `stripComments` from
-   scripts/tests/source-util.mjs, applied at the read, never to one assertion.
-   Three times (2026-09) a test matched text that merely QUOTED the thing it
-   asserted about: a doesNotMatch on the old function signature, the sw.js
-   `startsWith` comment, and enroll-list's header quoting `select("*")` while
-   forbidding it. A comment that explains why a pattern is forbidden contains
-   the pattern. The helper also normalises CRLF, without which `//.*$` never
-   reaches `$` on a Windows checkout and the comment survives.
-   **BUT the helper is two regexes, not a lexer.** It deletes real code from
-   the TEST'S VIEW of a file; the deployed bundle is not affected (Codex's
-   audit at 41153b8). A `/*` inside a string or a `//` comment opens a
-   "comment" that runs to the next `*/`. A `//` inside a string (any URL)
-   deletes the rest of its line.
-   - At 41153b8 the view loses code from 22 of the 68 files its consumers
-     read. That includes about 200 lines of src/App.jsx, each span opened
-     by an `image/*` inside a string.
-   - A negative-only check on its output can pass on erased code.
-   - Build no new check on it, and none on the regex SQL stripping in
-     inventory-check.mjs or the manifest checker's M-6/M-6b. The
-     replacement is a reviewed prerequisite.
+   SOURCE-STRING ASSERTIONS READ A CODE-ONLY VIEW, at the read, never per
+   assertion (docs/security/stage0-comment-stripping-plan.md):
+   - **JavaScript/JSX: `jsCode(src, { label })`** from
+     scripts/tests/source-util.mjs. It PARSES with acorn (acorn-jsx for a
+     `.jsx` label) and blanks exactly the comments, keeping strings,
+     templates, regex literals and JSX text, and lengths and lines. It
+     normalises CRLF. A parse failure throws (no fallback, no sourceType
+     retry: public/sw.js is `sourceType: "script"`), and an empty view
+     throws unless `allowEmpty`.
+   - **SQL: `sqlCode(text, { label, strings, bodies })`** from
+     scripts/tests/sql-lexer.mjs, a bounded PostgreSQL lexer
+     (standard_conforming_strings on; nested comments; E-strings; quoted
+     identifiers; dollar quotes). The CONSUMER says whether strings are
+     kept, and whether each dollar body is code or data. The tag never
+     decides. An unsupported form throws.
+   - Three times (2026-09) a test matched text that merely QUOTED the thing
+     it asserted about: a doesNotMatch on the old function signature, the
+     sw.js `startsWith` comment, and enroll-list's header quoting
+     `select("*")` while forbidding it. A comment that explains why a
+     pattern is forbidden contains the pattern.
+   - **The old regex strippers are gone.** They were `stripComments`, its
+     inline copy, the inventory's sqlWithoutComments and M-6's `--` passes.
+     They deleted real code from the TESTS' VIEWS (22 of 68 files at
+     41153b8, about 200 lines of src/App.jsx from an `image/*` string;
+     Codex's audit), so a negative-only check could pass on erased code.
+     comment-lexing.test.js CS-6 fails on a regex-literal stripper anywhere
+     in scripts/. It is a regression check, and `new RegExp` escapes it.
+   - **Every negative source predicate is REGISTERED** in its test file
+     with a violating `hit` (a `NEG` table). Its CS-4 control hides the hit
+     behind every comment-like wrapper and requires the predicate to catch
+     it. A doesNotMatch on a view that is not in the table fails.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

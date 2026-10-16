@@ -19,21 +19,41 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { stripComments } from "./source-util.mjs";
+import { jsCode, negativeControlFailures, unregisteredNegatives } from "./source-util.mjs";
 import { formatBuildStamp, MISSING_STAMP } from "../../src/lib/buildStamp.js";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
-const STAMP_SRC = stripComments(read("../../src/lib/buildStamp.js"));
-const VITE_SRC = stripComments(read("../../vite.config.js"));
-const APP_SRC = stripComments(read("../../src/App.jsx"));
+// Every source is read through jsCode (comment-stripping plan §3.1): parsed,
+// comments blank, everything else intact. A source that does not parse fails.
+const view = (p) => jsCode(read(`../../${p}`), { label: p });
+const STAMP_SRC = view("src/lib/buildStamp.js");
+const VITE_SRC = view("vite.config.js");
+const APP_SRC = view("src/App.jsx");
+
+// A path into the repo's dist/, assembled so this file's own source never
+// contains it (section 3 scans this file too).
+const REPO_DIST_MAIN = ["..", "..", "dist", "assets", "main.js"].join("/");
+
+// The negative source predicates (comment-stripping plan §3.2). Each one's
+// `hit` violates it; CS-4 below hides each hit behind every comment-like
+// wrapper and requires the predicate to catch it.
+const NEG = {
+  stampFetch: { re: /fetch\s*\(/, file: "src/lib/buildStamp.js", hit: 'fetch("/server-stamp");' },
+  stampEnv: { re: /process\.env|import\.meta\.env/, file: "src/lib/buildStamp.js", hit: "const __env = process.env.COMMIT_REF;" },
+  stampStorage: { re: /XMLHttpRequest|navigator\.|localStorage|sessionStorage/, file: "src/lib/buildStamp.js", hit: 'const __ls = localStorage.getItem("stamp");' },
+  stampImport: { re: /^\s*import\s/m, file: "src/lib/buildStamp.js", hit: 'import __stamp from "./stamp.js";', lineAnchored: true },
+  vitePlaceholder: { re: /COMMIT_REF\)\s*\|\|\s*["'][^"']+["']/, file: "vite.config.js", hit: 'const __c = trim(env.COMMIT_REF) || "dev";' },
+  repoDist: { re: /["'`]\.\.\/\.\.\/dist(?:\/|["'`])/, file: "scripts/tests/build-stamp.test.js", hit: `const __d = readFileSync(${JSON.stringify(REPO_DIST_MAIN)}, "utf8");` },
+  repoDistAssets: { re: /\/dist\/assets\//, file: "scripts/tests/build-stamp.test.js", hit: `const __d = readFileSync(${JSON.stringify(REPO_DIST_MAIN)}, "utf8");` },
+};
 
 // ── 1. compiled in, never fetched ──────────────────────────────────────────
 test("buildStamp.js reads __PC_BUILD__ and nothing else — no fetch, no runtime env, no import.meta.env", () => {
   assert.match(STAMP_SRC, /typeof __PC_BUILD__ !== "undefined"/);
-  assert.doesNotMatch(STAMP_SRC, /fetch\s*\(/, "a fetched value is a server value, not the running bundle's");
-  assert.doesNotMatch(STAMP_SRC, /process\.env|import\.meta\.env/, "runtime env is not the bundle");
-  assert.doesNotMatch(STAMP_SRC, /XMLHttpRequest|navigator\.|localStorage|sessionStorage/);
-  assert.doesNotMatch(STAMP_SRC, /^\s*import\s/m, "no imports: nothing outside this file feeds the value");
+  assert.doesNotMatch(STAMP_SRC, NEG.stampFetch.re, "a fetched value is a server value, not the running bundle's");
+  assert.doesNotMatch(STAMP_SRC, NEG.stampEnv.re, "runtime env is not the bundle");
+  assert.doesNotMatch(STAMP_SRC, NEG.stampStorage.re);
+  assert.doesNotMatch(STAMP_SRC, NEG.stampImport.re, "no imports: nothing outside this file feeds the value");
 });
 
 test("vite.config.js defines __PC_BUILD__ from Netlify's build-time COMMIT_REF and DEPLOY_ID — the same env the build guard already reads", () => {
@@ -44,7 +64,7 @@ test("vite.config.js defines __PC_BUILD__ from Netlify's build-time COMMIT_REF a
   // they are never defaulted to a string that could read as a version.
   assert.match(VITE_SRC, /trim\(env\.COMMIT_REF\)\s*\|\|\s*null/);
   assert.match(VITE_SRC, /trim\(env\.DEPLOY_ID\)\s*\|\|\s*null/);
-  assert.doesNotMatch(VITE_SRC, /COMMIT_REF\)\s*\|\|\s*["'][^"']+["']/, "no placeholder default");
+  assert.doesNotMatch(VITE_SRC, NEG.vitePlaceholder.re, "no placeholder default");
 });
 
 test("the Admin footer renders formatBuildStamp() and carries the raw values as data attributes", () => {
@@ -55,16 +75,16 @@ test("the Admin footer renders formatBuildStamp() and carries the raw values as 
 });
 
 test("the stamp is reachable WITHOUT an admin sign-in: the employee PIN dialog shows it, and boot logs it once", () => {
-  const LOGIN_SRC = stripComments(read("../../src/components/EmployeeLogin.jsx"));
+  const LOGIN_SRC = view("src/components/EmployeeLogin.jsx");
   assert.match(LOGIN_SRC, /import \{ formatBuildStamp, BUILD \} from "\.\.\/lib\/buildStamp\.js"/);
   assert.match(LOGIN_SRC, /className="emp-login-build-stamp"/);
   assert.match(LOGIN_SRC, /\{formatBuildStamp\(\)\}/);
-  const MAIN_SRC = stripComments(read("../../src/main.jsx"));
+  const MAIN_SRC = view("src/main.jsx");
   assert.match(MAIN_SRC, /console\.info\(`\[print-calculator\] \$\{formatBuildStamp\(\)\}`\)/);
 });
 
 test("the post-build invariant lives in inject-sw-manifest.mjs, runs after yarn build on Netlify, and refuses a MISSING stamp on a Netlify build", () => {
-  const INJ = stripComments(read("../inject-sw-manifest.mjs"));
+  const INJ = view("scripts/inject-sw-manifest.mjs");
   assert.match(INJ, /BUILD STAMP invariant failed/);
   assert.match(INJ, /__PC_BUILD__/, "checks the identifier was replaced");
   assert.match(INJ, /builtAt/);
@@ -132,9 +152,30 @@ test("no test in scripts/tests reads the repo's dist/ — post-build checks belo
   const here = new URL("./", import.meta.url);
   const files = readdirSync(here).filter((f) => /\.test\.js$/.test(f));
   assert.ok(files.includes("build-stamp.test.js"), "this file is in the set it checks");
+  let scanned = 0;
   for (const f of files) {
-    const src = stripComments(readFileSync(new URL(f, here), "utf8"));
-    assert.doesNotMatch(src, /["'`]\.\.\/\.\.\/dist(?:\/|["'`])/, `${f} reads the repo's dist/`);
-    assert.doesNotMatch(src, /\/dist\/assets\//, `${f} reads the repo's dist/assets/`);
+    // jsCode throws on a file that does not parse, so none drops out unseen.
+    const src = jsCode(readFileSync(new URL(f, here), "utf8"), { label: `scripts/tests/${f}` });
+    scanned++;
+    assert.doesNotMatch(src, NEG.repoDist.re, `${f} reads the repo's dist/`);
+    assert.doesNotMatch(src, NEG.repoDistAssets.re, `${f} reads the repo's dist/assets/`);
   }
+  assert.equal(scanned, files.length, "every test file was read");
+});
+
+// ── 4. CS-4: every negative source predicate above sees hidden code ────────
+test("CS-4 build-stamp: each negative source predicate catches its hit hidden behind every comment-like wrapper", () => {
+  const failures = negativeControlFailures(Object.entries(NEG).map(([id, n]) => ({
+    id, hit: n.hit, lineAnchored: n.lineAnchored,
+    raw: () => read(`../../${n.file}`), opts: { label: n.file },
+    violates: (v) => n.re.test(v),
+  })));
+  assert.deepEqual(failures, []);
+});
+
+test("CS-4 build-stamp: every doesNotMatch on a source view takes its pattern from NEG, and every NEG entry is asserted", () => {
+  assert.deepEqual(unregisteredNegatives(read("./build-stamp.test.js"), {
+    label: "scripts/tests/build-stamp.test.js", viewNames: ["STAMP_SRC", "VITE_SRC", "APP_SRC", "LOGIN_SRC", "MAIN_SRC", "INJ", "src"],
+    registry: "NEG", regexIds: Object.keys(NEG),
+  }), []);
 });

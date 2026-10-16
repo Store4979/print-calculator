@@ -6,7 +6,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadSW, mkReq, mkRes, ORIGIN, SB, SW_SOURCE } from "./sw-harness.mjs";
-import { stripComments } from "./source-util.mjs";
+import { jsCode, negativeControlFailures, unregisteredNegatives } from "./source-util.mjs";
+
+// public/sw.js is a classic worker script, read as one (comment-stripping plan §3.1).
+const SW_OPTS = { label: "public/sw.js", sourceType: "script" };
+// The negative source predicates of the rev 1 invariant test, each with a hit
+// that violates it (CS-4 at the end).
+const NEG = {
+  falseInvariant: { re: /Only the shell is ever stored/, hit: 'const __m = "Only the shell is ever stored";' },
+  uploadPrefix: { re: /startsWith\(\s*["']\/upload/, hit: 'const __p = url.pathname.startsWith("/upload");' },
+};
 
 const CACHE = "print-app-v16";
 const ASSETS = ["/assets/index-ftBg9V1i.js", "/assets/index-BYRfnAj8.css"];
@@ -187,22 +196,39 @@ test("the cache generation is past BOTH the pre-audit v14 and the flawed v15", (
   assert.equal(CACHE, "print-app-v" + m[1], "tests and source must agree");
 });
 
-test("the comment stripper survives CRLF line endings", () => {
+test("the source view survives CRLF line endings", () => {
   const line = '  // startsWith("/upload") would also match /uploads-anything;';
-  for (const [label, src] of [["LF", line], ["CRLF", line + "\r"], ["CRLF file", line.replace(/\n/g, "\r\n") + "\r\n"]]) {
-    assert.equal(/startsWith/.test(stripComments(src)), false, `${label}: comment must be stripped`);
+  for (const [label, src] of [["LF", line], ["CRLF", line + "\r"], ["CRLF file", line.replace(/\n/g, "\r\n") + "\r\n"], ["lone CR", line + "\rconst x = 1;"]]) {
+    // A comment-only control: its view is empty by design, so it says so.
+    assert.equal(/startsWith/.test(jsCode(src, { ...SW_OPTS, allowEmpty: true })), false, `${label}: the comment must be blank`);
+  }
+  // Code next to the comment survives, on every line ending.
+  const mixed = 'const route = "/upload"; // startsWith("/upload") is not used';
+  for (const [label, src] of [["LF", mixed + "\n"], ["CRLF", mixed + "\r\n"], ["lone CR", mixed + "\r"]]) {
+    const v = jsCode(src, SW_OPTS);
+    assert.match(v, /const route = "\/upload";/, `${label}: the code stays`);
+    assert.equal(/startsWith/.test(v), false, `${label}: the comment is blank`);
   }
   // And the real file, forced to CRLF, must still pass the assertion below.
-  const crlf = stripComments(SW_SOURCE.replace(/\n/g, "\r\n"));
-  assert.equal(/startsWith\(\s*["']\/upload/.test(crlf), false, "CRLF checkout must not false-positive");
+  const crlf = jsCode(SW_SOURCE.replace(/\n/g, "\r\n"), SW_OPTS);
+  assert.doesNotMatch(crlf, NEG.uploadPrefix.re, "CRLF checkout must not false-positive");
 });
 
 test("the rev 1 false invariant is gone from the CODE (comments may cite it)", () => {
-  const code = stripComments(SW_SOURCE);
-  assert.equal(/Only the shell is ever stored/.test(code), false);
-  assert.equal(/startsWith\(\s*["']\/upload/.test(code), false, "exact route map, not a prefix");
+  const code = jsCode(SW_SOURCE, SW_OPTS);
+  assert.doesNotMatch(code, NEG.falseInvariant.re);
+  assert.doesNotMatch(code, NEG.uploadPrefix.re, "exact route map, not a prefix");
   assert.match(code, /SHELL_ROUTES\s*=\s*new Map/, "routes are an exact map");
   assert.match(code, /SHELL_ROUTES\.get\(url\.pathname\)/, "and the listener uses it");
+});
+
+test("CS-4 sw-cache: each negative source predicate catches its hit hidden behind every comment-like wrapper", () => {
+  assert.deepEqual(negativeControlFailures(Object.entries(NEG).map(([id, n]) => ({
+    id, hit: n.hit, raw: () => SW_SOURCE, opts: SW_OPTS, violates: (v) => n.re.test(v),
+  }))), []);
+  assert.deepEqual(unregisteredNegatives(readFileSync(fileURLToPath(new URL("./sw-cache.test.js", import.meta.url)), "utf8"), {
+    label: "scripts/tests/sw-cache.test.js", viewNames: ["code", "crlf"], registry: "NEG", regexIds: Object.keys(NEG),
+  }), []);
 });
 
 // ── Build integration: the marker is actually filled in at deploy time ──────

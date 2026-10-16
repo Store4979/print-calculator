@@ -7,15 +7,57 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { stripComments } from "./source-util.mjs";
+import { jsCode, negativeControlFailures, unregisteredNegatives } from "./source-util.mjs";
 import { withRepoDeployContext, validContext } from "./deploy-context-fixture.mjs";
 
-// EVERY source read here is comment-stripped. Three times an assertion in
-// this suite matched text that merely QUOTED the thing it was asserting
-// about — the old signature in a doesNotMatch, the sw.js startsWith comment,
-// and enroll-list's header quoting select("*") while forbidding it. A source
-// assertion is about code, so the string it runs against must be code only.
-const read = (p) => stripComments(readFileSync(new URL(p, import.meta.url), "utf8"));
+// EVERY source read here is read through jsCode: parsed, comments blank,
+// strings and everything else intact (comment-stripping plan §3.1). Three
+// times an assertion in this suite matched text that merely QUOTED the thing
+// it was asserting about — the old signature in a doesNotMatch, the sw.js
+// startsWith comment, and enroll-list's header quoting select("*") while
+// forbidding it. A source assertion is about code, so the string it runs
+// against must be code only; and a source that does not parse fails here.
+const read = (p) => jsCode(readFileSync(new URL(p, import.meta.url), "utf8"), { label: p.replace(/^(\.\.\/)+/, "") });
+const FILES = {
+  LOGIN: "netlify/functions/staff-login.js",
+  REDEEM: "netlify/functions/enroll-redeem.js",
+  TICKET: "netlify/functions/enroll-ticket-create.js",
+  BOOT: "netlify/functions/csrf-bootstrap.js",
+  AUTH: "netlify/lib/release2-auth.js",
+  LOGOUT: "netlify/functions/staff-logout.js",
+  REVOKE_ALL: "netlify/functions/staff-session-revoke-all.js",
+  REVOKE: "netlify/functions/enroll-revoke.js",
+  LIST: "netlify/functions/enroll-list.js",
+};
+const HANDLERS = ["LOGIN", "REDEEM", "TICKET", "BOOT", "LOGOUT", "REVOKE_ALL", "REVOKE", "LIST"];
+
+// The negative source predicates (comment-stripping plan §3.2), each with the
+// views it is asserted on and a `hit` that violates it. CS-4 at the end hides
+// each hit behind every comment-like wrapper and requires the predicate to
+// catch it in every one of those views.
+const NEG = {
+  leakMessage: { re: /error:\s*e\.message/, on: HANDLERS, hit: "const __r = { error: e.message };" },
+  redeemBurn: { re: /from\("enrollment_tickets"\)[\s\S]{0,200}\.update\(/, on: ["REDEEM"], hit: 'sb.from("enrollment_tickets").update({ used_at: now });' },
+  redeemInsert: { re: /from\("device_enrollments"\)[\s\S]{0,200}\.insert\(/, on: ["REDEEM"], hit: 'sb.from("device_enrollments").insert({ store_id: s });' },
+  ticketManager: { re: /\["owner",\s*"manager"\]|owner','manager'/, on: ["TICKET"], hit: 'const __roles = ["owner", "manager"];' },
+  bootRotate: { re: /mintCsrfSecret|csrf_secret:/, on: ["BOOT"], hit: "const __s = mintCsrfSecret();" },
+  loginUpdate: { re: /from\("staff_sessions"\)[\s\S]{0,120}\.update\(/, on: ["LOGIN"], hit: 'sb.from("staff_sessions").update({ revoked_at: now });' },
+  loginInsert: { re: /from\("staff_sessions"\)[\s\S]{0,120}\.insert\(/, on: ["LOGIN"], hit: 'sb.from("staff_sessions").insert({ id: x });' },
+  logoutDevice: { re: /resolveDevice\(/, on: ["LOGOUT"], hit: "const __d = await resolveDevice(sb, event);" },
+  bodyParse: { re: /JSON\.parse\(event\.body/, on: ["LOGOUT", "REVOKE_ALL"], hit: "const __b = JSON.parse(event.body);" },
+  noRpc: { re: /\.rpc\(/, on: ["LOGOUT", "REVOKE_ALL"], hit: 'const __r = await sb.rpc("revoke_everything");' },
+  revokeAllStaff: { re: /resolveStaff\(/, on: ["REVOKE_ALL"], hit: "const __s = await resolveStaff(sb, event, { interactive: true });" },
+  revokeAllUpdate: { re: /from\("device_enrollments"\)[\s\S]{0,200}\.update\(/, on: ["REVOKE_ALL"], hit: 'sb.from("device_enrollments").update({ revoked_at: now });' },
+  revokeBodyOwner: { re: /body\??\.\s*(owner|user|ownerId|userId|createdBy|revokedBy)/i, on: ["REVOKE"], hit: "const __o = body.ownerId;" },
+  revokeQuery: { re: /queryStringParameters/, on: ["REVOKE"], hit: "const __q = event.queryStringParameters;" },
+  revokeHeader: { re: /headers\??\.?\[?["']?x-(owner|user)/i, on: ["REVOKE"], hit: 'const __h = event.headers["x-owner"];' },
+  revokeJwt: { re: /jwt\.decode|jsonwebtoken|atob\(/, on: ["REVOKE"], hit: "const __j = atob(token);" },
+  revokeBodyStore: { re: /body\??\.\s*storeId/, on: ["REVOKE"], hit: "const __st = body.storeId;" },
+  revokeCookies: { re: /resolveDevice\(|resolveStaff\(/, on: ["REVOKE"], hit: "const __c = await resolveDevice(sb, event);" },
+  revokeLeak: { re: /error:\s*(e|error)\.message/, on: ["REVOKE"], hit: "const __r = { error: error.message };" },
+  listStar: { re: /\.select\("\*"\)|\.select\(\)/, on: ["LIST"], hit: 'const __q = sb.from("device_enrollments").select("*");' },
+  listSecret: { re: /device_token_hash|csrf_secret|created_by|revoked_by|token_hash/, on: ["LIST"], hit: 'const __cols = "id, device_token_hash";' },
+};
 const LOGIN = read("../../netlify/functions/staff-login.js");
 const REDEEM = read("../../netlify/functions/enroll-redeem.js");
 const TICKET = read("../../netlify/functions/enroll-ticket-create.js");
@@ -39,7 +81,7 @@ test("no handler returns a token, session id or key material on failure", () => 
   for (const [name, src] of Object.entries(ALL)) {
     // Failure paths must go through the shared uniform helpers.
     assert.match(src, /authFailed\(\)|json\(4\d\d/, `${name} has no refusal path`);
-    assert.doesNotMatch(src, /error:\s*e\.message/, `${name} leaks an internal message to the caller`);
+    assert.doesNotMatch(src, NEG.leakMessage.re, `${name} leaks an internal message to the caller`);
   }
 });
 
@@ -74,9 +116,9 @@ test("staff-login rotates sessions on every sign-in", () => {
 test("enroll-redeem does the burn and the insert in ONE call, not two", () => {
   assert.match(REDEEM, /\.rpc\("redeem_enrollment_ticket"/,
     "atomicity lives in the function; two round trips reintroduce the window");
-  assert.doesNotMatch(REDEEM, /from\("enrollment_tickets"\)[\s\S]{0,200}\.update\(/,
+  assert.doesNotMatch(REDEEM, NEG.redeemBurn.re,
     "the handler must not burn the ticket itself");
-  assert.doesNotMatch(REDEEM, /from\("device_enrollments"\)[\s\S]{0,200}\.insert\(/,
+  assert.doesNotMatch(REDEEM, NEG.redeemInsert.re,
     "the handler must not insert the enrollment itself");
 });
 
@@ -88,7 +130,7 @@ test("enroll-redeem answers replay, expiry and revocation identically", () => {
 test("enroll-ticket-create is OWNER only", () => {
   assert.match(TICKET, /\.eq\("role", "owner"\)/,
     "a manager must not be able to mint a pairing ticket");
-  assert.doesNotMatch(TICKET, /\["owner",\s*"manager"\]|owner','manager'/);
+  assert.doesNotMatch(TICKET, NEG.ticketManager.re);
 });
 
 test("enroll-ticket-create refuses to guess a store when the owner has several", () => {
@@ -98,7 +140,7 @@ test("enroll-ticket-create refuses to guess a store when the owner has several",
 test("csrf-bootstrap is GET, passive, and does NOT rotate", () => {
   assert.match(BOOT, /method: "GET"/);
   assert.match(BOOT, /interactive: false/, "bootstrap must not advance the idle clock");
-  assert.doesNotMatch(BOOT, /mintCsrfSecret|csrf_secret:/,
+  assert.doesNotMatch(BOOT, NEG.bootRotate.re,
     "rotating here would break every other tab holding the previous token");
 });
 
@@ -129,9 +171,9 @@ test("F-2: a device refused at its own budget does NOT spend the shared store bu
 
 test("F-4: staff-login does not rotate by hand; it calls the serialized function", () => {
   assert.match(LOGIN, /\.rpc\("release2_create_staff_session"/);
-  assert.doesNotMatch(LOGIN, /from\("staff_sessions"\)[\s\S]{0,120}\.update\(/,
+  assert.doesNotMatch(LOGIN, NEG.loginUpdate.re,
     "a hand-rolled revoke cannot be serialized against a concurrent insert");
-  assert.doesNotMatch(LOGIN, /from\("staff_sessions"\)[\s\S]{0,120}\.insert\(/);
+  assert.doesNotMatch(LOGIN, NEG.loginInsert.re);
 });
 
 test("F-6: csrfOk is actually invoked, after the credential is resolved", () => {
@@ -199,13 +241,13 @@ test("staff-logout passes through gate() and refuses uniformly", () => {
   assert.match(LOGOUT, /const blocked = gate\(event, \{ method: "POST" \}\)/);
   assert.match(LOGOUT, /if \(blocked\) return blocked;/);
   assert.match(LOGOUT, /return authFailed\(\)/);
-  assert.doesNotMatch(LOGOUT, /error:\s*e\.message/);
+  assert.doesNotMatch(LOGOUT, NEG.leakMessage.re);
 });
 
 test("staff-logout resolves a STAFF credential, interactively, and never falls back to the device", () => {
   assert.match(LOGOUT, /resolveStaff\(sb, event, \{ interactive: true \}\)/,
     "a logout is an act by a person; it must not be mistaken for a passive poll");
-  assert.doesNotMatch(LOGOUT, /resolveDevice\(/,
+  assert.doesNotMatch(LOGOUT, NEG.logoutDevice.re,
     "a device token has nothing to log out of and must get the uniform 401");
 });
 
@@ -221,8 +263,8 @@ test("staff-logout revokes server-side, the resolved row only, never a body-supp
   assert.match(LOGOUT, /\.update\(\{ revoked_at: new Date\(\)\.toISOString\(\), revoked_reason: "logout" \}\)/);
   assert.match(LOGOUT, /\.eq\("id", staff\.sessionId\)/);
   assert.match(LOGOUT, /\.is\("revoked_at", null\)/, "a concurrent revoke must not be overwritten");
-  assert.doesNotMatch(LOGOUT, /JSON\.parse\(event\.body/, "nothing in the body is trusted");
-  assert.doesNotMatch(LOGOUT, /\.rpc\(/, "one statement on one row needs no function");
+  assert.doesNotMatch(LOGOUT, NEG.bodyParse.re, "nothing in the body is trusted");
+  assert.doesNotMatch(LOGOUT, NEG.noRpc.re, "one statement on one row needs no function");
 });
 
 test("clearHostCookie keeps the __Host- attribute set and expires the cookie", async () => {
@@ -450,13 +492,13 @@ test("revoke-all passes through gate() and refuses uniformly", () => {
   assert.match(REVOKE_ALL, /const blocked = gate\(event, \{ method: "POST" \}\)/);
   assert.match(REVOKE_ALL, /if \(blocked\) return blocked;/);
   assert.match(REVOKE_ALL, /return authFailed\(\)/);
-  assert.doesNotMatch(REVOKE_ALL, /error:\s*e\.message/);
+  assert.doesNotMatch(REVOKE_ALL, NEG.leakMessage.re);
 });
 
 test("revoke-all resolves the DEVICE credential and never consults a staff session", () => {
   assert.match(REVOKE_ALL, /await resolveDevice\(sb, event\)/,
     "kiosk entry must work when no staff session is live or resolvable");
-  assert.doesNotMatch(REVOKE_ALL, /resolveStaff\(/);
+  assert.doesNotMatch(REVOKE_ALL, NEG.revokeAllStaff.re);
 });
 
 test("revoke-all checks CSRF against the ENROLLMENT secret, after resolution, before the revoke", () => {
@@ -472,9 +514,9 @@ test("revoke-all is ONE filtered UPDATE on the resolved enrollment, reading noth
   assert.match(REVOKE_ALL, /\.eq\("enrollment_id", device\.enrollmentId\)/,
     "the filter must be the RESOLVED enrollment, so no parameter can name another device");
   assert.match(REVOKE_ALL, /\.is\("revoked_at", null\)/, "earlier revocations keep their own reason");
-  assert.doesNotMatch(REVOKE_ALL, /JSON\.parse\(event\.body/);
-  assert.doesNotMatch(REVOKE_ALL, /\.rpc\(/);
-  assert.doesNotMatch(REVOKE_ALL, /from\("device_enrollments"\)[\s\S]{0,200}\.update\(/,
+  assert.doesNotMatch(REVOKE_ALL, NEG.bodyParse.re);
+  assert.doesNotMatch(REVOKE_ALL, NEG.noRpc.re);
+  assert.doesNotMatch(REVOKE_ALL, NEG.revokeAllUpdate.re,
     "kiosk entry must not revoke the enrollment itself");
 });
 
@@ -633,10 +675,10 @@ test("enroll-revoke: p_owner derives ONLY from resolveOwnerUser() (getUser), nev
   assert.match(REVOKE, /const user = await resolveOwnerUser\(event, _authFactory\)/);
   assert.match(REVOKE, /p_owner: user\.id/, "the RPC must be handed the validated user's id");
   assert.equal((REVOKE.match(/p_owner:/g) || []).length, 1, "exactly one place sets p_owner");
-  assert.doesNotMatch(REVOKE, /body\??\.\s*(owner|user|ownerId|userId|createdBy|revokedBy)/i, "no owner id from the body");
-  assert.doesNotMatch(REVOKE, /queryStringParameters/, "no owner id from the query string");
-  assert.doesNotMatch(REVOKE, /headers\??\.?\[?["']?x-(owner|user)/i, "no owner id from a custom header");
-  assert.doesNotMatch(REVOKE, /jwt\.decode|jsonwebtoken|atob\(/, "no self-parsed JWT — getUser() validates against Supabase");
+  assert.doesNotMatch(REVOKE, NEG.revokeBodyOwner.re, "no owner id from the body");
+  assert.doesNotMatch(REVOKE, NEG.revokeQuery.re, "no owner id from the query string");
+  assert.doesNotMatch(REVOKE, NEG.revokeHeader.re, "no owner id from a custom header");
+  assert.doesNotMatch(REVOKE, NEG.revokeJwt.re, "no self-parsed JWT — getUser() validates against Supabase");
   assert.match(AUTH, /export async function resolveOwnerUser\(event, authFactory = null/);
   assert.match(AUTH, /asUser\.auth\.getUser\(\)/);
 });
@@ -649,9 +691,9 @@ test("enroll-revoke: gate, owner JWT before anything else, one RPC, 42501 -> uni
   assert.ok(userIdx > 0 && rpcIdx > userIdx);
   assert.equal((REVOKE.match(/\.rpc\(/g) || []).length, 1, "one RPC; the cascade lives in the function");
   assert.match(REVOKE, /error\.code === "42501"\) return authFailed\(\)/);
-  assert.doesNotMatch(REVOKE, /body\??\.\s*storeId/, "the store is resolved from the enrollment inside the function");
-  assert.doesNotMatch(REVOKE, /resolveDevice\(|resolveStaff\(/, "cookies are not consulted — self-revocation must not be refused");
-  assert.doesNotMatch(REVOKE, /error:\s*(e|error)\.message/);
+  assert.doesNotMatch(REVOKE, NEG.revokeBodyStore.re, "the store is resolved from the enrollment inside the function");
+  assert.doesNotMatch(REVOKE, NEG.revokeCookies.re, "cookies are not consulted — self-revocation must not be refused");
+  assert.doesNotMatch(REVOKE, NEG.revokeLeak.re);
 });
 
 test("enroll-revoke: the reason is bounded before the call", () => {
@@ -756,8 +798,8 @@ test("enroll-list: GET, owner JWT, owner memberships only, tenant-scoped, no sel
   assert.match(LIST, /const user = await resolveOwnerUser\(event, _authFactory\)/);
   assert.match(LIST, /\.eq\("user_id", user\.id\)\.eq\("role", "owner"\)/);
   assert.match(LIST, /storeId required: caller owns multiple stores/);
-  assert.doesNotMatch(LIST, /\.select\("\*"\)|\.select\(\)/, "columns must be named");
-  assert.doesNotMatch(LIST, /device_token_hash|csrf_secret|created_by|revoked_by|token_hash/, "no secret or user-id column is even selected");
+  assert.doesNotMatch(LIST, NEG.listStar.re, "columns must be named");
+  assert.doesNotMatch(LIST, NEG.listSecret.re, "no secret or user-id column is even selected");
   const devSel = LIST.indexOf('.from("device_enrollments")');
   assert.ok(devSel > 0 && LIST.indexOf('.eq("store_id", storeId)', devSel) > devSel, "devices filtered by the RESOLVED store");
 });
@@ -842,4 +884,22 @@ test("enroll-list / enroll-revoke: the gate applies", async () => {
     assert.equal((await rev.handler({ ...r, headers: { ...r.headers, "content-type": "text/plain" } })).statusCode, 415);
     assert.equal(calls.length, 0);
   });
+});
+
+// ── CS-4: every negative source predicate above sees hidden code ────────────
+
+test("CS-4 endpoints: each negative source predicate catches its hit hidden behind every comment-like wrapper, in every handler it guards", () => {
+  const raw = (k) => readFileSync(new URL(`../../${FILES[k]}`, import.meta.url), "utf8");
+  const entries = Object.entries(NEG).flatMap(([id, n]) => n.on.map((k) => ({
+    id: `${id} on ${k}`, hit: n.hit, raw: () => raw(k), opts: { label: FILES[k] }, violates: (v) => n.re.test(v),
+  })));
+  assert.deepEqual(negativeControlFailures(entries), []);
+});
+
+test("CS-4 endpoints: every doesNotMatch on a source view takes its pattern from NEG, and every NEG entry is asserted", () => {
+  assert.deepEqual(unregisteredNegatives(readFileSync(new URL("./release2-endpoints.test.js", import.meta.url), "utf8"), {
+    label: "scripts/tests/release2-endpoints.test.js",
+    viewNames: ["src", "LOGIN", "REDEEM", "TICKET", "BOOT", "AUTH", "LOGOUT", "REVOKE_ALL", "REVOKE", "LIST"],
+    registry: "NEG", regexIds: Object.keys(NEG),
+  }), []);
 });

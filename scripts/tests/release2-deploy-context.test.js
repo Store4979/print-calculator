@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { stripComments } from "./source-util.mjs";
+import { jsCode, negativeControlFailures, unregisteredNegatives } from "./source-util.mjs";
 import { withRepoDeployContext, validContext } from "./deploy-context-fixture.mjs";
 import {
   readDeployContext,
@@ -31,6 +31,38 @@ import {
 import { release2Allowed, gate, PRODUCTION_REF } from "../../netlify/lib/release2.js";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+// A source's code-only view (comment-stripping plan §3.1): parsed, comments
+// blank, everything else intact. A source that does not parse fails the test.
+const view = (p) => jsCode(read(`../../${p}`), { label: p });
+const READER = "netlify/lib/deploy-context.js";
+const GATE_FILE = "netlify/lib/release2.js";
+const ROUTE_FILE = "netlify/functions/deploy-context.js";
+
+/** DC-7: the env names a view reads as process.env.X. */
+const envReads = (src) => [...new Set([...src.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1]))].sort();
+/** DC-20: the specifiers of a view's top-level static imports. */
+const importsOf = (src) => [...src.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
+
+// The negative source predicates (comment-stripping plan §3.2). Each `hit`
+// violates its predicate; CS-4 hides each hit behind every comment-like
+// wrapper and requires the predicate to catch it. DC-13 and DC-22 are
+// positive-only on source and have no entry.
+const NEG = {
+  dc6Or: { re: /\|\|\s*"production"/, file: READER, hit: 'const __ctx = raw.context || "production";' },
+  dc6Nullish: { re: /\?\?\s*"production"/, file: READER, hit: 'const __ctx = raw.context ?? "production";' },
+  dc7Computed: { re: /process\.env\[[^\]]+\]/, file: READER, hit: "const __file = process.env[name];" },
+  dc20Supabase: { re: /SUPABASE_/, file: ROUTE_FILE, hit: "const __k = process.env.SUPABASE_SERVICE_ROLE_KEY;" },
+  dc20Client: { re: /@supabase\/supabase-js|createClient/, file: ROUTE_FILE, hit: "const __sb = createClient(url, key);" },
+  dc20Origins: { re: /RELEASE2_ALLOWED_ORIGINS/, file: ROUTE_FILE, hit: "const __o = process.env.RELEASE2_ALLOWED_ORIGINS;" },
+  dc20Gate: { re: /release2\.js/, file: ROUTE_FILE, hit: 'import { gate as __gate } from "../lib/release2.js";' },
+  dc24GateFlag: { re: /env\.RELEASE2_ENABLED/, file: GATE_FILE, hit: 'const __f = env.RELEASE2_ENABLED === "true";' },
+  dc24RouteSecond: { re: /===\s*"true"/, file: ROUTE_FILE, hit: 'const __f = String(flag).trim() === "true";' },
+};
+// Predicates that are not one regex: an exact set, so an extra item violates.
+const NEG_FN = {
+  dc7EnvReads: { file: READER, violates: (v) => JSON.stringify(envReads(v)) !== JSON.stringify(["LAMBDA_TASK_ROOT"]), hit: "const __p = process.env.DEPLOY_CONTEXT_PATH;" },
+  dc20Imports: { file: ROUTE_FILE, violates: (v) => JSON.stringify(importsOf(v)) !== JSON.stringify(["../lib/deploy-context.js"]), hit: 'import { createClient as __cc } from "@supabase/supabase-js";', lineAnchored: true },
+};
 const STAGING_REF = "lboajqihpsfrokqvjgnl";
 const STAGING_URL = `https://${STAGING_REF}.supabase.co`;
 const PROD_URL = `https://${PRODUCTION_REF}.supabase.co`;
@@ -126,20 +158,21 @@ test("DC-6 MUTANT: a reader that defaults a missing/invalid context to productio
     assert.equal(readDeployContext({ root }).ok, false, "the shipped reader refuses it");
   } finally { cleanup(root); }
 
-  const SRC = stripComments(read("../../netlify/lib/deploy-context.js"));
-  assert.doesNotMatch(SRC, /\|\|\s*"production"/, "no defaulting to production in the reader");
-  assert.doesNotMatch(SRC, /\?\?\s*"production"/, "no nullish fallback to production either");
+  const SRC = view(READER);
+  assert.match(SRC, /export function readDeployContext\(/, "the view holds the reader itself");
+  assert.doesNotMatch(SRC, NEG.dc6Or.re, "no defaulting to production in the reader");
+  assert.doesNotMatch(SRC, NEG.dc6Nullish.re, "no nullish fallback to production either");
 });
 
 test("DC-7 the reader has no environment switch: nothing at runtime can redirect it", () => {
-  const SRC = stripComments(read("../../netlify/lib/deploy-context.js"));
+  const SRC = view(READER);
   // LAMBDA_TASK_ROOT is the runtime's own directory, not a file selector: it
   // says WHERE the bundle was unpacked, and the filename is still the fixed
   // CONTEXT_FILE constant. An env var naming the FILE would defeat the
   // immutability the bundled file exists for, so there is none.
-  const envReads = [...new Set([...SRC.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(envReads, ["LAMBDA_TASK_ROOT"]);
-  assert.doesNotMatch(SRC, /process\.env\[[^\]]+\]/, "no computed env lookup either");
+  assert.deepEqual(envReads(SRC), ["LAMBDA_TASK_ROOT"]);
+  assert.equal(NEG_FN.dc7EnvReads.violates(SRC), false);
+  assert.doesNotMatch(SRC, NEG.dc7Computed.re, "no computed env lookup either");
   // The allow-list is read through the caller's env parameter, not from the
   // module's own process.env — one place decides policy.
   assert.match(SRC, /env\.RELEASE2_CONTEXTS/);
@@ -192,7 +225,7 @@ test("DC-13 the production-ref refusal STAYS until stage 0's production review d
   assert.equal(r.ok, false);
   assert.equal(r.status, 404);
   assert.match(r.reason, /refuse to run against the production project/);
-  const SRC = stripComments(read("../../netlify/lib/release2.js"));
+  const SRC = view(GATE_FILE);
   assert.match(SRC, /ref === PRODUCTION_REF/, "condition 2 is still in the code");
 });
 
@@ -326,18 +359,18 @@ test("DC-23 the writer OVERWRITES a pre-existing deploy-context.json; it never s
 // ── 4. the diagnostic route ────────────────────────────────────────────────
 
 test("DC-20 the route: GET only, no-store, one reader, and no Supabase anything", async () => {
-  const SRC = stripComments(read("../../netlify/functions/deploy-context.js"));
+  const SRC = view(ROUTE_FILE);
 
   // ONE reader. The only import in the file is the shared module.
-  const imports = [...SRC.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
-  assert.deepEqual(imports, ["../lib/deploy-context.js"],
+  assert.deepEqual(importsOf(SRC), ["../lib/deploy-context.js"],
     "a second reader would be a second policy; this route must use the shared one");
+  assert.equal(NEG_FN.dc20Imports.violates(SRC), false);
 
   // It must not be able to reach a key or an origin allowlist by any path.
-  assert.doesNotMatch(SRC, /SUPABASE_/, "never reads any SUPABASE_* value");
-  assert.doesNotMatch(SRC, /@supabase\/supabase-js|createClient/, "never imports the Supabase client");
-  assert.doesNotMatch(SRC, /RELEASE2_ALLOWED_ORIGINS/);
-  assert.doesNotMatch(SRC, /release2\.js/, "and it does not go through the gate — it must answer where the gate refuses");
+  assert.doesNotMatch(SRC, NEG.dc20Supabase.re, "never reads any SUPABASE_* value");
+  assert.doesNotMatch(SRC, NEG.dc20Client.re, "never imports the Supabase client");
+  assert.doesNotMatch(SRC, NEG.dc20Origins.re);
+  assert.doesNotMatch(SRC, NEG.dc20Gate.re, "and it does not go through the gate — it must answer where the gate refuses");
 
   const mod = await import("../../netlify/functions/deploy-context.js");
   const post = await mod.handler({ httpMethod: "POST", headers: {} });
@@ -381,13 +414,13 @@ test("DC-20 the route: GET only, no-store, one reader, and no Supabase anything"
 test("DC-24 flagEnabled: the route and release2Allowed() evaluate ONE predicate, and only a boolean leaves", async () => {
   // One definition. The gate imports it and has no flag comparison of its own;
   // the route calls it and has no second comparison either.
-  const GATE = stripComments(read("../../netlify/lib/release2.js"));
+  const GATE = view(GATE_FILE);
   assert.match(GATE, /import\s*\{[^}]*\brelease2FlagEnabled\b[^}]*\}\s*from\s*"\.\/deploy-context\.js"/);
   assert.match(GATE, /!release2FlagEnabled\(env\)/, "condition 1 is the shared predicate");
-  assert.doesNotMatch(GATE, /env\.RELEASE2_ENABLED/, "the gate reads the flag nowhere else");
-  const ROUTE = stripComments(read("../../netlify/functions/deploy-context.js"));
+  assert.doesNotMatch(GATE, NEG.dc24GateFlag.re, "the gate reads the flag nowhere else");
+  const ROUTE = view(ROUTE_FILE);
   assert.match(ROUTE, /flagEnabled\s*=\s*release2FlagEnabled\(process\.env\)/);
-  assert.doesNotMatch(ROUTE, /===\s*"true"/, "no second predicate in the route");
+  assert.doesNotMatch(ROUTE, NEG.dc24RouteSecond.re, "no second predicate in the route");
 
   const mod = await import("../../netlify/functions/deploy-context.js");
   const VALUES = [undefined, "", "   ", "true", " true ", "true\n", "\ttrue", "TRUE", "True", "1", "yes", "on",
@@ -434,7 +467,7 @@ test("DC-21 the writer runs before the build, and the file ships inside the func
 });
 
 test("DC-22 the injector cross-checks the context file against this build — hosted only", () => {
-  const INJ = stripComments(read("../inject-sw-manifest.mjs"));
+  const INJ = view("scripts/inject-sw-manifest.mjs");
   assert.match(INJ, /deploy-context\.json is absent on a Netlify build/);
   assert.match(INJ, /!= build env COMMIT_REF/);
   assert.match(INJ, /__PC_BUILD__ commit/, "the file is compared with the bundle's own stamp, not only with the env");
@@ -444,4 +477,21 @@ test("DC-22 the injector cross-checks the context file against this build — ho
   const writeIdx = INJ.indexOf("writeFileSync(SW, pendingWrite");
   assert.ok(netlifyIdx > 0 && dcIdx > netlifyIdx, "the cross-check is inside the hosted branch");
   assert.ok(writeIdx > dcIdx, "and it precedes the only write");
+});
+
+// ── 6. CS-4: every negative source predicate above sees hidden code ────────
+
+test("CS-4 deploy-context: each negative source predicate catches its hit hidden behind every comment-like wrapper", () => {
+  const entries = [
+    ...Object.entries(NEG).map(([id, n]) => ({ id, hit: n.hit, file: n.file, violates: (v) => n.re.test(v) })),
+    ...Object.entries(NEG_FN).map(([id, n]) => ({ id, hit: n.hit, file: n.file, violates: n.violates, lineAnchored: n.lineAnchored })),
+  ].map((e) => ({ ...e, raw: () => read(`../../${e.file}`), opts: { label: e.file } }));
+  assert.deepEqual(negativeControlFailures(entries), []);
+});
+
+test("CS-4 deploy-context: every doesNotMatch on a source view takes its pattern from NEG, and every NEG entry is asserted", () => {
+  assert.deepEqual(unregisteredNegatives(read("./release2-deploy-context.test.js"), {
+    label: "scripts/tests/release2-deploy-context.test.js", viewNames: ["SRC", "GATE", "ROUTE", "INJ"],
+    registry: "NEG", regexIds: Object.keys(NEG),
+  }), []);
 });

@@ -26,7 +26,10 @@
 //    and the applied <version>_release2_*.sql. Never from tables.json — once
 //    stage 0 applies them to production a refreshed snapshot contains them,
 //    and a prohibition derived from the snapshot would vanish at exactly the
-//    moment it starts mattering. An empty protected set is a failure.
+//    moment it starts mattering. An empty protected set is a failure. The
+//    files are read through sql-lexer.mjs's view (comments blanked by a real
+//    PostgreSQL lexer), and a CREATE/DROP TABLE form outside the supported
+//    complete forms is a failure too, never a partial name.
 //  - Reach detection is AST-level and follows bindings, failing closed (A5).
 //    The client identifier may appear only as the object of an allowed member
 //    chain (.from/.rpc/.channel as a callee, .storage.from as a callee,
@@ -147,6 +150,7 @@ import { Parser } from "acorn";
 import jsx from "acorn-jsx";
 import { DISPATCHERS, INTERNAL_FORWARDING, ASSET_TRANSPORT } from "./inventory-allowlist.mjs";
 import { eligibleOnDisk } from "./supabase-migration-discovery.mjs";
+import { sqlCode } from "./sql-lexer.mjs";
 
 const JSXParser = Parser.extend(jsx());
 
@@ -340,7 +344,8 @@ export function readTablesSnapshot(path, { root } = {}) {
     }
     // INV-6: Release 2 table presence follows applied migration state, net of
     // applied reviewed rollbacks.
-    const { pendingOnly } = protectedNamesByState(root);
+    const { pendingOnly, errors: nameErrors } = protectedNamesByState(root);
+    if (nameErrors.length) return { error: nameErrors[0] };
     const net = appliedReleaseState(root);
     if (net.errors.length) return { error: net.errors[0] };
     const have = new Set(j.tables);
@@ -363,18 +368,86 @@ export function readRetired(path) {
 // <version>_release2_*.sql after.
 function createdTables(dir) {
   const names = new Set();
-  if (!existsSync(dir)) return names;
+  const errors = [];
+  if (!existsSync(dir)) return { names, errors };
   for (const f of readdirSync(dir)) {
     if (!/(^|_)release2_.*\.sql$/i.test(f) || /\.rollback\.sql$/i.test(f)) continue;
-    const sql = readFileSync(join(dir, f), "utf8");
-    for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)) names.add(m[1].toLowerCase());
+    const label = `${dir.split(/[\\/]/).slice(-2).join("/")}/${f}`;
+    let found;
+    try { found = ddlTargets(migrationView(readFileSync(join(dir, f), "utf8"), label), label); }
+    catch (e) { errors.push(e.message); continue; }
+    errors.push(...found.errors);
+    for (const t of found.creates) names.add(t);
   }
-  return names;
+  return { names, errors };
 }
-const sqlWithoutComments = (sql) => sql.replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
-const TABLE_NAME = String.raw`(?:if\s+(?:not\s+)?exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)`;
-const DROP_TABLE = new RegExp(String.raw`drop\s+table\s+` + TABLE_NAME, "gi");
-const CREATE_TABLE = new RegExp(String.raw`create\s+table\s+` + TABLE_NAME, "gi");
+// The SQL view both readers use (comment-stripping plan §3.5): comments
+// blanked by the PostgreSQL lexer in sql-lexer.mjs, strings KEPT so a DDL text
+// in an `execute '…'` string stays visible (Codex Q2: conservative, it can also
+// match DDL-like data; it is not a dynamic-SQL analyzer), and every dollar body
+// read as code, because in a release2 migration each one is a function or DO
+// body. A file that does not lex is an error, never a pass.
+export function migrationView(raw, label) {
+  return sqlCode(raw.replace(/\r\n/g, "\n"), { label, strings: "keep", bodies: "code" });
+}
+
+// The CREATE/DROP targets of one view (Codex Q5). Only these complete forms
+// are recognized:
+//   create table [if not exists] [public.]<name> (
+//   drop table [if exists] [public.]<name> [cascade|restrict] ;
+// with <name> an unquoted [a-z_][a-z0-9_]* followed by whitespace, "(", ";"
+// or the end, folded to lower case. Any other form after create/drop … table
+// is reported as unsupported; a partial name is never derived from it.
+const CREATE_TABLE = /\bcreate\s+table\b/gi;
+const DROP_TABLE = /\bdrop\s+table\b/gi;
+const MODIFIED_TABLE = /\b(?:create\s+(?:(?:global|local)\s+)?(?:temp|temporary|unlogged|foreign)|drop\s+foreign)\s+table\b/gi;
+const sticky = (re, view, at) => { const r = new RegExp(re.source, "iy"); r.lastIndex = at; const m = r.exec(view); return m ? { m, end: r.lastIndex } : null; };
+function ddlTarget(view, at, verb) {
+  const exists = sticky(/\s+(if\s+not\s+exists\s+|if\s+exists\s+)?/, view, at);
+  if (!exists) return { error: "no whitespace after TABLE" };
+  const clause = (exists.m[1] || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (clause && clause !== (verb === "create" ? "if not exists" : "if exists")) return { error: `"${clause}" on a ${verb.toUpperCase()}` };
+  let p = exists.end;
+  const ident = () => {
+    if (view[p] === '"') return { error: "a quoted name" };
+    const id = sticky(/[a-z_][a-z0-9_]*/, view, p);
+    if (!id) return { error: "no recognizable name" };
+    if (/[$\u0080-￿]/.test(view[id.end] || "")) return { error: "an identifier character after the name" };
+    p = id.end;
+    return { name: id.m[0].toLowerCase() };
+  };
+  let part = ident();
+  if (part.error) return part;
+  const dot = sticky(/\s*\.\s*/, view, p);
+  if (dot) {
+    if (part.name !== "public") return { error: `the schema "${part.name}", not public` };
+    p = dot.end;
+    part = ident();
+    if (part.error) return part;
+  }
+  if (verb === "create") {
+    if (!sticky(/\s*\(/, view, p)) return { error: "a CREATE not followed by (" };
+  } else {
+    const tail = sticky(/\s*(?:(?:cascade|restrict)\b\s*)?(;|,|$)/, view, p);
+    if (!tail) return { error: "a DROP not ended by ;" };
+    if (tail.m[1] === ",") return { error: "more than one target" };
+  }
+  return { name: part.name };
+}
+export function ddlTargets(view, label) {
+  const out = { creates: [], drops: [], errors: [] };
+  const where = (i) => `${label}:${view.slice(0, i).split("\n").length}`;
+  for (const m of view.matchAll(MODIFIED_TABLE)) out.errors.push(`${where(m.index)}: unsupported DDL form "${m[0].replace(/\s+/g, " ")}"`);
+  for (const [re, verb, into] of [[CREATE_TABLE, "create", out.creates], [DROP_TABLE, "drop", out.drops]]) {
+    for (const m of view.matchAll(re)) {
+      const t = ddlTarget(view, m.index + m[0].length, verb);
+      if (t.error) out.errors.push(`${where(m.index)}: unsupported ${verb.toUpperCase()} TABLE target: ${t.error}`);
+      else into.push(t.name);
+    }
+  }
+  return out;
+}
+
 const lfMd5 = (buf) => createHash("md5").update(buf.toString("utf8").replace(/\r\n/g, "\n"), "utf8").digest("hex");
 
 /**
@@ -403,9 +476,11 @@ export function appliedReleaseState(root) {
     .sort();
   for (const f of applied) {
     const raw = readFileSync(join(dir, f));
-    const sql = sqlWithoutComments(raw.toString("utf8"));
-    const drops = [...sql.matchAll(DROP_TABLE)].map((m) => m[1].toLowerCase());
-    const creates = [...sql.matchAll(CREATE_TABLE)].map((m) => m[1].toLowerCase());
+    let found;
+    try { found = ddlTargets(migrationView(raw.toString("utf8"), `supabase/migrations/${f}`), `supabase/migrations/${f}`); }
+    catch (e) { out.errors.push(e.message); continue; }
+    if (found.errors.length) { out.errors.push(...found.errors); continue; }
+    const { drops, creates } = found;
     if (drops.length && !reviewed.has(lfMd5(raw))) {
       out.errors.push(`supabase/migrations/${f} drops ${drops.join(", ")} but is not byte-identical to any committed release2 .rollback.sql companion: an unreviewed drop`);
       continue;
@@ -423,12 +498,17 @@ export function appliedReleaseState(root) {
   return out;
 }
 
-/** Names by lifecycle state: created by an APPLIED file, or only by a pending one. */
+/**
+ * Names by lifecycle state: created by an APPLIED file, or only by a pending
+ * one. `errors` holds any unsupported DDL form or unlexable file; every caller
+ * reports them, so a name is never silently missing from the set.
+ */
 export function protectedNamesByState(root) {
-  const applied = createdTables(join(root, "supabase", "migrations"));
-  const pending = createdTables(join(root, "supabase", "migrations", "pending"));
+  const a = createdTables(join(root, "supabase", "migrations"));
+  const p = createdTables(join(root, "supabase", "migrations", "pending"));
+  const applied = a.names, pending = p.names;
   const pendingOnly = new Set([...pending].filter((n) => !applied.has(n)));
-  return { applied, pendingOnly, all: new Set([...applied, ...pending]) };
+  return { applied, pendingOnly, all: new Set([...applied, ...pending]), errors: [...a.errors, ...p.errors] };
 }
 export function protectedNamesFromMigrations(root) {
   return protectedNamesByState(root).all;
@@ -848,7 +928,9 @@ export function runInventory({ root, retiredEver = [], dispatchersFor = DISPATCH
     if (/export const TOMBSTONE = true/.test(src)) errors.push(`netlify/functions/${name}.js is a tombstone but is not listed in _retired.json`);
   }
 
-  const protectedNames = protectedNamesFromMigrations(root);
+  const protectedState = protectedNamesByState(root);
+  errors.push(...protectedState.errors);
+  const protectedNames = protectedState.all;
   if (protectedNames.size === 0) errors.push("no Release 2 table names discovered in supabase/migrations/pending/release2_*.sql or supabase/migrations/*_release2_*.sql: the protected set is empty");
 
   // ── the scan ──────────────────────────────────────────────────────────

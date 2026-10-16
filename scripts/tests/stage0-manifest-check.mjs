@@ -21,6 +21,7 @@ import { createRequire } from "node:module";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, eligibleMigrations, duplicateVersions } from "./supabase-migration-discovery.mjs";
+import { sqlCode } from "./sql-lexer.mjs";
 
 export const MANIFEST_PATH = "docs/security/stage0-production-manifest.json";
 const md5 = (b) => createHash("md5").update(b).digest("hex");
@@ -113,6 +114,81 @@ const MIG = MIGRATIONS_DIR;
 export const forwardPath = (m) => (m.productionVersion ? `${MIG}/${m.productionVersion}_${m.name}.sql` : m.pendingPath);
 export const companionPath = (m, r) => (m.productionVersion ? `${ROLLBACKS_DIR}/${m.productionVersion}_${m.name}.rollback.sql` : r.pendingPath);
 export const recordPath = (m, rec) => `${MIG}/${rec.version}_${m.name}_rollback.sql`;
+
+// ── M-6/M-6b's SQL predicates (comment-stripping plan §3.5) ─────────────────
+// Each reads a sql-lexer.mjs view and returns its problems; M-6 says each one,
+// and the CS-4 controls run the same functions on mutants. A text that does
+// not lex is a problem. These are heuristic checks next to the byte bindings
+// (embedded blobs, md5/bytes gates, output pins, send policy), which they do
+// not replace.
+export const STATE_WRITE_WORDS = /\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|lock)\b/gi;
+export const INSPECT_WRITE_WORDS = /\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|do|lock)\b|pg_cancel_backend|pg_terminate_backend/gi;
+export const SIZE_PROBE_WRITE_WORDS = /\b(insert|update|delete|create|drop|alter|grant|revoke|truncate|begin|commit|call|do)\b/gi;
+
+/** A view of a whole stage-0 text: every dollar body in these texts is a DO body or an executed input. */
+export function sqlView(text, label, strings, bodies = "code") {
+  try { return { view: sqlCode(text, { label, strings, bodies }) }; }
+  catch (e) { return { problem: `${label} does not lex: ${e.message}` }; }
+}
+
+/** The write keywords in `text` outside comments and strings; an empty text is a problem too. */
+export function readOnlyViolations(text, label, words) {
+  const r = sqlView(text, label, "blank");
+  if (r.problem) return [r.problem];
+  if (!/\S/.test(r.view)) return [`${label} is empty`];
+  const found = [...new Set([...r.view.matchAll(words)].map((m) => m[0].toLowerCase()))];
+  return found.length ? [`${label} is not read-only: ${found.join(", ")}`] : [];
+}
+
+/** CANCEL-STEP: one pg_cancel_backend, no pg_terminate_backend, its exact filters, refusals before the signal. */
+export function cancelStepProblems(text) {
+  const r = sqlView(text, "CANCEL-STEP-TEMPLATE", "keep");
+  if (r.problem) return [r.problem];
+  const cs = r.view, out = [];
+  if ((cs.match(/pg_cancel_backend\(/g) || []).length !== 1 || /pg_terminate_backend/.test(cs)) out.push("CANCEL-STEP must call pg_cancel_backend exactly once and never pg_terminate_backend");
+  for (const [what, re] of [
+    ["matches the exact application_name", /where a\.application_name = v_app\s/],
+    ["matches the exact backend_start", /backend_start at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS\.US"Z"'\) = v_start\s/],
+    ["excludes the caller", /and a\.pid <> pg_backend_pid\(\);/],
+    ["refuses zero matches", /if v_n = 0 then\s+raise exception/],
+    ["refuses more than one match", /if v_n > 1 then\s+raise exception/],
+    ["accepts only the stage-0 step names", new RegExp(`if v_app not in \\(${A.CANCEL_TARGETS.map((x) => `'${x}'`).join(", ")}\\) then\\s+raise exception`)],
+  ]) if (!re.test(cs)) out.push(`CANCEL-STEP ${what}`);
+  const sig = cs.indexOf("pg_cancel_backend(");
+  if (!(cs.indexOf("if v_n = 0") < sig && cs.indexOf("if v_n > 1") < sig)) out.push("CANCEL-STEP signals before its refusals");
+  return out;
+}
+
+/** M-6c: the DDL/DML targets of a LOCKPROBE text outside its own stage0_lockprobe schema. */
+export function lockprobeOutside(text, label) {
+  const r = sqlView(text, label, "keep");
+  if (r.problem) return [r.problem];
+  const ddl = [...r.view.matchAll(/\b(create|alter|drop|truncate|insert\s+into|update|delete\s+from|lock\s+table)\s+(?:table\s+|schema\s+|constraint\s+)?([a-z_][a-z0-9_.]*)/gi)]
+    .map((x) => x[2].toLowerCase()).filter((t) => !t.startsWith("stage0_lockprobe") && !["if", "exception", "pg_temp"].includes(t));
+  return ddl.length ? [`${label} writes outside stage0_lockprobe: ${[...new Set(ddl)].join(", ")}`] : [];
+}
+
+/**
+ * M-6b: SIZE-PROBE outside its literal is one read-only statement. The only
+ * data body is the one dollar quote that starts exactly where the reviewed
+ * head ends its opening $probe$ and is closed at once by the tail; that role
+ * comes from this position, not from the tag. Any other dollar body is read
+ * as code, so nothing can hide in one.
+ */
+export function sizeProbeOutsideProblems(head, tail) {
+  const junction = head.length - "$probe$".length;
+  let data = 0;
+  const role = (s, { depth }) => {
+    if (depth === 0 && s.start === junction && s.tag === "probe" && s.bodyStart === s.bodyEnd) { data++; return "data"; }
+    return "code";
+  };
+  const r = sqlView(head + tail, "SIZE-PROBE (outside its literal)", "blank", role);
+  if (r.problem) return [r.problem];
+  const out = [];
+  if (data !== 1) out.push("SIZE-PROBE's head and tail do not meet at its $probe$ literal");
+  if ((r.view.match(/;/g) || []).length !== 1 || [...r.view.matchAll(SIZE_PROBE_WRITE_WORDS)].length) out.push("SIZE-PROBE is not one read-only statement");
+  return out;
+}
 
 /** Every pinned file with the path the recorded state puts it at. */
 export function pinnedFiles(M) {
@@ -260,27 +336,19 @@ export function checkManifest(repo, M) {
       if (!w.includes("the ledger row does not have apply_migration''s shape")) say("M-6", `${stp.step} does not assert its ledger rows' shape`);
     }
     // STATE is read-only and names exactly the reviewed recovery sequences.
-    const stt = (out.STATE || "").replace(/--[^\n]*/g, " ");
-    if (/\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|lock)\b/i.test(stt.replace(/'[^']*'/g, "''"))) say("M-6", "STATE is not read-only");
-    for (const r of A.RECOVERY) if (r.ops.length && !stt.includes(`'${r.ops.join(", ")}'`)) say("M-6", `STATE does not name the recovery ${r.ops.join(", ")}`);
+    // The SQL checks below read sql-lexer.mjs's views, never a regex-stripped
+    // text (comment-stripping plan §3.5); each is a pure predicate exported
+    // below, and a text that does not lex is reported, never passed.
+    for (const p of readOnlyViolations(out.STATE || "", "STATE", STATE_WRITE_WORDS)) say("M-6", p);
+    const stt = sqlView(out.STATE || "", "STATE", "keep");
+    if (stt.problem) say("M-6", stt.problem);
+    else for (const r of A.RECOVERY) if (r.ops.length && !stt.view.includes(`'${r.ops.join(", ")}'`)) say("M-6", `STATE does not name the recovery ${r.ops.join(", ")}`);
     // The second-caller cancel procedure (plan §E8): INSPECT only reads; the
     // STEP template cancels (never terminates) ONE backend matched by exact
     // application_name AND backend_start, never the caller, refusing 0 or >1
     // matches before it signals.
-    const ins = (out["CANCEL-INSPECT"] || "").replace(/--[^\n]*/g, " ").replace(/'[^']*'/g, "''");
-    if (!ins.trim() || /\b(insert|update|delete|create|alter|drop|truncate|begin|commit|grant|revoke|do|lock)\b|pg_cancel_backend|pg_terminate_backend/i.test(ins)) say("M-6", "CANCEL-INSPECT is not read-only");
-    const cs = (out["CANCEL-STEP-TEMPLATE"] || "").replace(/--[^\n]*/g, " ");
-    if ((cs.match(/pg_cancel_backend\(/g) || []).length !== 1 || /pg_terminate_backend/.test(cs)) say("M-6", "CANCEL-STEP must call pg_cancel_backend exactly once and never pg_terminate_backend");
-    for (const [what, re] of [
-      ["matches the exact application_name", /where a\.application_name = v_app\s/],
-      ["matches the exact backend_start", /backend_start at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS\.US"Z"'\) = v_start\s/],
-      ["excludes the caller", /and a\.pid <> pg_backend_pid\(\);/],
-      ["refuses zero matches", /if v_n = 0 then\s+raise exception/],
-      ["refuses more than one match", /if v_n > 1 then\s+raise exception/],
-      ["accepts only the stage-0 step names", new RegExp(`if v_app not in \\(${A.CANCEL_TARGETS.map((x) => `'${x}'`).join(", ")}\\) then\\s+raise exception`)],
-    ]) if (!re.test(cs)) say("M-6", `CANCEL-STEP ${what}`);
-    const sig = cs.indexOf("pg_cancel_backend(");
-    if (!(cs.indexOf("if v_n = 0") < sig && cs.indexOf("if v_n > 1") < sig)) say("M-6", "CANCEL-STEP signals before its refusals");
+    for (const p of readOnlyViolations(out["CANCEL-INSPECT"] || "", "CANCEL-INSPECT", INSPECT_WRITE_WORDS)) say("M-6", p);
+    for (const p of cancelStepProblems(out["CANCEL-STEP-TEMPLATE"] || "")) say("M-6", p);
     const stepNames = ["P1", ...A.P2_STEPS.map((x) => x.step), ...A.ROLLBACK_OPS.map((x) => x.op)];
     for (const n of stepNames) if (!(out[n] || "").includes(`set_config('application_name', 'release2-stage0-${n}', true)`)) say("M-6", `${n} does not run under the application_name CANCEL-STEP targets`);
     if (!/^begin isolation level repeatable read;$/m.test(out.P1 || "") || !/\nrollback;\n$/.test(out.P1 || "") || /^commit;$/m.test(out.P1 || "")) say("M-6", "P1 must begin repeatable read, end in ROLLBACK and never commit");
@@ -289,9 +357,7 @@ export function checkManifest(repo, M) {
     if (lp.length !== 10) say("M-6", `expected 10 LOCKPROBE texts, found ${lp.length}`);
     for (const [k, v] of lp) {
       if (!/STAGING ONLY/.test(v)) say("M-6", `${k} is not marked STAGING ONLY`);
-      const ddl = [...v.replace(/--[^\n]*/g, " ").matchAll(/\b(create|alter|drop|truncate|insert\s+into|update|delete\s+from|lock\s+table)\s+(?:table\s+|schema\s+|constraint\s+)?([a-z_][a-z0-9_.]*)/gi)]
-        .map((x) => x[2].toLowerCase()).filter((t) => !t.startsWith("stage0_lockprobe") && !["if", "exception", "pg_temp"].includes(t));
-      if (ddl.length) say("M-6", `${k} writes outside stage0_lockprobe: ${[...new Set(ddl)].join(", ")}`);
+      for (const p of lockprobeOutside(v, k)) say("M-6", p);
       if (/^B-/.test(k.slice(10)) && !v.includes("the staging seed store is absent")) say("M-6", `${k} lacks the staging-only guard`);
       if (/'b7a8e54c99432c5e0ddb60be4c46505f'\) then\s+raise exception '[^']*production's ledger rows/.test(v)) say("M-6", `${k} carries the production identity guard`);
     }
@@ -302,8 +368,7 @@ export function checkManifest(repo, M) {
     else {
       const literal = probe.slice(A.SIZE_PROBE_HEAD.length, probe.length - A.SIZE_PROBE_TAIL.length);
       if (!A.SIZE_PROBE_LINE.repeat(Math.ceil(literal.length / A.SIZE_PROBE_LINE.length)).startsWith(literal) || literal.includes("$probe$")) say("M-6b", "SIZE-PROBE literal is not filler only");
-      const outside = (A.SIZE_PROBE_HEAD + A.SIZE_PROBE_TAIL).replace(/^--.*$/gm, "");
-      if ((outside.match(/;/g) || []).length !== 1 || /\b(insert|update|delete|create|drop|alter|grant|revoke|truncate|begin|commit|call|do)\b/i.test(outside)) say("M-6b", "SIZE-PROBE is not one read-only statement");
+      for (const p of sizeProbeOutsideProblems(A.SIZE_PROBE_HEAD, A.SIZE_PROBE_TAIL)) say("M-6b", p);
       if (JSON.stringify({ probe_bytes: Buffer.byteLength(literal), probe_md5: A.md5(literal) }) !== JSON.stringify(M.sizeProbe.expect)) say("M-6b", "SIZE-PROBE expected answer");
     }
   }

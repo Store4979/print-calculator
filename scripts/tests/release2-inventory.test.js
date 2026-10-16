@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { stripComments } from "./source-util.mjs";
+import { jsCode, negativeControlFailures, unregisteredNegatives } from "./source-util.mjs";
 import {
   runInventory, compareToAllowlist, appliedBaselineVersion, protectedNamesByState, appliedReleaseState,
   GATEWAY, CLIENT_INIT, APPROVED_RPC, SNAPSHOT_PROJECT,
@@ -67,14 +67,40 @@ test("INV-4 the gateway is two files, the package import is one file, and §0.2'
   ], "four importers plus the definer, and no other file");
 });
 
+// INV-5's view and slice (comment-stripping plan §3.2): the inventory read
+// through jsCode, then the protected-name code between two anchors, which must
+// both be found, in order, or the slice would be the wrong text.
+const INVENTORY_SRC = () => readFileSync(new URL("./inventory-check.mjs", import.meta.url), "utf8");
+const INV5_FROM = "function createdTables", INV5_TO = "export function tombstoneProblem";
+function inv5Slice(SRC) {
+  const from = SRC.indexOf(INV5_FROM), to = SRC.indexOf(INV5_TO);
+  assert.ok(from >= 0 && to > from, `both INV-5 anchors are in the view, in order (${from}, ${to})`);
+  return SRC.slice(from, to);
+}
+const NEG = {
+  snapshotRead: { re: /tables\.json|snapshot|tables\b/, hit: 'const __snap = readFileSync("supabase/tables.json", "utf8");' },
+};
+
 test("INV-5 the protected Release 2 names come from the migration files in both lifecycle locations, never from the snapshot", () => {
-  const SRC = stripComments(readFileSync(new URL("./inventory-check.mjs", import.meta.url), "utf8"));
-  const fn = SRC.slice(SRC.indexOf("function createdTables"), SRC.indexOf("export function tombstoneProblem"));
+  const SRC = jsCode(INVENTORY_SRC(), { label: "scripts/tests/inventory-check.mjs" });
+  const fn = inv5Slice(SRC);
   assert.match(fn, /"pending"/, "reads supabase/migrations/pending/");
   assert.match(fn, /createdTables\(join\(root, "supabase", "migrations"\)\)/, "and supabase/migrations/ itself (the applied names)");
   assert.match(fn, /create\\s\+table/i, "derives names from CREATE TABLE statements");
-  assert.doesNotMatch(fn, /tables\.json|snapshot|tables\b/, "the protected set does not read the snapshot");
+  assert.doesNotMatch(fn, NEG.snapshotRead.re, "the protected set does not read the snapshot");
   assert.match(SRC, /protected set is empty/, "an empty protected set is a failure");
+});
+
+test("CS-4 INV-5: a snapshot read hidden behind every comment-like wrapper inside the slice is caught", () => {
+  assert.deepEqual(negativeControlFailures([{
+    id: "snapshotRead", hit: NEG.snapshotRead.hit,
+    raw: INVENTORY_SRC, opts: { label: "scripts/tests/inventory-check.mjs" },
+    plant: (raw, wrapped) => raw.replace(INV5_TO, () => `${wrapped}\n${INV5_TO}`),
+    violates: (v) => NEG.snapshotRead.re.test(inv5Slice(v)),
+  }]), []);
+  assert.deepEqual(unregisteredNegatives(readFileSync(new URL("./release2-inventory.test.js", import.meta.url), "utf8"), {
+    label: "scripts/tests/release2-inventory.test.js", viewNames: ["fn", "SRC"], registry: "NEG", regexIds: Object.keys(NEG),
+  }), []);
 });
 
 test("INV-6 the snapshot is the production capture at the repo's applied baseline, and its Release 2 table presence follows applied migration state", () => {

@@ -208,7 +208,8 @@ test("RB-INV-8 controls: the committed tree passes, and applied-without-rollback
 // runInventory() accepting a tree is not the whole gate: release2-inventory.test.js
 // makes its own assertions (INV-6 among them). These tests run that file,
 // unchanged, as a child `node --test` with INVENTORY_ROOT pointed at the
-// fixture, and read its verdict.
+// fixture, and read its verdict. It declares 8 tests: INV-1…7 and CS-4's INV-5
+// control (comment-stripping plan §3.2); all 8 must run and pass.
 const INV_TEST = join(ROOT, "scripts", "tests", "release2-inventory.test.js");
 function realInventoryFile(fixtureRoot) {
   const env = { ...process.env, INVENTORY_ROOT: fixtureRoot };
@@ -227,7 +228,7 @@ test("RB-INV-9 Codex's lifecycle fixture — five forwards moved with history ke
     assert.equal(readdirSync(MIG(root)).filter((f) => /^\d{14}_release2_0\d_[a-z_]+\.sql$/.test(f) && !f.endsWith("_rollback.sql")).length, 5, "history kept");
     const r = realInventoryFile(root);
     assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /^# pass 7$/m);
+    assert.match(r.out, /^# pass 8$/m);
     assert.match(r.out, /^# fail 0$/m);
   });
 });
@@ -251,7 +252,7 @@ test("RB-INV-11 every committed prefix, applied and then recovered, passes the R
       assert.equal(readdirSync(MIG(root)).filter((f) => /^\d{14}_release2_0\d_[a-z_]+_rollback\.sql$/.test(f)).length, count, "one rollback record per applied file");
       r = realInventoryFile(root);
       assert.equal(r.code, 0, `prefix of ${count} recovered:\n${r.out}`);
-      assert.match(r.out, /^# pass 7$/m);
+      assert.match(r.out, /^# pass 8$/m);
       assert.match(r.out, /^# fail 0$/m);
       if (count === 4) {   // control: the same recovered prefix with a snapshot that kept the dropped tables
         snapshot(root, RBV(order.length - 1), [...CAPTURE.tables, ...SIX].sort());

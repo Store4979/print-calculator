@@ -87,3 +87,77 @@ test("M-9 the manifest is at schema 2, pending today, and the assembler reads it
   const body = src.slice(start, src.indexOf("\n}\n", start));
   assert.doesNotMatch(body, /git\(\s*["'`]?HEAD|ls-tree|readFileSync/, "assembleAll reads no path, no HEAD, no working tree");
 });
+
+// ── CS-4: M-6/M-6b's SQL predicates see writes hidden by comment-like text ──
+// docs/security/stage0-comment-stripping-plan.md §4. Each predicate passes on
+// its real text, and catches every hit planted behind every SQL wrapper below.
+// Each wrapper is a form a regex `--`/`/* */` pass could not see past.
+const SQL_WRAPPERS = [
+  ["a /* inside a line comment, closed by -- */", (hit) => `\n-- netlify/functions/*.js\n${hit}\n-- */\n`],
+  ["a literal '--' before the hit", (hit) => `\nselect '--'; ${hit}\n`],
+  ["an E-string with an escaped quote and --", (hit) => `\nselect E'\\'--'; ${hit}\n`],
+  ["a quoted identifier holding --", (hit) => `\nselect "a--b"; ${hit}\n`],
+  ["a dollar body holding --", (hit) => `\nselect $q$--$q$; ${hit}\n`],
+];
+const SQL_TEXTS = async () => {
+  const A = await import("../manual/assemble-stage0.mjs");
+  return { A, out: A.assembleAll(M, { cwd: ROOT }) };
+};
+
+test("CS-4 M-6: STATE and CANCEL-INSPECT are read-only, and a write hidden behind each wrapper is reported", async () => {
+  const { out } = await SQL_TEXTS();
+  const { readOnlyViolations, STATE_WRITE_WORDS, INSPECT_WRITE_WORDS } = await import("./stage0-manifest-check.mjs");
+  for (const [name, words, hits] of [
+    ["STATE", STATE_WRITE_WORDS, ["delete from public.employees;", "drop table public.staff_sessions;", "truncate public.employees;"]],
+    ["CANCEL-INSPECT", INSPECT_WRITE_WORDS, ["delete from public.employees;", "drop table public.staff_sessions;", "select pg_terminate_backend(1);", "do $i$ begin null; end $i$;"]],
+  ]) {
+    assert.deepEqual(readOnlyViolations(out[name], name, words), [], `the real ${name}`);
+    for (const hit of hits) for (const [w, wrap] of SQL_WRAPPERS) {
+      assert.ok(readOnlyViolations(out[name] + wrap(hit), name, words).length > 0, `${name}: ${hit} behind ${w}`);
+    }
+    // Text inside a nested block comment is a comment: not reported.
+    assert.deepEqual(readOnlyViolations(out[name] + "\n/* a /* drop table x */ still a comment */ select 1;\n", name, words), [], `${name}: a nested comment`);
+  }
+  assert.deepEqual(readOnlyViolations("", "CANCEL-INSPECT", INSPECT_WRITE_WORDS), ["CANCEL-INSPECT is empty"]);
+  assert.deepEqual(readOnlyViolations("-- only a comment\n", "CANCEL-INSPECT", INSPECT_WRITE_WORDS), ["CANCEL-INSPECT is empty"]);
+  assert.match(readOnlyViolations("select 'abc", "STATE", STATE_WRITE_WORDS)[0], /STATE does not lex: .*unterminated string/);
+});
+
+test("CS-4 M-6: CANCEL-STEP's one pg_cancel_backend and no pg_terminate_backend hold against hidden calls", async () => {
+  const { out } = await SQL_TEXTS();
+  const { cancelStepProblems } = await import("./stage0-manifest-check.mjs");
+  const t = out["CANCEL-STEP-TEMPLATE"];
+  assert.deepEqual(cancelStepProblems(t), [], "the real template");
+  for (const hit of ["perform pg_terminate_backend(v_pid);", "perform pg_cancel_backend(v_pid);"]) {
+    for (const [w, wrap] of SQL_WRAPPERS) {
+      assert.ok(cancelStepProblems(t + wrap(hit)).includes("CANCEL-STEP must call pg_cancel_backend exactly once and never pg_terminate_backend"), `${hit} behind ${w}`);
+    }
+  }
+});
+
+test("CS-4 M-6c: a LOCKPROBE write outside stage0_lockprobe hidden behind each wrapper is reported", async () => {
+  const { out } = await SQL_TEXTS();
+  const { lockprobeOutside } = await import("./stage0-manifest-check.mjs");
+  const probes = Object.keys(out).filter((k) => k.startsWith("LOCKPROBE-"));
+  assert.equal(probes.length, 10);
+  for (const k of probes) assert.deepEqual(lockprobeOutside(out[k], k), [], `the real ${k}`);
+  for (const k of ["LOCKPROBE-SETUP", "LOCKPROBE-B-LOCKTIMEOUT"]) {
+    for (const hit of ["drop table public.employees;", "alter table public.employees add column x int;"]) {
+      for (const [w, wrap] of SQL_WRAPPERS) assert.ok(lockprobeOutside(out[k] + wrap(hit), k).length > 0, `${k}: ${hit} behind ${w}`);
+    }
+  }
+});
+
+test("CS-4 M-6b: SIZE-PROBE outside its literal stays one read-only statement; hidden writes, a moved junction and a planted dollar body are reported", async () => {
+  const { A } = await SQL_TEXTS();
+  const { sizeProbeOutsideProblems } = await import("./stage0-manifest-check.mjs");
+  const H = A.SIZE_PROBE_HEAD, T = A.SIZE_PROBE_TAIL;
+  assert.deepEqual(sizeProbeOutsideProblems(H, T), [], "the real head and tail");
+  for (const hit of ["drop table public.employees;", "select 1;"]) {
+    for (const [w, wrap] of SQL_WRAPPERS) {
+      assert.ok(sizeProbeOutsideProblems(wrap(hit) + H, T).includes("SIZE-PROBE is not one read-only statement"), `${hit} behind ${w}`);
+    }
+  }
+  assert.ok(sizeProbeOutsideProblems(H.slice(0, -"$probe$".length), "$probe$" + T).includes("SIZE-PROBE's head and tail do not meet at its $probe$ literal"), "a moved junction");
+  assert.ok(sizeProbeOutsideProblems("select $h$ drop table public.employees $h$;\n" + H, T).length > 0, "a second dollar body is code, so the write in it is seen");
+});

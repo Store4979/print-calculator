@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadSW, SW_SOURCE } from "./sw-harness.mjs";
+import { jsCode } from "./source-util.mjs";
 
 const read = (p) => readFileSync(fileURLToPath(new URL(`../../${p}`, import.meta.url)), "utf8");
 
@@ -87,8 +88,9 @@ test("P2: the rev 1 reply target genuinely fails this test", async () => {
 });
 
 test("sw.js replies on the transferred port, not event.source", () => {
-  const code = SW_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+  // The shared code-only view; the inline copy of the old two-regex stripper
+  // that stood here is gone (comment-stripping plan §3.2).
+  const code = jsCode(SW_SOURCE, { label: "public/sw.js", sourceType: "script" });
   assert.match(code, /const port = event\.ports && event\.ports\[0\]/);
   assert.match(code, /if \(port\) port\.postMessage\(reply\)/);
   assert.match(SW_SOURCE, /CACHES_CLEARED/);
