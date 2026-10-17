@@ -164,7 +164,9 @@ test("no test in scripts/tests reads the repo's dist/ — post-build checks belo
 });
 
 // ── 4. CS-4: every negative source predicate above sees hidden code ────────
-test("CS-4 build-stamp: each negative source predicate catches its hit hidden behind every comment-like wrapper", () => {
+// stampImport is line-anchored, so it skips the three same-line wrappers (not
+// exercised); its same-line gap is tracked as its own item.
+test("CS-4 build-stamp: each negative source predicate catches its hit hidden behind every applicable comment-like wrapper (stampImport skips the three same-line ones)", () => {
   const failures = negativeControlFailures(Object.entries(NEG).map(([id, n]) => ({
     id, hit: n.hit, lineAnchored: n.lineAnchored,
     raw: () => read(`../../${n.file}`), opts: { label: n.file },

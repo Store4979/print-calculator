@@ -3,9 +3,10 @@
 //
 // jsCode() PARSES the source with acorn (acorn-jsx for JSX) and blanks exactly
 // the comments acorn reports: every comment character becomes a space, except
-// "\n". Strings, template literals, regex literals and JSX text are kept
-// verbatim; lengths, lines and columns are unchanged; a comment between two
-// tokens leaves whitespace, so tokens never join.
+// a line terminator (LF, U+2028, U+2029), which is kept. Strings, template
+// literals, regex literals and JSX text are kept verbatim; lengths, lines and
+// columns are unchanged; a comment between two tokens leaves whitespace, so
+// tokens never join, and a comment that held a line break still holds it.
 //
 // It replaces stripComments: two regexes that deleted from any "/*" to the
 // next "*/", and from any "//" to the end of its line, wherever they appeared,
@@ -24,6 +25,15 @@ import { Parser } from "acorn";
 import jsx from "acorn-jsx";
 
 const JSXParser = Parser.extend(jsx());
+
+// The JavaScript line terminators a comment may contain once CR and CRLF are
+// normalised to LF: LF, LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR
+// (U+2029). Blanking keeps every one of them, because a multi-line comment
+// holding one is a line break to automatic semicolon insertion: `return
+// /*<U+2028>*/ 1` returns undefined (Codex's review of 9333448, CS-R3).
+const LINE_SEPARATOR = String.fromCharCode(0x2028);
+const PARAGRAPH_SEPARATOR = String.fromCharCode(0x2029);
+const isLineTerminator = (ch) => ch === "\n" || ch === LINE_SEPARATOR || ch === PARAGRAPH_SEPARATOR;
 
 function parseWithComments(text, { label, jsx: withJsx, sourceType }) {
   const comments = [];
@@ -56,7 +66,7 @@ export function jsCode(src, { label, jsx: useJsx, sourceType, allowEmpty = false
   const text = src.replace(/\r\n?/g, "\n");
   const { comments } = parseWithComments(text, o);
   const out = text.split("");
-  for (const { start, end } of comments) for (let i = start; i < end; i++) if (out[i] !== "\n") out[i] = " ";
+  for (const { start, end } of comments) for (let i = start; i < end; i++) if (!isLineTerminator(out[i])) out[i] = " ";
   const view = out.join("");
   if (!allowEmpty && !/\S/.test(view)) throw new Error(`${label}: has no code outside its comments`);
   return view;
@@ -76,7 +86,10 @@ export function jsTokens(src, { label, jsx: useJsx, sourceType } = {}) {
 // the real source, and requires the predicate to catch it in jsCode's view.
 // Each wrapper is a form the old regex stripper could not see past. The
 // sameLine wrappers put the hit after other code on the same line, so a
-// predicate anchored at the start of a line skips them.
+// predicate anchored at the start of a line (lineAnchored) SKIPS them: those
+// combinations are not exercised. Two predicates are line-anchored, build-stamp's
+// stampImport and deploy-context's dc20Imports, so six combinations (3 × 2) are
+// skipped. Their same-line gap is a matching defect, tracked as its own item.
 export const HIDING_WRAPPERS = [
   { id: "a /* inside a line comment, closed by // */", sameLine: false, wrap: (hit) => `\n// netlify/functions/*.js\n${hit}\n// */\n` },
   { id: "an \"image/*\" string, closed by a real /* */", sameLine: false, wrap: (hit) => `\nconst __cs4_s = "image/*";\n${hit}\n/* x */\n` },

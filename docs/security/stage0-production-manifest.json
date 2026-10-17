@@ -609,10 +609,10 @@
       "scripts/check-build-env.mjs": "3484b0394de4fd3f213d22e426dc5cb8f53245c8",
       "scripts/write-deploy-context.mjs": "6f29742d966a63533a65e77791196248de73222d",
       "scripts/inject-sw-manifest.mjs": "7b63b613eb336ab8966fc9aa8b782a8492af3f26",
-      "scripts/tests/inventory-check.mjs": "f9db5631dff56a773ee7d4173f34f48e56a845dd",
+      "scripts/tests/inventory-check.mjs": "7f76691a8a0b535bdea2d1c39bcd4b843ebb44a8",
       "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a",
       "scripts/tests/supabase-migration-discovery.mjs": "90e5603bb6e1ddb5984acd09892034c35954fe5f",
-      "scripts/tests/sql-lexer.mjs": "36a16bd7c3e66dabbe3d0278dfd0fb0a676079d6"
+      "scripts/tests/sql-lexer.mjs": "ef487f59cd8c299ca9f939e1ed7bd1b96c2b5cfb"
     }
   },
   "rollbackTargets": {

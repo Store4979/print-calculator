@@ -15,21 +15,35 @@
 // body is executable SQL/PL/pgSQL (lexed again, recursively) or data, from the
 // input's reviewed role and position. The tag in the input decides nothing.
 //
-// String mode: standard_conforming_strings = on, PostgreSQL's default, so a
-// backslash inside '…' is literal and only E'…' takes backslash escapes. A
-// code segment that names that setting is refused, because it could change
-// the rule. Every unsupported form THROWS with the label and the offset;
-// nothing returns a partial result.
+// The rules follow PostgreSQL 17's scanner (src/backend/parser/scan.l):
+// - newline is LF or CR, and a `--` comment runs to the first of either
+//   (Codex's review of 9333448, CS-R1). The text is lexed as it is: no line
+//   ending is rewritten, and a view keeps every LF and CR;
+// - string mode: standard_conforming_strings = on, PostgreSQL's default, so a
+//   backslash inside '…' is literal and only E'…' takes backslash escapes. A
+//   code segment that names that setting is refused, because it could change
+//   the rule;
+// - string continuation (scan.l `quotecontinue`): a quote that follows a
+//   closed string across whitespace holding a newline, where `--` comments
+//   count as whitespace, CONTINUES that string in ITS mode. So E'a'⏎'it\'s'
+//   is one E-string, and its second segment takes backslash escapes
+//   (CS-R2). An ordinary string's continuation is ordinary, so it lexes as
+//   before.
+// Every unsupported form THROWS with the label and the offset; nothing
+// returns a partial result.
 
 export const MAX_INPUT = 4 * 1024 * 1024;  // characters; SIZE-PROBE, the largest real input, is ~241 KB
 export const MAX_COMMENT_DEPTH = 64;       // nested /* … */
 export const MAX_BODY_DEPTH = 8;           // dollar bodies interpreted as code inside each other
 
-const IDENT_START = /[A-Za-z_\u0080-￿]/;
-const IDENT_PART = /[A-Za-z0-9_$\u0080-￿]/;
+// Identifier characters: ASCII letters, digits, `_` and `$` (not first), and
+// every code unit from 0x80 up, as scan.l's ident_start/ident_cont do.
+const isIdentStart = (c) => c !== undefined && (/[A-Za-z_]/.test(c) || c.charCodeAt(0) >= 0x80);
+const isIdentPart = (c) => c !== undefined && (/[A-Za-z0-9_$]/.test(c) || c.charCodeAt(0) >= 0x80);
 const TAG_START = /[A-Za-z_]/;
 const TAG_PART = /[A-Za-z0-9_]/;
 const DIGIT = /[0-9]/;
+const isNewline = (c) => c === "\n" || c === "\r";
 
 export class SqlLexError extends Error {}
 
@@ -53,10 +67,44 @@ function quotedEnd(text, open, q, backslashEscapes, label, what) {
 }
 
 /**
+ * scan.l's quotecontinue at `i`, just past a closing quote:
+ *   {horiz_whitespace}*{newline}{special_whitespace}*{quote}
+ * where horiz_whitespace is [ \t\f] or a `--` comment, and special_whitespace
+ * is [ \t\n\r\f\v] or a `--` comment followed by a newline. Returns the index
+ * of the continuing quote, or -1. Linear: each character is visited once.
+ */
+export function quoteContinuesAt(text, i) {
+  const n = text.length;
+  let j = i;
+  for (;;) {
+    const c = text[j];
+    if (c === " " || c === "\t" || c === "\f") { j++; continue; }
+    if (c === "-" && text[j + 1] === "-") { j += 2; while (j < n && !isNewline(text[j])) j++; continue; }
+    break;
+  }
+  if (!isNewline(text[j])) return -1;
+  j++;
+  for (;;) {
+    const c = text[j];
+    if (c === " " || c === "\t" || c === "\f" || c === "\v" || isNewline(c)) { j++; continue; }
+    if (c === "-" && text[j + 1] === "-") {
+      let k = j + 2;
+      while (k < n && !isNewline(text[k])) k++;
+      if (k >= n) return -1;   // a comment that runs to the end is not followed by a newline
+      j = k + 1;
+      continue;
+    }
+    break;
+  }
+  return text[j] === "'" ? j : -1;
+}
+
+/**
  * Segments covering `text` exactly, in order. Kinds: code, line-comment,
  * block-comment, string, e-string, quoted-ident, dollar (with tag, bodyStart,
- * bodyEnd). Each character is visited a bounded number of times; a dollar
- * quote's end is found with one indexOf.
+ * bodyEnd). A continuation segment of an E-string is an e-string with
+ * `continues: true`. Each character is visited a bounded number of times; a
+ * dollar quote's end is found with one indexOf.
  */
 export function lexSql(text, { label } = {}) {
   if (typeof label !== "string" || !label) throw new Error("lexSql: a label is required");
@@ -65,16 +113,23 @@ export function lexSql(text, { label } = {}) {
   const n = text.length;
   const segs = [];
   let i = 0, codeStart = 0;
+  let eContinuesAt = -1;   // the quote that continues the last E-string, if any
   const push = (seg) => {
     if (seg.start > codeStart) segs.push({ kind: "code", start: codeStart, end: seg.start });
     segs.push(seg);
     codeStart = i = seg.end;
   };
+  const pushEString = (start, quote, continues) => {
+    const end = quotedEnd(text, quote, "'", true, label, "E-string");
+    push(continues ? { kind: "e-string", start, end, continues: true } : { kind: "e-string", start, end });
+    eContinuesAt = quoteContinuesAt(text, end);
+  };
   while (i < n) {
     const c = text[i], d = text[i + 1];
     if (c === "-" && d === "-") {
-      const nl = text.indexOf("\n", i + 2);
-      push({ kind: "line-comment", start: i, end: nl === -1 ? n : nl });
+      let j = i + 2;
+      while (j < n && !isNewline(text[j])) j++;
+      push({ kind: "line-comment", start: i, end: j });
     } else if (c === "/" && d === "*") {
       let depth = 1, j = i + 2;
       while (depth > 0) {
@@ -87,7 +142,8 @@ export function lexSql(text, { label } = {}) {
       }
       push({ kind: "block-comment", start: i, end: j });
     } else if (c === "'") {
-      push({ kind: "string", start: i, end: quotedEnd(text, i, "'", false, label, "string") });
+      if (i === eContinuesAt) pushEString(i, i, true);
+      else push({ kind: "string", start: i, end: quotedEnd(text, i, "'", false, label, "string") });
     } else if (c === '"') {
       push({ kind: "quoted-ident", start: i, end: quotedEnd(text, i, '"', false, label, "quoted identifier") });
     } else if (c === "$") {
@@ -107,14 +163,13 @@ export function lexSql(text, { label } = {}) {
       const close = text.indexOf(delim, j + 1);
       if (close === -1) fail(label, i, `an unterminated dollar quote ${delim}`);
       push({ kind: "dollar", start: i, end: close + delim.length, tag: delim.slice(1, -1), bodyStart: j + 1, bodyEnd: close });
-    } else if (IDENT_START.test(c)) {
+    } else if (isIdentStart(c)) {
       // A whole identifier, `$` included after its first character: the `$` in
       // a$b$ belongs to the identifier and opens nothing.
       let j = i + 1;
-      while (j < n && IDENT_PART.test(text[j])) j++;
-      if (j === i + 1 && (c === "E" || c === "e") && text[j] === "'") {
-        push({ kind: "e-string", start: i, end: quotedEnd(text, j, "'", true, label, "E-string") });
-      } else i = j;
+      while (j < n && isIdentPart(text[j])) j++;
+      if (j === i + 1 && (c === "E" || c === "e") && text[j] === "'") pushEString(i, j, false);
+      else i = j;
     } else i++;
   }
   if (n > codeStart) segs.push({ kind: "code", start: codeStart, end: n });
@@ -134,15 +189,16 @@ export function lexSql(text, { label } = {}) {
   return segs;
 }
 
-const blank = (t) => t.replace(/[^\n]/g, " ");
+// Blanking keeps every newline, LF and CR alike (CS-R1).
+const blank = (t) => t.replace(/[^\n\r]/g, " ");
 
 /**
- * A view of `text` with the same length: comments blanked to spaces (newlines
- * kept) at every depth; strings, E-strings and quoted identifiers kept or
- * blanked between their delimiters, as the caller says; dollar bodies either
- * interpreted as code (recursively, same options) or treated as data, as the
- * caller's `bodies` says. With strings "keep", every character outside a
- * comment is unchanged.
+ * A view of `text` with the same length: comments blanked to spaces, every LF
+ * and CR kept, at every depth; strings, E-strings and quoted identifiers kept
+ * or blanked between their delimiters, as the caller says; dollar bodies
+ * either interpreted as code (recursively, same options) or treated as data,
+ * as the caller's `bodies` says. With strings "keep", every character outside
+ * a comment is unchanged.
  *
  * bodies: "code" (every dollar body in this text is executable), or a function
  * (segment, { text, depth }) → "code" | "data" that decides from the input's
@@ -159,18 +215,21 @@ export function sqlCode(text, { label, strings, bodies, depth = 0 } = {}) {
     if (s.kind === "code") out += t;
     else if (s.kind === "line-comment" || s.kind === "block-comment") out += blank(t);
     else if (s.kind === "string" || s.kind === "quoted-ident") out += strings === "keep" ? t : t[0] + blank(t.slice(1, -1)) + t.slice(-1);
-    else if (s.kind === "e-string") out += strings === "keep" ? t : t.slice(0, 2) + blank(t.slice(2, -1)) + t.slice(-1);
-    else if (s.kind === "dollar") {
-      const open = text.slice(s.start, s.bodyStart);
+    else if (s.kind === "e-string") {
+      // An opening segment carries its E prefix; a continuation starts at its quote.
+      const open = s.continues ? 1 : 2;
+      out += strings === "keep" ? t : t.slice(0, open) + blank(t.slice(open, -1)) + t.slice(-1);
+    } else if (s.kind === "dollar") {
+      const openDelim = text.slice(s.start, s.bodyStart);
       const body = text.slice(s.bodyStart, s.bodyEnd);
-      const close = text.slice(s.bodyEnd, s.end);
+      const closeDelim = text.slice(s.bodyEnd, s.end);
       const role = bodies === "code" ? "code" : bodies(s, { text, depth });
       if (role === "code") {
-        out += open + sqlCode(body, { label: `${label} > ${open} at offset ${s.start}`, strings, bodies, depth: depth + 1 }) + close;
+        out += openDelim + sqlCode(body, { label: `${label} > ${openDelim} at offset ${s.start}`, strings, bodies, depth: depth + 1 }) + closeDelim;
       } else if (role === "data") {
-        out += open + (strings === "keep" ? body : blank(body)) + close;
+        out += openDelim + (strings === "keep" ? body : blank(body)) + closeDelim;
       } else {
-        throw new Error(`${label}: the role given for ${open} at offset ${s.start} is ${JSON.stringify(role)}, not "code" or "data"`);
+        throw new Error(`${label}: the role given for ${openDelim} at offset ${s.start} is ${JSON.stringify(role)}, not "code" or "data"`);
       }
     } else throw new Error(`${label}: unknown segment kind ${s.kind}`);
   }

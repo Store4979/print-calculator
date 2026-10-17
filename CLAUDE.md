@@ -563,15 +563,28 @@ abuse, does not guarantee a cap"), say so in the comment itself.
      scripts/tests/source-util.mjs. It PARSES with acorn (acorn-jsx for a
      `.jsx` label) and blanks exactly the comments, keeping strings,
      templates, regex literals and JSX text, and lengths and lines. It
-     normalises CRLF. A parse failure throws (no fallback, no sourceType
+     normalises CR/CRLF to LF, and **keeps every line terminator inside a
+     comment: LF, U+2028 and U+2029.** `return /*<U+2028>*/ 1` returns
+     undefined, so blanking that separator changes ASI while every token
+     stays equal (Codex's review of 9333448). CS-5 therefore compares ASTs,
+     not just tokens. A parse failure throws (no fallback, no sourceType
      retry: public/sw.js is `sourceType: "script"`), and an empty view
      throws unless `allowEmpty`.
    - **SQL: `sqlCode(text, { label, strings, bodies })`** from
-     scripts/tests/sql-lexer.mjs, a bounded PostgreSQL lexer
-     (standard_conforming_strings on; nested comments; E-strings; quoted
-     identifiers; dollar quotes). The CONSUMER says whether strings are
-     kept, and whether each dollar body is code or data. The tag never
-     decides. An unsupported form throws.
+     scripts/tests/sql-lexer.mjs, a bounded PostgreSQL lexer following
+     PG 17's scan.l:
+     - standard_conforming_strings on;
+     - nested comments, E-strings, quoted identifiers, dollar quotes;
+     - **a `--` comment ends at LF or CR**, and views keep both. The bytes
+       are lexed as they are, never newline-rewritten;
+     - **string continuation**: a quote after a closed string, across a
+       newline (`--` comments allowed), continues it IN ITS MODE. So
+       `E'a'⏎'it\'s'` is one E-string. Real migrations use ordinary
+       continuation in multi-line `comment on … is '…'` texts.
+
+     The CONSUMER says whether strings are kept, and whether each dollar
+     body is code or data. The tag never decides. An unsupported form
+     throws.
    - Three times (2026-09) a test matched text that merely QUOTED the thing
      it asserted about: a doesNotMatch on the old function signature, the
      sw.js `startsWith` comment, and enroll-list's header quoting
@@ -586,8 +599,14 @@ abuse, does not guarantee a cap"), say so in the comment itself.
      in scripts/. It is a regression check, and `new RegExp` escapes it.
    - **Every negative source predicate is REGISTERED** in its test file
      with a violating `hit` (a `NEG` table). Its CS-4 control hides the hit
-     behind every comment-like wrapper and requires the predicate to catch
-     it. A doesNotMatch on a view that is not in the table fails.
+     behind every APPLICABLE comment-like wrapper and requires the
+     predicate to catch it. A doesNotMatch on a view that is not in the
+     table fails.
+     - Two predicates are line-anchored: build-stamp's `stampImport` and
+       deploy-context's `importsOf`/`dc20Imports`. They skip the three
+       same-line wrappers, so six combinations are NOT exercised.
+     - Their same-line gap, `x = 1; import y from "z"` evading them, is
+       tracked as its own item: replace them with AST import declarations.
 5. Prompt files from prior work (SPECIALTY_TAB_PROMPT.md,
    SIGNS365_PRICING_UPDATE.md, etc.) may exist in the repo root — they are
    historical specs, not standing instructions.

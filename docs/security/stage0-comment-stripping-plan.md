@@ -61,6 +61,19 @@ listed with items 2, 3, 4(c) and 6 (plan §I; incident record §5;
    from policy verdicts. A genuine semantic difference is inspected, not
    forced back to an old false result (§6).
 
+**Codex's review of the implementation, G `9333448` (2026-10-16): AMEND.**
+Three blocking lexer-preservation defects were corrected in H, on top of G,
+each with a required-failing regression:
+
+| # | defect | the correction |
+|---|---|---|
+| CS-R1 | an SQL `--` comment ended only at LF, so a lone CR hid the next statement | it ends at LF or CR; views keep both; the bytes are lexed as they are (§3.3) |
+| CS-R2 | a continued E-string's next segment lost its escape mode | continuation keeps the mode (§3.3) |
+| CS-R3 | JS blanking dropped U+2028/U+2029 from comments, changing ASI with equal tokens | every line terminator is kept; CS-5 compares ASTs (§3.1) |
+
+The CS-4 coverage is stated exactly: six wrapper combinations are skipped
+(§3.2). The line-anchored import predicates are a separate tracked item.
+
 ## 1. What is required
 
 **From Codex:**
@@ -195,10 +208,16 @@ jsCode(src, { label, jsx = /\.jsx$/.test(label), sourceType = "module", allowEmp
   extended by the pinned `acorn-jsx` 5.3.2 when `jsx` is set. Comments are
   collected through `onComment`, JSX `{/* … */}` included.
 - **The result** is the normalized text with every comment character
-  replaced by a space, except `\n`:
+  replaced by a space, except a **line terminator: LF, U+2028 or U+2029**.
+  CR and CRLF are LF by then. A line terminator is kept (Codex's review of
+  `9333448`, CS-R3):
   - the same length, lines and columns;
   - strings, templates, regex literals and JSX text are kept verbatim;
-  - a comment between two tokens becomes whitespace, so tokens never join.
+  - a comment between two tokens becomes whitespace, so tokens never join;
+  - a comment that held a line break still holds it, so automatic
+    semicolon insertion is unchanged. `return /*<U+2028>*/ 1` returns
+    undefined in the source and in the view. Token equality cannot show
+    this, so CS-5 compares ASTs.
 - **A parse failure throws:**
   `<label>: does not parse as <module|script>[+jsx]: <acorn message>`.
   - No partial result, no regex fallback, and no retry with another
@@ -245,7 +264,14 @@ assertion test the same thing.
   - a regex literal ending `\//`, then the hit;
   - a template holding `//` and `/*`.
 
-  A predicate anchored at the start of a line skips the same-line wrappers.
+  A predicate anchored at the start of a line skips the three same-line
+  wrappers, and those combinations are **not exercised**.
+  - Two predicates are line-anchored: build-stamp's `stampImport` and
+    deploy-context's `importsOf`/`dc20Imports`. That makes **six skipped
+    combinations**.
+  - Their same-line gap (`x = 1; import y from "z"` evades them) is a
+    matching defect, not a lexing one. It is tracked as its own item,
+    which replaces them with AST import declarations.
 - **(c)** A coverage check parses the test file itself. Every
   `assert.doesNotMatch` (or equivalent negative) on a source view must take
   its predicate from the table, so a new unregistered negative fails.
@@ -273,19 +299,33 @@ code segment that names `standard_conforming_strings` is refused as
 unsupported, because it could change the rule.
 
 **The segment kinds:**
-- `line-comment`: `--` to the end of the line;
+- `line-comment`: `--` to the first **LF or CR**, PostgreSQL's newline
+  (CS-R1). The text is lexed as it is: no line ending is rewritten, and a
+  view keeps every LF and CR;
 - `block-comment`: `/* … */`, **nested**, counted by depth as PostgreSQL
   does;
 - `string`: `'…'` with `''`. The prefixes `U&'`, `B'`, `X'` and `N'` end by
   the same rule, so the prefix lexes as code before a plain string;
 - `e-string`: `E'…'` (`E` as a whole token), with backslash escapes and
   `''`;
+- **string continuation** (scan.l's `quotecontinue`; CS-R2): a quote that
+  follows a closed string across whitespace holding a newline, with `--`
+  comments counted as whitespace, continues that string **in its mode**.
+  - A continued E-string's next segment is an `e-string` with
+    `continues: true`, and takes backslash escapes. So
+    `E'a'⏎'it\'s -- x'; drop …` hides nothing.
+  - An ordinary string's continuation is ordinary.
+  - Rejecting continuation was not available: the real inputs use
+    ordinary continuation 148 times, in multi-line `comment on … is '…'`
+    texts, `release2_01` and the pending 02–05 among them. None uses
+    E-string continuation;
 - `quoted-ident`: `"…"` with `""` (and `U&"…"` likewise);
 - `dollar`: `$tag$…$tag$`, where the tag is empty or
   `[A-Za-z_][A-Za-z0-9_]*`. **Lexically it is a string.** The lexer never
   looks inside it, so a data literal is never "malformed SQL";
 - `code`: everything else.
-  - An identifier is `[A-Za-z_\x80-￿][A-Za-z0-9_$\x80-￿]*`, so
+  - An identifier starts with an ASCII letter, `_` or any code unit from
+    0x80 up, and continues with those, digits and `$`, so
     the `$` in `a$b$` belongs to the identifier.
   - `$` plus a digit is a parameter.
 
@@ -322,8 +362,8 @@ sqlCode(text, { label, strings: "keep" | "blank", bodies })
 Any other answer throws (fail closed).
 
 **The view keeps the input's length:**
-- **Comments:** every character becomes a space, except `\n`, at every
-  depth.
+- **Comments:** every character becomes a space, except **LF and CR**,
+  which are kept, at every depth.
 - **Strings, e-strings and quoted identifiers:** kept verbatim, or blanked
   between their delimiters (`strings: "blank"`), by the consumer's
   explicit choice.
@@ -483,7 +523,8 @@ and lone CR:
 **CS-5. Real-input invariants:**
 - every file a JS consumer reads parses (68 at `41153b8`);
 - re-parsing `jsCode`'s output gives exactly the source's tokens (type,
-  value, start, end) and **zero** comments;
+  value, start, end), **the same AST** (CS-R3: tokens alone cannot show an
+  ASI change), and **zero** comments;
 - every SQL text the inventory or M-6 reads lexes;
 - `sqlCode` keeps code and string identity (§3.4), checked on every real
   input, at every depth.

@@ -14,7 +14,9 @@ import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync, mkdirSync
 import { join, relative, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { Parser } from "acorn";
+import jsx from "acorn-jsx";
 import { jsCode, jsTokens } from "./source-util.mjs";
 import { lexSql, sqlCode, MAX_INPUT, MAX_COMMENT_DEPTH, MAX_BODY_DEPTH } from "./sql-lexer.mjs";
 import { appliedReleaseState, readTablesSnapshot, protectedNamesByState, migrationView, ddlTargets, SNAPSHOT_PROJECT } from "./inventory-check.mjs";
@@ -227,7 +229,7 @@ test("CS-3 the view keeps the length, and changes only comment characters", () =
   assert.equal(v.length, text.length);
   const mask = commentMask(text);
   for (let i = 0; i < text.length; i++) {
-    if (mask[i]) assert.ok(v[i] === " " || (text[i] === "\n" && v[i] === "\n"), `offset ${i} in a comment`);
+    if (mask[i]) assert.ok(v[i] === " " || ((text[i] === "\n" || text[i] === "\r") && v[i] === text[i]), `offset ${i} in a comment`);
     else assert.equal(v[i], text[i], `offset ${i} outside comments`);
   }
 });
@@ -274,6 +276,106 @@ test("CS-3 unsupported target forms are reported alike by the protected names, t
   }
 });
 
+// ── CS-R1…R3: Codex's review of 9333448 ────────────────────────────────────
+// Each case below fails on 9333448's helpers and passes here (the review
+// request's before-run). Line endings and separators are built from their
+// code points, so no escape in this file can change on the way into it.
+const CR = String.fromCharCode(13);
+const LS = String.fromCharCode(0x2028), PS = String.fromCharCode(0x2029);
+const endings = [["LF", "\n"], ["CRLF", CR + "\n"], ["lone CR", CR]];
+
+test("CS-R1 a `--` comment ends at LF or CR, as in PostgreSQL: Codex's exact input, through the read-only predicate", () => {
+  const exact = "select 1; -- comment" + CR + "drop table public.audit_hidden;";
+  assert.deepEqual(readOnlyViolations(exact, "STATE", STATE_WRITE_WORDS), ["STATE is not read-only: drop"]);
+  for (const [name, nl] of endings) {
+    const text = `select 1; -- comment${nl}drop table public.audit_hidden;`;
+    assert.deepEqual(readOnlyViolations(text, "STATE", STATE_WRITE_WORDS), ["STATE is not read-only: drop"], name);
+    const segs = lexSql(text, { label: name });
+    const comment = segs.find((s) => s.kind === "line-comment");
+    assert.equal(text.slice(comment.start, comment.end), "-- comment", `${name}: the comment stops before the newline`);
+    const view = code(text);
+    assert.equal(view.slice(comment.end, comment.end + nl.length), nl, `${name}: the view keeps the newline characters`);
+    assert.match(view, /drop table public\.audit_hidden;$/, name);
+  }
+  // Inside an executable dollar body too.
+  assert.match(code("do $$ begin -- c" + CR + "drop table x; end $$;"), /drop table x;/);
+});
+
+test("CS-R1 the inventory/snapshot path: Codex's exact CREATE input, and each line ending", () => {
+  const exact = "create table public.a (id int); -- comment" + CR + "create table public.audit_hidden (id int);";
+  assert.deepEqual(targets(exact), { creates: ["a", "audit_hidden"], drops: [], errors: [] });
+  for (const [name, nl] of endings) {
+    const sql = `create table public.a (id int); -- comment${nl}create table public.audit_hidden (id int);${nl}`;
+    withRoot({ applied: { "20261015120000_release2_99_cr.sql": sql }, tables: ["stores", "a"] }, (root) => {
+      assert.deepEqual(appliedReleaseState(root).present.has("audit_hidden"), true, `${name}: applied state`);
+      assert.ok(protectedNamesByState(root).all.has("audit_hidden"), `${name}: protected names`);
+      assert.match(snapshotOf(root).error || "", /lacks "audit_hidden"/, `${name}: a snapshot without it is refused`);
+    });
+    withRoot({ applied: { "20261015120000_release2_99_cr.sql": sql }, tables: ["stores", "a", "audit_hidden"] }, (root) => {
+      assert.equal(snapshotOf(root).error, undefined, `${name}: the control, a snapshot with both, passes`);
+    });
+  }
+});
+
+test("CS-R2 a continued E-string keeps its escape mode: Codex's exact input, through the read-only predicate", () => {
+  const exact = "select E'a'\n'it\\'s -- x'; drop table public.audit_hidden;";
+  assert.deepEqual(readOnlyViolations(exact, "STATE", STATE_WRITE_WORDS), ["STATE is not read-only: drop"]);
+  const segs = lexSql(exact, { label: "exact" });
+  assert.deepEqual(segs.filter((s) => s.kind !== "code").map((s) => [s.kind, !!s.continues, exact.slice(s.start, s.end)]),
+    [["e-string", false, "E'a'"], ["e-string", true, "'it\\'s -- x'"]]);
+  assert.equal(code(exact, "blank"), `select E' '\n'${" ".repeat("it\\'s -- x".length)}'; drop table public.audit_hidden;`, "the blank view keeps the delimiters of both segments");
+});
+
+test("CS-R2 continuation across each line ending, and across `--` comments, as scan.l's quotecontinue allows", () => {
+  for (const [name, nl] of endings) {
+    for (const [form, between] of [
+      ["newline", nl],
+      ["a comment on the first line", ` -- c${nl}`],
+      ["a comment on its own line", `${nl}-- c${nl}`],
+      ["blank lines", `${nl}  ${nl}${nl}`],
+    ]) {
+      const text = `select E'a'${between}'it\\'s -- x'; drop table public.audit_hidden;`;
+      assert.deepEqual(readOnlyViolations(text, "STATE", STATE_WRITE_WORDS), ["STATE is not read-only: drop"], `${form} (${name})`);
+      assert.ok(lexSql(text, { label: "c" }).some((s) => s.continues), `${form} (${name}) continues`);
+    }
+  }
+  // Not continuation in PostgreSQL: on the same line, after a block comment,
+  // or after a comment that runs to the end. The second string is then
+  // ordinary, as scan.l lexes it.
+  for (const [form, text] of [
+    ["the same line", "select E'a' 'b';"],
+    ["a block comment between", "select E'a' /* c */\n'b';"],
+    ["a comment to the end", "select E'a' -- c"],
+  ]) assert.ok(!lexSql(text, { label: "n" }).some((s) => s.continues), form);
+  // An ordinary string's continuation (the real inputs' multi-line comments) is ordinary.
+  const plain = "comment on table t is 'a\\'\n  'b'; drop table t;";
+  assert.deepEqual(lexSql(plain, { label: "p" }).filter((s) => s.kind !== "code").map((s) => s.kind), ["string", "string"]);
+  assert.match(code(plain), /drop table t;/);
+});
+
+test("CS-R2 the inventory/snapshot path: a CREATE after a continued E-string is applied state", () => {
+  const sql = "create table public.a (id int);\ncomment on table public.a is E'x'\n'it\\'s -- y'; create table public.audit_hidden (id int);\n";
+  withRoot({ applied: { "20261015120000_release2_99_cont.sql": sql }, tables: ["stores", "a"] }, (root) => {
+    assert.ok(appliedReleaseState(root).present.has("audit_hidden"));
+    assert.ok(protectedNamesByState(root).all.has("audit_hidden"));
+    assert.match(snapshotOf(root).error || "", /lacks "audit_hidden"/);
+  });
+});
+
+test("CS-R3 a comment holding U+2028 or U+2029 still breaks the line: the AST and the result are unchanged", () => {
+  for (const [name, sep] of [["U+2028", LS], ["U+2029", PS], ["LF (control)", "\n"]]) {
+    const raw = `function f() { return /*${sep}*/ 1; } f();`;
+    const view = jsCode(raw, { label: "asi.js" });
+    assert.equal(view.length, raw.length);
+    assert.equal(view[raw.indexOf(sep)], sep, `${name}: the separator is kept`);
+    const returned = (src) => Parser.parse(src, { ecmaVersion: "latest", sourceType: "script" }).body[0].body.body[0].argument;
+    assert.equal(returned(raw), null, `${name}: ASI ends the return in the source`);
+    assert.equal(returned(view), null, `${name}: and in the view`);
+    assert.equal(vm.runInNewContext(view), vm.runInNewContext(raw), `${name}: the view runs as the source does`);
+    assert.equal(vm.runInNewContext(view), undefined, name);
+  }
+});
+
 // ── CS-5: real-input preservation ──────────────────────────────────────────
 
 /** Comment positions at every depth, dollar bodies read as code. */
@@ -301,7 +403,20 @@ function jsInputs() {
   return [...new Set([...src, ...tests, ...named])].sort().map((p) => ({ p, opts: { label: p } })).concat([{ p: "public/sw.js", opts: { label: "public/sw.js", sourceType: "script" } }]);
 }
 
-test("CS-5 every file a JavaScript consumer reads parses, and its view has exactly its tokens and no comment", () => {
+/**
+ * The whole AST, positions included. Token equality alone does not prove the
+ * view means what the source means: blanking a line terminator inside a
+ * comment keeps every token and changes automatic semicolon insertion
+ * (CS-R3). The AST shows that change.
+ */
+const JSX_PARSER = Parser.extend(jsx());
+function astOf(src, opts) {
+  const P = (opts.jsx ?? /\.jsx$/.test(opts.label)) ? JSX_PARSER : Parser;
+  const ast = P.parse(src.replace(/\r\n?/g, "\n"), { ecmaVersion: "latest", sourceType: opts.sourceType ?? "module" });
+  return JSON.stringify(ast, (k, v) => (typeof v === "bigint" ? `${v}n` : v instanceof RegExp ? String(v) : v));
+}
+
+test("CS-5 every file a JavaScript consumer reads parses, and its view has exactly its tokens and AST, and no comment", () => {
   const inputs = jsInputs();
   assert.ok(inputs.length >= 68, `the consumers' input set (${inputs.length})`);
   for (const { p, opts } of inputs) {
@@ -310,6 +425,7 @@ test("CS-5 every file a JavaScript consumer reads parses, and its view has exact
     const a = jsTokens(raw, opts), b = jsTokens(view, opts);
     assert.equal(b.comments, 0, `${p}: no comment survives`);
     assert.deepEqual(b.tokens, a.tokens, `${p}: the view's tokens are the source's`);
+    assert.ok(astOf(view, opts) === astOf(raw, opts), `${p}: the view's AST is the source's`);
   }
 });
 
@@ -317,7 +433,8 @@ test("CS-5 every file a JavaScript consumer reads parses, and its view has exact
 function sqlInputs() {
   const dirs = [join(ROOT, "supabase", "migrations"), join(ROOT, "supabase", "migrations", "pending"), join(ROOT, "supabase", "rollbacks")];
   const files = dirs.filter(existsSync).flatMap((d) => readdirSync(d).filter((f) => /(^|_)release2_.*\.sql$/i.test(f)).map((f) => join(d, f)));
-  const out = files.map((f) => ({ label: rel(f), text: readFileSync(f, "utf8").replace(/\r\n/g, "\n") }));
+  // The bytes as they are, a Windows checkout's CRLF included (CS-R1).
+  const out = files.map((f) => ({ label: rel(f), text: readFileSync(f, "utf8") }));
   const M = A.manifestAt("HEAD", ROOT);
   const texts = A.assembleAll(M, { cwd: ROOT });
   for (const k of ["STATE", "CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE", ...Object.keys(texts).filter((x) => x.startsWith("LOCKPROBE-"))]) out.push({ label: k, text: texts[k] });
@@ -332,7 +449,7 @@ test("CS-5 every SQL text the inventory and M-6 read lexes, and its view keeps c
     const mask = commentMask(text);
     let changed = 0;
     for (let i = 0; i < text.length; i++) {
-      if (mask[i]) { if (v[i] !== " " && !(text[i] === "\n" && v[i] === "\n")) assert.fail(`${label}: offset ${i} in a comment is not blank`); }
+      if (mask[i]) { if (v[i] !== " " && !((text[i] === "\n" || text[i] === "\r") && v[i] === text[i])) assert.fail(`${label}: offset ${i} in a comment is not blank`); }
       else if (v[i] !== text[i]) { changed++; break; }
     }
     assert.equal(changed, 0, `${label}: a character outside comments changed`);

@@ -481,7 +481,9 @@ test("DC-22 the injector cross-checks the context file against this build — ho
 
 // ── 6. CS-4: every negative source predicate above sees hidden code ────────
 
-test("CS-4 deploy-context: each negative source predicate catches its hit hidden behind every comment-like wrapper", () => {
+// dc20Imports is line-anchored, so it skips the three same-line wrappers (not
+// exercised); its same-line gap is tracked as its own item.
+test("CS-4 deploy-context: each negative source predicate catches its hit hidden behind every applicable comment-like wrapper (dc20Imports skips the three same-line ones)", () => {
   const entries = [
     ...Object.entries(NEG).map(([id, n]) => ({ id, hit: n.hit, file: n.file, violates: (v) => n.re.test(v) })),
     ...Object.entries(NEG_FN).map(([id, n]) => ({ id, hit: n.hit, file: n.file, violates: n.violates, lineAnchored: n.lineAnchored })),

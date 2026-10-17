@@ -386,9 +386,12 @@ function createdTables(dir) {
 // in an `execute '…'` string stays visible (Codex Q2: conservative, it can also
 // match DDL-like data; it is not a dynamic-SQL analyzer), and every dollar body
 // read as code, because in a release2 migration each one is a function or DO
-// body. A file that does not lex is an error, never a pass.
+// body. A file that does not lex is an error, never a pass. The bytes are lexed
+// as they are, a Windows checkout's CRLF included: the lexer ends a `--`
+// comment at LF or CR, as PostgreSQL does, so no line ending is rewritten
+// (Codex's review of 9333448, CS-R1).
 export function migrationView(raw, label) {
-  return sqlCode(raw.replace(/\r\n/g, "\n"), { label, strings: "keep", bodies: "code" });
+  return sqlCode(raw, { label, strings: "keep", bodies: "code" });
 }
 
 // The CREATE/DROP targets of one view (Codex Q5). Only these complete forms
@@ -412,7 +415,8 @@ function ddlTarget(view, at, verb) {
     if (view[p] === '"') return { error: "a quoted name" };
     const id = sticky(/[a-z_][a-z0-9_]*/, view, p);
     if (!id) return { error: "no recognizable name" };
-    if (/[$\u0080-￿]/.test(view[id.end] || "")) return { error: "an identifier character after the name" };
+    const next = view[id.end];
+    if (next !== undefined && (next === "$" || next.charCodeAt(0) >= 0x80)) return { error: "an identifier character after the name" };
     p = id.end;
     return { name: id.m[0].toLowerCase() };
   };
@@ -436,7 +440,7 @@ function ddlTarget(view, at, verb) {
 }
 export function ddlTargets(view, label) {
   const out = { creates: [], drops: [], errors: [] };
-  const where = (i) => `${label}:${view.slice(0, i).split("\n").length}`;
+  const where = (i) => `${label}:${view.slice(0, i).split(/\r\n|\r|\n/).length}`;
   for (const m of view.matchAll(MODIFIED_TABLE)) out.errors.push(`${where(m.index)}: unsupported DDL form "${m[0].replace(/\s+/g, " ")}"`);
   for (const [re, verb, into] of [[CREATE_TABLE, "create", out.creates], [DROP_TABLE, "drop", out.drops]]) {
     for (const m of view.matchAll(re)) {
