@@ -581,6 +581,11 @@ abuse, does not guarantee a cap"), say so in the comment itself.
        newline (`--` comments allowed), continues it IN ITS MODE. So
        `E'a'⏎'it\'s'` is one E-string. Real migrations use ordinary
        continuation in multi-line `comment on … is '…'` texts.
+     - **Every whitespace and newline set** in the recognizer is copied
+       from scan.l at REL_17_5 (non_newline_space `[ \t\f\v]`, space,
+       newline, whitespace_with_newline, quotecontinue), never hand-listed.
+       A hand list left out vertical tab, and `E'a'<VT>⏎'it\'s -- x'; drop …`
+       hid a DROP that PostgreSQL 17.5 ran (Codex's review of 1c4d8a4).
 
      The CONSUMER says whether strings are kept, and whether each dollar
      body is code or data. The tag never decides. An unsupported form

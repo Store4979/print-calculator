@@ -353,6 +353,47 @@ test("CS-R2 continuation across each line ending, and across `--` comments, as s
   assert.match(code(plain), /drop table t;/);
 });
 
+// Codex's review of 1c4d8a4: the continuation recognizer must take its
+// whitespace from scan.l. non_newline_space is [ \t\f\v]; vertical tab was
+// missing before the first newline. Built from code points: SP, HT, FF, VT.
+const NON_NEWLINE_SPACE = [["SP", String.fromCharCode(32)], ["HT", String.fromCharCode(9)], ["FF", String.fromCharCode(12)], ["VT", String.fromCharCode(11)]];
+const VT = String.fromCharCode(11);
+/** Both consumers on one continuation separator: read-only, and the inventory/snapshot path. */
+function bothConsumersSeeTheWrite(sep, name) {
+  const dropText = `select E'a'${sep}'it\\'s -- x'; drop table public.audit_hidden;`;
+  assert.deepEqual(readOnlyViolations(dropText, "STATE", STATE_WRITE_WORDS), ["STATE is not read-only: drop"], `${name}: read-only`);
+  assert.ok(lexSql(dropText, { label: name }).some((s) => s.continues), `${name}: it continues, as in PostgreSQL`);
+  const sql = `create table public.a (id int);\ncomment on table public.a is E'x'${sep}'it\\'s -- y'; create table public.audit_hidden (id int);\n`;
+  withRoot({ applied: { "20261015120000_release2_99_vt.sql": sql }, tables: ["stores", "a"] }, (root) => {
+    assert.ok(appliedReleaseState(root).present.has("audit_hidden"), `${name}: applied state`);
+    assert.ok(protectedNamesByState(root).all.has("audit_hidden"), `${name}: protected names`);
+    assert.match(snapshotOf(root).error || "", /lacks "audit_hidden"/, `${name}: the snapshot without it is refused`);
+  });
+  withRoot({ applied: { "20261015120000_release2_99_vt.sql": sql }, tables: ["stores", "a", "audit_hidden"] }, (root) => {
+    assert.equal(snapshotOf(root).error, undefined, `${name}: the control, a snapshot with it, passes`);
+  });
+}
+
+test("CS-R2b Codex's exact vertical-tab input continues the E-string, through both consumers", () => {
+  const exact = "select E'a'" + VT + "\n'it\\'s -- x'; drop table public.audit_hidden;";
+  assert.deepEqual(readOnlyViolations(exact, "STATE", STATE_WRITE_WORDS), ["STATE is not read-only: drop"]);
+  assert.deepEqual(lexSql(exact, { label: "exact" }).filter((s) => s.kind !== "code").map((s) => [s.kind, !!s.continues]), [["e-string", false], ["e-string", true]]);
+  bothConsumersSeeTheWrite(VT + "\n", "VT LF");
+});
+
+test("CS-R2b each non_newline_space character, before and after LF, CRLF and CR, with and without a line comment, through both consumers", () => {
+  for (const [wsName, ws] of NON_NEWLINE_SPACE) {
+    for (const [nlName, nl] of endings) {
+      for (const [form, sep] of [
+        ["before", `${ws}${nl}`],
+        ["before, then a comment", `${ws}-- c${nl}`],
+        ["after", `${nl}${ws}`],
+        ["after, then a comment", `${nl}${ws}-- c${nl}`],
+      ]) bothConsumersSeeTheWrite(sep, `${wsName} ${form} ${nlName}`);
+    }
+  }
+});
+
 test("CS-R2 the inventory/snapshot path: a CREATE after a continued E-string is applied state", () => {
   const sql = "create table public.a (id int);\ncomment on table public.a is E'x'\n'it\\'s -- y'; create table public.audit_hidden (id int);\n";
   withRoot({ applied: { "20261015120000_release2_99_cont.sql": sql }, tables: ["stores", "a"] }, (root) => {

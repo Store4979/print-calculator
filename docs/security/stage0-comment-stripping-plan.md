@@ -74,6 +74,16 @@ each with a required-failing regression:
 The CS-4 coverage is stated exactly: six wrapper combinations are skipped
 (§3.2). The line-anchored import predicates are a separate tracked item.
 
+**Codex's review of H `1c4d8a4` (2026-10-18): AMEND, one blocker.**
+- **Accepted:** CS-R1, CS-R3, the coverage wording, the re-pins, a Unicode
+  audit of everything since `7181b42`, and ordinary continuation
+  (identical on all 75 real inputs).
+- **CS-R2's recognizer omitted vertical tab** before the first newline.
+  Commit I takes every whitespace and newline set from scan.l (§3.3) and
+  adds the regressions for each `non_newline_space` character before and
+  after LF, CRLF and CR, with and without a line comment, through both
+  consumers.
+
 ## 1. What is required
 
 **From Codex:**
@@ -319,6 +329,17 @@ unsupported, because it could change the rule.
     ordinary continuation 148 times, in multi-line `comment on … is '…'`
     texts, `release2_01` and the pending 02–05 among them. None uses
     E-string continuation;
+  - **every whitespace and newline set** in the recognizer is copied from
+    scan.l at `REL_17_5` (md5 `ce6026b9…`, identical to `REL_17_STABLE` on
+    2026-10-20). Those definitions are `space`, `non_newline_space`
+    (`[ \t\f\v]`), `newline`, `non_newline`, `comment`,
+    `special_whitespace`, `non_newline_whitespace`,
+    `whitespace_with_newline` and `quotecontinue`.
+    - The first version's hand list left out vertical tab before the
+      newline (Codex's review of `1c4d8a4`, CS-R2), which I corrects.
+    - A review-only differential check against PostgreSQL 17.5 (PGlite,
+      outside the repository) compares the consumers with what
+      PostgreSQL actually does over generated continuation inputs;
 - `quoted-ident`: `"…"` with `""` (and `U&"…"` likewise);
 - `dollar`: `$tag$…$tag$`, where the tag is empty or
   `[A-Za-z_][A-Za-z0-9_]*`. **Lexically it is a string.** The lexer never

@@ -612,7 +612,7 @@
       "scripts/tests/inventory-check.mjs": "7f76691a8a0b535bdea2d1c39bcd4b843ebb44a8",
       "scripts/tests/inventory-allowlist.mjs": "e305bbc8c221487bf1d5ea7df5fc932b1458e90a",
       "scripts/tests/supabase-migration-discovery.mjs": "90e5603bb6e1ddb5984acd09892034c35954fe5f",
-      "scripts/tests/sql-lexer.mjs": "ef487f59cd8c299ca9f939e1ed7bd1b96c2b5cfb"
+      "scripts/tests/sql-lexer.mjs": "d5f188d2de3ebb71499fae9d6e600897185118d2"
     }
   },
   "rollbackTargets": {

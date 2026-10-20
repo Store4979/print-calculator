@@ -23,12 +23,13 @@
 //   backslash inside '…' is literal and only E'…' takes backslash escapes. A
 //   code segment that names that setting is refused, because it could change
 //   the rule;
-// - string continuation (scan.l `quotecontinue`): a quote that follows a
-//   closed string across whitespace holding a newline, where `--` comments
-//   count as whitespace, CONTINUES that string in ITS mode. So E'a'⏎'it\'s'
-//   is one E-string, and its second segment takes backslash escapes
-//   (CS-R2). An ordinary string's continuation is ordinary, so it lexes as
-//   before.
+// - string continuation (scan.l `quotecontinue`, quoteContinuesAt below,
+//   with every whitespace and newline set copied from scan.l): a quote that
+//   follows a closed string across whitespace holding a newline, where `--`
+//   comments count as whitespace, CONTINUES that string in ITS mode. So
+//   E'a'⏎'it\'s' is one E-string, and its second segment takes backslash
+//   escapes (CS-R2). An ordinary string's continuation is ordinary, so it
+//   lexes as before.
 // Every unsupported form THROWS with the label and the offset; nothing
 // returns a partial result.
 
@@ -43,7 +44,21 @@ const isIdentPart = (c) => c !== undefined && (/[A-Za-z0-9_$]/.test(c) || c.char
 const TAG_START = /[A-Za-z_]/;
 const TAG_PART = /[A-Za-z0-9_]/;
 const DIGIT = /[0-9]/;
-const isNewline = (c) => c === "\n" || c === "\r";
+
+// PostgreSQL 17's whitespace and newline sets, copied from scan.l at
+// REL_17_5 (= REL_17_STABLE on 2026-10-20, md5 ce6026b940fc78d4b52348b53771c6bf),
+// lines 222–225:
+//   space              [ \t\n\r\f\v]
+//   non_newline_space  [ \t\f\v]
+//   newline            [\n\r]
+//   non_newline        [^\n\r]
+// Built from code points (HT 9, LF 10, VT 11, FF 12, CR 13, SP 32), so no
+// escape in this file can change on the way into it.
+const ch = (cp) => String.fromCharCode(cp);
+const NEWLINE = new Set([ch(10), ch(13)]);
+const NON_NEWLINE_SPACE = new Set([ch(32), ch(9), ch(12), ch(11)]);
+const SPACE = new Set([...NON_NEWLINE_SPACE, ...NEWLINE]);
+const isNewline = (c) => NEWLINE.has(c);
 
 export class SqlLexError extends Error {}
 
@@ -67,26 +82,36 @@ function quotedEnd(text, open, q, backslashEscapes, label, what) {
 }
 
 /**
- * scan.l's quotecontinue at `i`, just past a closing quote:
- *   {horiz_whitespace}*{newline}{special_whitespace}*{quote}
- * where horiz_whitespace is [ \t\f] or a `--` comment, and special_whitespace
- * is [ \t\n\r\f\v] or a `--` comment followed by a newline. Returns the index
- * of the continuing quote, or -1. Linear: each character is visited once.
+ * scan.l's quotecontinue at `i`, just past a closing quote. The definitions,
+ * copied from scan.l at REL_17_5, lines 227 and 238–244:
+ *   comment                 ("--"{non_newline}*)
+ *   special_whitespace      ({space}+|{comment}{newline})
+ *   non_newline_whitespace  ({non_newline_space}|{comment})
+ *   whitespace_with_newline ({non_newline_whitespace}*{newline}{special_whitespace}*)
+ *   quotecontinue           {whitespace_with_newline}{quote}
+ * Phase 1 is {non_newline_whitespace}* up to the first {newline}: a comment
+ * there runs to that newline. Phase 2 is {special_whitespace}*: a comment
+ * there must END in a newline. Then {quote}. Each set is the one defined
+ * above, never a hand list (Codex's review of 1c4d8a4: vertical tab was
+ * missing from phase 1). Under flex's longest match, a string continues
+ * exactly when quotecontinue matches: quotecontinuefail ({whitespace}*"-"?)
+ * can never consume the quote. Returns the index of the continuing quote, or
+ * -1. Linear: each character is visited once.
  */
 export function quoteContinuesAt(text, i) {
   const n = text.length;
   let j = i;
-  for (;;) {
+  for (;;) {                                      // {non_newline_whitespace}*
     const c = text[j];
-    if (c === " " || c === "\t" || c === "\f") { j++; continue; }
+    if (NON_NEWLINE_SPACE.has(c)) { j++; continue; }
     if (c === "-" && text[j + 1] === "-") { j += 2; while (j < n && !isNewline(text[j])) j++; continue; }
     break;
   }
-  if (!isNewline(text[j])) return -1;
+  if (!isNewline(text[j])) return -1;             // {newline}
   j++;
-  for (;;) {
+  for (;;) {                                      // {special_whitespace}*
     const c = text[j];
-    if (c === " " || c === "\t" || c === "\f" || c === "\v" || isNewline(c)) { j++; continue; }
+    if (SPACE.has(c)) { j++; continue; }
     if (c === "-" && text[j + 1] === "-") {
       let k = j + 2;
       while (k < n && !isNewline(text[k])) k++;
