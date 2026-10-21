@@ -1,0 +1,48 @@
+{
+  "about": "Messages the Supabase Management API returned through the Supabase MCP execute_sql tool (the same POST /v1/projects/{ref}/database/query endpoint the sender uses), copied exactly from the preparing session transcript. They are NOT sender receipts: no HTTP status or raw body was recorded. Evidence for the declared capture expectations and the envelope hypotheses only; never a basis for SUPPORT.",
+  "source": "session transcript dfd2fde4-0a73-42a2-bbdf-a1da0e3c2634, tool results of mcp execute_sql",
+  "messages": [
+    {
+      "at": "2026-09-15T14:18:30.382Z",
+      "project": "lboajqihpsfrokqvjgnl",
+      "what": "03 alone on staging, before release2_04: the 42702 defect (DETAIL, a multi-line QUERY, a named-function frame)",
+      "toolResult": "{\"error\":{\"name\":\"HttpException\",\"message\":\"Failed to run sql query: ERROR:  42702: column reference \\\"store_id\\\" is ambiguous\\nDETAIL:  It could refer to either a PL/pgSQL variable or a table column.\\nQUERY:  select *            from public.employees\\n   where id = p_employee and store_id = v_enr.store_id and active\\nCONTEXT:  PL/pgSQL function release2_create_staff_session(uuid,uuid,bytea,bytea,timestamp with time zone,timestamp with time zone) line 7 at SQL statement\\n\"}}",
+      "message": "Failed to run sql query: ERROR:  42702: column reference \"store_id\" is ambiguous\nDETAIL:  It could refer to either a PL/pgSQL variable or a table column.\nQUERY:  select *            from public.employees\n   where id = p_employee and store_id = v_enr.store_id and active\nCONTEXT:  PL/pgSQL function release2_create_staff_session(uuid,uuid,bytea,bytea,timestamp with time zone,timestamp with time zone) line 7 at SQL statement\n"
+    },
+    {
+      "at": "2026-09-29T16:30:37.252Z",
+      "project": "lboajqihpsfrokqvjgnl",
+      "what": "N5 B-LOCKTIMEOUT with no holder: the guard refusal, re-raised by the probe handler",
+      "toolResult": "{\"error\":{\"name\":\"HttpException\",\"message\":\"Failed to run sql query: ERROR:  P0001: lockprobe B-LOCKTIMEOUT: [P0001] lockprobe B-LOCKTIMEOUT: no holder seen within 10 s — the sessions did not overlap; nothing was tried — after 10131 ms, backend 1836099\\nCONTEXT:  PL/pgSQL function inline_code_block line 75 at RAISE\\n\"}}",
+      "message": "Failed to run sql query: ERROR:  P0001: lockprobe B-LOCKTIMEOUT: [P0001] lockprobe B-LOCKTIMEOUT: no holder seen within 10 s — the sessions did not overlap; nothing was tried — after 10131 ms, backend 1836099\nCONTEXT:  PL/pgSQL function inline_code_block line 75 at RAISE\n"
+    },
+    {
+      "at": "2026-09-29T16:38:55.436Z",
+      "project": "lboajqihpsfrokqvjgnl",
+      "what": "N5 scenario 1: 55P03 lock timeout, re-raised by the probe handler",
+      "toolResult": "{\"error\":{\"name\":\"HttpException\",\"message\":\"Failed to run sql query: ERROR:  55P03: lockprobe B-LOCKTIMEOUT: [55P03] canceling statement due to lock timeout — after 3001 ms, backend 1836824\\nCONTEXT:  PL/pgSQL function inline_code_block line 75 at RAISE\\n\"}}",
+      "message": "Failed to run sql query: ERROR:  55P03: lockprobe B-LOCKTIMEOUT: [55P03] canceling statement due to lock timeout — after 3001 ms, backend 1836824\nCONTEXT:  PL/pgSQL function inline_code_block line 75 at RAISE\n"
+    },
+    {
+      "at": "2026-09-29T16:39:58.546Z",
+      "project": "lboajqihpsfrokqvjgnl",
+      "what": "N5 scenario 2a: 57014 statement timeout, re-raised by the probe handler",
+      "toolResult": "{\"error\":{\"name\":\"HttpException\",\"message\":\"Failed to run sql query: ERROR:  57014: lockprobe B-STMTTIMEOUT: [57014] canceling statement due to statement timeout — after 7998 ms, backend 1836837\\nCONTEXT:  PL/pgSQL function inline_code_block line 64 at RAISE\\n\"}}",
+      "message": "Failed to run sql query: ERROR:  57014: lockprobe B-STMTTIMEOUT: [57014] canceling statement due to statement timeout — after 7998 ms, backend 1836837\nCONTEXT:  PL/pgSQL function inline_code_block line 64 at RAISE\n"
+    },
+    {
+      "at": "2026-09-29T16:40:35.381Z",
+      "project": "lboajqihpsfrokqvjgnl",
+      "what": "N5 B-TXTIMEOUT at 60s: the settings assert refused (60s displays as 1min); the text was re-pinned at 50s (1e122db)",
+      "toolResult": "{\"error\":{\"name\":\"HttpException\",\"message\":\"Failed to run sql query: ERROR:  P0001: lockprobe B-TXTIMEOUT: [P0001] lockprobe B-TXTIMEOUT: the stage-0 timeouts (PG 17 transaction_timeout included) are not in force in this transaction — after 1 ms, backend 1836869\\nCONTEXT:  PL/pgSQL function inline_code_block line 67 at RAISE\\n\"}}",
+      "message": "Failed to run sql query: ERROR:  P0001: lockprobe B-TXTIMEOUT: [P0001] lockprobe B-TXTIMEOUT: the stage-0 timeouts (PG 17 transaction_timeout included) are not in force in this transaction — after 1 ms, backend 1836869\nCONTEXT:  PL/pgSQL function inline_code_block line 67 at RAISE\n"
+    },
+    {
+      "at": "2026-09-29T16:45:30.271Z",
+      "project": "lboajqihpsfrokqvjgnl",
+      "what": "N5 scenario 2b: FATAL 25P04 transaction timeout, uncaught",
+      "toolResult": "{\"error\":{\"name\":\"HttpException\",\"message\":\"Failed to run sql query: FATAL:  25P04: terminating connection due to transaction timeout\\nCONTEXT:  SQL statement \\\"SELECT pg_sleep(30)\\\"\\nPL/pgSQL function inline_code_block line 33 at PERFORM\\n\"}}",
+      "message": "Failed to run sql query: FATAL:  25P04: terminating connection due to transaction timeout\nCONTEXT:  SQL statement \"SELECT pg_sleep(30)\"\nPL/pgSQL function inline_code_block line 33 at PERFORM\n"
+    }
+  ]
+}

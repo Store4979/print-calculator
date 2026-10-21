@@ -477,6 +477,13 @@ LAST row-returning statement (plan §E8).
 | P2-01, P2-02, P2-0304, P2-05, RB-* | 201 | **`[{"set_config":"45s"}]`**: the `transaction_timeout` line; the `DO` block and `COMMIT` return no rows | staging, 2026-09-29 (B-POSITIVE, the same wrapper pattern, through the same endpoint); local PG 17 |
 | STATE | 201 | one row (table below) | local PG 17 |
 
+**Superseded for any later window (Codex item 2).** Rules 1–4 below are
+kept as the record of the 2026-10-08/09 window, which used them. Rule 3's
+single-line regex rejected a real refusal (incident record §5). Any later
+classification uses rule 3′, `scripts/manual/stage0-classify.mjs`
+(`docs/security/stage0-item2-classifier-plan.md` §3), once Codex has reviewed
+it. This runbook clears nothing further.
+
 **Every send is RESOLVED or UNRESOLVED (UO-1).** Claude classifies each one
 from its results file (V-FILE) before anything else is decided. The rules
 apply **in this order of precedence**. The first that matches decides.

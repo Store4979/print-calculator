@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "P2-01",
+  "target": "production",
+  "ref": "gmxyisjjaxtpycsmmzef",
+  "readOnly": false,
+  "requestMd5": "b680442d19f25aca0ede5fdf32542207",
+  "requestBytes": 25194,
+  "endpoint": "https://api.supabase.com/v1/projects/gmxyisjjaxtpycsmmzef/database/query",
+  "startedAt": "2026-10-09T15:17:50.900Z",
+  "finishedAt": "2026-10-09T15:17:52.228Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  P0001: stage0 P2-01: release2_01_identity_schema is already in the ledger\\nCONTEXT:  PL/pgSQL function inline_code_block line 312 at RAISE\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

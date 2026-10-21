@@ -77,6 +77,7 @@ test("SEND-3 a target the policy does not allow, an unknown target or an unknown
   assert.throws(() => planSend(M, "RB-43", "staging"), /may not be sent to staging/);
   assert.throws(() => planSend(M, "LOCKPROBE-B-POSITIVE", "production"), /may not be sent to production; the manifest allows staging/);
   assert.throws(() => planSend(M, "SIZE-PROBE", "production"), /may not be sent to production/);
+  for (const n of [1, 2, 3, 4, 5]) assert.throws(() => planSend(M, `ENVELOPE-PROBE-${n}`, "production"), /may not be sent to production; the manifest allows staging/);
   assert.throws(() => planSend(M, "P0", "gmxyisjjaxtpycsmmzef"), /unknown target/);
   assert.throws(() => planSend(M, "P0", "prod"), /unknown target "prod"/);
   assert.throws(() => planSend(M, "NOT-A-TEXT", "production"), /is not a sendable text/);

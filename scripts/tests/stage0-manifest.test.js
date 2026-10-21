@@ -16,7 +16,10 @@
 //   M-4 md5(prosrc) re-derived from the committed forward and rollback bodies
 //   M-5 the assembler's constants are the manifest's
 //   M-6 every output, re-assembled from the FROZEN inputs (blob ids), has its
-//       pinned md5; the wrapper embeds the blob and gates on it; P1 never commits
+//       pinned md5; the wrapper embeds the blob and gates on it; P1 never commits;
+//       M-6c the lock probes write only their own schema; M-6d the five item 2
+//       envelope probes are marked STAGING ONLY and hold no write word, even
+//       inside a string
 //   M-6b the SIZE-PROBE is one read-only SELECT larger than P1, with its answer
 //   M-7 A3: the pinned commit holds the pinned trees and blobs; HEAD too while
 //       enforced
@@ -29,8 +32,9 @@
 //       commits before it are retained URLs only (review of d01b74a, N4)
 //   M-12 the send policy the pinned sender enforces (review of 07574c1): every
 //       output exactly once; production texts to production only, lock probes
-//       to staging only, SIZE-PROBE to staging; read_only for P0, STATE and
-//       SIZE-PROBE; the sender itself pinned
+//       and envelope probes to staging only, SIZE-PROBE to staging; read_only
+//       for P0, STATE, SIZE-PROBE and the envelope probes; the sender itself
+//       pinned
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -146,6 +150,33 @@ test("CS-4 M-6c: a LOCKPROBE write outside stage0_lockprobe hidden behind each w
       for (const [w, wrap] of SQL_WRAPPERS) assert.ok(lockprobeOutside(out[k] + wrap(hit), k).length > 0, `${k}: ${hit} behind ${w}`);
     }
   }
+});
+
+test("CS-4 M-6d: an envelope probe's write hidden behind each wrapper, or inside an EXECUTE string, is reported", async () => {
+  const { out } = await SQL_TEXTS();
+  const { probeWriteViolations, ENVELOPE_PROBES } = await import("./stage0-manifest-check.mjs");
+  assert.deepEqual(Object.keys(out).filter((k) => k.startsWith("ENVELOPE-PROBE-")).sort(), ENVELOPE_PROBES);
+  for (const k of ENVELOPE_PROBES) assert.deepEqual(probeWriteViolations(out[k], k), [], `the real ${k}`);
+  for (const k of ["ENVELOPE-PROBE-1", "ENVELOPE-PROBE-2"]) {
+    for (const hit of ["drop table public.employees;", "select pg_terminate_backend(1);", "set role postgres;"]) {
+      for (const [w, wrap] of SQL_WRAPPERS) assert.ok(probeWriteViolations(out[k] + wrap(hit), k).length > 0, `${k}: ${hit} behind ${w}`);
+    }
+  }
+  // Strings are kept: what an EXECUTE runs is a string, and a write in it is
+  // seen, also when an E-string escape runs into the word.
+  const BS = String.fromCharCode(92);
+  for (const s of [
+    "do $$ begin execute 'drop table public.employees'; end $$;\n",
+    `do $$ begin execute E'select 1;${BS}ndelete from public.orders;'; end $$;\n`,
+    `do $$ begin execute E'select 1;${BS}x20delete from public.orders;'; end $$;\n`,
+    `do $$ begin execute E'select 1; ${BS}x64elete from public.orders;'; end $$;\n`,
+    `do $$ begin execute E'select 1; ${BS}u0064elete from public.orders;'; end $$;\n`,
+    `do $$ begin execute E'select 1; ${BS}144elete from public.orders;'; end $$;\n`,
+  ]) assert.ok(probeWriteViolations(s, "ENVELOPE-PROBE-2").some((p) => /is not read-only: delete|is not read-only: drop/.test(p)), s);
+  assert.deepEqual(probeWriteViolations(`select U&'d${BS}0065lete';\n`, "ENVELOPE-PROBE-1"), ["ENVELOPE-PROBE-1 holds a U& literal or identifier, whose escapes M-6d does not decode"]);
+  assert.deepEqual(probeWriteViolations("-- only a comment\n", "ENVELOPE-PROBE-1"), ["ENVELOPE-PROBE-1 is empty"]);
+  const { decodeEString } = await import("./stage0-manifest-check.mjs");
+  assert.equal(decodeEString(`E'a${BS}nb${BS}x41${BS}u0042${BS}103${BS}${BS}${BS}q'`), "E'a bABC" + BS + "q'");
 });
 
 test("CS-4 M-6b: SIZE-PROBE outside its literal stays one read-only statement; hidden writes, a moved junction and a planted dollar body are reported", async () => {

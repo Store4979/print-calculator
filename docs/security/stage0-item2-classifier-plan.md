@@ -1,12 +1,13 @@
 # Stage 0 — Codex item 2: the SQL-error classifier (rule 3′) — PLAN for review
 
-**Status: REVIEWED plan. Codex, 2026-10-15: AMEND, direction accepted.**
-Codex's rulings are folded in below (§0 lists them). Codex said no further
-plan-only round is needed once they are in. It implements nothing yet.
-- **The implementation starts only after Codex accepts CS** (the
-  comment-stripping correction, `stage0-comment-stripping-plan.md`). The
-  probe checks rely on CS's SQL handling.
-- **Neither the implementation nor its push is cleared.**
+**Status: IMPLEMENTED LOCALLY, for Codex's review (§10).** The plan was
+reviewed by Codex on 2026-10-15: AMEND, direction accepted. Its rulings are
+folded in below (§0 lists them).
+- **CS was accepted at I `c75d1d7`** (Codex, 2026-10-20), which cleared
+  the implementation as local work.
+- **The push of the implementation is not cleared.**
+- **The capture session has its own runbook,**
+  `docs/security/stage0-item2-capture-runbook.md`, a DRAFT for Codex.
 - **No database work runs under this plan.** The staging capture session
   (§6) is held until its own runbook, its exact probe pins and its
   executable stop rules have been reviewed by Codex. It runs on staging
@@ -184,7 +185,7 @@ receipt.
 | text(s) | success predicate |
 |---|---|
 | P2-01, P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2, RB-1 | `body === '[{"set_config":"45s"}]'` |
-| P1 | A JSON array of exactly 45 objects, each with exactly the keys `n` (an integer) and `what` (a string). Sorted by `n`, the `n\twhat\n` lines have md5 `5983d4a7f104692cc90e0004da21efa9` (plan §E11, §5.3), which fixes every id and label |
+| P1 | A JSON array of exactly 45 objects, each with exactly the keys `n` (a string, such as `"E1"`; corrected from "an integer" against the receipt, §10) and `what` (a string). Sorted by `n`, the `n\twhat\n` lines have md5 `5983d4a7f104692cc90e0004da21efa9` (plan §E11, §5.3), which fixes every id and label |
 | P0 | A JSON array of exactly one object with exactly the 26 named columns, **each of its contracted JSON type**, nested values included. The types come from the reviewed P0 SQL and the three held P0 receipts |
 | STATE | A JSON array of exactly one object with exactly `effective_prefix`, `ledger_md5_ok`, `catalog_state`, `ledger_rows`, `recovery`. Each has its contracted type and nested shape (`ledger_md5_ok` a boolean; `ledger_rows` exactly its reviewed nested keys), taken from the reviewed STATE SQL and the two held STATE receipts |
 | SIZE-PROBE | Its §E9 shape, read from the receipt of 2026-10-07 |
@@ -509,3 +510,81 @@ Codex accepted **CS → 2 → 6 → 3 → 4(c)** (2026-10-15).
 The six questions (FATAL; the observed-status rule; the five
 `ENVELOPE-PROBE` designs; the `sqltext` bound; one sitting or two; where
 the predicates live) are answered in §0 and folded into §3–§7.
+
+## 10. The implementation (local, for review)
+
+**What it consists of:**
+- `scripts/manual/stage0-classify.mjs`, rule 3′:
+  - `strictJson`, which refuses duplicate keys, deep nesting and oversize
+    input;
+  - `classifyText`, R1–R4;
+  - `receiptProblems`, with the cancel path;
+  - `SUCCESS`, `SUPPORT` and `OBSERVED_STATUSES`;
+  - `parseEnvelope` and `readbackAcceptance`;
+  - a CLI.
+- `scripts/manual/stage0-capture.mjs`, the executable stop rules:
+  - `STEPS` and `PHASES`;
+  - `checkStep`, which gives MATCH, STOP-RECORD or STOP;
+  - `nextStep`;
+  - `pgMetaFormat`;
+  - a CLI.
+- **The assembler** gains `ENVELOPE-PROBE-1…5` and `executedInputs()`.
+  - The manifest pins the five probes: staging only, `read_only`.
+  - It re-pins the assembler.
+  - No other output changes.
+- **The manifest checks:** M-12 admits the probes to staging only, as
+  `read_only`. **M-6d** checks they are marked STAGING ONLY and hold no write
+  word.
+- **The tests:** `scripts/tests/stage0-classify.test.js` (CL-1…18), the
+  CS-4 M-6d control, SEND-3 and CS-5's input set.
+- **The fixtures:**
+  - the nine receipts, byte for byte, kept `-text` by `.gitattributes`;
+  - the N5 `execute_sql` history.
+
+**Corrections and decisions found while implementing, each for Codex:**
+1. **P1's `n` is a string,** not an integer: `"E1"`, `"S0.1"`. The receipt
+   is the contract, so the predicate follows it. The digest over the rows
+   sorted by `n` is unchanged, `5983d4a7…`.
+2. **The lock-probe successes are declared now.**
+   - LOCKPROBE-SETUP, B-POSITIVE and CLEANUP get exact R2 bodies, and
+     READBACK a typed shape. Each comes from its SQL result contract.
+   - Codex asked for this: "define the supported expected successes before
+     the run". Without it, A1's 201 would be an UNRESOLVED writing send, and
+     the session would stop at its first step.
+   - The other lock-probe texts, CANCEL-* and the probes stay unsupported
+     for a 201.
+3. **SUPPORT today is P2-01 send 2's form only:** `ERROR`, one `CONTEXT`
+   frame, `PL/pgSQL function inline_code_block line N at RAISE`.
+   - Not supported until the capture commit: a field-less envelope, DETAIL,
+     HINT, QUERY, FATAL, a `SQL statement` frame, EXECUTE and PERFORM.
+   - The grammar code for them is exercised under a test support object,
+     and the mutation companion runs against it.
+4. **The QUERY field can span lines.** The 42702 history message proves it,
+   so the single-line `text` hypothesis is false for QUERY. QUERY stays
+   unsupported, and that message is outside the grammar even with every
+   element enabled.
+5. **The capture session is split into B, A, T and U.** The runbook's §2
+   says why: T2's FATAL would otherwise strand the cleanup.
+6. **The declared outcomes rest on three things,** all attached or in the
+   repository:
+   - postgres-meta's error formatting (H-FMT), read from source;
+   - PostgreSQL 17.5's own fields, from a review-only PGlite run;
+   - the N5 `execute_sql` messages, copied exactly from the transcript.
+   None of them is a sender receipt, so none extends SUPPORT.
+7. **A PERFORM frame quotes PERFORM's own query** (`SELECT pg_sleep(30)`),
+   which is not an `EXECUTE` input. Whether such queries join a text's
+   candidates is a capture-commit question.
+8. **M-6d's CS-4 control found a real gap.** In the strings-kept view, an
+   E-string escape that runs into a word (`\ndelete`, `\x64elete`)
+   hid the word. M-6d now decodes E-string escapes, and refuses a U&
+   literal. A write assembled at run time (concatenation) is still not
+   seen: the md5 pin and review are that control.
+9. **The synthetic fixtures are generated in the test,** each case with its
+   reason, rather than stored under `synthetic/`. The truncation family
+   uses every proper prefix, as §5 asks.
+10. **The CLIs' exit status:**
+    - `stage0-classify.mjs`: 0 when everything is R2, 1 with an R3, 3 when
+      anything is UNRESOLVED, 2 on usage;
+    - `stage0-capture.mjs`: 0 on MATCH, otherwise 3.
+
+    The classifier prints "A classification, not a go."

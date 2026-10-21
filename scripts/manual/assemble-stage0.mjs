@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Assemble every SQL text that stage 0 runs against PRODUCTION — P0, P1, the
 // five P2 wrappers and the four rollback operations
-// (docs/security/release-2-stage-0-production-plan.md §E1–§E4, §A6).
+// (docs/security/release-2-stage-0-production-plan.md §E1–§E4, §A6) — and the
+// staging-only texts beside them: SIZE-PROBE, the LOCKPROBE rehearsal and the
+// item 2 ENVELOPE-PROBEs.
 //
 // WHY ASSEMBLED, AND WHY PINNED: the reviewed bytes must be the executed bytes.
 // The md5 of each output is pinned in docs/security/stage0-production-manifest.json,
@@ -813,6 +815,43 @@ export function cancelStepText(template, step, backendStart) {
   return template.replace(CANCEL_APP, app).replace(CANCEL_START, backendStart);
 }
 
+// ── Item 2: the envelope probes (docs/security/stage0-item2-classifier-plan.md §6 B) ──
+// Five tiny STAGING-ONLY texts, each sent with read_only. None writes. Each
+// makes PostgreSQL raise one error shape, so a capture shows how the
+// Management API renders it. ENVELOPE_PROBE_2_EXECUTED is the string probe 2
+// EXECUTEs: the one input its `SQL statement "…"` frame may quote.
+export const ENVELOPE_PROBE_2_EXECUTED = "select 1;\n-- line two\nselect 1/0;";
+const E_STRING_NEWLINE = String.fromCharCode(92) + "n"; // the two characters \ n inside E'…'
+function envelopeProbeTexts() {
+  const head = (n, what) => `-- ENVELOPE-PROBE-${n} — STAGING ONLY, read-only (item 2 plan §6 B${n}): ${what}.\n`;
+  const executed = ENVELOPE_PROBE_2_EXECUTED.split("\n").join(E_STRING_NEWLINE);
+  return {
+    "ENVELOPE-PROBE-1": head(1, "22012, no fields") + "select 1/0;\n",
+    "ENVELOPE-PROBE-2": head(2, "22012 inside EXECUTE, so a SQL statement frame and an EXECUTE frame") + `do $$ begin execute E'${executed}'; end $$;\n`,
+    "ENVELOPE-PROBE-3": head(3, "22P02, with DETAIL and a JSON data frame") + "select '{'::json;\n",
+    "ENVELOPE-PROBE-4": head(4, "P0001, with DETAIL, HINT and a RAISE frame") + "do $$ begin raise exception 'probe' using errcode = 'P0001', detail = 'd', hint = 'h'; end $$;\n",
+    "ENVELOPE-PROBE-5": head(5, "42601, with a position") + "select from from;\n",
+  };
+}
+
+/**
+ * The inputs each text EXECUTEs, by text name: everything a `SQL statement "…"`
+ * frame in that text's error can quote. Item 2's classifier matches such a
+ * frame against these candidates only (plan §3 R3, Codex Q4). Texts that
+ * EXECUTE nothing have no entry.
+ */
+export function executedInputs(manifest, opts = {}) {
+  const src = sourceFromManifest(manifest, opts);
+  const byN = (n) => MIGRATIONS.find((x) => x.n === n);
+  const out = {};
+  for (const s of P2_STEPS) out[s.step] = s.files.map((n) => src.migration(byN(n)));
+  for (const op of ROLLBACK_OPS) out[op.op] = op.files.map((n) => src.rollback(byN(n)));
+  out.P1 = [...MIGRATIONS.map((m) => src.migration(m)), ...ROLLBACK_OPS.flatMap((op) => op.files.map((n) => src.rollback(byN(n))))];
+  for (const k of ["B-LOCKTIMEOUT", "B-STMTTIMEOUT", "B-TXTIMEOUT", "B-CANCEL", "B-POSITIVE"]) out[`LOCKPROBE-${k}`] = [LOCKPROBE_FILE];
+  out["ENVELOPE-PROBE-2"] = [ENVELOPE_PROBE_2_EXECUTED];
+  return out;
+}
+
 /**
  * Every stage-0 SQL text, by name, from the manifest's frozen inputs.
  * Deterministic: the same manifest inputs give the same bytes, wherever the
@@ -861,6 +900,7 @@ export function assembleAll(manifest, opts = {}) {
   out.STATE = stateReadback(rows);
   Object.assign(out, cancelTexts());
   Object.assign(out, lockProbeTexts());
+  Object.assign(out, envelopeProbeTexts());
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
   }

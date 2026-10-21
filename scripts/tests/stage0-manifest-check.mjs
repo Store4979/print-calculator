@@ -21,7 +21,7 @@ import { createRequire } from "node:module";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, eligibleMigrations, duplicateVersions } from "./supabase-migration-discovery.mjs";
-import { sqlCode } from "./sql-lexer.mjs";
+import { sqlCode, lexSql } from "./sql-lexer.mjs";
 
 export const MANIFEST_PATH = "docs/security/stage0-production-manifest.json";
 const md5 = (b) => createHash("md5").update(b).digest("hex");
@@ -159,6 +159,65 @@ export function cancelStepProblems(text) {
   return out;
 }
 
+/** The item 2 envelope probes (classifier plan §6 B): staging only, read_only. */
+export const ENVELOPE_PROBES = ["ENVELOPE-PROBE-1", "ENVELOPE-PROBE-2", "ENVELOPE-PROBE-3", "ENVELOPE-PROBE-4", "ENVELOPE-PROBE-5"];
+export const PROBE_WRITE_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare)\b|\bpg_\w+\s*\(/gi;
+
+const BACKSLASH = String.fromCharCode(92);
+
+/**
+ * An E-string's characters with PostgreSQL's backslash escapes decoded
+ * (\b \f \n \r \t as a space; octal, \x, \u and \U as their character; any
+ * other \c as c), so that a word an escape runs into is still a word.
+ */
+export function decodeEString(raw) {
+  let out = "";
+  const take = (from, max, ok) => { let s = ""; while (s.length < max && ok(raw[from + s.length] ?? "")) s += raw[from + s.length]; return s; };
+  const isOct = (c) => c >= "0" && c <= "7";
+  const isHex = (c) => /^[0-9A-Fa-f]$/.test(c);
+  const ch = (cp) => (cp <= 0x10ffff ? String.fromCodePoint(cp) : " ");
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== BACKSLASH) { out += raw[i]; continue; }
+    const n = raw[i + 1] ?? "";
+    if (n && "bfnrt".includes(n)) { out += " "; i += 1; }
+    else if (isOct(n)) { const s = take(i + 1, 3, isOct); out += ch(parseInt(s, 8)); i += s.length; }
+    else if (n === "x") { const s = take(i + 2, 2, isHex); out += s ? ch(parseInt(s, 16)) : "x"; i += 1 + s.length; }
+    else if (n === "u" || n === "U") { const want = n === "u" ? 4 : 8; const s = take(i + 2, want, isHex); out += s.length === want ? ch(parseInt(s, 16)) : n; i += 1 + s.length; }
+    else { out += n; i += 1; }
+  }
+  return out;
+}
+
+/** A lexed text with every E-string decoded, inside dollar bodies too (to the lexer's body depth). */
+function eStringsDecoded(text, label, depth = 0) {
+  return lexSql(text, { label }).map((s) => {
+    if (s.kind === "e-string") return ` ${decodeEString(text.slice(s.start, s.end))} `;
+    if (s.kind === "dollar" && depth < 8) return text.slice(s.start, s.bodyStart) + eStringsDecoded(text.slice(s.bodyStart, s.bodyEnd), label, depth + 1) + text.slice(s.bodyEnd, s.end);
+    return text.slice(s.start, s.end);
+  }).join("");
+}
+
+/**
+ * M-6d: the write words of an envelope probe, read with its strings KEPT,
+ * because what probe 2 EXECUTEs is a string, and with every E-string's
+ * escapes decoded. A U& literal, whose escapes are not decoded here, is a
+ * problem; so is an empty text. A write assembled at run time (string
+ * concatenation, format()) is not seen: the md5 pin (M-6) and review are the
+ * control for that.
+ */
+export function probeWriteViolations(text, label) {
+  const r = sqlView(text, label, "keep");
+  if (r.problem) return [r.problem];
+  if (!/\S/.test(r.view)) return [`${label} is empty`];
+  let decoded;
+  try { decoded = eStringsDecoded(r.view, label); } catch (e) { return [`${label} does not lex: ${e.message}`]; }
+  const out = [];
+  if (/\bu&\s*['"]/i.test(decoded)) out.push(`${label} holds a U& literal or identifier, whose escapes M-6d does not decode`);
+  const found = [...new Set([...decoded.matchAll(PROBE_WRITE_WORDS)].map((m) => m[0].toLowerCase()))];
+  if (found.length) out.push(`${label} is not read-only: ${found.join(", ")}`);
+  return out;
+}
+
 /** M-6c: the DDL/DML targets of a LOCKPROBE text outside its own stage0_lockprobe schema. */
 export function lockprobeOutside(text, label) {
   const r = sqlView(text, label, "keep");
@@ -290,9 +349,9 @@ export function checkManifest(repo, M) {
   const outs = Object.keys(M.outputs || {});
   for (const k of outs) if (!texts[k]) say("M-12", `${k} has no send-policy entry`);
   for (const k of Object.keys(texts)) if (!outs.includes(k)) say("M-12", `the send policy names ${k}, which is not an output`);
-  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE"];
+  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES];
   for (const [k, e] of Object.entries(texts)) {
-    const want = k.startsWith("LOCKPROBE-") ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
+    const want = k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
     if (want && JSON.stringify(e.targets) !== JSON.stringify(want)) say("M-12", `${k} must go to ${want.join(", ")} only; the policy says ${JSON.stringify(e.targets)}`);
     if (k === "SIZE-PROBE" && (!Array.isArray(e.targets) || !e.targets.includes("staging") || e.targets.some((t) => !["staging", "production"].includes(t)))) say("M-12", "SIZE-PROBE must include staging and name no other target than production");
     if ((e.readOnly === true) !== READ_ONLY.includes(k)) say("M-12", `${k}: readOnly must be ${READ_ONLY.includes(k)}`);
@@ -360,6 +419,15 @@ export function checkManifest(repo, M) {
       for (const p of lockprobeOutside(v, k)) say("M-6", p);
       if (/^B-/.test(k.slice(10)) && !v.includes("the staging seed store is absent")) say("M-6", `${k} lacks the staging-only guard`);
       if (/'b7a8e54c99432c5e0ddb60be4c46505f'\) then\s+raise exception '[^']*production's ledger rows/.test(v)) say("M-6", `${k} carries the production identity guard`);
+    }
+    // M-6d the item 2 envelope probes: exactly the five, marked STAGING ONLY
+    // (M-12 sends them to staging only, read_only), with no write word even
+    // inside a string.
+    const ep = Object.keys(out).filter((k) => k.startsWith("ENVELOPE-PROBE-")).sort();
+    if (JSON.stringify(ep) !== JSON.stringify(ENVELOPE_PROBES)) say("M-6", `the envelope probes are ${ep.join(", ") || "none"}, not ${ENVELOPE_PROBES.join(", ")}`);
+    for (const k of ep) {
+      if (!/STAGING ONLY/.test(out[k])) say("M-6", `${k} is not marked STAGING ONLY`);
+      for (const p of probeWriteViolations(out[k], k)) say("M-6", p);
     }
     // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.
     const probe = out["SIZE-PROBE"] || "";

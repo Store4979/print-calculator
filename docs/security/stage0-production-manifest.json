@@ -243,9 +243,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "61668585a29000003d212cb0490c1a5613eb2672",
-    "md5": "fd2073c87a787893fec093ae8abad84c",
-    "bytes": 54633,
+    "blob": "242f3715529275508b376fb54714216df178b482",
+    "md5": "b605a19af297f7f9d5820c3e9c9d29c6",
+    "bytes": 57175,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -561,6 +561,26 @@
       "md5": "c31297aaa5f8cb481acf48f1cdaa810c",
       "bytes": 924
     },
+    "ENVELOPE-PROBE-1": {
+      "md5": "94a0ad24c017d29693346aefa07d0165",
+      "bytes": 100
+    },
+    "ENVELOPE-PROBE-2": {
+      "md5": "5c6d0617384192f7d9381f57b2a91104",
+      "bytes": 207
+    },
+    "ENVELOPE-PROBE-3": {
+      "md5": "f95beecbe5e7840b21177800ffe4feb3",
+      "bytes": 130
+    },
+    "ENVELOPE-PROBE-4": {
+      "md5": "c6f2a0d0489f5d4aa894a61f1859cc85",
+      "bytes": 209
+    },
+    "ENVELOPE-PROBE-5": {
+      "md5": "ece595beef61fa0817442376b2266089",
+      "bytes": 112
+    },
     "RB-5": {
       "md5": "92c1c8bceb5c6a943c682cf3ca4c20db",
       "bytes": 16551
@@ -661,7 +681,7 @@
   "send": {
     "endpoint": "https://api.supabase.com/v1/projects/{ref}/database/query",
     "source": "The endpoint and body shape the Supabase MCP server's execute_sql uses: @supabase/mcp-server-supabase 0.13.0 (npm; GitHub supabase-community/supabase-mcp main at 4cc6660f656673eb83f3b80b0c3ae7030b3d2772): execute_sql -> database.executeSql(project_id, { query, read_only }) -> POST /v1/projects/{ref}/database/query with body { query, parameters, read_only }; the published dist (chunk-ZKX2YAIQ.js) has the same call. Plan section E1, The transport.",
-    "readOnlyNote": "read_only:true only for texts that read nothing but their own statement and the catalog/ledger (P0, STATE, SIZE-PROBE). CANCEL-INSPECT and LOCKPROBE-READBACK read OTHER sessions' pg_stat_activity rows, which a read-only role may see only in part, so they go as the default role like every other text; neither writes (M-6, M-6c).",
+    "readOnlyNote": "read_only:true only for texts that read nothing but their own statement and the catalog/ledger (P0, STATE, SIZE-PROBE), and for the five item 2 ENVELOPE-PROBEs, which read nothing at all and exist to raise one error each (M-6d). CANCEL-INSPECT and LOCKPROBE-READBACK read OTHER sessions' pg_stat_activity rows, which a read-only role may see only in part, so they go as the default role like every other text; neither writes (M-6, M-6c).",
     "targets": {
       "production": "gmxyisjjaxtpycsmmzef",
       "staging": "lboajqihpsfrokqvjgnl"
@@ -811,6 +831,36 @@
           "production"
         ],
         "readOnly": false
+      },
+      "ENVELOPE-PROBE-1": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true
+      },
+      "ENVELOPE-PROBE-2": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true
+      },
+      "ENVELOPE-PROBE-3": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true
+      },
+      "ENVELOPE-PROBE-4": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true
+      },
+      "ENVELOPE-PROBE-5": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true
       }
     }
   }

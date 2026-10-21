@@ -357,17 +357,30 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     a savepoint. After a stop, run the pinned read-only STATE text FIRST.
     For a SETTLED state, where every writing send got a server response (201
     or a SQL-error body), it names the committed prefix and the one
-    reviewed recovery, or STOP. Classify every send by precedence (runbook
-    §0.7):
-    - UNRESOLVED first, whatever httpStatus says: a sender-side `error`, a
-      missing or unreadable results file, or an incomplete body. A `201`
-      with `error: "TypeError: response body connection reset"` and
-      `body: null` is UNRESOLVED;
-    - RESOLVED success needs a complete 201, `error null` and EXACTLY the
-      expected body;
-    - RESOLVED SQL error needs a complete, recognized
-      `Failed to run sql query: ERROR|FATAL:  <SQLSTATE>:` response. Gateway
-      text that merely contains "ERROR" is not one.
+    reviewed recovery, or STOP. Classify every send with rule 3′,
+    `node scripts/manual/stage0-classify.mjs <results file>` (Codex item 2;
+    docs/security/stage0-item2-classifier-plan.md §3). It is implemented
+    locally and NOT yet reviewed by Codex, so no window relies on it yet; the
+    old regex (P1–P3 runbook §0.7 rule 3) is history. In precedence order:
+    - R1 UNRESOLVED: the file is not exactly the sender's 14-field record
+      (plus `cancelTemplate` for a cancel), holds a duplicate key, or does
+      not bind to the pinned text, ref, endpoint and policy; or it has a
+      sender-side `error`, no body, or a leaked token. A `201` with
+      `error: "TypeError: response body connection reset"` and
+      `body: null` is R1;
+    - R2 RESOLVED success: 201 and the text's own predicate. It is NOT
+      acceptance: `readbackAcceptance()` checks P0's and STATE's values, and
+      a STATE with `ledger_md5_ok false` is R2 that still stops;
+    - R3 RESOLVED SQL error: an observed status (400 only), a body of
+      exactly `{"message"}`, and an envelope inside SUPPORT, an
+      evidence-backed subset. Today that is only `ERROR` with one
+      `PL/pgSQL function inline_code_block line N at RAISE` frame. It is not
+      a retry, and not proof of an unchanged prefix;
+    - R4 UNRESOLVED: everything else, gateway text quoting an error
+      included.
+    The sender's exit 0 on any 201 is a transport fact, not a class.
+    SUPPORT grows only in a reviewed capture commit, from sender receipts
+    (docs/security/stage0-item2-capture-runbook.md).
     An UNRESOLVED writing send is STOP-and-review (UO-1):
     - no retry and no recovery;
     - STATE is a diagnostic only, and an unchanged prefix is UNKNOWN, never
@@ -399,7 +412,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     and the regex failed it. Every P2/RB error after the `set_config`
     preamble is raised inside PL/pgSQL (the guards AND `execute f`), so it
     carries that line. The classifier fix, with a real-refusal fixture, is
-    Codex item 2.
+    Codex item 2: rule 3′, implemented locally for Codex's review. The
+    refusal is a fixture in scripts/tests/fixtures/stage0-classify/real/.
+  - **A strings-kept SQL view does not decode E-string escapes.** An
+    escape that runs into a word (`E'…\ndelete …'`, `\x64elete`) hides
+    it from a word match. The item 2 probes' M-6d decodes them, and its
+    CS-4 control is what found the gap. A write assembled at run time is
+    seen by no lexical check: the md5 pins and review are that control.
   - **A Database Read PAT is NOT refused by `/database/query` for a text
     sent without `read_only`.** That is route access, not a write
     boundary. That request logged in as `supabase_read_only_user`

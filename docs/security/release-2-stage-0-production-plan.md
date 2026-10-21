@@ -903,11 +903,22 @@ STATE's recovery table around them.
   - The assembled text's md5 and bytes equal `outputs[<text>]`.
   - The manifest's send policy allows the target (`send.texts`, checked by
     M-12). Every production text goes to production only, the lock probes
-    to staging only, and SIZE-PROBE to staging.
+    and the item 2 envelope probes to staging only, and SIZE-PROBE to
+    staging.
   - `--confirm-ref` repeats the target's ref.
 
   `--dry-run` stops there, with no network call.
-- **`read_only`.** Sent as `true` for P0, STATE and SIZE-PROBE. CANCEL-INSPECT
+- **How a results file is classified (Codex item 2): rule 3′,**
+  `node scripts/manual/stage0-classify.mjs <results file>`.
+  - It sorts every send into R1–R4
+    (`docs/security/stage0-item2-classifier-plan.md` §3).
+  - The sender does not import it until item 6. Its exit code (0 on any
+    201) is a transport fact, not a classification.
+  - The classifier runs on every results file before anything follows it.
+  - Rule 3′ is implemented locally and **not yet reviewed by Codex**. No
+    window relies on it before that review.
+- **`read_only`.** Sent as `true` for P0, STATE, SIZE-PROBE and the five
+  item 2 envelope probes. CANCEL-INSPECT
   and LOCKPROBE-READBACK go as the default role: they read OTHER sessions'
   `pg_stat_activity` rows, which a read-only role may see only in part. Neither
   writes (M-6, M-6c). Whether the read-only role can read everything P0 and
@@ -2818,7 +2829,10 @@ until approved:**
 2. 02–05, the rest of P2, and P3. **Held: no window is cleared** (Codex's
    incident review, §4 and §6).
    - **Before any new window, each of these is reviewed:**
-     - Codex item 2: the SQL-error classifier and its fixtures;
+     - Codex item 2: the SQL-error classifier and its fixtures.
+       **Implemented locally** (rule 3′, `scripts/manual/stage0-classify.mjs`)
+       with its capture runbook (`docs/security/stage0-item2-capture-runbook.md`,
+       DRAFT), for Codex's review. Not pushed. No staging send has run;
      - item 3: the staging read-token experiment, and a protocol revision
        if a Read PAT can write;
      - item 4(c): a rehearsal from the committed 01 state, with new pins, a

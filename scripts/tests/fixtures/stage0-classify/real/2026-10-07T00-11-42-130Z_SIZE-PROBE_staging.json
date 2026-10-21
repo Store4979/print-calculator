@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "SIZE-PROBE",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "64836acd787dc72bb0ad3e6564a66db4",
+  "requestBytes": 241149,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-07T00:11:42.130Z",
+  "finishedAt": "2026-10-07T00:11:43.419Z",
+  "httpStatus": 201,
+  "body": "[{\"probe_bytes\":240951,\"probe_md5\":\"79c453d9ccdc3a1b14eb34619ffe2cea\"}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

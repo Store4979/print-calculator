@@ -478,7 +478,7 @@ function sqlInputs() {
   const out = files.map((f) => ({ label: rel(f), text: readFileSync(f, "utf8") }));
   const M = A.manifestAt("HEAD", ROOT);
   const texts = A.assembleAll(M, { cwd: ROOT });
-  for (const k of ["STATE", "CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE", ...Object.keys(texts).filter((x) => x.startsWith("LOCKPROBE-"))]) out.push({ label: k, text: texts[k] });
+  for (const k of ["STATE", "CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE", ...Object.keys(texts).filter((x) => x.startsWith("LOCKPROBE-") || x.startsWith("ENVELOPE-PROBE-"))]) out.push({ label: k, text: texts[k] });
   return out;
 }
 

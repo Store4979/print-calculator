@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "P0",
+  "target": "production",
+  "ref": "gmxyisjjaxtpycsmmzef",
+  "readOnly": true,
+  "requestMd5": "2d6977169a592cac78a15c5ebe17509b",
+  "requestBytes": 11694,
+  "endpoint": "https://api.supabase.com/v1/projects/gmxyisjjaxtpycsmmzef/database/query",
+  "startedAt": "2026-10-07T15:21:44.109Z",
+  "finishedAt": "2026-10-07T15:21:44.596Z",
+  "httpStatus": 201,
+  "body": "[{\"has_store_role\":true,\"organizations\":true,\"stores_org_id\":true,\"stores_without_org\":0,\"stores_without_org_ids\":[],\"uniq_already_there\":false,\"release2_tables_present\":0,\"release2_functions_present\":0,\"catalog_fingerprint\":\"8b3c9eadf9eb8a98cb8cc6dca996663e\",\"probe_slug_absent\":true,\"nil_job_absent\":true,\"auth_users_user_triggers\":0,\"free_pins\":8999,\"server_version_num\":170006,\"pg17_hard_timer\":true,\"ledger_head\":\"20260909232836\",\"ledger_rows\":20,\"ledger_matches_repo\":true,\"release2_in_ledger\":0,\"ledger_columns\":\"version:text:NO:, statements:ARRAY:YES:, name:text:YES:, created_by:text:YES:, idempotency_key:text:YES:, rollback:ARRAY:YES:\",\"ledger_columns_as_pinned\":true,\"ledger_created_by\":[\"store4979@theupsstore.com\"],\"ledger_rows_single_element\":true,\"production_ledger_marker\":true,\"staging_seed_absent\":true,\"production_store_present\":true}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "STATE",
+  "target": "production",
+  "ref": "gmxyisjjaxtpycsmmzef",
+  "readOnly": true,
+  "requestMd5": "41dd91021512640818cf80cc7c8ee0f9",
+  "requestBytes": 10781,
+  "endpoint": "https://api.supabase.com/v1/projects/gmxyisjjaxtpycsmmzef/database/query",
+  "startedAt": "2026-10-09T01:32:05.922Z",
+  "finishedAt": "2026-10-09T01:32:06.381Z",
+  "httpStatus": 201,
+  "body": "[{\"effective_prefix\":\"\",\"ledger_md5_ok\":true,\"catalog_state\":\"00\",\"ledger_rows\":[{\"n\":\"01\",\"forward\":null,\"rollback\":null},{\"n\":\"02\",\"forward\":null,\"rollback\":null},{\"n\":\"03\",\"forward\":null,\"rollback\":null},{\"n\":\"04\",\"forward\":null,\"rollback\":null},{\"n\":\"05\",\"forward\":null,\"rollback\":null}],\"recovery\":\"none — nothing is applied\"}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

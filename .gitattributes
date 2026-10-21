@@ -1,0 +1,3 @@
+# Real stage-0 sender receipts, kept byte for byte as the sender wrote them
+# (item 2 classifier plan §5: receipts are exact files, never normalized).
+scripts/tests/fixtures/stage0-classify/real/*.json -text
