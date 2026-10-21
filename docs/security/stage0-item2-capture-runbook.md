@@ -77,11 +77,13 @@ node scripts/manual/stage0-classify.mjs .stage0-send/<results file>
 
 | verdict | meaning | what follows |
 |---|---|---|
-| **MATCH** | the receipt binds (not R1), is exactly the step's declared outcome, and rule 3′ gives the declared class | the next step of the phase, if `nextStep` allows it |
-| **STOP-RECORD** | the intended SQLSTATE and path were reached, but the status or rendering differs from the declared one | the phase ends. The receipt is evidence for review |
+| **MATCH** | the receipt binds (not R1), is exactly the step's declared outcome, and rule 3′ gives the declared class | the next step of the phase, if the progression gate (§4.3) names it |
+| **STOP-RECORD** | the message starts with the expected severity, SQLSTATE and primary text, but the receipt is not the declared one. Only that prefix was checked: the path (the frames) and the rendering are **unconfirmed**, for review. A STOP-RECORD is never nested-frame evidence on its own (B2 without its frames, for example) | the phase ends. The receipt is evidence for review |
 | **STOP** | anything else: R1, another status, another SQLSTATE (a permission refusal included), a transport failure, gateway text, another success body | the phase ends. The receipt is recorded as itself |
 
-**Only MATCH continues** (`nextStep` in the module). The other rules:
+**Only MATCH continues,** and only when the progression gate names the next
+step (§4.3; `progress()` calls `nextStep()` over the phase's checked
+receipts). The other rules:
 - **Any other verdict ends the phase at once.**
   - No later step of the phase is sent.
   - In a writing phase (A, T, U), no later write is sent, cleanup included,
@@ -155,8 +157,11 @@ receipt.
 
 **Each phase has its own:**
 - **go**, given by Ryan in chat, naming the phase, its exact steps and an
-  absolute deadline (EDT). The go lapses at that deadline, at any stop, and
-  at any pause. Every pause ends the session (incident record §5);
+  absolute deadline (EDT). Claude repeats it back with both times in UTC
+  (the go time is when Ryan's message arrived), and those UTC times are
+  the gate's `--go` and `--deadline`. The go lapses at that deadline, at any
+  stop, and at any pause. Every pause ends the session (incident record
+  §5);
 - **token**:
   - B uses a staging **Database: Read** token, named `stage0-item2-B-<date>`;
   - A, T and U each use a staging token at the level above Read, named
@@ -167,11 +172,103 @@ receipt.
     whatever the outcome;
 - **receipt preservation** (§4.4) before anything else follows it.
 
-**One window, one token, one send at a time.** The window is titled
-`STAGE0 ITEM2 <phase>`. Each send waits for the sender's result. No second
-caller is used: no step of this session needs one.
+**One window, one token, one send at a time.** Each send waits for the
+sender's result. No second caller is used: no step of this session needs
+one.
+
+**These procedures stand in for item 6's machine checks, for this staging
+session only** (Codex, review of `df401b3`, K-R2). The present sender
+checks a text's bytes, its ref and its send policy, and nothing more. It
+enforces no deadline, no window role and no next-step go: §4's procedures
+and the gate do that work here, by hand and by check. Item 6 still adds the
+machine-enforced guards before later work relies on them.
 
 ## 4. The procedure for each phase
+
+Codex's six procedures (review of `df401b3`, K-R2) are P1–P6 below. Each is
+written into the steps where it applies.
+
+**P1. One sitting, and a fresh window and token per phase.**
+- A phase runs in one sitting, from its token's creation to its deletion.
+- It gets a new PowerShell window, opened for this phase: never a window or
+  shell from an earlier phase, and never one that ever held a production
+  token.
+- Before the token is loaded, Ryan confirms four things on the token's page:
+  - the phase;
+  - the staging project only;
+  - Read (B), or the level above Read (A, T, U);
+  - the expiry.
+- The window title `STAGE0 ITEM2 <phase>` helps a person check. It enforces
+  nothing, and it is not a window-role marker.
+
+**P2. One current send command at a time.**
+- A complete numbered plan of the phase may be shown for review (§4.1).
+  There is never a block of executable future commands.
+- Immediately before each send, Claude:
+  - runs the gate (P3);
+  - names the exact pending step, text and ref;
+  - checks the go and the absolute deadline;
+  - supplies that ONE step's command, and records the UTC time it did so.
+    That time is the step's "issued" time in every later gate run.
+- Ryan checks the command against the current phase and window before he
+  runs it.
+- He never uses shell history or up-arrow recall, never a command from
+  earlier in the chat, never a retyped command, and never re-runs a failed
+  command.
+- A stop, a pause or the deadline invalidates every command not yet run.
+  Nothing resumes on its own.
+
+**P3. The progression gate runs before every send,** including the first.
+It is read-only:
+
+```bash
+node scripts/manual/stage0-capture.mjs --progress <PHASE> --go <UTC> --deadline <UTC> [--reviewed <ref>] <STEP>=.stage0-send/<file>@<UTC issued> …
+```
+
+- It lists every results file of the phase so far, in step order, each with
+  the time its command was issued.
+- `progress()` re-checks each with `checkStep()` and runs `nextStep()` over
+  the results.
+- It prints `NEXT: <step> …` (exit 0), `COMPLETE` (exit 4) or `STOP: <why>`
+  (exit 3). Claude reports that line before any command is issued.
+- Only `NEXT` lets P2 supply a command, and only for the step it names.
+- Phase U also needs `--reviewed`, naming the reviewed decision on T2's
+  receipt.
+
+**P4. Only this session's fresh results count.** The gate refuses a results
+file unless all of these hold:
+- it is for the step at that position, with that step's text, on staging;
+- its file name is the one the sender gave the record inside it;
+- its command was issued after the phase's go, and after the previous
+  receipt finished;
+- the receipt started after its command was issued, and finished before now;
+- it is used once: no repeated file name, start time or content.
+
+So an old receipt with the same pins cannot advance a new phase. The
+classifier binds a receipt's form, target and pins. It does not bind a
+receipt to a live go, and it does not make it single-use; the gate does
+both.
+
+**P5. Every pause is an exit.**
+- Before stepping away for any reason, Ryan:
+  - runs `Remove-Item Env:SUPABASE_ACCESS_TOKEN`, then `exit` (the window
+    closes);
+  - deletes the phase's token in the dashboard.
+- Waiting for a person or a review is a pause. Receipt inventory (§4.4) is
+  never a reason to keep a token loaded.
+- After a lost window, delete the dashboard token.
+- The receipt files are kept unchanged.
+- **Token cleanup ends nothing on the server.** It does not resolve or
+  cancel a request in flight or one with an unknown outcome. An unresolved
+  writing outcome still holds every later write for review.
+
+**P6. The sender's exit code and banner are not authorization.**
+- Its exit 0 on a 201 is a transport fact.
+- Its banner "a writing text: read back before the next step … STATE first"
+  is generic. It is not permission to send a diagnostic, a READBACK or
+  STATE after this runbook has stopped.
+- The gate, the capture check, the classification and this phase's stop
+  rules govern.
 
 **4.1 CLAUDE — before the phase.**
 1. In this checkout, `git rev-parse HEAD` prints H, and `git status --short`
@@ -179,12 +276,13 @@ caller is used: no step of this session needs one.
 2. Each text of the phase: `node scripts/manual/stage0-send.mjs <TEXT>
    --target staging --dry-run`. The md5 and bytes equal §1 (P1–P3 runbook
    V-DRY, with `target staging = lboajqihpsfrokqvjgnl`).
-3. Print the phase's numbered command list, and its declared outcomes
-   (`--list`).
+3. Show the phase's numbered plan: steps, texts and declared outcomes
+   (`--list`). It contains no executable send command (P2).
+4. Repeat Ryan's go back with its UTC go time and deadline (§3).
 
-**4.2 RYAN — token and window.** The P1–P3 runbook's §0.5 window setup and
-§3.2 token steps, with staging in place of production and this phase's name
-and level:
+**4.2 RYAN — token and window (P1).** The P1–P3 runbook's §0.5 window setup
+and §3.2 token steps, in a NEW window, with staging in place of production
+and this phase's name and level:
 - **V-SCOPE**, **V-PROMPT**, **V-MASK** and **V-PREFIX** as written there;
 - **V-CLIP** after the paste.
 
@@ -192,15 +290,18 @@ Report the token's name, scope, level and expiry, and the `True` / `44`
 lines.
 
 **4.3 Each step, in order.**
-1. **RYAN** runs:
+1. **CLAUDE** runs the gate (P3) over the phase's results so far. Without
+   `NEXT` for this step, go to §5.
+2. **CLAUDE** supplies this step's one command and records its issued time
+   (P2). It has this form; the exact text is in Claude's message:
    ```powershell
    node scripts/manual/stage0-send.mjs <TEXT> --target staging --confirm-ref lboajqihpsfrokqvjgnl
    ```
-   Then he pastes the sender's lines. They carry no secret.
-2. **CLAUDE** runs §2's two commands on that results file and reports the
-   verdict.
-3. **Only on MATCH**, and only if `nextStep` allows it, does Ryan send the
-   next step. On anything else, go to §5.
+3. **RYAN** checks it against the phase and window, runs it once, and
+   pastes the sender's lines. They carry no secret.
+4. **CLAUDE** runs §2's two commands on that results file and reports the
+   verdict. Then step 1 again: the gate decides what follows, never the
+   sender's exit code or banner (P6).
 
 **Timings:**
 - A2 waits about 10 s before it refuses (no holder);
@@ -210,13 +311,12 @@ lines.
 Nothing is typed into the window while a send is running.
 
 **4.4 CLAUDE — preserve the receipts.** At the end of the phase, or at any
-stop, before anything else:
-- list the phase's results files with their md5 and byte counts;
-- write that list into the capture record.
+stop, list the phase's results files with their md5 and byte counts, and
+write that list into the capture record.
+- It runs after the token is gone (§4.5 and P5), never while a token waits.
+- The files are never edited, moved or renamed; they stay in `.stage0-send/`.
 
-The files are never edited, moved or renamed; they stay in `.stage0-send/`.
-
-**4.5 RYAN — close.**
+**4.5 RYAN — close (P5).**
 1. In the window, run `Remove-Item Env:SUPABASE_ACCESS_TOKEN`, then `exit`.
 2. Delete the phase's token in the dashboard.
 3. Report the time.
@@ -226,9 +326,11 @@ nothing can be sent in this phase.
 
 ## 5. Stop points
 
-Each of these ends the phase at once. Then: §4.4, then §4.5, then review.
-1. **A verdict other than MATCH**, or a MATCH after which `nextStep` stops
-   (T2).
+Each of these ends the phase at once. Then: §4.5 (the token goes first, P5),
+then §4.4, then review.
+1. **A verdict other than MATCH**, or a gate result other than `NEXT` for
+   the pending step. That includes T2's MATCH, after which the gate stops,
+   and every freshness refusal (P4).
 2. **A sender refusal before sending:** exit 2, for example a pin mismatch
    or a wrong ref. Nothing was sent, and nothing is changed in the moment.
 3. **`tokenRedactedFromResponse: true`.** The token is deleted first.
@@ -242,6 +344,9 @@ Each of these ends the phase at once. Then: §4.4, then §4.5, then review.
 6. **A1 or T1 refused** because `stage0_lockprobe` already exists (P0001
    "clean up first"). That is STOP: an earlier leftover goes to review, not
    to CLEANUP.
+7. **A command that is not the one current command:** one from history, an
+   earlier message, a retype, or a re-run of a failed command (P2). It is
+   reported as it happened, and its receipt is classified as itself.
 
 ## 6. The capture record
 

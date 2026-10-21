@@ -22,6 +22,13 @@
 //   CL-16 the declarations bind to the pinned texts
 //   CL-17 the two command lines
 //   CL-18 no network call
+//   CL-19 K-R1: a timestamp that parses to no time is R1 everywhere: the
+//         library, the classify CLI (exit 3) and the capture checker (STOP)
+//   CL-20 a defect inside a check is R1 or STOP, never an uncaught exception
+//   CL-21 STOP-RECORD claims only the severity, SQLSTATE and primary text
+//   CL-22 the progression gate: NEXT, COMPLETE and every stop, freshness and
+//         single use included
+//   CL-23 the gate's command line
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -515,4 +522,161 @@ test("CL-18 classification and step checks make no network call", () => {
     for (const f of Object.keys(REAL)) C.classifyText(real(f), ctx);
     for (const id of Object.keys(K.STEPS)) check(id, declaredReceipt(id));
   } finally { globalThis.fetch = saved; }
+});
+
+// Codex's two forms (review of df401b3, K-R1): each matches the ISO pattern
+// and parses to no time. Before L they threw RangeError out of the R1 checks.
+const BAD_TIMES = ["2026-13-09T15:17:05.343Z", "2026-10-09T25:17:05.343Z"];
+
+test("CL-19 K-R1: an invalid month or hour in startedAt or finishedAt is R1, from the library, the classify CLI (exit 3) and the capture checker (STOP)", () => {
+  const node = (args) => spawnSync(process.execPath, args, { cwd: ROOT, encoding: "utf8" });
+  const dir = mkdtempSync(join(tmpdir(), "stage0-classify-kr1-"));
+  try {
+    for (const field of ["startedAt", "finishedAt"]) {
+      for (const bad of BAD_TIMES) {
+        const why = `${field} = ${bad}`;
+        const c = cls({ ...rec(SEND1), [field]: bad });
+        assert.equal(c.class, "R1", why);
+        assert.ok(c.reasons.includes(`the field ${field} has the wrong type or form`), `${why}: the timestamp check itself refuses it, not the safety net`);
+        const f = join(dir, `${field}-${bad.slice(5, 7)}-${bad.slice(11, 13)}.json`);
+        writeFileSync(f, asFile({ ...rec(SEND1), [field]: bad }));
+        const r = node([join(ROOT, "scripts", "manual", "stage0-classify.mjs"), f]);
+        assert.equal(r.status, 3, `${why}: the CLI exits 3 (${r.stderr})`);
+        assert.match(r.stdout, new RegExp(`^R1 UNRESOLVED \\| P2-01 -> production \\| HTTP 201 \\| .*the field ${field} has the wrong type or form`), why);
+        const s = check("A1", { ...declaredReceipt("A1"), [field]: bad });
+        assert.equal(s.verdict, "STOP", `${why}: the capture checker stops`);
+        const a1 = join(dir, `a1-${field}-${bad.slice(5, 7)}.json`);
+        writeFileSync(a1, asFile({ ...declaredReceipt("A1"), [field]: bad }));
+        const cp = node([join(ROOT, "scripts", "manual", "stage0-capture.mjs"), "A1", a1]);
+        assert.equal(cp.status, 3, `${why}: the capture CLI exits 3 (${cp.stderr})`);
+        assert.match(cp.stdout, /^STOP A1 LOCKPROBE-SETUP \| the receipt does not bind \(R1\)/, why);
+      }
+    }
+    // Kept: a reversed pair and a calendar date that normalizes are still R1.
+    r1({ ...rec(SEND1), finishedAt: "2026-10-09T15:17:04.000Z" }, "a reversed pair");
+    r1({ ...rec(SEND1), startedAt: "2026-02-30T15:17:05.343Z" }, "a normalized invalid calendar date");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CL-20 a defect inside a check is R1 or STOP with its message, never an uncaught exception", () => {
+  const broken = { ...ctx, inputs: new Proxy({}, { get() { throw new Error("planted defect"); } }) };
+  const c = C.classifyText(asFile(rec(SEND2)), broken);
+  assert.equal(c.class, "R1");
+  assert.match(c.reasons[0], /the classifier could not complete \(Error: planted defect\); a tooling defect, for review/);
+  const s = K.checkStep("A2", asFile(declaredReceipt("A2")), { ...ctx, texts: new Proxy(ctx.texts, { get(t, k) { if (k === "LOCKPROBE-B-LOCKTIMEOUT") throw new Error("planted defect"); return t[k]; } }) });
+  assert.equal(s.verdict, "STOP");
+  assert.ok(s.reasons.some((x) => /could not complete|does not bind/.test(x)), JSON.stringify(s.reasons));
+  assert.throws(() => K.checkStep("Z9", "{}", ctx), /unknown step/, "only an unknown step id throws");
+});
+
+test("CL-21 STOP-RECORD claims only the severity, SQLSTATE and primary text; the path and rendering stay unconfirmed", () => {
+  // Codex's example: B2 with its primary line and none of its frames.
+  const r = check("B2", declaredReceipt("B2", { body: env(`${P}ERROR:  22012: division by zero\n`) }));
+  assert.equal(r.verdict, "STOP-RECORD");
+  assert.match(r.reasons[0], /starts with the expected ERROR 22012 and primary text, but the receipt is not the declared one .*; the path and the rendering are unconfirmed, for review/);
+  assert.ok(!/path (was|were) reached/.test(r.reasons[0]), "it never claims the path");
+});
+
+// ── the progression gate ────────────────────────────────────────────────────
+
+const GO = "2026-10-21T16:00:00Z";
+const DEADLINE = "2026-10-21T17:00:00Z";
+const NOW = Date.parse("2026-10-21T16:30:00.000Z");
+/** A results file as the sender would write it for a step: its name and its exact text. */
+function sent(id, startedAt, over = {}) {
+  const finishedAt = new Date(Date.parse(startedAt) + 1500).toISOString();
+  const r = declaredReceipt(id, { startedAt, finishedAt, ...over });
+  return { file: `.stage0-send/${K.senderFileName(r)}`, text: asFile(r) };
+}
+/** Entries for consecutive steps: each issued at :m0 past the minute grid, each receipt 5 s later. */
+function run(ids, firstMinute = 1) {
+  return ids.map((id, n) => {
+    const issuedAt = `2026-10-21T16:${String(firstMinute + n).padStart(2, "0")}:00Z`;
+    return { step: id, issuedAt, ...sent(id, `2026-10-21T16:${String(firstMinute + n).padStart(2, "0")}:05.000Z`) };
+  });
+}
+const gate = (phase, entries, over = {}) => K.progress({ phase, goAt: GO, deadline: DEADLINE, now: NOW, entries, ...over }, ctx);
+
+test("CL-22 the progression gate names the one next step, COMPLETE, or the stop; freshness and single use included", () => {
+  assert.deepEqual([gate("B", []).next, gate("B", []).stop], ["B1", false], "before the first send");
+  assert.equal(gate("B", run(["B1", "B2"])).next, "B3");
+  const all = gate("B", run(K.PHASES.B.steps));
+  assert.equal(all.complete, true);
+  assert.equal(all.next, null);
+  assert.equal(gate("A", run(K.PHASES.A.steps)).complete, true);
+  // The go and the deadline.
+  assert.match(gate("B", [], { now: Date.parse(DEADLINE) }).reason, /the deadline .* has passed/);
+  assert.match(gate("B", [], { now: Date.parse(GO) - 1 }).reason, /the go is in the future/);
+  assert.match(gate("B", [], { deadline: GO }).reason, /the deadline is not after the go/);
+  assert.match(gate("B", [], { goAt: "2026-10-21 16:00" }).reason, /absolute UTC times/);
+  assert.match(gate("B", [], { goAt: "2026-13-21T16:00:00Z" }).reason, /absolute UTC times/, "the gate's time check is total too");
+  assert.match(gate("Q", []).reason, /unknown phase/);
+  // Order and binding.
+  const [b1, b2] = run(["B1", "B2"]);
+  assert.match(gate("B", [b2, b1]).reason, /is given as B2; step 1 of phase B is B1/);
+  assert.match(gate("B", [{ ...b1, file: ".stage0-send/renamed.json" }]).reason, /the file name is not the sender's/);
+  assert.match(gate("B", [{ ...b1, text: null }]).reason, /missing or unreadable/);
+  assert.match(gate("B", [{ ...b1, issuedAt: "16:01" }]).reason, /the issue time is not an absolute UTC time/);
+  // Freshness: before the go, before its command, overlapping the previous one, after now.
+  const early = { step: "B1", issuedAt: "2026-10-21T15:59:00Z", ...sent("B1", "2026-10-21T15:59:05.000Z") };
+  assert.match(gate("B", [early]).reason, /issued before the phase's go/);
+  assert.match(gate("B", [{ ...b1, issuedAt: "2026-10-21T16:01:10Z" }]).reason, /started before its command was issued/);
+  assert.match(gate("B", [b1, { ...b2, issuedAt: "2026-10-21T16:01:06Z" }]).reason, /issued before the previous receipt finished/);
+  const late = { step: "B1", issuedAt: "2026-10-21T16:40:00Z", ...sent("B1", "2026-10-21T16:40:05.000Z") };
+  assert.match(gate("B", [late]).reason, /finished after now/);
+  // Single use. Inside one phase every step sends a different text, so a
+  // receipt can match one step at most; a results file offered again is
+  // refused outright. A phase that repeated a step (none does) shows it.
+  for (const [ph, p] of Object.entries(K.PHASES)) assert.equal(new Set(p.steps.map((s) => K.STEPS[s].text)).size, p.steps.length, `phase ${ph}: distinct texts`);
+  const a1 = run(["A1"])[0];
+  K.PHASES.X = { steps: ["A1", "A1"], token: "test only", writes: true };
+  try {
+    const again = { ...a1, issuedAt: "2026-10-21T16:02:00Z" };
+    assert.match(gate("X", [a1, again]).reason, /already used in this phase/);
+  } finally { delete K.PHASES.X; }
+  // An old receipt cannot open a new phase: A's SETUP receipt offered as T1 under T's later go.
+  assert.match(gate("T", [{ ...a1, step: "T1" }], { goAt: "2026-10-21T16:20:00Z" }).reason, /issued before the phase's go/);
+  // A stop from a check.
+  const bad = { ...run(["A1"])[0], ...sent("A1", "2026-10-21T16:01:05.000Z", { body: "[]" }) };
+  const s = gate("A", [bad]);
+  assert.equal(s.stop, true);
+  assert.match(s.reason, /A1 was STOP: the phase ends here\. No later step of phase A is sent, cleanup included, until a reviewed decision/);
+  // T2's MATCH ends T; U needs a reviewed decision named.
+  const t = gate("T", run(["T1", "T2"]));
+  assert.equal(t.stop, true);
+  assert.match(t.reason, /writing send that rule 3′ classifies UNRESOLVED/);
+  assert.match(gate("U", []).reason, /phase U needs a reviewed decision on T2's receipt; none is named/);
+  assert.equal(gate("U", [], { reviewed: "Codex's disposition of T2, reviews/<file>" }).next, "U1");
+  assert.match(gate("B", run(["B1", "B2", "B3", "B4", "B5", "B1"])).reason, /more results files than phase B has steps/);
+});
+
+test("CL-23 the gate's command line: NEXT exits 0, COMPLETE 4, a stop 3, usage 2", () => {
+  const node = (args) => spawnSync(process.execPath, args, { cwd: ROOT, encoding: "utf8" });
+  const CP = join(ROOT, "scripts", "manual", "stage0-capture.mjs");
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const go = iso(now - 3600e3).replace(/\.\d{3}Z$/, "Z");
+  const deadline = iso(now + 3600e3).replace(/\.\d{3}Z$/, "Z");
+  const dir = mkdtempSync(join(tmpdir(), "stage0-gate-cli-"));
+  try {
+    const entries = K.PHASES.B.steps.map((id, n) => {
+      const issued = now - 3000e3 + n * 60e3;
+      const r = declaredReceipt(id, { startedAt: iso(issued + 5e3), finishedAt: iso(issued + 6e3) });
+      const f = join(dir, K.senderFileName(r));
+      writeFileSync(f, asFile(r));
+      return `${id}=${f}@${iso(issued)}`;
+    });
+    const two = node([CP, "--progress", "B", "--go", go, "--deadline", deadline, ...entries.slice(0, 2)]);
+    assert.equal(two.status, 0, two.stdout + two.stderr);
+    assert.match(two.stdout, /^ {2}MATCH B1 ENVELOPE-PROBE-1$/m);
+    assert.match(two.stdout, /^NEXT: B3 may be sent next: ENVELOPE-PROBE-3 to staging, before /m);
+    const all = node([CP, "--progress", "B", "--go", go, "--deadline", deadline, ...entries]);
+    assert.equal(all.status, 4, all.stdout);
+    assert.match(all.stdout, /^COMPLETE: phase B is complete/m);
+    const past = node([CP, "--progress", "B", "--go", go, "--deadline", iso(now - 60e3).replace(/\.\d{3}Z$/, "Z"), ...entries.slice(0, 1)]);
+    assert.equal(past.status, 3);
+    assert.match(past.stdout, /^STOP: /m);
+    assert.equal(node([CP, "--progress", "B", "--go", go]).status, 2, "no deadline");
+    assert.equal(node([CP, "--progress", "B", "--go", go, "--deadline", deadline, "B1-no-separators"]).status, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

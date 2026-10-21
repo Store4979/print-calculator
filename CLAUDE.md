@@ -380,7 +380,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       included.
     The sender's exit 0 on any 201 is a transport fact, not a class.
     SUPPORT grows only in a reviewed capture commit, from sender receipts
-    (docs/security/stage0-item2-capture-runbook.md).
+    (docs/security/stage0-item2-capture-runbook.md). In the capture session,
+    `node scripts/manual/stage0-capture.mjs --progress …` runs before EVERY
+    send. It re-checks the phase's receipts for freshness and single use, and
+    names the one next step. A tested function that no runbook step runs is
+    not a control (Codex, K-R2). Every validator in these tools must be
+    total: malformed input gives R1 or STOP, never an exception (K-R1).
     An UNRESOLVED writing send is STOP-and-review (UO-1):
     - no retry and no recovery;
     - STATE is a diagnostic only, and an unchanged prefix is UNKNOWN, never

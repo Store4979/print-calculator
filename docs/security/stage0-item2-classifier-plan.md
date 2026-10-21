@@ -588,3 +588,29 @@ the predicates live) are answered in §0 and folded into §3–§7.
     - `stage0-capture.mjs`: 0 on MATCH, otherwise 3.
 
     The classifier prints "A classification, not a go."
+
+**Codex's review of K `df401b3` (2026-10-21): AMEND, two blockers,** and
+rulings 1–8 accepted (`reviews/2026-10-21-df401b3-review.md`). L, on top of
+K:
+- **K-R1, totality.** A timestamp of the right form that parses to no time
+  (`2026-13-09…`, `…T25:17…`) threw `RangeError` out of the R1 checks:
+  - the CLI exited 1 with no line, the code for an R3;
+  - the capture checker crashed instead of stopping.
+
+  `isIso` now tests for a finite parsed time before `toISOString()`. Both
+  forms, in both fields, are R1 through the library, the classify CLI
+  (exit 3) and the capture checker (STOP), in CL-19; K throws on all four.
+  As a safety net, an exception inside `classifyText` or `checkStep` is now
+  R1 or STOP with its message, a tooling defect for review (CL-20).
+- **K-R2, the operational substitute for item 6.**
+  - Codex's six procedures are P1–P6 in the capture runbook's §4.
+  - `nextStep()` now runs as a real gate: `stage0-capture.mjs --progress`
+    (`progress()`) runs before every send. It re-checks the phase's results
+    files in order, and requires each to be fresh and single-use against
+    the go, the deadline and the time its command was issued. It names the
+    one next step or the stop. It is read-only, and the go in chat stays
+    the authority (CL-22, CL-23).
+- **The STOP-RECORD wording.** It claims only that the message starts with
+  the expected severity, SQLSTATE and primary text. The path and rendering
+  stay unconfirmed, and such a receipt is never nested-frame evidence on its
+  own (CL-21).

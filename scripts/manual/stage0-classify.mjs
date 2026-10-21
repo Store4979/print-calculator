@@ -150,7 +150,14 @@ export function contextFor(manifest, opts = {}) {
 /** The sender's record (stage0-send.mjs send()): these 14 keys, plus cancelTemplate for a cancel. */
 export const RECEIPT_KEYS = ["tool", "text", "target", "ref", "readOnly", "requestMd5", "requestBytes", "endpoint", "startedAt", "finishedAt", "httpStatus", "body", "error", "tokenRedactedFromResponse"];
 const ISO_MS = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
-const isIso = (s) => typeof s === "string" && ISO_MS.test(s) && new Date(s).toISOString() === s;
+// Total: a form that parses to no time (month 13, hour 25) is false, never a
+// throw. toISOString() is called only on a finite time (Codex, review of
+// df401b3, K-R1).
+const isIso = (s) => {
+  if (typeof s !== "string" || !ISO_MS.test(s)) return false;
+  const t = Date.parse(s);
+  return Number.isFinite(t) && new Date(t).toISOString() === s;
+};
 const HEX32 = /^[0-9a-f]{32}$/;
 const isPosInt = (n) => Number.isSafeInteger(n) && n > 0;
 const FIELD_OK = {
@@ -503,8 +510,19 @@ export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
 
 const summary = (rec) => (isPlainObject(rec) ? { text: rec.text, target: rec.target, httpStatus: rec.httpStatus } : {});
 
-/** Classify a results file's exact text against a context (contextAt / contextFor). */
+/**
+ * Classify a results file's exact text against a context (contextAt /
+ * contextFor). It returns a classification for any input: an exception
+ * inside it is reported as R1 UNRESOLVED with its message, so a defect here
+ * stops the runbook instead of crashing it.
+ */
 export function classifyText(fileText, ctx) {
+  try { return classifyChecked(fileText, ctx); } catch (e) {
+    return { class: "R1", outcome: "UNRESOLVED", reasons: [`the classifier could not complete (${e && e.name}: ${e && e.message}); a tooling defect, for review`], writing: null };
+  }
+}
+
+function classifyChecked(fileText, ctx) {
   let rec;
   try { rec = strictJson(fileText); } catch (e) {
     return { class: "R1", outcome: "UNRESOLVED", reasons: [`the file is not exactly one JSON document: ${e.message}`] };

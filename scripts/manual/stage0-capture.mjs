@@ -9,18 +9,27 @@
 // results file with its step:
 //   MATCH        the receipt binds (not R1), is exactly the declared outcome,
 //                and rule 3′ classifies it as the step declares;
-//   STOP-RECORD  the intended SQLSTATE and path were reached, but the
-//                rendering differs from the declared one. The receipt is
-//                evidence for review;
+//   STOP-RECORD  the message starts with the expected severity, SQLSTATE and
+//                primary text, but the whole receipt is not the declared one.
+//                Only that prefix was checked: the path (the frames) and the
+//                rendering are unconfirmed, and stay for review. Such a
+//                receipt is never nested-frame evidence on its own;
 //   STOP         anything else: R1, another status, another SQLSTATE (a
 //                permission refusal included), a transport failure, another
 //                success body.
-// Only MATCH lets the phase go on (nextStep). Any other verdict ends the phase:
-// no later send in it, and a writing phase's later writes, cleanup included,
-// wait for a reviewed decision. A MATCH of a writing send that rule 3′ still
-// classifies UNRESOLVED (T2's FATAL) ends its phase too. A MATCH changes
-// nothing in rule 3′'s SUPPORT, which grows only in the reviewed capture
-// commit.
+// Only MATCH lets the phase go on. Any other verdict ends the phase: no later
+// send in it, and a writing phase's later writes, cleanup included, wait for a
+// reviewed decision. A MATCH of a writing send that rule 3′ still classifies
+// UNRESOLVED (T2's FATAL) ends its phase too. A MATCH changes nothing in rule
+// 3′'s SUPPORT, which grows only in the reviewed capture commit.
+//
+// The progression gate (progress(), --progress) runs before every send. It
+// re-checks the phase's results files so far, in order, requires each to be
+// fresh and single-use against the phase's go, its deadline and the time each
+// command was issued, and names the one step that may be sent next, or the
+// stop (Codex, review of df401b3, K-R2). It is read-only. It does not enforce
+// a go: Ryan's go in chat is the authority, and the gate checks the receipts
+// against the times that go and each command carry.
 //
 // The declared error renderings follow postgres-meta's error formatting
 // (pgMetaFormat below). That the Management API's "Failed to run sql query: "
@@ -30,8 +39,12 @@
 //
 //   node scripts/manual/stage0-capture.mjs --list
 //   node scripts/manual/stage0-capture.mjs <STEP> <results file>
+//   node scripts/manual/stage0-capture.mjs --progress <PHASE> --go <UTC> --deadline <UTC>
+//        [--reviewed <reference>] [<STEP>=<results file>@<UTC the command was issued>]...
 //
-// Exit status: 0 MATCH; 3 STOP-RECORD or STOP; 2 usage or context error.
+// Exit status: a single check, 0 MATCH and 3 STOP-RECORD or STOP; the gate,
+// 0 when it names a next step, 4 when the phase is complete, 3 on a stop;
+// 2 for usage or a context error. None of these is a go on its own.
 // It makes no network call, no database call and no write.
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -182,10 +195,20 @@ export function matchDeclared(m, declared, ranges = {}) {
   return got;
 }
 
-/** Compare one results file with its step. */
+/**
+ * Compare one results file with its step. Any input gives a verdict: an
+ * exception while checking it is a STOP, with its message (a tooling defect,
+ * for review). Only an unknown step id throws.
+ */
 export function checkStep(id, fileText, ctx) {
   const step = STEPS[id];
   if (!step) throw new Error(`unknown step ${id}`);
+  try { return checkStepChecked(id, step, fileText, ctx); } catch (e) {
+    return { step: id, text: step.text, verdict: "STOP", reasons: [`the check could not complete (${e && e.name}: ${e && e.message}); a tooling defect, for review`], classification: null };
+  }
+}
+
+function checkStepChecked(id, step, fileText, ctx) {
   const c = classifyText(fileText, ctx);
   const res = (verdict, reasons) => ({ step: id, text: step.text, verdict, reasons, classification: c });
   if (c.class === "R1") return res("STOP", [`the receipt does not bind (R1): ${c.reasons.join("; ")}`]);
@@ -209,8 +232,8 @@ export function checkStep(id, fileText, ctx) {
       const literal = s.message.split("{")[0];
       const intended = m !== null && m.startsWith(`${ENVELOPE_PREFIX}${s.severity}:  ${s.code}: ${literal}`);
       return intended
-        ? res("STOP-RECORD", [`the intended ${s.severity} ${s.code} was reached; the status or rendering differs from the declared one (HTTP ${rec.httpStatus ?? "none"})`])
-        : res("STOP", [`not the intended ${s.severity} ${s.code} on its declared path; recorded as itself (HTTP ${rec.httpStatus ?? "none"})`]);
+        ? res("STOP-RECORD", [`the message starts with the expected ${s.severity} ${s.code} and primary text, but the receipt is not the declared one (HTTP ${rec.httpStatus ?? "none"}); the path and the rendering are unconfirmed, for review`])
+        : res("STOP", [`not the expected ${s.severity} ${s.code} and primary text; recorded as itself (HTTP ${rec.httpStatus ?? "none"})`]);
     }
   }
   if (c.class !== step.classNow) return res("STOP", [`rule 3′ classifies the declared outcome as ${c.class}, but the step declares ${step.classNow}: a tooling defect`]);
@@ -238,10 +261,119 @@ export function nextStep(phase, results) {
   return { stop: false, next: p.steps[results.length] ?? null };
 }
 
+const UTC = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{3})?Z$/;
+/** An absolute UTC time (YYYY-MM-DDTHH:MM:SS[.sss]Z) in ms, or null. Total: never throws. */
+export function utcTime(s) {
+  if (typeof s !== "string" || !UTC.test(s)) return null;
+  const t = Date.parse(s);
+  if (!Number.isFinite(t)) return null;
+  const iso = new Date(t).toISOString();
+  return iso === s || iso === s.slice(0, -1) + ".000Z" ? t : null;
+}
+
+/** The file name the sender gives a record (stage0-send.mjs writeRecord). */
+export const senderFileName = (rec) => `${rec.startedAt.split(":").join("-").split(".").join("-")}_${rec.text}_${rec.target}.json`;
+
+/**
+ * The progression gate (K-R2). `entries` are the phase's results so far, in
+ * step order: { step, file, text, issuedAt }, where `text` is the file's
+ * exact content (null when unreadable) and `issuedAt` the UTC time Claude
+ * issued that step's one command. Each is re-checked (checkStep) and must be
+ * fresh and single-use:
+ *   - entry n is for the phase's step n;
+ *   - its file name is the sender's name for the record inside it;
+ *   - its command was issued after the go, and after the previous receipt
+ *     finished;
+ *   - the receipt started after its command was issued, and finished
+ *     before now;
+ *   - no file name, receipt start or file content is used twice.
+ * Returns { stop, next, complete, reason, results }. `next` is the one step
+ * that may be sent now; anything else is a stop. Read-only.
+ */
+export function progress({ phase, goAt, deadline, now, reviewed = null, entries = [] }, ctx) {
+  const results = [];
+  const stop = (reason) => ({ stop: true, next: null, complete: false, reason, results });
+  const p = PHASES[phase];
+  if (!p) return stop(`unknown phase ${phase}`);
+  if (p.requires && !(typeof reviewed === "string" && reviewed.trim())) return stop(`phase ${phase} needs ${p.requires}; none is named (--reviewed)`);
+  const go = utcTime(goAt);
+  const dl = utcTime(deadline);
+  if (go === null || dl === null) return stop("the go and the deadline must be absolute UTC times, YYYY-MM-DDTHH:MM:SS[.sss]Z");
+  if (!(dl > go)) return stop("the deadline is not after the go");
+  if (!(Number.isFinite(now) && now >= go)) return stop("the go is in the future");
+  if (now >= dl) return stop(`the deadline ${deadline} has passed: no further send in phase ${phase}`);
+  if (entries.length > p.steps.length) return stop(`more results files than phase ${phase} has steps`);
+  const names = new Set();
+  const starts = new Set();
+  const contents = new Set();
+  let prevEnd = go;
+  for (const [n, e] of entries.entries()) {
+    const id = p.steps[n];
+    if (e.step !== id) return stop(`results file ${n + 1} is given as ${e.step}; step ${n + 1} of phase ${phase} is ${id}`);
+    const label = `${id} (${e.file})`;
+    const issued = utcTime(e.issuedAt);
+    if (issued === null) return stop(`${label}: the issue time is not an absolute UTC time`);
+    if (typeof e.text !== "string") return stop(`${label}: the results file is missing or unreadable`);
+    const r = checkStep(id, e.text, ctx);
+    results.push(r);
+    if (r.verdict !== "MATCH") break; // nextStep() below names the stop
+    const rec = strictJson(e.text);
+    const base = String(e.file).split(/[\\/]/).pop();
+    if (base !== senderFileName(rec)) return stop(`${label}: the file name is not the sender's for the record inside it (${senderFileName(rec)})`);
+    if (names.has(base) || starts.has(rec.startedAt) || contents.has(A.md5(e.text))) return stop(`${label}: this results file, or one with the same start or content, is already used in this phase`);
+    names.add(base); starts.add(rec.startedAt); contents.add(A.md5(e.text));
+    if (issued < go) return stop(`${label}: its command was issued before the phase's go`);
+    if (issued < prevEnd) return stop(`${label}: its command was issued before the previous receipt finished`);
+    const started = Date.parse(rec.startedAt);
+    const finished = Date.parse(rec.finishedAt);
+    if (started < issued) return stop(`${label}: the receipt started before its command was issued; it is not this command's`);
+    if (finished > now) return stop(`${label}: the receipt finished after now`);
+    prevEnd = finished;
+  }
+  const ns = nextStep(phase, results);
+  if (ns.stop) return { ...stop(ns.reason) };
+  if (ns.next === null) return { stop: false, next: null, complete: true, reason: `phase ${phase} is complete: no further send in it`, results };
+  return { stop: false, next: ns.next, complete: false, reason: `${ns.next} may be sent next: ${STEPS[ns.next].text} to staging, before ${deadline}`, results };
+}
+
+/** The --progress command line: [phase, go, deadline, reviewed, entries] or a usage error. */
+export function parseProgressArgs(args) {
+  const o = { phase: null, goAt: null, deadline: null, reviewed: null, entries: [] };
+  const a = [...args];
+  while (a.length) {
+    const x = a.shift();
+    if (x === "--progress") o.phase = a.shift() ?? null;
+    else if (x === "--go") o.goAt = a.shift() ?? null;
+    else if (x === "--deadline") o.deadline = a.shift() ?? null;
+    else if (x === "--reviewed") o.reviewed = a.shift() ?? null;
+    else {
+      const eq = x.indexOf("=");
+      const at = x.lastIndexOf("@");
+      if (eq < 1 || at < eq + 2) throw new Error(`not <STEP>=<results file>@<UTC>: ${x}`);
+      o.entries.push({ step: x.slice(0, eq), file: x.slice(eq + 1, at), issuedAt: x.slice(at + 1) });
+    }
+  }
+  if (!o.phase || !o.goAt || !o.deadline) throw new Error("--progress needs <PHASE>, --go and --deadline");
+  return o;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const [id, file] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const [id, file] = argv;
   let ctx;
   try { ctx = contextAt("HEAD", ROOT); } catch (e) { process.stderr.write(`stage0-capture: ${e.message}\n`); process.exit(2); }
+  if (id === "--progress") {
+    let o;
+    try { o = parseProgressArgs(argv); } catch (e) { process.stderr.write(`usage: ${e.message}\n`); process.exit(2); }
+    for (const e of o.entries) { try { e.text = readFileSync(e.file, "utf8"); } catch { e.text = null; } }
+    const now = Date.now();
+    const g = progress({ ...o, now }, ctx);
+    process.stdout.write(`phase ${o.phase}; go ${o.goAt}; deadline ${o.deadline}; now ${new Date(now).toISOString()}\n`);
+    for (const r of g.results) process.stdout.write(`  ${r.verdict} ${r.step} ${r.text}${r.reasons.length ? ` | ${r.reasons.join("; ")}` : ""}\n`);
+    process.stdout.write(g.stop ? `STOP: ${g.reason}\n` : g.complete ? `COMPLETE: ${g.reason}\n` : `NEXT: ${g.reason}\n`);
+    process.stdout.write("Read-only: this names the step the runbook allows; Ryan's go and the runbook are the authority.\n");
+    process.exit(g.stop ? 3 : g.complete ? 4 : 0);
+  }
   if (id === "--list") {
     for (const [ph, p] of Object.entries(PHASES)) {
       process.stdout.write(`phase ${ph} (token: ${p.token}; ${p.writes ? "writes" : "read-only"})\n`);
@@ -253,7 +385,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     }
     process.exit(0);
   }
-  if (!STEPS[id] || !file) { process.stderr.write("usage: stage0-capture.mjs --list | <STEP> <results file>\n"); process.exit(2); }
+  if (!STEPS[id] || !file) { process.stderr.write("usage: stage0-capture.mjs --list | <STEP> <results file> | --progress <PHASE> --go <UTC> --deadline <UTC> [--reviewed <ref>] [<STEP>=<file>@<UTC>]...\n"); process.exit(2); }
   let text = null;
   try { text = readFileSync(file, "utf8"); } catch { /* reported below */ }
   const r = text === null ? { step: id, text: STEPS[id].text, verdict: "STOP", reasons: ["the results file is missing or unreadable"] } : checkStep(id, text, ctx);
