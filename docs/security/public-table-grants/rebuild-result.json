@@ -1,0 +1,2141 @@
+{
+  "engine": "PostgreSQL 17.5 on wasm32-unknown-linux-gnu, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5), 32-bit",
+  "migrations": 21,
+  "draft": "docs/security/public-table-grants/record_public_table_grants.sql",
+  "runs": {
+    "old": {
+      "grantRows": 68,
+      "vsLive": [],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres,service_role"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [],
+      "checksPassed": 28,
+      "checks": 28
+    },
+    "old + draft": {
+      "grantRows": 68,
+      "vsLive": [],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres,service_role"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [],
+      "checksPassed": 28,
+      "checks": 28
+    },
+    "new": {
+      "grantRows": 26,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "auth_attempts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "device_enrollments|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "enrollment_tickets|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "staff_sessions|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "upload_capabilities|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "upload_capability_files|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres,service_role"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [
+        {
+          "role": "anon",
+          "check": "stores: select by slug",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "paper_types: select",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "anon",
+          "check": "sheet_prices: select",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "anon",
+          "check": "discounts: select",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "anon",
+          "check": "addons: select",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "anon",
+          "check": "settings: select",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: count today",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: queue list",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: insert ... returning",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: list",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "orders: insert ... returning",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "orders: list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "verify_employee_pin rpc",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "orders: a real row, RLS included",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: a real row, RLS included",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "authenticated",
+          "check": "stores: select + update",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "authenticated",
+          "check": "memberships: own role",
+          "result": "42501 permission denied for table memberships"
+        },
+        {
+          "role": "authenticated",
+          "check": "paper_types: upsert, select, delete",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "authenticated",
+          "check": "sheet_prices: upsert",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "authenticated",
+          "check": "discounts: delete + insert",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "authenticated",
+          "check": "addons: upsert",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "authenticated",
+          "check": "settings: upsert",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "authenticated",
+          "check": "employees: select, insert, update",
+          "result": "42501 permission denied for table employees"
+        },
+        {
+          "role": "authenticated",
+          "check": "orders: dashboard list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "service_role",
+          "check": "pending_jobs: function reads and writes",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "service_role",
+          "check": "stores: send-print-job, register-job",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "service_role",
+          "check": "memberships: enroll-list, enroll-ticket-create",
+          "result": "42501 permission denied for table memberships"
+        }
+      ],
+      "checksPassed": 1,
+      "checks": 28
+    },
+    "new + draft": {
+      "grantRows": 63,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres,service_role"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [],
+      "checksPassed": 28,
+      "checks": 28
+    },
+    "new-strict": {
+      "grantRows": 26,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "auth_attempts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "device_enrollments|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "enrollment_tickets|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "staff_sessions|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "upload_capabilities|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "upload_capability_files|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres,service_role"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [
+        {
+          "role": "anon",
+          "check": "stores: select by slug",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "paper_types: select",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "anon",
+          "check": "sheet_prices: select",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "anon",
+          "check": "discounts: select",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "anon",
+          "check": "addons: select",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "anon",
+          "check": "settings: select",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: count today",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: queue list",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: insert ... returning",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: list",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "orders: insert ... returning",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "orders: list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "verify_employee_pin rpc",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "orders: a real row, RLS included",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: a real row, RLS included",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "authenticated",
+          "check": "stores: select + update",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "authenticated",
+          "check": "memberships: own role",
+          "result": "42501 permission denied for table memberships"
+        },
+        {
+          "role": "authenticated",
+          "check": "paper_types: upsert, select, delete",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "authenticated",
+          "check": "sheet_prices: upsert",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "authenticated",
+          "check": "discounts: delete + insert",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "authenticated",
+          "check": "addons: upsert",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "authenticated",
+          "check": "settings: upsert",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "authenticated",
+          "check": "employees: select, insert, update",
+          "result": "42501 permission denied for table employees"
+        },
+        {
+          "role": "authenticated",
+          "check": "orders: dashboard list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "service_role",
+          "check": "pending_jobs: function reads and writes",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "service_role",
+          "check": "stores: send-print-job, register-job",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "service_role",
+          "check": "memberships: enroll-list, enroll-ticket-create",
+          "result": "42501 permission denied for table memberships"
+        }
+      ],
+      "checksPassed": 1,
+      "checks": 28
+    },
+    "new-strict + draft": {
+      "grantRows": 63,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres,service_role"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [],
+      "checksPassed": 28,
+      "checks": 28
+    },
+    "docs": {
+      "grantRows": 26,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "auth_attempts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "device_enrollments|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "enrollment_tickets|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "staff_sessions|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "upload_capabilities|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "upload_capability_files|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [
+        {
+          "role": "anon",
+          "check": "stores: select by slug",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "paper_types: select",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "anon",
+          "check": "sheet_prices: select",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "anon",
+          "check": "discounts: select",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "anon",
+          "check": "addons: select",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "anon",
+          "check": "settings: select",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: count today",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: queue list",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: insert ... returning",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: list",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "orders: insert ... returning",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "orders: list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "verify_employee_pin rpc",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "orders: a real row, RLS included",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: a real row, RLS included",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "authenticated",
+          "check": "stores: select + update",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "authenticated",
+          "check": "memberships: own role",
+          "result": "42501 permission denied for table memberships"
+        },
+        {
+          "role": "authenticated",
+          "check": "paper_types: upsert, select, delete",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "authenticated",
+          "check": "sheet_prices: upsert",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "authenticated",
+          "check": "discounts: delete + insert",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "authenticated",
+          "check": "addons: upsert",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "authenticated",
+          "check": "settings: upsert",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "authenticated",
+          "check": "employees: select, insert, update",
+          "result": "42501 permission denied for table employees"
+        },
+        {
+          "role": "authenticated",
+          "check": "orders: dashboard list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "service_role",
+          "check": "pending_jobs: function reads and writes",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "service_role",
+          "check": "stores: send-print-job, register-job",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "service_role",
+          "check": "memberships: enroll-list, enroll-ticket-create",
+          "result": "42501 permission denied for table memberships"
+        }
+      ],
+      "checksPassed": 1,
+      "checks": 28
+    },
+    "docs + draft": {
+      "grantRows": 63,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [],
+      "checksPassed": 28,
+      "checks": 28
+    },
+    "docs-global": {
+      "grantRows": 26,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "_archive_commission_columns|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "auth_attempts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "device_enrollments|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "discounts|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "employees|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "enrollment_tickets|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "organizations|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "pending_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "print_jobs|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "settings|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "sheet_prices|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "staff_sessions|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|authenticated",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "stores|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "upload_capabilities|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        },
+        {
+          "table_grantee": "upload_capability_files|service_role",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "DELETE,INSERT,SELECT,UPDATE rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [
+        {
+          "role": "anon",
+          "check": "stores: select by slug",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "paper_types: select",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "anon",
+          "check": "sheet_prices: select",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "anon",
+          "check": "discounts: select",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "anon",
+          "check": "addons: select",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "anon",
+          "check": "settings: select",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: count today",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "pending_jobs: queue list",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: insert ... returning",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: list",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "anon",
+          "check": "orders: insert ... returning",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "orders: list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "verify_employee_pin rpc",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "anon",
+          "check": "orders: a real row, RLS included",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "anon",
+          "check": "print_jobs: a real row, RLS included",
+          "result": "42501 permission denied for table print_jobs"
+        },
+        {
+          "role": "authenticated",
+          "check": "stores: select + update",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "authenticated",
+          "check": "memberships: own role",
+          "result": "42501 permission denied for table memberships"
+        },
+        {
+          "role": "authenticated",
+          "check": "paper_types: upsert, select, delete",
+          "result": "42501 permission denied for table paper_types"
+        },
+        {
+          "role": "authenticated",
+          "check": "sheet_prices: upsert",
+          "result": "42501 permission denied for table sheet_prices"
+        },
+        {
+          "role": "authenticated",
+          "check": "discounts: delete + insert",
+          "result": "42501 permission denied for table discounts"
+        },
+        {
+          "role": "authenticated",
+          "check": "addons: upsert",
+          "result": "42501 permission denied for table addons"
+        },
+        {
+          "role": "authenticated",
+          "check": "settings: upsert",
+          "result": "42501 permission denied for table settings"
+        },
+        {
+          "role": "authenticated",
+          "check": "employees: select, insert, update",
+          "result": "42501 permission denied for table employees"
+        },
+        {
+          "role": "authenticated",
+          "check": "orders: dashboard list",
+          "result": "42501 permission denied for table orders"
+        },
+        {
+          "role": "service_role",
+          "check": "pending_jobs: function reads and writes",
+          "result": "42501 permission denied for table pending_jobs"
+        },
+        {
+          "role": "service_role",
+          "check": "stores: send-print-job, register-job",
+          "result": "42501 permission denied for table stores"
+        },
+        {
+          "role": "service_role",
+          "check": "memberships: enroll-list, enroll-ticket-create",
+          "result": "42501 permission denied for table memberships"
+        }
+      ],
+      "checksPassed": 1,
+      "checks": 28
+    },
+    "docs-global + draft": {
+      "grantRows": 63,
+      "vsLive": [
+        {
+          "table_grantee": "_archive_commission_columns|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "addons|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "discounts|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "employees|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "memberships|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "orders|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "organizations|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "outsourced_products|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "(none)"
+        },
+        {
+          "table_grantee": "paper_types|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "pending_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "print_jobs|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "INSERT,SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "settings|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "sheet_prices|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        },
+        {
+          "table_grantee": "stores|anon",
+          "left": "DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE rls=true/false",
+          "right": "SELECT rls=true/false"
+        }
+      ],
+      "functions": [
+        {
+          "fn": "employees_role_owner_only()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "has_store_role(p_store uuid, p_roles text[])",
+          "secdef": true,
+          "execute_to": "authenticated,postgres"
+        },
+        {
+          "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)",
+          "secdef": true,
+          "execute_to": "postgres,service_role"
+        },
+        {
+          "fn": "set_updated_at()",
+          "secdef": false,
+          "execute_to": "postgres"
+        },
+        {
+          "fn": "verify_employee_pin(p_store_id uuid, p_pin text)",
+          "secdef": true,
+          "execute_to": "anon,authenticated,postgres,service_role"
+        }
+      ],
+      "checksFailed": [],
+      "checksPassed": 28,
+      "checks": 28
+    }
+  },
+  "noOpOnOldDefault": [],
+  "locksHeldByTheDraft": []
+}

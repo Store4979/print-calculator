@@ -1,0 +1,12 @@
+{
+  "project": "gmxyisjjaxtpycsmmzef",
+  "read": "2026-10-20, ad-hoc read-only execute_sql (MCP): EXECUTE on functions in public, extension members left out. The same query is FUNCS in rebuild.mjs.",
+  "query": "select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as fn, p.prosecdef as secdef, string_agg(coalesce(r.rolname, 'PUBLIC'), ',' order by coalesce(r.rolname, 'PUBLIC')) as execute_to from pg_proc p join pg_namespace n on n.oid = p.pronamespace cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a left join pg_roles r on r.oid = a.grantee where n.nspname = 'public' and a.privilege_type = 'EXECUTE' and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e') group by p.oid, p.proname, p.prosecdef order by 1",
+  "rows": [
+    { "fn": "employees_role_owner_only()", "secdef": false, "execute_to": "postgres,service_role" },
+    { "fn": "has_store_role(p_store uuid, p_roles text[])", "secdef": true, "execute_to": "authenticated,postgres,service_role" },
+    { "fn": "redeem_enrollment_ticket(p_ticket_hash bytea, p_token_hash bytea, p_csrf_secret bytea, p_label text)", "secdef": true, "execute_to": "postgres,service_role" },
+    { "fn": "set_updated_at()", "secdef": false, "execute_to": "postgres,service_role" },
+    { "fn": "verify_employee_pin(p_store_id uuid, p_pin text)", "secdef": true, "execute_to": "anon,authenticated,postgres,service_role" }
+  ]
+}

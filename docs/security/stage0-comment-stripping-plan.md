@@ -1,6 +1,7 @@
 # Stage 0 — the comment-stripping correction (CS) — PLAN
 
-**Status: REVIEWED plan. Codex, 2026-10-15: AMEND, direction accepted.**
+**Status: IMPLEMENTED and ACCEPTED at I `c75d1d7` (Codex, 2026-10-20).**
+The plan was reviewed by Codex on 2026-10-15: AMEND, direction accepted.
 Codex's rulings are folded in below (§0 lists them). Codex said no further
 plan-only round is needed once they are in.
 - **Ryan cleared the implementation as local commits** (2026-10-15).
@@ -83,6 +84,10 @@ The CS-4 coverage is stated exactly: six wrapper combinations are skipped
   adds the regressions for each `non_newline_space` character before and
   after LF, CRLF and CR, with and without a line comment, through both
   consumers.
+
+**Codex's review of I `c75d1d7` (2026-10-20): ACCEPT, non-blocking.** CS-R2
+is closed, and **the CS correction is accepted at I**
+(`reviews/2026-10-20-c75d1d7-review.md`; plan §E13).
 
 ## 1. What is required
 

@@ -152,7 +152,8 @@ Each is planned after this record, for Codex review.
 source-reading checks must move to JavaScript/JSX-aware and SQL-aware
 handling, with explicit behaviour on parse failure. It is not an incident
 ruling. It is required before any new production-window or security
-clearance that relies on those checks.
+clearance that relies on those checks. **Codex accepted it at I `c75d1d7`
+on 2026-10-20** (plan §E13).
 
 ## 6. Re-opening evidence (Codex §1)
 

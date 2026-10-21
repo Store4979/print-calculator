@@ -383,10 +383,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     means no more writes are started. Never pick an operation from memory.
 - STAGE-0 INCIDENT, 2026-10-09 (docs/security/stage0-incident-2026-10-09.md;
   Codex's incident review, 2026-10-12, is its Appendix A). NO production
-  migration window is cleared until Codex items 2, 3, 4(c) and 6 AND the
-  comment-stripping correction (Codex's review of 41153b8) are reviewed.
-  The comment-stripping correction also comes before any security
-  clearance that relies on a source-reading test. The lessons:
+  migration window is cleared until Codex items 2, 3, 4(c) and 6 are
+  reviewed. The comment-stripping correction (Codex's review of 41153b8),
+  which had to come first, was accepted at c75d1d7 (Codex, 2026-10-20). The
+  lessons:
   - **Every pause ends the session.** Before stepping away or ending a
     window: delete both tokens and close both windows (runbook §9). A
     clearance never survives a stop, and no loaded production token stays
@@ -557,6 +557,30 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    release2_04). A `returns table (...)` OUT column name that matches any table
    column in the body is a collision waiting to happen: alias every table and
    qualify every column.
+   TABLE GRANTS AND RLS (rule, 2026-10-20): every migration that creates a
+   table in `public` states, IN THE SAME MIGRATION, both its RLS and its
+   grants. From 2026-10-30 Supabase gives a NEW table or sequence no Data API
+   grants (changelog 45329), however it is created, migrations included, so
+   a database rebuilt from them (db reset, preview branches, new projects,
+   staging rebuilds) gets none. Existing objects keep what they have. The
+   changelog does not change function EXECUTE; the FUNCTION ACLs rule above
+   already makes that explicit. A rebuilt database must come out the same
+   under the old default and the new one:
+   - `alter table … enable row level security;` and its policies. A
+     service_role-only table has RLS on and ZERO policies (Release 2's tables);
+   - `revoke all on table … from public, anon, authenticated, service_role;`,
+     then explicit grants of exactly the privileges each role uses.
+     `.insert(…).select(…)` (INSERT … RETURNING) needs SELECT as well. anon
+     gets only what the signed-out app calls today, and only where a policy
+     admits it;
+   - an identity or serial column: `grant usage on sequence …` to every role
+     that inserts.
+
+   The tables that predate this rule got their grants from the old default.
+   docs/security/public-table-grants/record_public_table_grants.sql states
+   them. It is a PARKED draft, applied nowhere, kept outside
+   supabase/migrations/ until stage 0 is complete (plan §I). This is a review
+   rule: no test enforces it yet.
    SOURCE-STRING ASSERTIONS READ A CODE-ONLY VIEW, at the read, never per
    assertion (docs/security/stage0-comment-stripping-plan.md):
    - **JavaScript/JSX: `jsCode(src, { label })`** from

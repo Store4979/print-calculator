@@ -2510,6 +2510,86 @@ window.**
       commits;
     - item 2's capture runbook, exact probe pins and stop rules go to
       Codex before any staging send.
+- **Codex reviewed F `54edb6a` and G `9333448`, 2026-10-16**
+  (`reviews/2026-10-16-9333448-review.md`, with
+  `release-9333448-repros.mjs`/`.json`):
+  - **F: ACCEPT** as documentation and record.
+  - **G: AMEND, three blocking lexer-preservation defects,** each
+    reproduced:
+    - **CS-R1:** a lone CR after a `--` comment hid a DROP from the
+      read-only predicate and a CREATE from the inventory. PGlite 17.5 ran
+      the DROP;
+    - **CS-R2:** a continued E-string lost its escape mode, hiding a DROP;
+    - **CS-R3:** JS blanking dropped U+2028/U+2029 from comments, so
+      `return /*…*/ 1` changed meaning while every token stayed equal.
+  - **Accepted:** the rollback test's pass count moving from 7 to 8.
+  - **Non-blocking:**
+    - the line-anchored import predicates are a separate tracked item
+      (§I);
+    - the CS-4 coverage is to be stated exactly: six combinations are
+      skipped.
+  - **Codex's independent targeted run at G:** 54/54.
+  - **Ryan (2026-10-16): G is not amended.** Commit H on top fixes
+    CS-R1…R3, with required-failing regressions. Nothing is pushed, and
+    item 2 still waits for CS.
+- **Codex reviewed H `1c4d8a4`, 2026-10-18: AMEND, one blocker**
+  (`reviews/2026-10-18-1c4d8a4-review.md`, with the
+  `release-1c4d8a4-*` files).
+  - **Accepted:**
+    - CS-R1 and CS-R3;
+    - the CS-4 wording;
+    - the separate import item;
+    - the re-pins;
+    - a Unicode audit of every path changed since `7181b42`, A–E
+      included: no further problem;
+    - ordinary continuation, identical between G and H on all 75 real
+      inputs.
+  - **CS-R2's recognizer omitted vertical tab** before the first newline
+    (scan.l `non_newline_space` is `[ \t\f\v]`).
+    `select E'a'<VT>⏎'it\'s -- x'; drop table …` gave no read-only
+    violation, and PostgreSQL 17.5 dropped the table.
+  - **Ryan (2026-10-20): commit I on top of H.**
+    - Every whitespace and newline set is copied from scan.l.
+    - The regressions run through both consumers.
+    - A review-only PGlite differential check runs outside the
+      repository.
+    - Nothing is pushed, and item 2 still waits.
+- **Codex reviewed I `c75d1d7`, 2026-10-20: ACCEPT, non-blocking**
+  (`reviews/2026-10-20-c75d1d7-review.md`, with
+  `release-c75d1d7-targeted-tests.txt` and
+  `release-c75d1d7-review-check.mjs`/`.json`).
+  - **CS-R2 is closed, and the CS correction is accepted at I.** Its
+    acceptances of CS-R1, CS-R3, the Unicode audit and the coverage wording
+    stand.
+  - **Codex's independent checks:**
+    - 51/51 targeted tests;
+    - 15 separator variants run in PGlite 17.5, the exact VT case
+      included. Every DROP and CREATE ran, and its consumer reported it;
+    - H and I identical on all 75 canonical inputs;
+    - replay root `cf2ffe5` has I's exact tree.
+
+    It did not rerun the full suite, the build, the replay or the
+    9,072-input differential. Those stay supplied evidence.
+  - **The differential is accepted as finite-corpus corroboration,** not
+    as a proof of equivalence with PostgreSQL's lexer.
+  - **The line-anchored import predicates** stay a separate tracked item
+    (§I).
+  - **Parking the grants migration until after stage 0: ACCEPT, as
+    sequencing only.** Codex did not review the draft or the `CLAUDE.md`
+    rule (§I item 4). It noted that changelog 45329 covers tables and
+    sequences and leaves function EXECUTE unchanged. The rule and §I item 4
+    are worded to match.
+  - **Next scope: item 2 may be implemented locally.** Not authorized: a
+    push, a deploy, a staging capture session, any remote SQL send or a
+    production step. The order stays CS → 2 → 6 → 3 → 4(c).
+  - **Ryan (2026-10-20):**
+    - this docs commit holds the G, H and I records, the import item, §I
+      item 4, the `CLAUDE.md` rule and `docs/security/public-table-grants/`;
+    - push F through this commit to `security/release-2-slice-2`, for its
+      staging build only, once Codex clears it;
+    - item 2 starts locally. No staging send of any kind happens before
+      Codex reviews the implementation, the probe texts and pins, the
+      executable policies and the capture runbook.
 
 ---
 
@@ -2749,7 +2829,19 @@ until approved:**
        2026-10-15). The source-reading checks must use JavaScript/JSX-aware
        and SQL-aware handling, with explicit behaviour on parse failure.
        It is required before any new production-window or security
-       clearance that relies on those checks.
+       clearance that relies on those checks. **ACCEPTED at I `c75d1d7`**
+       (Codex, 2026-10-20; §E13).
+   - **Tracked separately, not part of CS** (Codex's review of `9333448`,
+     2026-10-16; non-blocking for CS): **the line-anchored import
+     predicates.**
+     - The predicates are `build-stamp.test.js:44` (`stampImport`,
+       `/^\s*import\s/m`) and `release2-deploy-context.test.js:44,64`
+       (`importsOf`/`dc20Imports`, `/^import…/gm`).
+     - A module holding `const x = 1; import extra from "./extra.js";`
+       evades both. This is a matching defect, not code deleted by `jsCode`.
+     - They are to be replaced with AST import declarations, and the item
+       is to define whether its policy also covers re-exports and dynamic
+       imports.
    - **The P1–P3 runbook cannot be used again.**
      `docs/security/stage0-p1-p3-runbook.md` was executed at H to P1 (§E11).
      Its P1 and P2-01 refuse over 01.
@@ -2795,6 +2887,91 @@ until approved:**
        - the time rule: the whole remaining path must fit before 20:15.
      - The pre-window suite and the 15-state replay run at that head.
 3. P5 (C5), after P4 and before P6 (C10), from the reviewed C5 runbook.
+4. **After stage 0 is complete, for Codex review: the public-table grants
+   record.** Ryan parked it on 2026-10-20. Nothing is applied to staging or
+   production before then.
+   - **Why.** Supabase changelog 45329: from 2026-10-30 a NEW table or
+     sequence in `public` gets no automatic Data API grants, however it is
+     created, migrations included. A database rebuilt from migrations
+     therefore gets none. Existing objects keep their grants. Function
+     EXECUTE is not part of that change. Only the opt-in snippet on the
+     "Securing your API" docs page also revokes it.
+     Every table that predates the `CLAUDE.md` rule "TABLE GRANTS AND RLS"
+     got its grants from the old default, so a rebuild after that date gives
+     the app's roles nothing on them.
+   - **Stage 0 does not depend on it.** Production and staging keep their
+     grants, and 02–05 create only functions, each with its own revoke and
+     grant. Applying it now would move the production ledger in the middle of
+     Release 2.
+   - **The draft:** `docs/security/public-table-grants/record_public_table_grants.sql`.
+     It is kept outside `supabase/migrations/`, so no discovery or record
+     check sees it. It holds GRANTs only, each already held on production:
+     - service_role: its exact grants on all 20 tables;
+     - authenticated: its exact grants on the 14 application tables;
+     - anon, **narrowed** (Ryan's decision): SELECT on stores, paper_types,
+       sheet_prices, discounts, addons, settings and pending_jobs; SELECT and
+       INSERT on orders and print_jobs. Production's anon keeps all eight
+       privileges on the 14 tables until Release 2 closes the grants;
+     - **tables only** (Ryan's decision). If function defaults were removed
+       too (the docs page's opt-in snippet, not the changelog), a rebuild
+       would drop service_role's EXECUTE on `set_updated_at()`,
+       `employees_role_owner_only()` and `has_store_role()`. service_role
+       calls none of them, and a trigger fires without EXECUTE.
+   - **The upload page, Ryan's condition for narrowing anon.**
+     `src/UploadApp.jsx` reaches exactly ONE table directly as anon:
+     - `fetchStoreProfile()` (`src/lib/storeConfig.js:78`), a `select *` on
+       `stores` by slug, on page load, for the page header. It falls back to
+       the built-in profile on any error. The draft keeps anon's SELECT on
+       stores.
+     - Everything else goes through Netlify functions (start-upload,
+       register-job, fetch-link-job). The file bytes go to Storage
+       (`customer-uploads`) by `uploadToSignedUrl`, not to a table.
+     - The parsed module closure: `upload-main.jsx` → `UploadApp.jsx` →
+       `pdfSafe.js`, `supabase.js`, `storeConfig.js`,
+       `storeConfigAssemble.js`. None makes a table call at import time.
+   - **Evidence, in the same folder:**
+     - `live-grants-20261020.json` and `live-functions-20261020.json`:
+       production, ad-hoc read-only;
+     - `rebuild.mjs` and `rebuild-result.json`. They rebuild the 21 applied
+       migrations in a local PG 17.5 (PGlite, outside the repository). Five
+       default-privilege variants run, from today's to the changelog's
+       (`new-strict`) and beyond. Each runs with and without the draft, with
+       28 checks in the shapes the client and the functions issue:
+       - without the draft: 1/28 under every new-default variant;
+       - with it: 28/28 under all five;
+       - 0 grant differences from production under today's default (the
+         no-op). Under the new defaults, the only differences are anon's 14
+         narrowed rows;
+       - the draft took no relation lock on the public tables.
+     - Not covered: PostgREST, Realtime, Storage, Auth and the UI.
+   - **The record-side changes it needs, reviewed before any apply.** A
+     scratch clone of `c75d1d7` with the draft recorded as an applied
+     top-level file gave `yarn test` 389/427, with 38 failures:
+     - **M-8** refuses an applied migration file that is not a Release 2
+       one (`unexpected applied migration file`). The manifest model needs a
+       state-aware place for a non-Release-2 applied migration.
+     - **INV-6** requires `supabase/tables.json`'s `ledgerVersion` to equal
+       the newest applied file. Recapture it with
+       `scripts/manual/tables-snapshot.sql` after the apply.
+     - **Fixtures** that assume 01 is the newest applied file: inventory
+       mutation, RB-INV, INV-1/2/6, LC-1/3/4/5 and REC-1.
+     - **The record path.** `stage0-record.mjs` records only stage-0 steps.
+       This record needs its own reviewed procedure: read the ledger version
+       back, then name the file by it, byte-identical to `statements[1]`
+       (md5 from the blob; this checkout is CRLF).
+     - **Any stage-0 text still to run.** P0's `ledger_matches_repo` is an
+       exact set comparison and would need the row. LEDGER_INSERT takes a
+       version after the head, and the identity guards check a subset, so
+       those accept an extra row. Codex is to confirm this against the texts
+       that remain.
+     - The full suite and the replay at that head.
+   - **Then the apply:** staging first, then production. Each runs the
+     relation-grants query (`GRANTS` in `rebuild.mjs`) before and after,
+     which must show no difference, and reads the ledger version back.
+   - **Optional, after CS is accepted:** a test that enforces the rule. A
+     CREATE TABLE would need RLS enabled and an explicit grant or revoke
+     naming the table, in the same file. The six migrations that predate
+     the rule would be listed as exempt.
 
 ---
 
