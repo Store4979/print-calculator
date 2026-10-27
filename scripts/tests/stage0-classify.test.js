@@ -3,7 +3,7 @@
 // executable stop rules (scripts/manual/stage0-capture.mjs). Classifier plan
 // §5. No test here reaches the network or a database.
 //
-//   CL-1  history: the nine held receipts classify as on record
+//   CL-1  history and the capture: the 24 held receipts classify as on record
 //   CL-2  the real fixtures are the sender's files byte for byte
 //   CL-3  coverage: a predicate entry for exactly the send policy's texts; the
 //         receipt keys are the real sender's; the observed statuses
@@ -29,6 +29,10 @@
 //   CL-22 the progression gate: NEXT, COMPLETE and every stop, freshness and
 //         single use included
 //   CL-23 the gate's command line
+//   CL-24 the capture's 15 receipts: each step's MATCH now; L's classes kept
+//   CL-25 the recorded progression of B, A, T and U replays through the gate
+//   CL-26 a PERFORM query binds to its own text; a statement frame pairs with
+//         the frame of the statement that ran it
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -48,7 +52,7 @@ const M = JSON.parse(readFileSync(join(ROOT, MANIFEST_PATH), "utf8"));
 const ctx = C.contextFor(M, { cwd: ROOT });
 
 // The receipts in .stage0-send/ as the sender wrote them: md5 of the file, and the class on record.
-const REAL = {
+const HELD = {
   "2026-10-07T00-11-42-130Z_SIZE-PROBE_staging.json": ["b5fea7c74ccc0c2a559fd2e43a958604", "R2"],
   "2026-10-07T15-21-44-109Z_P0_production.json": ["a4407704e2e73a3c9e7a251bd94ac074", "R2"],
   "2026-10-09T01-24-24-192Z_P0_production.json": ["567a4646edfac8eff50c951b9635cbdd", "R2"],
@@ -59,6 +63,27 @@ const REAL = {
   "2026-10-09T15-17-50-900Z_P2-01_production.json": ["9b497c2c99c7616359289c8774957808", "R3"],
   "2026-10-13T16-02-46-359Z_STATE_production.json": ["4bfd515a52745533dc2b6d1aefdc3dd2", "R2"],
 };
+// The item 2 capture's receipts on staging (plan §E14), by step: the file,
+// its md5, the class the capture commit gives it, and the class rule 3′ gave
+// it at L (1042d2c), which the capture records keep.
+const CAPTURE = {
+  B1: ["2026-10-22T15-35-38-187Z_ENVELOPE-PROBE-1_staging.json", "e95f621b69c39af28d85196c5c9daf45", "R3", "R4"],
+  B2: ["2026-10-22T15-43-05-120Z_ENVELOPE-PROBE-2_staging.json", "47303b3eb7b022f87cbfc5d9e934ed19", "R3", "R4"],
+  B3: ["2026-10-22T15-43-57-386Z_ENVELOPE-PROBE-3_staging.json", "94f373a573429158ef476acb39d03b54", "R4", "R4"],
+  B4: ["2026-10-22T15-44-50-624Z_ENVELOPE-PROBE-4_staging.json", "1f159c49497390bbd1d7d42e3e0e8964", "R3", "R4"],
+  B5: ["2026-10-22T15-45-41-244Z_ENVELOPE-PROBE-5_staging.json", "777a619451a5b8a8c4967e234011aca5", "R4", "R4"],
+  A1: ["2026-10-22T16-40-36-989Z_LOCKPROBE-SETUP_staging.json", "cd8bb95e58c29165d7563962e30ebc10", "R2", "R2"],
+  A2: ["2026-10-22T16-41-36-172Z_LOCKPROBE-B-LOCKTIMEOUT_staging.json", "a54661da84ebe306c517752a9bfa047b", "R3", "R3"],
+  A3: ["2026-10-22T16-45-58-150Z_LOCKPROBE-B-STMTTIMEOUT_staging.json", "226de5fcaca12f4ccb7cc14f440d7106", "R3", "R3"],
+  A4: ["2026-10-22T16-48-07-410Z_LOCKPROBE-B-POSITIVE_staging.json", "60a5535dd8cd80c2462b0b3ac5f4ad1b", "R2", "R2"],
+  A5: ["2026-10-22T16-50-51-100Z_LOCKPROBE-READBACK_staging.json", "82eaa0daa19d6b64eff5aee01a0c0635", "R2", "R2"],
+  A6: ["2026-10-22T16-51-47-129Z_LOCKPROBE-CLEANUP_staging.json", "713ef03d32bd141c0a5d25e43912223d", "R2", "R2"],
+  T1: ["2026-10-23T15-27-47-027Z_LOCKPROBE-SETUP_staging.json", "ff576ccebc8d4339095db05193948b4a", "R2", "R2"],
+  T2: ["2026-10-23T15-31-55-289Z_LOCKPROBE-B-TXTIMEOUT_staging.json", "c40698a74e7ed9e714d75f2ae7989ebc", "R3", "R4"],
+  U1: ["2026-10-27T14-29-34-831Z_LOCKPROBE-READBACK_staging.json", "8bb00312b3654b04c93c9b99bb01255d", "R2", "R2"],
+  U2: ["2026-10-27T14-31-49-148Z_LOCKPROBE-CLEANUP_staging.json", "028abf34e66eae4ca23ec475ebe1280e", "R2", "R2"],
+};
+const REAL = { ...HELD, ...Object.fromEntries(Object.values(CAPTURE).map(([f, md5, now]) => [f, [md5, now]])) };
 const SEND1 = "2026-10-09T15-17-05-343Z_P2-01_production.json";
 const SEND2 = "2026-10-09T15-17-50-900Z_P2-01_production.json";
 const STATE01 = "2026-10-13T16-02-46-359Z_STATE_production.json";
@@ -83,7 +108,7 @@ function receiptFor(text, target, httpStatus, body, extra = {}) {
   };
 }
 
-test("CL-1 history: the nine held receipts classify as on record (P2-01 send 2 is R3 P0001; every other one R2)", () => {
+test("CL-1 history and the capture: the 24 held receipts classify as on record (the nine before the capture unchanged; the capture's as Codex's review §2 rules)", () => {
   assert.deepEqual(readdirSync(join(FIX, "real")).sort(), Object.keys(REAL).sort());
   for (const [f, [, want]] of Object.entries(REAL)) assert.equal(C.classifyText(real(f), ctx).class, want, f);
   const c = C.classifyText(real(SEND2), ctx);
@@ -94,6 +119,24 @@ test("CL-1 history: the nine held receipts classify as on record (P2-01 send 2 i
   });
   assert.equal(c.writing, true);
   assert.deepEqual(Object.keys(cls(rec(STATE01)).values).sort(), ["catalog_state", "effective_prefix", "ledger_md5_ok", "ledger_rows", "recovery"]);
+  // The capture's new forms, element by element.
+  const sq = (id) => C.classifyText(real(CAPTURE[id][0]), ctx);
+  assert.deepEqual(sq("B1").sqlError, { severity: "ERROR", sqlstate: "22012", primary: "division by zero", context: [] });
+  assert.deepEqual(sq("B2").sqlError.context, [
+    { kind: "sqlstmt", via: "EXECUTE", input: 0, md5: A.md5(A.ENVELOPE_PROBE_2_EXECUTED) },
+    { kind: "plpgsql", fname: "inline_code_block", line: 1, stmt: "EXECUTE" },
+  ]);
+  assert.deepEqual(sq("B4").sqlError, { severity: "ERROR", sqlstate: "P0001", primary: "probe", detail: "d", hint: "h", context: [{ kind: "plpgsql", fname: "inline_code_block", line: 1, stmt: "RAISE" }] });
+  const t2 = sq("T2");
+  assert.deepEqual(t2.sqlError, {
+    severity: "FATAL", sqlstate: "25P04", primary: "terminating connection due to transaction timeout",
+    context: [
+      { kind: "sqlstmt", via: "PERFORM", input: 1, md5: A.md5("SELECT pg_sleep(30)") },
+      { kind: "plpgsql", fname: "inline_code_block", line: 33, stmt: "PERFORM" },
+    ],
+  });
+  assert.equal(t2.writing, true);
+  for (const id of ["B3", "B5"]) assert.match(sq(id).reasons[0], /a LINE position block is not supported/, id);
 });
 
 test("CL-2 the real fixtures are the sender's files byte for byte: md5, no CR, no token text, tokenRedactedFromResponse false", () => {
@@ -114,6 +157,16 @@ test("CL-3 coverage: one predicate entry per send-policy text, both ways; the re
     else { assert.equal(typeof s.check, "function", k); assert.ok(s.source, `${k}: the SQL or receipt it comes from`); }
   }
   assert.deepEqual(Object.keys(C.OBSERVED_STATUSES), ["400"]);
+  // Every SUPPORT entry and PERFORM binding names the receipt that shows it:
+  // each receipt time in it is a fixture's.
+  const leaves = (o) => (typeof o === "string" ? [o] : o && typeof o === "object" ? Object.values(o).flatMap(leaves) : []);
+  const stamps = (w) => w.match(/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z/g) || [];
+  const witnesses = [...leaves(C.SUPPORT), ...Object.values(C.PERFORM_QUERIES).flat().map((e) => e.witness), ...leaves(C.OBSERVED_STATUSES)];
+  assert.equal(witnesses.length, 13, "11 SUPPORT entries, 1 PERFORM binding, 1 status");
+  for (const w of witnesses) {
+    assert.ok(stamps(w).length, `a witness without a receipt time: ${w}`);
+    for (const t of stamps(w)) assert.ok(Object.keys(REAL).some((f) => f.startsWith(t.split(":").join("-").split(".").join("-"))), `${t}: no fixture holds that receipt`);
+  }
   // The record the real sender writes, through a mock fetch: its keys, and its class.
   const plan = S.planSend(M, "P2-01", "production", { cwd: ROOT });
   const r = await S.send(plan, { token: "sbp_test", fetchImpl: async () => ({ status: 201, text: async () => SET45 }), clock: () => new Date("2026-10-21T12:00:00.000Z") });
@@ -239,47 +292,70 @@ const FULL = {
 };
 const P = "Failed to run sql query: ";
 const TRAP = 'select 1;\n-- "\nPL/pgSQL function inline_code_block line 1 at EXECUTE\nselect 1/0;';
-// Each case: the message, its candidate inputs, and whether the grammar accepts it under FULL.
+const EX = (sql) => ({ sql, via: "EXECUTE" });
+const PF = (sql) => ({ sql, via: "PERFORM" });
+const PROBE2 = A.ENVELOPE_PROBE_2_EXECUTED;
+const SLEEP = "SELECT pg_sleep(30)";
+const sqlFrame = (sql, stmt) => `CONTEXT:  SQL statement "${sql}"\nPL/pgSQL function inline_code_block line 1 at ${stmt}\n`;
+// Each case: the message, its candidates, and whether the grammar accepts it
+// under FULL (every element enabled) and under the capture commit's SUPPORT.
 const GRAMMAR = [
-  ["the real P0001", M2, [], true],
-  ["field-less", `${P}ERROR:  22012: division by zero\n`, [], true],
-  ["a SQL statement frame quoting a pinned input", `${P}ERROR:  22012: division by zero\nCONTEXT:  SQL statement "${A.ENVELOPE_PROBE_2_EXECUTED}"\nPL/pgSQL function inline_code_block line 1 at EXECUTE\n`, [A.ENVELOPE_PROBE_2_EXECUTED], true],
-  ["a pinned input that itself holds a quote, a newline and a PL/pgSQL-looking line", `${P}ERROR:  22012: division by zero\nCONTEXT:  SQL statement "${TRAP}"\nPL/pgSQL function inline_code_block line 1 at EXECUTE\n`, [TRAP], true],
-  ["DETAIL, HINT, CONTEXT in order", `${P}ERROR:  P0001: probe\nDETAIL:  d\nHINT:  h\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n`, [], true],
-  ["FATAL", `${P}FATAL:  25P04: terminating connection due to transaction timeout\n`, [], true],
-  ["fields out of order", `${P}ERROR:  P0001: probe\nHINT:  h\nDETAIL:  d\n`, [], false],
-  ["a repeated field", `${P}ERROR:  P0001: probe\nDETAIL:  d\nDETAIL:  e\n`, [], false],
-  ["an unknown label", `${P}ERROR:  P0001: probe\nNOTE:  n\n`, [], false],
-  ["one space after ERROR:", `${P}ERROR: P0001: probe\n`, [], false],
-  ["a lowercase SQLSTATE", `${P}ERROR:  p0001: probe\n`, [], false],
-  ["a four-character SQLSTATE", `${P}ERROR:  P001: probe\n`, [], false],
-  ["no prefix", `ERROR:  P0001: probe\n`, [], false],
-  ["a prefixed prefix", `proxy: ${P}ERROR:  P0001: probe\n`, [], false],
-  ["a SQL statement frame quoting no pinned input", `${P}ERROR:  22012: division by zero\nCONTEXT:  SQL statement "select 1/0;"\nPL/pgSQL function inline_code_block line 1 at EXECUTE\n`, [A.ENVELOPE_PROBE_2_EXECUTED], false],
-  ["junk after the last frame", `${M2}junk\n`, [], false],
-  ["junk after the last field", `${P}ERROR:  P0001: probe\nDETAIL:  d\njunk\n`, [], false],
-  ["a second primary line", `${P}ERROR:  P0001: probe\nERROR:  P0001: again\n`, [], false],
-  ["an empty primary text", `${P}ERROR:  P0001: \n`, [], false],
-  ["a frame of an unknown kind", `${P}ERROR:  22P02: invalid input syntax for type json\nCONTEXT:  JSON data, line 1: {\n`, [], false],
-  ["a function name that is not supported", `${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function f() line 1 at RAISE\n`, [], false],
-  ["a seven-digit line", `${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function inline_code_block line 1234567 at RAISE\n`, [], false],
-  ["seventeen frames", `${P}ERROR:  P0001: x\nCONTEXT:  ${Array(17).fill("PL/pgSQL function inline_code_block line 1 at RAISE").join("\n")}\n`, [], false],
-  ["a primary text over 8 KiB", `${P}ERROR:  P0001: ${"x".repeat(8 * 1024 + 1)}\n`, [], false],
-  ["a message over the bound", `${P}ERROR:  P0001: x\nDETAIL:  ${"x".repeat(8000)}\n`.repeat(9), [], false],
+  ["the real P0001", M2, [], true, true],
+  ["field-less", `${P}ERROR:  22012: division by zero\n`, [], true, true],
+  ["a SQL statement frame quoting a pinned input", `${P}ERROR:  22012: division by zero\n${sqlFrame(PROBE2, "EXECUTE")}`, [EX(PROBE2)], true, true],
+  ["a pinned input that itself holds a quote, a newline and a PL/pgSQL-looking line", `${P}ERROR:  22012: division by zero\n${sqlFrame(TRAP, "EXECUTE")}`, [EX(TRAP)], true, true],
+  ["DETAIL, HINT, CONTEXT in order", `${P}ERROR:  P0001: probe\nDETAIL:  d\nHINT:  h\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n`, [], true, true],
+  ["FATAL", `${P}FATAL:  25P04: terminating connection due to transaction timeout\n`, [], true, true],
+  ["T2's form: a PERFORM query, then its PERFORM frame", `${P}FATAL:  25P04: terminating connection due to transaction timeout\n${sqlFrame(SLEEP, "PERFORM")}`, [PF(SLEEP)], true, true],
+  ["a single-line QUERY", `${P}ERROR:  P0001: x\nQUERY:  select 1\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\n`, [], true, false],
+  ["a PERFORM query offered as an EXECUTE input", `${P}FATAL:  25P04: x\n${sqlFrame(SLEEP, "PERFORM")}`, [EX(SLEEP)], false, false],
+  ["an executed input followed by a PERFORM frame", `${P}ERROR:  22012: x\n${sqlFrame(PROBE2, "PERFORM")}`, [EX(PROBE2)], false, false],
+  ["a statement frame followed by a RAISE frame", `${P}ERROR:  22012: x\n${sqlFrame(PROBE2, "RAISE")}`, [EX(PROBE2)], false, false],
+  ["an EXECUTE frame with no statement frame before it", `${P}ERROR:  22012: x\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at EXECUTE\n`, [], false, false],
+  ["a PERFORM frame with no statement frame before it", `${P}FATAL:  25P04: x\nCONTEXT:  PL/pgSQL function inline_code_block line 33 at PERFORM\n`, [], false, false],
+  ["a statement frame with nothing after it", `${P}ERROR:  22012: x\nCONTEXT:  SQL statement "${PROBE2}"\n`, [EX(PROBE2)], false, false],
+  ["two statement frames in a row", `${P}ERROR:  22012: x\nCONTEXT:  SQL statement "a"\nSQL statement "b"\nPL/pgSQL function inline_code_block line 1 at EXECUTE\n`, [EX("a"), EX("b")], false, false],
+  ["a LINE position block", JSON.parse(rec(CAPTURE.B5[0]).body).message, [], false, false],
+  ["fields out of order", `${P}ERROR:  P0001: probe\nHINT:  h\nDETAIL:  d\n`, [], false, false],
+  ["a repeated field", `${P}ERROR:  P0001: probe\nDETAIL:  d\nDETAIL:  e\n`, [], false, false],
+  ["an unknown label", `${P}ERROR:  P0001: probe\nNOTE:  n\n`, [], false, false],
+  ["one space after ERROR:", `${P}ERROR: P0001: probe\n`, [], false, false],
+  ["a lowercase SQLSTATE", `${P}ERROR:  p0001: probe\n`, [], false, false],
+  ["a four-character SQLSTATE", `${P}ERROR:  P001: probe\n`, [], false, false],
+  ["no prefix", `ERROR:  P0001: probe\n`, [], false, false],
+  ["a prefixed prefix", `proxy: ${P}ERROR:  P0001: probe\n`, [], false, false],
+  ["a SQL statement frame quoting no pinned input", `${P}ERROR:  22012: division by zero\n${sqlFrame("select 1/0;", "EXECUTE")}`, [EX(PROBE2)], false, false],
+  ["junk after the last frame", `${M2}junk\n`, [], false, false],
+  ["junk after the last field", `${P}ERROR:  P0001: probe\nDETAIL:  d\njunk\n`, [], false, false],
+  ["a second primary line", `${P}ERROR:  P0001: probe\nERROR:  P0001: again\n`, [], false, false],
+  ["an empty primary text", `${P}ERROR:  P0001: \n`, [], false, false],
+  ["a frame of an unknown kind", `${P}ERROR:  22P02: invalid input syntax for type json\nCONTEXT:  JSON data, line 1: {\n`, [], false, false],
+  ["a function name that is not supported", `${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function f() line 1 at RAISE\n`, [], false, false],
+  ["a seven-digit line", `${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function inline_code_block line 1234567 at RAISE\n`, [], false, false],
+  ["seventeen frames", `${P}ERROR:  P0001: x\nCONTEXT:  ${Array(17).fill("PL/pgSQL function inline_code_block line 1 at RAISE").join("\n")}\n`, [], false, false],
+  ["a primary text over 8 KiB", `${P}ERROR:  P0001: ${"x".repeat(8 * 1024 + 1)}\n`, [], false, false],
+  ["a message over the bound", `${P}ERROR:  P0001: x\nDETAIL:  ${"x".repeat(8000)}\n`.repeat(9), [], false, false],
 ];
 
-test("CL-10 the envelope grammar: its accepted forms, its edges and bounds; today's SUPPORT admits only the observed P0001 form", () => {
+test("CL-10 the envelope grammar: its accepted forms, its edges and bounds; the capture commit's SUPPORT admits the captured elements and nothing else", () => {
   for (const [name, m, candidates, ok] of GRAMMAR) assert.equal(C.parseEnvelope(m, { candidates, support: FULL }).ok, ok, `${name} (FULL)`);
-  for (const [name, m, candidates] of GRAMMAR) {
-    const r = C.parseEnvelope(m, { candidates });
-    assert.equal(r.ok, name === "the real P0001", `${name} (SUPPORT)`);
-  }
-  assert.match(C.parseEnvelope(`${P}FATAL:  25P04: x\n`).why, /severity FATAL is not supported yet/);
-  assert.match(C.parseEnvelope(`${P}ERROR:  22012: x\n`).why, /field-less envelope is not supported yet/);
-  assert.match(C.parseEnvelope(`${P}ERROR:  P0001: x\nDETAIL:  d\n`).why, /DETAIL is not supported yet/);
-  // Through a receipt, under the observed status: the grammar's refusals are R4.
+  for (const [name, m, candidates, , okSupport] of GRAMMAR) assert.equal(C.parseEnvelope(m, { candidates }).ok, okSupport, `${name} (SUPPORT)`);
+  // What stays out, by name (Codex's capture review §2).
+  assert.match(C.parseEnvelope(`${P}ERROR:  P0001: x\nQUERY:  q\n`).why, /the field QUERY is not supported yet/);
+  assert.match(C.parseEnvelope(JSON.parse(rec(CAPTURE.B3[0]).body).message).why, /a LINE position block is not supported/);
+  assert.match(C.parseEnvelope(`${P}ERROR:  22P02: x\nDETAIL:  d\nCONTEXT:  JSON data, line 1: {\n`).why, /a frame of a kind that is not supported/);
+  assert.match(C.parseEnvelope(`${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function f() line 1 at RAISE\n`).why, /function is not a supported name/);
+  assert.match(C.parseEnvelope(`${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at FETCH\n`).why, /statement kind that is not supported/);
+  assert.match(C.parseEnvelope(`${P}PANIC:  XX000: x\n`).why, /no ERROR or FATAL/);
+  // Through P2-01 send 2's receipt, under the observed status: a refusal is
+  // R4, and an accepted form that needs no candidate is R3. A statement frame
+  // quotes no input of P2-01's, so it is R4 there.
   const s2 = rec(SEND2);
-  for (const [name, m] of GRAMMAR) if (name !== "the real P0001") assert.equal(cls({ ...s2, body: env(m) }).class, "R4", name);
+  for (const [name, m, candidates, , okSupport] of GRAMMAR) {
+    if (!okSupport) assert.equal(cls({ ...s2, body: env(m) }).class, "R4", name);
+    else if (!candidates.length) assert.equal(cls({ ...s2, body: env(m) }).class, "R3", name);
+    else assert.equal(cls({ ...s2, body: env(m) }).class, "R4", `${name}, under another text`);
+  }
 });
 
 test("CL-11 success is not acceptance: R2 read-backs pass or STOP on their values; a P0 type error is R4", () => {
@@ -318,8 +394,11 @@ const MUTANTS = [
   ["the SQLSTATE class", [["/^[0-9A-Z]{5}$/.test(state)", "/^.{5}$/.test(state)"]], "a lowercase SQLSTATE"],
   ["the field order", [["    if (k < next) return no(`${FIELD_ORDER[k]} is out of order or repeated`);\n", ""]], "fields out of order"],
   ["the frame kinds", [["    return no(\"a frame of a kind that is not supported\");", "    { const e = m.indexOf(String.fromCharCode(10), i); if (e < 0) return no(\"x\"); i = e + 1; return { ok: true, frame: { kind: \"other\" } }; }"]], "a frame of an unknown kind"],
-  ["the pinned sqltext", [["      const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => m.startsWith(`${c}\"" + String.fromCharCode(92) + "n`, start));", "      const e = m.indexOf('\"' + String.fromCharCode(10), start); const hits = e < 0 ? [] : [{ c: m.slice(start, e), n: -1 }];"]], "a SQL statement frame quoting no pinned input"],
-  ["the candidate-first match", [["      const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => m.startsWith(`${c}\"" + String.fromCharCode(92) + "n`, start));", "      const e = m.indexOf('\"' + String.fromCharCode(10), start); const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => e >= 0 && m.slice(start, e) === c);"]], "a pinned input that itself holds a quote, a newline and a PL/pgSQL-looking line"],
+  ["the pinned sqltext", [["      const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => m.startsWith(`${c.sql}\"" + String.fromCharCode(92) + "n`, start));", "      const e = m.indexOf('\"' + String.fromCharCode(10), start); const hits = e < 0 ? [] : [{ c: { sql: m.slice(start, e), via: \"EXECUTE\" }, n: -1 }];"]], "a SQL statement frame quoting no pinned input"],
+  ["the candidate-first match", [["      const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => m.startsWith(`${c.sql}\"" + String.fromCharCode(92) + "n`, start));", "      const e = m.indexOf('\"' + String.fromCharCode(10), start); const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => e >= 0 && m.slice(start, e) === c.sql);"]], "a pinned input that itself holds a quote, a newline and a PL/pgSQL-looking line"],
+  ["the statement that ran it", [["        if (fx.stmt !== ran) return no(`the frame after a SQL statement frame is at ${fx.stmt}, not at the ${ran} that ran that candidate`);\n", ""]], "a PERFORM query offered as an EXECUTE input"],
+  ["a statement frame's PL/pgSQL frame", [["    if (ran) return no(\"a SQL statement frame with no PL/pgSQL frame after it\");\n", ""]], "a statement frame with nothing after it"],
+  ["an EXECUTE or PERFORM frame's statement frame", [["      } else if (RUNS_SQL.includes(fx.stmt)) {\n        return no(`a frame at ${fx.stmt} without the SQL statement frame of the query it ran`);\n      }", "      }"]], "an EXECUTE frame with no statement frame before it"],
   ["nothing left over", [["  while (i < m.length) {", "  while (i < m.length && FIELD_ORDER.some((f) => at(`${f}:  `))) {"]], "junk after the last field"],
   ["the observed-status set", [["  if (own(OBSERVED_STATUSES, rec.httpStatus)) {", "  if (rec.httpStatus !== 201) {"]], "status 500"],
 ];
@@ -364,12 +443,14 @@ test("CL-13 the N5 execute_sql history fits the declared capture outcomes (A2, A
     const st = K.STEPS[id];
     assert.ok(K.matchDeclared(HIST[at].message, K.declaredMessage(st, ctx.texts), st.expect.ranges), `${id} is what N5 saw at ${at}`);
   }
-  // As 400 receipts of their texts, today's rule 3′ says: the two re-raised errors are R3, the FATAL is R4.
+  // As 400 receipts of their texts: the two re-raised errors are R3, and so,
+  // since the capture commit, is the FATAL (R4 at L).
   const as400 = (text, m) => cls(receiptFor(text, "staging", 400, env(m))).class;
   assert.equal(as400("LOCKPROBE-B-LOCKTIMEOUT", HIST["2026-09-29T16:30:37.252Z"].message), "R3");
   assert.equal(as400("LOCKPROBE-B-LOCKTIMEOUT", HIST["2026-09-29T16:38:55.436Z"].message), "R3", "55P03, re-raised, is the same envelope shape");
   assert.equal(as400("LOCKPROBE-B-STMTTIMEOUT", HIST["2026-09-29T16:39:58.546Z"].message), "R3");
-  assert.equal(as400("LOCKPROBE-B-TXTIMEOUT", HIST["2026-09-29T16:45:30.271Z"].message), "R4", "FATAL and a SQL statement frame are not supported yet");
+  assert.equal(as400("LOCKPROBE-B-TXTIMEOUT", HIST["2026-09-29T16:45:30.271Z"].message), "R3", "the FATAL with its bound PERFORM query");
+  assert.equal(HIST["2026-09-29T16:45:30.271Z"].message, JSON.parse(rec(CAPTURE.T2[0]).body).message, "T2's receipt says exactly what N5 saw");
   // The 42702: DETAIL, a QUERY that spans two lines and a named-function frame: outside the grammar, even under FULL.
   const q = HIST["2026-09-15T14:18:30.382Z"].message;
   assert.equal(C.parseEnvelope(q, { support: FULL }).ok, false);
@@ -430,7 +511,7 @@ test("CL-14 every capture step's declared outcome is a MATCH with its declared c
   assert.throws(() => check("Z9", declaredReceipt("A1")), /unknown step/);
 });
 
-test("CL-15 nextStep: only a MATCH continues; a STOP ends the phase; T2's MATCH ends phase T (a writing send rule 3′ calls UNRESOLVED)", () => {
+test("CL-15 nextStep: only a MATCH continues; a STOP ends the phase; a MATCH of a writing send rule 3′ calls UNRESOLVED ends it too (T2 at L)", () => {
   const ok = (id) => check(id, declaredReceipt(id));
   assert.deepEqual(K.nextStep("B", []), { stop: false, next: "B1" });
   assert.deepEqual(K.nextStep("B", ["B1", "B2"].map(ok)), { stop: false, next: "B3" });
@@ -440,9 +521,14 @@ test("CL-15 nextStep: only a MATCH continues; a STOP ends the phase; T2's MATCH 
   const s = K.nextStep("A", [ok("A1"), a2stop]);
   assert.equal(s.stop, true);
   assert.match(s.reason, /A2 was STOP: the phase ends here\. No later step of phase A is sent, cleanup included, until a reviewed decision/);
-  const t = K.nextStep("T", ["T1", "T2"].map(ok));
-  assert.equal(t.stop, true, "T2 matched, and still ends the phase");
+  assert.deepEqual(K.nextStep("T", ["T1", "T2"].map(ok)), { stop: false, next: null }, "T2 is R3 since the capture commit, so T completes");
+  // The rule, as it applied to T2 at L: a writing send's MATCH that rule 3′
+  // calls UNRESOLVED ends the phase. A read-only one does not (B at L).
+  const unresolved = (r) => ({ ...r, classification: { ...r.classification, class: "R4", outcome: "UNRESOLVED" } });
+  const t = K.nextStep("T", [ok("T1"), unresolved(ok("T2"))]);
+  assert.equal(t.stop, true, "T2 matched, and still ended the phase");
   assert.match(t.reason, /writing send that rule 3′ classifies UNRESOLVED \(R4\)/);
+  assert.deepEqual(K.nextStep("B", [unresolved(ok("B1"))]), { stop: false, next: "B2" });
   assert.deepEqual(K.nextStep("U", [ok("U1")]), { stop: false, next: "U2" });
   assert.equal(K.PHASES.U.requires, "a reviewed decision on T2's receipt");
   assert.throws(() => K.nextStep("A", [ok("A2")]), /expects A1/);
@@ -487,11 +573,16 @@ test("CL-16 the declarations bind to the pinned texts: positions, CONTEXT lines,
 test("CL-17 the command lines: classify exits 0 on R2 only, 1 with an R3, 3 with an UNRESOLVED file, 2 on usage; capture exits 0 on MATCH, 3 otherwise", () => {
   const node = (args) => spawnSync(process.execPath, args, { cwd: ROOT, encoding: "utf8" });
   const CL = join(ROOT, "scripts", "manual", "stage0-classify.mjs");
+  const held = node([CL, ...Object.keys(HELD).map((f) => join(FIX, "real", f))]);
+  assert.equal(held.status, 1, held.stderr);
+  assert.match(held.stdout, /R3 RESOLVED SQL error \| P2-01 -> production \| HTTP 400 \| ERROR P0001: stage0 P2-01: release2_01_identity_schema is already in the ledger/);
+  assert.equal(held.stdout.split("\n").filter((l) => l.startsWith("R2 ")).length, 8);
+  assert.match(held.stdout, /A classification, not a go\./);
   const all = node([CL, ...Object.keys(REAL).map((f) => join(FIX, "real", f))]);
-  assert.equal(all.status, 1, all.stderr);
-  assert.match(all.stdout, /R3 RESOLVED SQL error \| P2-01 -> production \| HTTP 400 \| ERROR P0001: stage0 P2-01: release2_01_identity_schema is already in the ledger/);
-  assert.equal(all.stdout.split("\n").filter((l) => l.startsWith("R2 ")).length, 8);
-  assert.match(all.stdout, /A classification, not a go\./);
+  assert.equal(all.status, 3, "B3 and B5 are R4");
+  const count = (c) => all.stdout.split("\n").filter((l) => l.startsWith(`${c} `)).length;
+  assert.deepEqual([count("R2"), count("R3"), count("R4"), count("R1")], [15, 7, 2, 0]);
+  assert.match(all.stdout, /R3 RESOLVED SQL error \| LOCKPROBE-B-TXTIMEOUT -> staging \| HTTP 400 \| FATAL 25P04: terminating connection due to transaction timeout/);
   assert.equal(node([CL, join(FIX, "real", SEND1)]).status, 0);
   const dir = mkdtempSync(join(tmpdir(), "stage0-classify-cli-"));
   try {
@@ -641,10 +732,8 @@ test("CL-22 the progression gate names the one next step, COMPLETE, or the stop;
   const s = gate("A", [bad]);
   assert.equal(s.stop, true);
   assert.match(s.reason, /A1 was STOP: the phase ends here\. No later step of phase A is sent, cleanup included, until a reviewed decision/);
-  // T2's MATCH ends T; U needs a reviewed decision named.
-  const t = gate("T", run(["T1", "T2"]));
-  assert.equal(t.stop, true);
-  assert.match(t.reason, /writing send that rule 3′ classifies UNRESOLVED/);
+  // T completes now that T2 is R3 (it stopped at L); U still needs a reviewed decision named.
+  assert.equal(gate("T", run(["T1", "T2"])).complete, true);
   assert.match(gate("U", []).reason, /phase U needs a reviewed decision on T2's receipt; none is named/);
   assert.equal(gate("U", [], { reviewed: "Codex's disposition of T2, reviews/<file>" }).next, "U1");
   assert.match(gate("B", run(["B1", "B2", "B3", "B4", "B5", "B1"])).reason, /more results files than phase B has steps/);
@@ -679,4 +768,89 @@ test("CL-23 the gate's command line: NEXT exits 0, COMPLETE 4, a stop 3, usage 2
     assert.equal(node([CP, "--progress", "B", "--go", go]).status, 2, "no deadline");
     assert.equal(node([CP, "--progress", "B", "--go", go, "--deadline", deadline, "B1-no-separators"]).status, 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── the capture's receipts ──────────────────────────────────────────────────
+
+// SUPPORT as it stood at L (1042d2c): P2-01 send 2's form only.
+const SUPPORT_AT_L = {
+  severities: { ERROR: "L" }, fieldless: null, fields: { CONTEXT: "L" },
+  frames: { plpgsql: { fnames: { inline_code_block: "L" }, stmts: { RAISE: "L" } }, sqlstmt: null },
+};
+
+test("CL-24 the capture's 15 receipts: each is its step's MATCH, with the class the capture commit gives it; L's SUPPORT gives the class recorded at L", () => {
+  assert.deepEqual(Object.keys(CAPTURE), Object.values(K.PHASES).flatMap((p) => p.steps), "one receipt per step, in phase order");
+  for (const [id, [f, , now, atL]] of Object.entries(CAPTURE)) {
+    const r = K.checkStep(id, real(f), ctx);
+    assert.equal(r.verdict, "MATCH", `${id}: ${r.reasons.join("; ")}`);
+    assert.equal(r.classification.class, now, id);
+    assert.equal(K.STEPS[id].classNow, now, `${id}: the declared class`);
+    const x = rec(f);
+    assert.equal(x.text, K.STEPS[id].text, id);
+    if (x.httpStatus === 400) {
+      const okAtL = C.parseEnvelope(JSON.parse(x.body).message, { candidates: C.candidatesFor(ctx, x.text), support: SUPPORT_AT_L }).ok;
+      assert.equal(okAtL ? "R3" : "R4", atL, `${id}: its class at L`);
+    } else assert.equal(atL, now, `${id}: a success's class is unchanged`);
+  }
+});
+
+// The gos, deadlines and command issue times of the four phases, as the
+// capture records give them (plan §E14), and the time of each phase's final
+// gate.
+const RECORDED = {
+  B: { go: "2026-10-22T15:32:37Z", deadline: "2026-10-22T20:00:00Z", final: "2026-10-22T15:46:01Z", issued: ["15:32:40", "15:36:36", "15:43:31", "15:44:21", "15:45:19"], day: "2026-10-22" },
+  A: { go: "2026-10-22T16:22:22Z", deadline: "2026-10-22T18:00:00Z", final: "2026-10-22T16:52:10Z", issued: ["16:38:26", "16:40:58", "16:44:25", "16:46:29", "16:48:35", "16:51:16"], day: "2026-10-22" },
+  T: { go: "2026-10-23T15:23:53Z", deadline: "2026-10-23T16:15:00Z", final: "2026-10-23T15:32:30Z", issued: ["15:26:05", "15:28:21"], day: "2026-10-23" },
+  U: { go: "2026-10-27T14:22:49Z", deadline: "2026-10-27T15:06:00Z", final: "2026-10-27T14:32:10Z", issued: ["14:28:23", "14:29:59"], day: "2026-10-27", reviewed: "reviews/2026-10-23-capture-BAT-review.md" },
+};
+
+test("CL-25 the recorded progression replays through the gate: NEXT for each step at its issue time, then COMPLETE (T stopped after T2 at L; it completes now)", () => {
+  for (const [phase, r] of Object.entries(RECORDED)) {
+    const steps = K.PHASES[phase].steps;
+    assert.equal(r.issued.length, steps.length, phase);
+    const entries = steps.map((id, n) => ({ step: id, file: `.stage0-send/${CAPTURE[id][0]}`, text: real(CAPTURE[id][0]), issuedAt: `${r.day}T${r.issued[n]}Z` }));
+    const at = (iso) => ({ phase, goAt: r.go, deadline: r.deadline, now: Date.parse(iso), reviewed: r.reviewed ?? null });
+    for (const [n, id] of steps.entries()) {
+      const g = K.progress({ ...at(entries[n].issuedAt), entries: entries.slice(0, n) }, ctx);
+      assert.equal(g.next, id, `${phase}: the gate before ${id} (${g.reason})`);
+    }
+    const end = K.progress({ ...at(r.final), entries }, ctx);
+    assert.equal(end.complete, true, `${phase}: ${end.reason}`);
+  }
+  // The same receipts cannot open a later phase, or be offered twice.
+  const u = RECORDED.U;
+  const a5asU1 = [{ step: "U1", file: `.stage0-send/${CAPTURE.A5[0]}`, text: real(CAPTURE.A5[0]), issuedAt: "2026-10-27T14:28:23Z" }];
+  assert.equal(K.progress({ phase: "U", goAt: u.go, deadline: u.deadline, now: Date.parse(u.final), reviewed: u.reviewed, entries: a5asU1 }, ctx).stop, true, "A5's READBACK (the DDL committed) is not U1's");
+  const u1early = [{ step: "U1", file: `.stage0-send/${CAPTURE.U1[0]}`, text: real(CAPTURE.U1[0]), issuedAt: "2026-10-27T14:22:00Z" }];
+  assert.match(K.progress({ phase: "U", goAt: u.go, deadline: u.deadline, now: Date.parse(u.final), reviewed: u.reviewed, entries: u1early }, ctx).reason, /issued before the phase's go/);
+});
+
+test("CL-26 a PERFORM query is a candidate for its own text only, bound to its one source; a statement frame pairs with the frame of the statement that ran it", () => {
+  assert.deepEqual(ctx.performs, { "LOCKPROBE-B-TXTIMEOUT": [SLEEP] });
+  assert.deepEqual(C.candidatesFor(ctx, "LOCKPROBE-B-TXTIMEOUT").map((c) => c.via), ["EXECUTE", "PERFORM"]);
+  assert.deepEqual(C.candidatesFor(ctx, "P1").map((c) => c.via), Array(10).fill("EXECUTE"), "P1's PERFORMs have no entry");
+  // T2's exact message, under other texts' receipts: no bound candidate there.
+  const t2 = rec(CAPTURE.T2[0]);
+  for (const text of ["LOCKPROBE-B-STMTTIMEOUT", "LOCKPROBE-B-LOCKTIMEOUT"]) assert.equal(cls(receiptFor(text, "staging", 400, t2.body)).class, "R4", text);
+  for (const text of ["P2-01", "RB-43", "P1"]) assert.equal(cls(receiptFor(text, "production", 400, t2.body)).class, "R4", text);
+  // An entry that does not bind to its pinned text refuses the context.
+  const texts = { ...ctx.texts };
+  texts["LOCKPROBE-B-TXTIMEOUT"] = ctx.texts["LOCKPROBE-B-TXTIMEOUT"].replace("perform pg_sleep(30);", "perform pg_sleep(31);");
+  assert.throws(() => C.performQueries(texts), /is not in the pinned text exactly once/, "the source is gone");
+  texts["LOCKPROBE-B-TXTIMEOUT"] = `${ctx.texts["LOCKPROBE-B-TXTIMEOUT"]}\n-- perform pg_sleep(30);\n`;
+  assert.throws(() => C.performQueries(texts), /is not in the pinned text exactly once/, "the source twice");
+  delete texts["LOCKPROBE-B-TXTIMEOUT"];
+  assert.throws(() => C.performQueries(texts), /not an assembled text/);
+  // The pairing, on the real receipts: T2's and B2's messages, each with one frame changed.
+  const t2m = JSON.parse(t2.body).message;
+  const asT2 = (m) => cls({ ...t2, body: env(m) }).class;
+  assert.equal(asT2(t2m), "R3");
+  assert.equal(asT2(t2m.replace("at PERFORM", "at EXECUTE")), "R4", "the PERFORM query, then an EXECUTE frame");
+  assert.equal(asT2(t2m.replace("at PERFORM", "at RAISE")), "R4", "the PERFORM query, then a RAISE frame");
+  assert.equal(asT2(t2m.replace(`SQL statement "${SLEEP}"\n`, "")), "R4", "the PERFORM frame without its statement frame");
+  assert.equal(asT2(t2m.replace("FATAL:  25P04", "ERROR:  57014")), "R3", "elements compose: the same frames under ERROR");
+  const b2 = rec(CAPTURE.B2[0]);
+  const b2m = JSON.parse(b2.body).message;
+  assert.equal(cls({ ...b2, body: env(b2m.replace("at EXECUTE", "at PERFORM")) }).class, "R4", "an executed input, then a PERFORM frame");
+  assert.equal(cls({ ...b2, body: env(b2m.replace("select 1/0;", "select 1/1;")) }).class, "R4", "a statement frame quoting what was not executed");
 });

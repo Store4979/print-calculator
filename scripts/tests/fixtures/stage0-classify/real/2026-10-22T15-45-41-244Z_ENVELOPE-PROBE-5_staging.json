@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "ENVELOPE-PROBE-5",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "ece595beef61fa0817442376b2266089",
+  "requestBytes": 112,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T15:45:41.244Z",
+  "finishedAt": "2026-10-22T15:45:41.927Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  42601: syntax error at or near \\\"from\\\"\\nLINE 2: select from from;\\n                    ^\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

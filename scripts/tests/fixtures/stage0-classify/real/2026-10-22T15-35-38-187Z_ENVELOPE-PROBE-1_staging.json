@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "ENVELOPE-PROBE-1",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "94a0ad24c017d29693346aefa07d0165",
+  "requestBytes": 100,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T15:35:38.187Z",
+  "finishedAt": "2026-10-22T15:35:38.789Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  22012: division by zero\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

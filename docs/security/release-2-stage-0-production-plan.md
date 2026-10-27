@@ -2601,6 +2601,341 @@ window.**
     - item 2 starts locally. No staging send of any kind happens before
       Codex reviews the implementation, the probe texts and pins, the
       executable policies and the capture runbook.
+- **Codex cleared the F–J push, 2026-10-21**
+  (`reviews/2026-10-21-F-J-push-clearance.md`).
+  - **What it clears:** the exact tip `cdacd8cc1885dfdc41632a55e065d54c1d78fc07`,
+    tree `92cd1b5f`, for the staging build only.
+  - **What it does not clear:** K; `main`; tags or force updates;
+    integrations; migration CLI operations; captures; SQL sends.
+- **The push, Wed 2026-10-21, 15:58:06–09Z, under that clearance only:**
+  - **Before:**
+    - local HEAD was K `df401b3`;
+    - J's tree was `92cd1b5f`, `41153b8` was its ancestor, five commits;
+    - `ls-remote` showed the branch at `41153b8` and `main` at `7ec5af4`.
+  - **The command:**
+    `git push origin cdacd8cc1885dfdc41632a55e065d54c1d78fc07:refs/heads/security/release-2-slice-2`
+    gave `41153b8..cdacd8c`, with no force and no tags.
+  - **After (`ls-remote`, 15:58:09Z and again 16:11:46Z):**
+    - the branch is at `cdacd8c`;
+    - `main` is still at `7ec5af4`;
+    - no remote ref holds K. K is local only.
+  - **Staging (`printcalculator2-staging`), from `deploy-context`:**
+    - **before, 15:58:29Z:** deploy `6ad15335…` at `41153b8`;
+    - **after, first seen 16:07:39Z:** deploy
+      **`6ad8e28dbcc67e3cac4a8e35`**, context `production`, commitRef
+      `cdacd8cc1885dfdc41632a55e065d54c1d78fc07`, built
+      2026-10-21T16:07:14.992Z. Its permalink reported the same at
+      16:11:58Z, with `contextAllowed true`, `flagPresent true` and
+      `flagEnabled true`;
+    - the build command runs `write-deploy-context.mjs` after `yarn test`,
+      joined by `&&`, so `yarn test` exited 0 on Netlify at J. The deploy
+      log was not read.
+  - **Production is unchanged, 16:11:58–16:12Z:**
+    - the live `index.html`, `main-DZt0oGiJ.js` (md5 `47ab9406…`) and
+      `index-ftBg9V1i.js` (md5 `57fb08e6…`) are byte-identical to deploy
+      `6ab020c5`'s permalink. The md5s are those of 2026-10-13 and
+      2026-10-15;
+    - `/.netlify/functions/deploy-context` on production returns the SPA's
+      `index.html`, the same bytes as `/`. There is no deploy-context
+      function there.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked.** He reported
+    it by about 12:59 EDT (16:59Z); the time of the read itself was not
+    given:
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site check above.
+- **Codex reviewed K `df401b3`, 2026-10-21: AMEND, two blockers**
+  (`reviews/2026-10-21-df401b3-review.md`, with the `release-df401b3-*`
+  files). Rulings 1–8 are accepted. L, on top of K, fixes:
+  - **K-R1:** timestamp validation is now total;
+  - **K-R2:** the six procedures, and the progression gate;
+  - the STOP-RECORD wording.
+
+  The classifier plan's §10 records the details.
+- **Codex accepted L `1042d2c`, 2026-10-21** (`reviews/2026-10-21-1042d2c-review.md`),
+  and cleared the capture runbook for phases B, A and T. **Codex's capture
+  review, 2026-10-23** (`reviews/2026-10-23-capture-BAT-review.md`), §6,
+  separately cleared the K/L push:
+  - **What it clears:** the exact tip `1042d2cd21d6812f961f9f4e33b9071df5713526`,
+    for the existing staging branch and build only, without the capture
+    commit.
+  - **What it does not clear:** the capture commit; further pushes; `main`;
+    tags or force updates; integrations; migration CLI operations; any
+    production step.
+- **The push, Fri 2026-10-23, 16:12:14–16Z, under that clearance only:**
+  - **Before (16:12:09Z):**
+    - L's tree was `f798ff03…`. J was its ancestor, with exactly two commits,
+      K and L;
+    - `ls-remote` showed the branch at `cdacd8c` (J) and `main` at
+      `7ec5af4`.
+  - **The command:**
+    `git push origin 1042d2cd21d6812f961f9f4e33b9071df5713526:refs/heads/security/release-2-slice-2`
+    gave `cdacd8c..1042d2c`, exit 0, with no force and no tags.
+  - **After (`ls-remote`, 16:12:25Z and again 16:15:37Z):**
+    - the branch is at `1042d2c`;
+    - `main` is still at `7ec5af4`;
+    - the remote has no tags.
+  - **Staging (`printcalculator2-staging`), from `deploy-context`:**
+    - **before, 16:12:25Z:** deploy `6ad8e28d…` at `cdacd8c`;
+    - **after, first seen 16:15:22Z:** deploy
+      **`6adb87610f3d3d2aa51a7a2d`**, context `production`, commitRef
+      `1042d2cd21d6812f961f9f4e33b9071df5713526`, built
+      2026-10-23T16:15:03.793Z. Its permalink reported the same at
+      16:15:33Z, with `contextAllowed true`, `flagPresent true` and
+      `flagEnabled true`;
+    - as at J, `write-deploy-context.mjs` runs only after `yarn test`
+      exits 0, so `yarn test` passed on Netlify at L. The deploy log was
+      not read.
+  - **Production is unchanged, at 16:12:37Z and again at 16:15:33Z:**
+    - the live `index.html` (md5 `d67e9e91…`), `main-DZt0oGiJ.js`
+      (`47ab9406…`) and `index-ftBg9V1i.js` (`57fb08e6…`) are
+      byte-identical to deploy `6ab020c5`'s permalink;
+    - `/.netlify/functions/deploy-context` on production returns the same
+      bytes as `index.html`. There is still no deploy-context function there.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked, about
+    10:11 EDT on Tue 2026-10-27 (about 14:11Z), four days after the push:**
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above. It also agrees with a
+    further check at 14:13:28Z the same day:
+    - the live files were still byte-identical to `6ab020c5`'s permalink;
+    - staging was still deploy `6adb8761…` at `1042d2c`;
+    - `ls-remote` showed the branch at `1042d2c`, `main` at `7ec5af4`, and
+      no tags.
+
+**E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
+
+**The basis:**
+- the runbook `docs/security/stage0-item2-capture-runbook.md`, at H = L
+  `1042d2cd21d6812f961f9f4e33b9071df5713526`;
+- Codex cleared it for B, A and T (`reviews/2026-10-21-1042d2c-review.md`);
+- Codex's capture review (`reviews/2026-10-23-capture-BAT-review.md`)
+  accepted B, A and T's receipts, gave T2 its disposition and cleared U.
+
+**Where:**
+- **Target:** staging `lboajqihpsfrokqvjgnl` only. Nothing was sent to
+  production.
+- **Checkout:** every command ran in the clean checkout
+  `C:\Dev\print-calculator-main\.review\capture-1042d2c`. It is a clone
+  detached at L, with no remote, and its status was empty before and after
+  every phase.
+- **Receipts:** they stay unchanged in that checkout's `.stage0-send/`.
+  Byte-identical copies are fixtures in
+  `scripts/tests/fixtures/stage0-classify/real/`.
+
+**Outcome:**
+- **15 sends, 15 MATCH,** with no STOP-RECORD and no unplanned STOP.
+- **Each phase reached its planned end:**
+  - B, A and U: COMPLETE;
+  - T: stopped by design after T2. At L, T2 was a writing send that rule 3′
+    classified R4.
+
+**The procedure at every send:**
+1. the gate (`stage0-capture.mjs --progress`) said `NEXT` for that step;
+2. Claude issued its one command and recorded the issued time;
+3. Ryan ran it once;
+4. Claude ran the capture check and the classifier on the exact results
+   file.
+
+| phase | go (its arrival) | deadline | token: name; level; expiry as reported | token deleted | end |
+|---|---|---|---|---|---|
+| B | 2026-10-22T15:32:37Z (the amended go) | 2026-10-22T20:00:00Z | `stage0-item2-B-10-22-2026-16:00`; Database Read; 24 h | between 15:45:41Z (B5) and about 15:48Z; exact time not known | COMPLETE, 15:46:01Z |
+| A | 2026-10-22T16:22:22Z | 2026-10-22T18:00:00Z | `stage0-item2-A-20261022`; read-write; 24 h | after 16:51:47Z (A6), reported about 16:56Z; exact time not known | COMPLETE, 16:52:10Z |
+| T | 2026-10-23T15:23:53Z (go 4, confirmed by read-back) | 2026-10-23T16:15:00Z | `stage0-item2-T-20261023c`; read-write; **expiry not stated** | about 15:34Z ("token deleted now") | STOP after T2 by design, 15:32:30Z |
+| U | 2026-10-27T14:22:49Z (Claude's draft, returned verbatim) | 2026-10-27T15:06:00Z | `stage0-item2-U-20261027`; read-write; 24 h from 10:18 EDT, so about 2026-10-28T14:18Z | 14:33:31Z ("token deleted now") | COMPLETE, 14:32:10Z |
+
+Every request in A, T and U was sent with `read_only` false, the texts'
+send policy. That does not mean every text writes. LOCKPROBE-READBACK (A5,
+U1) is a read-back, and the elevated policy gives it metadata visibility.
+B's five probes were sent `read_only`.
+
+| step | text | issued | sender start → finish | HTTP | verdict | rule 3′ at L | capture commit | receipt md5 / bytes |
+|---|---|---|---|---|---|---|---|---|
+| B1 | ENVELOPE-PROBE-1 | 15:32:40Z | 15:35:38.187 → 15:35:38.789 | 400 | MATCH | R4 | R3 | `e95f621b69c39af28d85196c5c9daf45` / 572 |
+| B2 | ENVELOPE-PROBE-2 | 15:36:36Z | 15:43:05.120 → 15:43:05.802 | 400 | MATCH | R4 | R3 | `47303b3eb7b022f87cbfc5d9e934ed19` / 700 |
+| B3 | ENVELOPE-PROBE-3 | 15:43:31Z | 15:43:57.386 → 15:43:57.871 | 400 | MATCH | R4 | R4 | `94f373a573429158ef476acb39d03b54` / 718 |
+| B4 | ENVELOPE-PROBE-4 | 15:44:21Z | 15:44:50.624 → 15:44:51.242 | 400 | MATCH | R4 | R3 | `1f159c49497390bbd1d7d42e3e0e8964` / 649 |
+| B5 | ENVELOPE-PROBE-5 | 15:45:19Z | 15:45:41.244 → 15:45:41.927 | 400 | MATCH | R4 | R4 | `777a619451a5b8a8c4967e234011aca5` / 644 |
+| A1 | LOCKPROBE-SETUP | 16:38:26Z | 16:40:36.989 → 16:40:37.423 | 201 | MATCH | R2 | R2 | `cd8bb95e58c29165d7563962e30ebc10` / 535 |
+| A2 | LOCKPROBE-B-LOCKTIMEOUT | 16:40:58Z | 16:41:36.172 → 16:41:46.816 | 400 | MATCH | R3 | R3 | `a54661da84ebe306c517752a9bfa047b` / 800 |
+| A3 | LOCKPROBE-B-STMTTIMEOUT | 16:44:25Z | 16:45:58.150 → 16:46:06.738 | 400 | MATCH | R3 | R3 | `226de5fcaca12f4ccb7cc14f440d7106` / 740 |
+| A4 | LOCKPROBE-B-POSITIVE | 16:46:29Z | 16:48:07.410 → 16:48:07.980 | 201 | MATCH | R2 | R2 | `60a5535dd8cd80c2462b0b3ac5f4ad1b` / 527 |
+| A5 | LOCKPROBE-READBACK | 16:48:35Z | 16:50:51.100 → 16:50:51.865 | 201 | MATCH | R2 | R2 | `82eaa0daa19d6b64eff5aee01a0c0635` / 930 |
+| A6 | LOCKPROBE-CLEANUP | 16:51:16Z | 16:51:47.129 → 16:51:47.878 | 201 | MATCH | R2 | R2 | `713ef03d32bd141c0a5d25e43912223d` / 593 |
+| T1 | LOCKPROBE-SETUP | 15:26:05Z | 15:27:47.027 → 15:27:47.326 | 201 | MATCH | R2 | R2 | `ff576ccebc8d4339095db05193948b4a` / 535 |
+| T2 | LOCKPROBE-B-TXTIMEOUT | 15:28:21Z | 15:31:55.289 → 15:32:04.095 | 400 | MATCH | R4 | R3 | `c40698a74e7ed9e714d75f2ae7989ebc` / 723 |
+| U1 | LOCKPROBE-READBACK | 14:28:23Z | 14:29:34.831 → 14:29:35.152 | 201 | MATCH | R2 | R2 | `8bb00312b3654b04c93c9b99bb01255d` / 776 |
+| U2 | LOCKPROBE-CLEANUP | 14:29:59Z | 14:31:49.148 → 14:31:49.580 | 201 | MATCH | R2 | R2 | `028abf34e66eae4ca23ec475ebe1280e` / 593 |
+
+The dates are B and A on 2026-10-22, T on 2026-10-23, U on 2026-10-27.
+- **The file names:** each file is `<start, with - for : and .>_<text>_staging.json`.
+- **In every file:**
+  - all 14 sender fields are present;
+  - `error` is null and `tokenRedactedFromResponse` is false;
+  - the request md5 and bytes are the pinned ones;
+  - `readOnly` follows the policy;
+  - there is no `sbp_` text.
+- **The old rule 3, as history:** it called all 15 UNRESOLVED.
+  - Its single-line regex fails every error message, all of which end in
+    `\n` (A2 and A3 also carry a CONTEXT line).
+  - It has no expected body for a LOCKPROBE success, so those fall to its
+    rule 4.
+
+**What the captures show,** for these inputs only. None of it is a claim
+about every server error, or about production.
+- **Eight HTTP-400 error receipts: seven ERROR (B1–B5, A2, A3) and one
+  FATAL (T2).** Each body is exactly `{"message"}`, and each message is
+  exactly its declared rendering: `Failed to run sql query: ` plus
+  postgres-meta's formatting of PostgreSQL 17.5's fields. So H-STATUS and
+  H-FMT held for these eight. In particular:
+  - a field-less envelope ends in `\n` (B1);
+  - a `SQL statement "…"` frame quotes the EXECUTE input verbatim, newlines
+    included, then the EXECUTE line (B2);
+  - a position renders as `LINE n: <line>` and a caret line, before
+    DETAIL (B3, B5);
+  - the field order is DETAIL, HINT, CONTEXT (B4);
+  - a FATAL comes back as an ordinary 400 envelope. Its frames are the stack
+    at the interrupt: PERFORM's own query `SELECT pg_sleep(30)`, then `… line
+    33 at PERFORM` (T2). It equals the N5 `execute_sql` message of
+    2026-09-29T16:45:30.271Z exactly.
+- **Seven HTTP-201 successes,** each meeting its declared contract:
+  - A1, A4, A6, T1 and U2 are exact literal bodies;
+  - A5 and U1 are a structured value and shape check with dynamic fields
+    (`read_at`, and A5's ledger version).
+- **A5:**
+  - `ddl_committed` true;
+  - the baseline ledger row, and one `lockprobe` row of the checked bytes
+    (version `20261022164807`);
+  - no lock, no probe backend.
+- **A3's evidence, scoped.** A3's error and its reviewed transaction
+  source, followed by the successful A4 and A5's later read-back, support
+  that A3's transaction rolled back. There was **no standalone read-back
+  between A3 and A4**. A5 observes the state after the positive control, and
+  cannot show the constraint and ledger at the earlier instant.
+- **H-TS.** A top-level `timestamptz` comes back as PostgreSQL's own text,
+  `"2026-10-22 16:50:51.776958+00"` (A5) and
+  `"2026-10-27 14:29:35.76595+00"` (U1), not an ISO `…T…Z` string.
+  - READBACK's predicate only requires a string, and the receipts' own
+    timestamp validator does not apply to this column (Codex §2).
+  - This is an observation for this column, not for every timestamp.
+
+**T2's disposition (Codex, capture review §1):**
+- **The decision:** T2's receipt is **a resolved SQL failure of that
+  request**, not an unresolved transport outcome.
+- **Why:** the pinned text's single transaction was interrupted during the
+  sleep, before the ledger insert, the final deadline check and COMMIT.
+  PostgreSQL's transaction-timeout FATAL ends that session and aborts the
+  transaction.
+- **Its limits:**
+  - it introduces no general rule that an R3 means unchanged database state;
+  - it is not a rewrite of L's output, which stays R4.
+
+**U1 is the fresh observation** that disposition required. At
+2026-10-27T14:29:35Z it found:
+- `ddl_committed` false;
+- the baseline ledger row only;
+- no lock;
+- no probe backend.
+
+It does not show the state at any earlier instant. U2 then dropped the
+schema, and reported `schema_gone` true, with no relation, probe lock or
+probe backend left.
+
+**Staging afterwards:**
+- A6 dropped phase A's schema.
+- T1 created a new one, which waited, by design, for U.
+- U2 dropped it (2026-10-27T14:31:49Z).
+
+Nothing from the capture remains on staging.
+
+**The gos.** The refused gos below, the corrected token name and folder, and
+waiting for A2's complete output were checks catching mistakes before a
+send. None of them was a send.
+- **B:** the first go (15:02:57Z) named token `stage0-item2-B-20261021`.
+  The token in the window was named `stage0-item2-B-10-22-2026-16:00`, and
+  Ryan amended the go to it before any command (15:32:37Z).
+- **A:** taken as given.
+- **T: four gos.**
+  - **Go 1** arrived at 2026-10-23T14:53:23Z, about 20 h after its deadline
+    (2026-10-22T19:00:00Z). The gate refused it.
+  - **Go 2** (14:58:49Z, token `stage0-item2-T-20261023`) stopped in setup.
+    See the departures below.
+  - **Go 3** (about 15:21Z) carried the template's placeholder for the
+    token name, and two deadline times that disagreed. Both had passed.
+  - **Go 4,** "GO phase T with token stage0-item2-T-20261023c, deadline
+    12:15 EDT", was read back in full by Claude: phase, steps, target, token
+    and deadline 16:15:00Z. Ryan confirmed it at 15:23:53Z. Codex records
+    that read-back as the authorization for go 4 only, not retroactively for
+    the earlier attempts.
+- **U:** Claude drafted the complete go line at 14:21:33Z, after Ryan's
+  report of the token. Ryan returned it word for word at 14:22:49Z. Codex
+  ruled (§3) that this return is his go.
+
+**Departures and unknowns, kept as they are** (Codex §5.6). Every send
+matched, but that is not a claim that the whole operation complied.
+- **B:**
+  - the window was first opened in `C:\Users\Tex's PC`, and moved to the
+    checkout before any command;
+  - the token's exact deletion time is not known;
+  - when Win+V was cleared is not known.
+- **A:**
+  - Ryan's first paste of A2 held only three sender lines. Claude waited for
+    the full output, which matched the file, before A3;
+  - the token's exact deletion time is not known;
+  - Win+V: "not known". The first answer arrived as unfilled template text.
+- **T, go 2: the token was exposed.** In Windows PowerShell 5.1, Ryan ran
+  the runbook's first prompt line, `Read-Host "Paste token" -MaskInput`
+  (labelled "PowerShell 7.1 or later"). 5.1 has no such parameter: it took
+  the word as part of the label and echoed the pasted token in clear.
+  - Ryan's paste of the window put the full value in the chat and in the
+    session transcript. It is reproduced nowhere in the repository.
+  - `stage0-item2-T-20261023` was deleted at 15:07:16Z (the arrival of
+    "token deleted now").
+  - **Nothing was sent with that token.** No gate ran and no command was
+    issued. At 15:07Z `.stage0-send/` held the same 11 receipts, and the
+    checkout was still at L with an empty status. Phase T changed nothing on
+    staging **under go 2**.
+- **T, after go 2's stop: a second token outside any go.**
+  `stage0-item2-T-20261023b` was loaded, by the two `-AsSecureString` lines,
+  before the stop was closed out. It was deleted at 15:15:30Z, and nothing
+  was sent with it (11 receipts at 15:15Z).
+- **T's closure:** Ryan reported all windows closed, the tokens deleted and
+  no `stage0-` token listed. Win+V was cleared at a time not known.
+- **T's go 4 token:** its expiry was never stated. That is a missing
+  preflight observation, not one to fill in.
+- **Codex §4 on the deletions:** the deletions, the closed windows and the
+  empty token list are Ryan's attestations. Codex queried no cloud audit
+  log. The lack of a sender receipt does not establish that the leaked
+  credential had no use elsewhere.
+- **U:**
+  - `git rev-parse HEAD.` was a typo, in a read-only setup check, before
+    the token was loaded. Git refused it, and the intended line followed;
+  - the expiry was reported as a duration and a creation time, not as the
+    dashboard's timestamp;
+  - Ryan confirmed `Remove-Item` and `exit` at 14:45:03Z, after the
+    deletion. Their exact times are not reported.
+
+**The procedure fixes this produced (Codex §3–4, in the capture commit):**
+- **The token prompt is the `-AsSecureString` form only.** It is in the
+  P1–P3 runbook's §0.5 and the capture runbook's §4.2. The C3 runbook's
+  block is marked historical.
+- **A token value in a console, a paste or the chat is a STOP,** even before
+  a send.
+- **The drafted-and-returned go** is in the capture runbook's §3.
+
+**The capture commit (this commit, local, for Codex's review; nothing is
+pushed):**
+- the 15 receipts as fixtures;
+- SUPPORT, within Codex's capture review §2;
+- the tests CL-24…26;
+- this record;
+- the procedure fixes.
+
+The classifier plan's §10 has the details.
 
 ---
 
@@ -2830,9 +3165,14 @@ until approved:**
    incident review, §4 and §6).
    - **Before any new window, each of these is reviewed:**
      - Codex item 2: the SQL-error classifier and its fixtures.
-       **Implemented locally** (rule 3′, `scripts/manual/stage0-classify.mjs`)
-       with its capture runbook (`docs/security/stage0-item2-capture-runbook.md`,
-       DRAFT), for Codex's review. Not pushed. No staging send has run;
+       - Rule 3′ (`scripts/manual/stage0-classify.mjs`) and the capture
+         runbook were **accepted at L `1042d2c`** (Codex, 2026-10-21). L
+         was pushed to the staging branch on 2026-10-23 (§E13).
+       - **The staging capture ran** B, A, T and U, 2026-10-22 to 27: 15
+         MATCH (§E14). Codex accepted B, A and T's receipts and T2's
+         disposition (2026-10-23).
+       - **The capture commit,** which extends SUPPORT from those
+         receipts, is local and for Codex's review. It is not pushed;
      - item 3: the staging read-token experiment, and a protocol revision
        if a Read PAT can write;
      - item 4(c): a rehearsal from the committed 01 state, with new pins, a

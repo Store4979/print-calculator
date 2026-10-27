@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "ENVELOPE-PROBE-4",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "c6f2a0d0489f5d4aa894a61f1859cc85",
+  "requestBytes": 209,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T15:44:50.624Z",
+  "finishedAt": "2026-10-22T15:44:51.242Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  P0001: probe\\nDETAIL:  d\\nHINT:  h\\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

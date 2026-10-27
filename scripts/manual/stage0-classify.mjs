@@ -134,7 +134,10 @@ export function contextAt(rev = "HEAD", cwd = ROOT) {
   return contextFor(A.manifestAt(rev, cwd), { cwd });
 }
 
-/** The context for a manifest object. Refuses when any assembled text differs from its pin. */
+/**
+ * The context for a manifest object. Refuses when any assembled text differs
+ * from its pin, or a PERFORM_QUERIES entry does not bind to its text.
+ */
 export function contextFor(manifest, opts = {}) {
   const texts = A.assembleAll(manifest, opts);
   for (const [k, pin] of Object.entries(manifest.outputs || {})) {
@@ -142,7 +145,7 @@ export function contextFor(manifest, opts = {}) {
       throw new Error(`${k}: the assembled text does not match the manifest's pin; refusing to classify against it`);
     }
   }
-  return { manifest, texts, inputs: A.executedInputs(manifest, opts) };
+  return { manifest, texts, inputs: A.executedInputs(manifest, opts), performs: performQueries(texts) };
 }
 
 // ── R1: the receipt is the sender's record, and it binds ────────────────────
@@ -384,25 +387,82 @@ export function readbackAcceptance(text, values, expected) {
 // ── R3: the supported envelope grammar ───────────────────────────────────────
 
 const P2_01_SEND_2 = "P2-01 send 2, production, 2026-10-09T15:17:50.900Z (scripts/tests/fixtures/stage0-classify/real/)";
+// The item 2 capture's sender receipts on staging, in the same fixture
+// directory (plan §E14; Codex's capture review of 2026-10-23, §2).
+const CAPTURE = (step, text, at) => `capture ${step}, ${text}, staging, ${at} (scripts/tests/fixtures/stage0-classify/real/)`;
+const B1 = CAPTURE("B1", "ENVELOPE-PROBE-1", "2026-10-22T15:35:38.187Z");
+const B2 = CAPTURE("B2", "ENVELOPE-PROBE-2", "2026-10-22T15:43:05.120Z");
+const B3 = CAPTURE("B3", "ENVELOPE-PROBE-3", "2026-10-22T15:43:57.386Z");
+const B4 = CAPTURE("B4", "ENVELOPE-PROBE-4", "2026-10-22T15:44:50.624Z");
+const T2 = CAPTURE("T2", "LOCKPROBE-B-TXTIMEOUT", "2026-10-23T15:31:55.289Z");
 
 /** The HTTP statuses an SQL error has been seen under, through the sender. */
-export const OBSERVED_STATUSES = Object.freeze({ 400: P2_01_SEND_2 });
+export const OBSERVED_STATUSES = Object.freeze({ 400: `${P2_01_SEND_2}; and all eight capture errors (B1-B5, A2, A3 and T2)` });
 
 /**
  * What the envelope parser accepts, each with the sender receipt that shows
- * it. A missing or null entry is not accepted. Until the item 2 capture
- * commit, only the one real SQL error is supported: an ERROR with one CONTEXT
- * frame, "PL/pgSQL function inline_code_block line N at RAISE".
+ * it. A missing or null entry is not accepted. Elements compose: an envelope
+ * is accepted when each of its elements is, even in a combination no receipt
+ * shows (a field-less FATAL, for example). Not accepted: QUERY, a LINE
+ * position block (B3 and B5 show its rendering; it stays unsupported), a
+ * frame of another kind (B3's "JSON data"), and any other function name or
+ * statement kind.
  */
 export const SUPPORT = Object.freeze({
-  severities: Object.freeze({ ERROR: P2_01_SEND_2 }),
-  fieldless: null,
-  fields: Object.freeze({ CONTEXT: P2_01_SEND_2 }),
+  severities: Object.freeze({ ERROR: P2_01_SEND_2, FATAL: T2 }),
+  fieldless: B1,
+  fields: Object.freeze({ DETAIL: `${B4}; also ${B3}`, HINT: B4, CONTEXT: P2_01_SEND_2 }),
   frames: Object.freeze({
-    plpgsql: Object.freeze({ fnames: Object.freeze({ inline_code_block: P2_01_SEND_2 }), stmts: Object.freeze({ RAISE: P2_01_SEND_2 }) }),
-    sqlstmt: null,
+    plpgsql: Object.freeze({
+      fnames: Object.freeze({ inline_code_block: P2_01_SEND_2 }),
+      stmts: Object.freeze({ RAISE: P2_01_SEND_2, EXECUTE: B2, PERFORM: T2 }),
+    }),
+    sqlstmt: B2,
   }),
 });
+
+/**
+ * The statement kinds whose frame follows the "SQL statement" frame of the
+ * query they ran, and the candidate each one quotes: EXECUTE an executed
+ * input (assemble-stage0.mjs executedInputs()), PERFORM its own query
+ * (PERFORM_QUERIES). B2 and T2 show each pair.
+ */
+const RUNS_SQL = Object.freeze(["EXECUTE", "PERFORM"]);
+
+/**
+ * The query each bound PERFORM runs, per text, as its frame quotes it. T2
+ * shows `perform pg_sleep(30);` quoted as `SELECT pg_sleep(30)`. An entry
+ * binds one text's one PERFORM source to the query its receipt shows; the
+ * query is not derived from the source. There is no generic rule: the query
+ * is a candidate for its own text only, and another PERFORM (P1's, RB-43's,
+ * CANCEL-STEP-TEMPLATE's) needs its own reviewed entry and receipt (Codex,
+ * capture review §2). performQueries() refuses an entry whose source is not
+ * in its pinned text exactly once.
+ */
+export const PERFORM_QUERIES = Object.freeze({
+  "LOCKPROBE-B-TXTIMEOUT": Object.freeze([Object.freeze({ source: "perform pg_sleep(30);", query: "SELECT pg_sleep(30)", witness: T2 })]),
+});
+
+/** Each text's bound PERFORM queries, checked against the assembled texts. Throws on an unbound entry. */
+export function performQueries(texts) {
+  const out = {};
+  for (const [k, list] of Object.entries(PERFORM_QUERIES)) {
+    if (typeof texts[k] !== "string") throw new Error(`PERFORM_QUERIES names ${k}, which is not an assembled text`);
+    out[k] = list.map(({ source, query }) => {
+      if (texts[k].split(source).length !== 2) throw new Error(`${k}: the PERFORM source ${JSON.stringify(source)} is not in the pinned text exactly once`);
+      return query;
+    });
+  }
+  return out;
+}
+
+/** A text's statement-frame candidates: what its EXECUTEs run, then its bound PERFORM queries. */
+export function candidatesFor(ctx, text) {
+  return [
+    ...(ctx.inputs[text] || []).map((sql) => ({ sql, via: "EXECUTE" })),
+    ...((ctx.performs && ctx.performs[text]) || []).map((sql) => ({ sql, via: "PERFORM" })),
+  ];
+}
 
 export const ENVELOPE_PREFIX = "Failed to run sql query: ";
 export const LIMITS = Object.freeze({ envelope: 64 * 1024, text: 8 * 1024, frames: 16, lineDigits: 6 });
@@ -414,15 +474,18 @@ const FIELD_ORDER = ["DETAIL", "HINT", "QUERY", "CONTEXT"];
  *   fields   := [DETAIL] [HINT] [QUERY] [CONTEXT], in this order, each at most once
  *   CONTEXT  := "CONTEXT:  " frame ("\n" frame)* "\n", and nothing after it
  *   frame    := "PL/pgSQL function " fname " line " digits " at " stmt
- *             | "SQL statement \"" <a complete candidate input> "\""
- * Every element must also be in `support`. A SQL statement frame is matched
- * against complete candidates (the bound text's executed inputs) before any
- * closing quote is read. Returns {ok: true, sqlError} or {ok: false, why}.
+ *             | "SQL statement \"" <a complete candidate> "\""
+ * Every element must also be in `support`. `candidates` are {sql, via}
+ * (candidatesFor()). A SQL statement frame is matched against complete
+ * candidates before any closing quote is read, and the next frame must be a
+ * PL/pgSQL frame at the candidate's `via` statement. An EXECUTE or PERFORM
+ * frame must follow such a statement frame. Returns {ok: true, sqlError} or
+ * {ok: false, why}.
  */
 export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
   const no = (why) => ({ ok: false, why });
   if (typeof m !== "string") return no("the message is not a string");
-  const maxInput = candidates.reduce((a, c) => Math.max(a, c.length), 0);
+  const maxInput = candidates.reduce((a, c) => Math.max(a, c.sql.length), 0);
   if (m.length > maxInput + LIMITS.envelope) return no(`the message is longer than the bound ${maxInput + LIMITS.envelope}`);
   let i = 0;
   const at = (s) => m.startsWith(s, i);
@@ -450,6 +513,7 @@ export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
   let fields = 0;
   while (i < m.length) {
     const k = FIELD_ORDER.findIndex((f) => at(`${f}:  `));
+    if (k < 0 && at("LINE ")) return no("a LINE position block is not supported (B3 and B5 show its rendering; it stays unsupported)");
     if (k < 0) return no("an unknown label, or content after the last field");
     if (k < next) return no(`${FIELD_ORDER[k]} is out of order or repeated`);
     const f = FIELD_ORDER[k];
@@ -463,13 +527,25 @@ export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
       err[f.toLowerCase()] = t;
       continue;
     }
+    let ran = null; // the `via` of the statement frame just read, until its PL/pgSQL frame
     for (;;) {
       if (err.context.length >= LIMITS.frames) return no(`more than ${LIMITS.frames} frames`);
       const fr = frame();
       if (!fr.ok) return fr;
-      err.context.push(fr.frame);
+      const fx = fr.frame;
+      if (fx.kind === "sqlstmt") {
+        if (ran) return no("a SQL statement frame where the PL/pgSQL frame of the statement that ran the previous one belongs");
+        ran = fx.via;
+      } else if (ran) {
+        if (fx.stmt !== ran) return no(`the frame after a SQL statement frame is at ${fx.stmt}, not at the ${ran} that ran that candidate`);
+        ran = null;
+      } else if (RUNS_SQL.includes(fx.stmt)) {
+        return no(`a frame at ${fx.stmt} without the SQL statement frame of the query it ran`);
+      }
+      err.context.push(fx);
       if (i === m.length) break;
     }
+    if (ran) return no("a SQL statement frame with no PL/pgSQL frame after it");
   }
   if (!fields && !support.fieldless) return no("a field-less envelope is not supported yet (no sender capture shows it)");
   return { ok: true, sqlError: err };
@@ -497,10 +573,10 @@ export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
     if (at(SQ)) {
       if (!support.frames.sqlstmt) return no("a SQL statement frame is not supported yet (no sender capture shows its rendering)");
       const start = i + SQ.length;
-      const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => m.startsWith(`${c}"\n`, start));
+      const hits = candidates.map((c, n) => ({ c, n })).filter(({ c }) => m.startsWith(`${c.sql}"\n`, start));
       if (hits.length !== 1) return no(hits.length ? "a SQL statement frame that matches more than one candidate input" : "a SQL statement frame that quotes no complete input of the bound text");
-      i = start + hits[0].c.length + 2;
-      return { ok: true, frame: { kind: "sqlstmt", input: hits[0].n, md5: A.md5(hits[0].c) } };
+      i = start + hits[0].c.sql.length + 2;
+      return { ok: true, frame: { kind: "sqlstmt", via: hits[0].c.via, input: hits[0].n, md5: A.md5(hits[0].c.sql) } };
     }
     return no("a frame of a kind that is not supported");
   }
@@ -543,7 +619,7 @@ function classifyChecked(fileText, ctx) {
     const p = parsed(rec.body);
     if (p.why) return { class: "R4", outcome: "UNRESOLVED", reasons: [p.why], ...base };
     if (!sameKeys(p.v, ["message"]) || typeof p.v.message !== "string") return { class: "R4", outcome: "UNRESOLVED", reasons: ['the body is not exactly {"message": <string>}'], ...base };
-    const env = parseEnvelope(p.v.message, { candidates: ctx.inputs[rec.text] || [] });
+    const env = parseEnvelope(p.v.message, { candidates: candidatesFor(ctx, rec.text) });
     if (env.ok) return { class: "R3", outcome: "RESOLVED SQL error", reasons: [], ...base, sqlError: env.sqlError };
     return { class: "R4", outcome: "UNRESOLVED", reasons: [`not a supported SQL-error envelope: ${env.why}`], ...base };
   }

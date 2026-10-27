@@ -1,9 +1,16 @@
-# Stage 0 — item 2: the staging capture session — RUNBOOK (DRAFT, for Codex review)
+# Stage 0 — item 2: the staging capture session — RUNBOOK (executed; record in plan §E14)
 
-**Status: DRAFT. Nothing in it runs yet.** Three things are reviewed by Codex
-before any send: this runbook, the exact probe pins (§1), and the executable
-stop rules (`scripts/manual/stage0-capture.mjs`, §2). After that review, each
-phase still needs its own go from Ryan (§3).
+**Status: EXECUTED.** Codex cleared this runbook, the probe pins (§1) and the
+executable stop rules (§2) at H for B, A and T
+(`reviews/2026-10-21-1042d2c-review.md`), and U after its reviewed
+disposition of T2's receipt (`reviews/2026-10-23-capture-BAT-review.md`
+§1). Each phase ran under Ryan's own go, to its planned end:
+- B and A on 2026-10-22;
+- T on 2026-10-23;
+- U on 2026-10-27.
+
+All 15 receipts were MATCH. The record is plan §E14. The capture commit
+(§7) is for Codex's review.
 - **Staging only:** `lboajqihpsfrokqvjgnl`. No production send of any kind.
 - **H** below is the commit Codex names when it clears this runbook.
 
@@ -14,8 +21,8 @@ unknown outcomes").
 ## 0. What it is for, and what it is not
 
 **For:** real sender receipts of the error shapes a stage-0 text can produce.
-Rule 3′'s SUPPORT (`scripts/manual/stage0-classify.mjs`) admits today only the
-one SQL error ever received through the sender: P2-01 send 2's
+At H, rule 3′'s SUPPORT (`scripts/manual/stage0-classify.mjs`) admitted only
+the one SQL error ever received through the sender: P2-01 send 2's
 `ERROR … CONTEXT: PL/pgSQL function inline_code_block line N at RAISE`. The
 capture commit (§7) extends SUPPORT only from what these receipts show.
 
@@ -91,9 +98,11 @@ receipts). The other rules:
   - Diagnostics are not clearance to resume. A disposable schema is no
     exemption.
 - **A MATCH of a writing send that rule 3′ still classifies UNRESOLVED ends
-  its phase too.** That is T2, whose FATAL is outside today's SUPPORT. So T
-  ends after T2 by design, and U starts only on a reviewed decision about
-  T2's receipt.
+  its phase too.** At H that was T2, whose FATAL was outside SUPPORT. So T
+  ended after T2 by design, and U started only on Codex's reviewed
+  disposition of T2's receipt (capture review §1). L's R4 for T2 stays in
+  the record. Under the capture commit's SUPPORT, T2's receipt is R3, and no
+  declared step is an UNRESOLVED writing send. The rule stays.
 - **A step's expected outcome was declared before the session** (the module's
   `STEPS`), from:
   - the text's SQL;
@@ -117,32 +126,41 @@ receipts). The other rules:
 
   A difference is STOP-RECORD, a finding for review, never a correction in
   the moment.
+- **What the capture found** (plan §E14). These hold for these inputs; they
+  are not claims about every server error, or about production:
+  - **H-FMT and H-STATUS held for all eight error receipts,** seven ERROR
+    and one FATAL. Each came back as HTTP 400 with a body of exactly
+    `{"message"}`, in exactly the declared rendering;
+  - **H-ROWS held** for the seven successes;
+  - **H-TS:** `read_at` came back as PostgreSQL's own text,
+    `"2026-10-22 16:50:51.776958+00"`, not an ISO `…T…Z` string. That
+    observation is for this column only.
 
 `node scripts/manual/stage0-capture.mjs --list` prints every step and its
 declared outcome. At H:
 
-| step | plan | text | declared outcome | rule 3′ now |
-|---|---|---|---|---|
-| B1 | B1 | ENVELOPE-PROBE-1 | 400, `…ERROR:  22012: division by zero\n` | R4 |
-| B2 | B2 | ENVELOPE-PROBE-2 | 400, 22012 + `CONTEXT:  SQL statement "<the executed string>"` + `PL/pgSQL function inline_code_block line 1 at EXECUTE` | R4 |
-| B3 | B3 | ENVELOPE-PROBE-3 | 400, 22P02 + `LINE 2:` and its caret + DETAIL + `CONTEXT:  JSON data, line 1: {` | R4 |
-| B4 | B4 | ENVELOPE-PROBE-4 | 400, P0001 `probe` + `DETAIL:  d` + `HINT:  h` + `… line 1 at RAISE` | R4 |
-| B5 | B5 | ENVELOPE-PROBE-5 | 400, 42601 + `LINE 2:` and its caret, no other field | R4 |
-| A1 | A1 | LOCKPROBE-SETUP | 201, `[{"setup":"stage0_lockprobe ready"}]` | R2 |
-| A2 | A2 | LOCKPROBE-B-LOCKTIMEOUT (no holder) | 400, P0001 re-raised: `… no holder seen within 10 s … — after <10000–11999> ms, backend <pid>` + `… line 75 at RAISE` | R3 |
-| A3 | A3 | LOCKPROBE-B-STMTTIMEOUT | 400, 57014 re-raised: `… canceling statement due to statement timeout — after <7000–8999> ms, backend <pid>` + `… line 64 at RAISE` | R3 |
-| A4 | A5 | LOCKPROBE-B-POSITIVE | 201, `[{"set_config":"45s"}]` | R2 |
-| A5 | A6 | LOCKPROBE-READBACK | 201: the DDL committed; ledger = the baseline row and one `lockprobe` row of the checked bytes; no lock; no probe backend | R2 |
-| A6 | A7 | LOCKPROBE-CLEANUP | 201, `[{"schema_gone":true,"relations_left":0,"probe_locks_left":0,"probe_backends_active":0}]` | R2 |
-| T1 | A1 again | LOCKPROBE-SETUP | as A1 | R2 |
-| T2 | A4 | LOCKPROBE-B-TXTIMEOUT | 400, `…FATAL:  25P04: terminating connection due to transaction timeout\nCONTEXT:  SQL statement "SELECT pg_sleep(30)"\nPL/pgSQL function inline_code_block line 33 at PERFORM\n` | R4 |
-| U1 | A6 again | LOCKPROBE-READBACK | 201: no DDL; the baseline row only; no lock; no probe backend | R2 |
-| U2 | A7 again | LOCKPROBE-CLEANUP | as A6 | R2 |
+| step | plan | text | declared outcome | rule 3′ at H | capture commit |
+|---|---|---|---|---|---|
+| B1 | B1 | ENVELOPE-PROBE-1 | 400, `…ERROR:  22012: division by zero\n` | R4 | R3 |
+| B2 | B2 | ENVELOPE-PROBE-2 | 400, 22012 + `CONTEXT:  SQL statement "<the executed string>"` + `PL/pgSQL function inline_code_block line 1 at EXECUTE` | R4 | R3 |
+| B3 | B3 | ENVELOPE-PROBE-3 | 400, 22P02 + `LINE 2:` and its caret + DETAIL + `CONTEXT:  JSON data, line 1: {` | R4 | R4 |
+| B4 | B4 | ENVELOPE-PROBE-4 | 400, P0001 `probe` + `DETAIL:  d` + `HINT:  h` + `… line 1 at RAISE` | R4 | R3 |
+| B5 | B5 | ENVELOPE-PROBE-5 | 400, 42601 + `LINE 2:` and its caret, no other field | R4 | R4 |
+| A1 | A1 | LOCKPROBE-SETUP | 201, `[{"setup":"stage0_lockprobe ready"}]` | R2 | R2 |
+| A2 | A2 | LOCKPROBE-B-LOCKTIMEOUT (no holder) | 400, P0001 re-raised: `… no holder seen within 10 s … — after <10000–11999> ms, backend <pid>` + `… line 75 at RAISE` | R3 | R3 |
+| A3 | A3 | LOCKPROBE-B-STMTTIMEOUT | 400, 57014 re-raised: `… canceling statement due to statement timeout — after <7000–8999> ms, backend <pid>` + `… line 64 at RAISE` | R3 | R3 |
+| A4 | A5 | LOCKPROBE-B-POSITIVE | 201, `[{"set_config":"45s"}]` | R2 | R2 |
+| A5 | A6 | LOCKPROBE-READBACK | 201: the DDL committed; ledger = the baseline row and one `lockprobe` row of the checked bytes; no lock; no probe backend | R2 | R2 |
+| A6 | A7 | LOCKPROBE-CLEANUP | 201, `[{"schema_gone":true,"relations_left":0,"probe_locks_left":0,"probe_backends_active":0}]` | R2 | R2 |
+| T1 | A1 again | LOCKPROBE-SETUP | as A1 | R2 | R2 |
+| T2 | A4 | LOCKPROBE-B-TXTIMEOUT | 400, `…FATAL:  25P04: terminating connection due to transaction timeout\nCONTEXT:  SQL statement "SELECT pg_sleep(30)"\nPL/pgSQL function inline_code_block line 33 at PERFORM\n` | R4 | R3 |
+| U1 | A6 again | LOCKPROBE-READBACK | 201: no DDL; the baseline row only; no lock; no probe backend | R2 | R2 |
+| U2 | A7 again | LOCKPROBE-CLEANUP | as A6 | R2 | R2 |
 
 **Why the plan's A1–A7 became A, T and U.** The plan ran TXTIMEOUT (its A4)
 in the middle of one phase. Its FATAL is the outcome Codex named as one that
 cannot be accepted as it comes. An UNRESOLVED writing send stops every later
-write, cleanup included, and a FATAL is R4 today. So in the plan's order, A4
+write, cleanup included, and a FATAL was R4 at H. So in the plan's order, A4
 would always strand A5–A7 and the schema. Here:
 - the main phase A ends with its own cleanup;
 - TXTIMEOUT runs alone in T, after its own SETUP;
@@ -162,12 +180,31 @@ receipt.
   the gate's `--go` and `--deadline`. The go lapses at that deadline, at any
   stop, and at any pause. Every pause ends the session (incident record
   §5);
+  - **From U on, the go is drafted and returned** (Codex's capture review
+    §3), after T's gos 1 and 3 arrived expired or malformed:
+    1. Ryan creates the token and keeps it unloaded. He reports its exact
+       dashboard name, its project scope, its database level, its other
+       permissions (None), and its **actual expiry**, not just "shortest".
+    2. Claude drafts the complete go line: the phase, its steps, the
+       target, the token's exact name, and a deadline about 45 minutes out
+       and inside the expiry. The deadline is written in Eastern time and in
+       UTC, both with dates, using the actual date's Eastern offset (UTC−4
+       until 1 November 2026, then UTC−5).
+    3. Ryan's verbatim return of that line is his go, and its arrival is the
+       go time. Claude checks the whole text, the conversion, the remaining
+       time (at least 30 minutes) and the token's identity before setup.
+       There are no placeholders and no expired drafts.
+
+    Claude's draft grants no authority; Ryan's reply does. The method does
+    not pre-clear a later phase;
 - **token**:
   - B uses a staging **Database: Read** token, named `stage0-item2-B-<date>`;
   - A, T and U each use a staging token at the level above Read, named
     `stage0-item2-<phase>-<date>`;
   - every token has Resource access → Project → **staging only**, every other
-    permission None, and the shortest expiry. Never "Create legacy token";
+    permission None, and the shortest expiry. Ryan reports the actual
+    expiry, and the deadline must fit inside it. Never "Create legacy
+    token";
   - created just before the phase, deleted at its end or at any stop,
     whatever the outcome;
 - **receipt preservation** (§4.4) before anything else follows it.
@@ -285,6 +322,13 @@ and §3.2 token steps, in a NEW window, with staging in place of production
 and this phase's name and level:
 - **V-SCOPE**, **V-PROMPT**, **V-MASK** and **V-PREFIX** as written there;
 - **V-CLIP** after the paste.
+- **The prompt is the two-line `-AsSecureString` form only,** as §0.5 now
+  gives it (Codex's capture review §4). Never `-MaskInput`: in Windows
+  PowerShell 5.1 it echoed the token (T, go 2).
+- **Any token value in the console, a paste or the chat is a STOP,** even
+  before the first send and even after `True` / `44`. The token is deleted
+  at once and the window closed and cleared (§5). There is no retry with a
+  replacement token outside a fresh go.
 
 Report the token's name, scope, level and expiry, and the `True` / `44`
 lines.
@@ -372,13 +416,44 @@ It contains:
   example. Each is reviewed; no receipt is normalized to fit;
 - **the open questions, decided with evidence:**
   - whether a PERFORM frame's quoted query (`SELECT pg_sleep(30)`, PERFORM's
-    own query) joins the bound text's candidates. Today the candidates are
+    own query) joins the bound text's candidates. At H the candidates were
     only `executedInputs`, what an `EXECUTE` runs;
   - how a position is rendered;
 - **the record,** in plan §E.
 
 Codex reviews the implementation, the tests and the captures before any
 production window (plan §I).
+
+**What the capture commit holds** (within Codex's capture review §2; the
+classifier plan's §10 has the details):
+- **The 15 receipts,** byte for byte in `real/`, each with its md5, its
+  class now and its class at L.
+- **SUPPORT:**
+  - FATAL (T2);
+  - the field-less envelope (B1);
+  - single-line DETAIL and HINT, in order (B4; B3 also shows DETAIL);
+  - the verbatim `SQL statement "…"` frame (B2);
+  - the frame statements EXECUTE (B2) and PERFORM (T2).
+
+  The status set stays {400}. QUERY, a LINE position block, a non-PL/pgSQL
+  frame and any other function name or statement kind stay unsupported.
+- **The PERFORM question, decided.** A PERFORM's query is a candidate
+  only through an explicit per-text entry (`PERFORM_QUERIES`), today
+  `LOCKPROBE-B-TXTIMEOUT` → `SELECT pg_sleep(30)`.
+  - The entry's source must occur in its pinned text exactly once.
+  - It is no candidate for any other text.
+  - P1's, RB-43's and CANCEL-STEP-TEMPLATE's PERFORMs have no entry, so a
+    frame quoting one stays R4 until a reviewed entry and receipt exist.
+- **A grammar tightening.** A statement frame is followed by the PL/pgSQL
+  frame of the statement that ran its candidate: EXECUTE for an executed
+  input, PERFORM for a PERFORM query. An EXECUTE or PERFORM frame must
+  follow such a statement frame. B2 and T2 show the pairs; nothing showed
+  otherwise.
+- **The position question, decided.** A position renders as `LINE n:
+  <line>` and a caret line, before DETAIL (B3, B5), exactly as
+  `pgMetaFormat` declared. It stays unsupported, and its existence is
+  recorded.
+- **No grammar correction was forced:** every capture was a MATCH.
 
 ## 8. What the session cannot establish
 

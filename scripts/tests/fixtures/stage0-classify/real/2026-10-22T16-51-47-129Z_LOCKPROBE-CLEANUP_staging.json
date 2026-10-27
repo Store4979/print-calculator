@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-CLEANUP",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "c31297aaa5f8cb481acf48f1cdaa810c",
+  "requestBytes": 924,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T16:51:47.129Z",
+  "finishedAt": "2026-10-22T16:51:47.878Z",
+  "httpStatus": 201,
+  "body": "[{\"schema_gone\":true,\"relations_left\":0,\"probe_locks_left\":0,\"probe_backends_active\":0}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

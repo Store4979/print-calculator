@@ -59,6 +59,11 @@ is a Supabase personal access token (`sbp_…`):
   offers;
 - delete it right after section 9.
 
+**Historical (C3 ran 2026-10-06/07). Do not reuse the prompt lines below.**
+On Windows PowerShell 5.1 the `-MaskInput` line echoes the token in clear
+(2026-10-23, plan §E14). The current form is the `-AsSecureString` one only,
+in the P1–P3 runbook's §0.5.
+
 ```powershell
 git log -1 --format=%H                        # must print the reviewed commit
 # PowerShell 7.1 or later:

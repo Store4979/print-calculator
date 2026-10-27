@@ -20,8 +20,9 @@
 // Only MATCH lets the phase go on. Any other verdict ends the phase: no later
 // send in it, and a writing phase's later writes, cleanup included, wait for a
 // reviewed decision. A MATCH of a writing send that rule 3′ still classifies
-// UNRESOLVED (T2's FATAL) ends its phase too. A MATCH changes nothing in rule
-// 3′'s SUPPORT, which grows only in the reviewed capture commit.
+// UNRESOLVED ends its phase too (T2's FATAL at L; no declared step since the
+// capture commit). A MATCH changes nothing in rule 3′'s SUPPORT, which grows
+// only in a reviewed capture commit.
 //
 // The progression gate (progress(), --progress) runs before every send. It
 // re-checks the phase's results files so far, in order, requires each to be
@@ -33,9 +34,10 @@
 //
 // The declared error renderings follow postgres-meta's error formatting
 // (pgMetaFormat below). That the Management API's "Failed to run sql query: "
-// message is that formatting is a HYPOTHESIS. The one sender receipt of an
-// error, P2-01 send 2, and the N5 execute_sql messages of 2026-09-29 fit it.
-// The capture tests it.
+// message is that formatting is a HYPOTHESIS. The sender receipts of errors
+// fit it exactly: P2-01 send 2 and the capture's eight (B1-B5, A2, A3, T2),
+// as do the N5 execute_sql messages of 2026-09-29. Another error's rendering
+// is not established by them.
 //
 //   node scripts/manual/stage0-capture.mjs --list
 //   node scripts/manual/stage0-capture.mjs <STEP> <results file>
@@ -122,13 +124,13 @@ const ERR = (server, ranges = {}) => ({ status: 400, server, ranges });
  * today's SUPPORT, says of that outcome; `plan` is the classifier plan's label.
  */
 export const STEPS = {
-  B1: { phase: "B", plan: "B1", text: "ENVELOPE-PROBE-1", classNow: "R4", source: PGLITE,
+  B1: { phase: "B", plan: "B1", text: "ENVELOPE-PROBE-1", classNow: "R3", source: PGLITE,
     expect: ERR({ severity: "ERROR", code: "22012", message: "division by zero" }) },
-  B2: { phase: "B", plan: "B2", text: "ENVELOPE-PROBE-2", classNow: "R4", source: PGLITE,
+  B2: { phase: "B", plan: "B2", text: "ENVELOPE-PROBE-2", classNow: "R3", source: PGLITE,
     expect: ERR({ severity: "ERROR", code: "22012", message: "division by zero", where: `SQL statement "${A.ENVELOPE_PROBE_2_EXECUTED}"\nPL/pgSQL function inline_code_block line 1 at EXECUTE` }) },
   B3: { phase: "B", plan: "B3", text: "ENVELOPE-PROBE-3", classNow: "R4", source: PGLITE,
     expect: ERR({ severity: "ERROR", code: "22P02", message: "invalid input syntax for type json", detail: "The input string ended unexpectedly.", position: "117", where: "JSON data, line 1: {" }) },
-  B4: { phase: "B", plan: "B4", text: "ENVELOPE-PROBE-4", classNow: "R4", source: PGLITE,
+  B4: { phase: "B", plan: "B4", text: "ENVELOPE-PROBE-4", classNow: "R3", source: PGLITE,
     expect: ERR({ severity: "ERROR", code: "P0001", message: "probe", detail: "d", hint: "h", where: "PL/pgSQL function inline_code_block line 1 at RAISE" }) },
   B5: { phase: "B", plan: "B5", text: "ENVELOPE-PROBE-5", classNow: "R4", source: PGLITE,
     expect: ERR({ severity: "ERROR", code: "42601", message: 'syntax error at or near "from"', position: "104" }) },
@@ -146,9 +148,12 @@ export const STEPS = {
     expect: { status: 201, body: CLEANUP_BODY } },
   T1: { phase: "T", plan: "A1 again", text: "LOCKPROBE-SETUP", classNow: "R2", source: `${PGLITE}; its last row-returning statement`,
     expect: { status: 201, body: SETUP_BODY } },
-  // A writing send that rule 3′ classifies R4 (FATAL is not supported yet),
-  // so phase T ends here even on a MATCH; U needs a reviewed go.
-  T2: { phase: "T", plan: "A4", text: "LOCKPROBE-B-TXTIMEOUT", classNow: "R4", source: N5("16:45:30.271"),
+  // At L (1042d2c) rule 3′ classified this R4 (FATAL was not supported), so
+  // phase T ended here on its MATCH, and U waited for Codex's reviewed
+  // disposition of the receipt (capture review §1). The capture commit's
+  // SUPPORT makes the same receipt R3, so a phase T run now completes after
+  // T2; U still needs a reviewed decision named.
+  T2: { phase: "T", plan: "A4", text: "LOCKPROBE-B-TXTIMEOUT", classNow: "R3", source: N5("16:45:30.271"),
     expect: ERR({ severity: "FATAL", code: "25P04", message: "terminating connection due to transaction timeout", where: 'SQL statement "SELECT pg_sleep(30)"\nPL/pgSQL function inline_code_block line 33 at PERFORM' }) },
   U1: { phase: "U", plan: "A6 again", text: "LOCKPROBE-READBACK", classNow: "R2", source: `${PGLITE}; the READBACK SQL`,
     expect: { status: 201, shape: readbackShape(false), shapeName: "no DDL; the baseline row only; no locks; no probe backend" } },

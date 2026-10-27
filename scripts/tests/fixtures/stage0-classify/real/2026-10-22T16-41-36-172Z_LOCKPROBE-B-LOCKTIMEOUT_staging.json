@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-B-LOCKTIMEOUT",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "726f086647bb2a1ef087f19e16de6527",
+  "requestBytes": 5519,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T16:41:36.172Z",
+  "finishedAt": "2026-10-22T16:41:46.816Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  P0001: lockprobe B-LOCKTIMEOUT: [P0001] lockprobe B-LOCKTIMEOUT: no holder seen within 10 s — the sessions did not overlap; nothing was tried — after 10130 ms, backend 12904\\nCONTEXT:  PL/pgSQL function inline_code_block line 75 at RAISE\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

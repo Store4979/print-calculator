@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "ENVELOPE-PROBE-2",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "5c6d0617384192f7d9381f57b2a91104",
+  "requestBytes": 207,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T15:43:05.120Z",
+  "finishedAt": "2026-10-22T15:43:05.802Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  22012: division by zero\\nCONTEXT:  SQL statement \\\"select 1;\\n-- line two\\nselect 1/0;\\\"\\nPL/pgSQL function inline_code_block line 1 at EXECUTE\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

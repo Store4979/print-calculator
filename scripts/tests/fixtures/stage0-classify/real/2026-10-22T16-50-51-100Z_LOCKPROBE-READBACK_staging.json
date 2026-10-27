@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-READBACK",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "f0d1a6e51d5012fb732241f9e2ae9cc2",
+  "requestBytes": 1164,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T16:50:51.100Z",
+  "finishedAt": "2026-10-22T16:50:51.865Z",
+  "httpStatus": 201,
+  "body": "[{\"ddl_committed\":true,\"ledger\":[{\"version\":\"20000101000000\",\"name\":\"baseline\",\"n\":1,\"md5\":\"7b42f99147dbae0ebc9563ed290a26b2\",\"created_by\":\"store4979@theupsstore.com\"},{\"version\":\"20261022164807\",\"name\":\"lockprobe\",\"n\":1,\"md5\":\"59ece267be0304d3434f2006b5ed958d\",\"created_by\":\"store4979@theupsstore.com\"}],\"locks\":[],\"lockprobe_backends\":[],\"read_at\":\"2026-10-22 16:50:51.776958+00\"}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

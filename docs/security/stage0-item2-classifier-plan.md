@@ -614,3 +614,85 @@ K:
   the expected severity, SQLSTATE and primary text. The path and rendering
   stay unconfirmed, and such a receipt is never nested-frame evidence on its
   own (CL-21).
+
+**The capture commit (local, for review).** Codex accepted L, and cleared
+the capture at H = L. The capture ran B, A, T and U, and every receipt was
+a MATCH (plan §E14). Codex's capture review
+(`reviews/2026-10-23-capture-BAT-review.md`) accepted the receipts and gave
+T2 its disposition. Its §2 accepted the direction below, within its bounds.
+This commit holds the concrete code, fixtures and record for review.
+
+**What changes:**
+- **The fixtures.** The 15 receipts are copied byte for byte into `real/`
+  (`-text`), so `REAL` has 24 entries. `CAPTURE` maps each step to its
+  file, md5, class now and class at L.
+- **SUPPORT,** each entry naming its sender witness:
+  - FATAL (T2);
+  - the field-less envelope (B1);
+  - DETAIL (B4; B3 also) and HINT (B4), single-line, in order, each at most
+    once;
+  - the verbatim `SQL statement "…"` frame (B2);
+  - EXECUTE (B2) and PERFORM (T2) as frame statements.
+
+  `OBSERVED_STATUSES` stays exactly {400}, now witnessed by all eight
+  capture errors as well. CL-3 requires every SUPPORT entry and PERFORM
+  binding to name a receipt held in `real/`.
+- **What stays out:**
+  - QUERY;
+  - a LINE position block. B3 and B5 show it, so it is recorded, not
+    treated as impossible. It now has its own refusal reason;
+  - a non-PL/pgSQL frame (B3's `JSON data`);
+  - any other function name or statement kind;
+  - any status but 400.
+- **PERFORM's query (ruling 7, decided).** `PERFORM_QUERIES` binds
+  `LOCKPROBE-B-TXTIMEOUT` → `SELECT pg_sleep(30)` explicitly:
+  - `contextFor` refuses the context when an entry's source, `perform
+    pg_sleep(30);`, is not in its pinned text exactly once;
+  - the query is taken from T2's receipt, not derived from the source;
+  - it is a candidate for that text only (CL-26);
+  - P1, RB-43 and CANCEL-STEP-TEMPLATE also hold PERFORMs. They have no
+    entry, so a frame quoting one is R4 until a reviewed entry and receipt
+    exist.
+- **A tightening, beyond the proposal, for review.** Candidates are typed
+  `{sql, via}`:
+  - a statement frame must be followed by the PL/pgSQL frame at its
+    candidate's `via` (EXECUTE for an executed input, PERFORM for a PERFORM
+    query);
+  - an EXECUTE or PERFORM frame must follow such a statement frame;
+  - a statement frame with nothing after it is refused.
+
+  B2 and T2 show the pairs; nothing showed another order. Three new
+  mutants prove each check load-bearing (CL-12).
+- **Composition, for Codex to confirm.** SUPPORT's elements compose. An
+  envelope is R3 when each element is supported, even in a combination no
+  receipt shows:
+  - a field-less FATAL;
+  - T2's frames under ERROR (CL-26).
+
+  That is how the grammar treated ERROR before. Codex's bound was that the
+  supported captured FATAL form can classify; this widens that to its
+  elements.
+- **The assembler is unchanged,** so nothing is re-pinned, and every SQL
+  output stays the same. The PERFORM binding lives in the classifier, which
+  the manifest does not pin.
+- **The capture checker:**
+  - B1, B2, B4 and T2 now declare R3 (`classNow`);
+  - T2's comment keeps L's R4 and why T stopped;
+  - nothing else in the declarations changes.
+
+  Under this SUPPORT, a phase T run completes after T2. U still needs a
+  reviewed decision named. The rule that a writing send's UNRESOLVED MATCH
+  ends its phase stays, tested with T2 as it was at L (CL-15).
+- **The new tests:**
+  - **CL-24:** each receipt is its step's MATCH with its class now. L's
+    SUPPORT, run through this parser, gives each one the class recorded
+    at L;
+  - **CL-25:** the recorded gos, deadlines and issue times replay through
+    the gate, NEXT at each step, then COMPLETE;
+  - **CL-26:** the PERFORM binding and the pairing, on the real receipts.
+
+**The history, kept apart.** At L, rule 3′ classified B1–B5 and T2 as R4,
+and the records keep that output. Under this commit B1, B2, B4 and T2 are
+R3, and B3 and B5 stay R4. T2's disposition as a resolved SQL failure is
+Codex's reviewed human decision of 2026-10-23. It is not a rewrite of L's
+output.

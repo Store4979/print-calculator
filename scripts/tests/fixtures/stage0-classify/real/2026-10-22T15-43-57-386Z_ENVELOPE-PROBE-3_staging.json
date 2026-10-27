@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "ENVELOPE-PROBE-3",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "f95beecbe5e7840b21177800ffe4feb3",
+  "requestBytes": 130,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T15:43:57.386Z",
+  "finishedAt": "2026-10-22T15:43:57.871Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  22P02: invalid input syntax for type json\\nLINE 2: select '{'::json;\\n               ^\\nDETAIL:  The input string ended unexpectedly.\\nCONTEXT:  JSON data, line 1: {\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

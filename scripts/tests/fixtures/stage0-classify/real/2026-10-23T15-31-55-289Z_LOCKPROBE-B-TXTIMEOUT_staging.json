@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-B-TXTIMEOUT",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "040bd75a51d45641aa9dd7df35e939ad",
+  "requestBytes": 4945,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-23T15:31:55.289Z",
+  "finishedAt": "2026-10-23T15:32:04.095Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: FATAL:  25P04: terminating connection due to transaction timeout\\nCONTEXT:  SQL statement \\\"SELECT pg_sleep(30)\\\"\\nPL/pgSQL function inline_code_block line 33 at PERFORM\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

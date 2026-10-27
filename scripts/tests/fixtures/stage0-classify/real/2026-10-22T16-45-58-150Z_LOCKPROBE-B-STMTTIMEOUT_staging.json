@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-B-STMTTIMEOUT",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "b4bb7ddaaedb12c6c97b41ff44529fce",
+  "requestBytes": 4969,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T16:45:58.150Z",
+  "finishedAt": "2026-10-22T16:46:06.738Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  57014: lockprobe B-STMTTIMEOUT: [57014] canceling statement due to statement timeout — after 7999 ms, backend 13611\\nCONTEXT:  PL/pgSQL function inline_code_block line 64 at RAISE\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

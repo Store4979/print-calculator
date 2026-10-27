@@ -301,6 +301,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       and still start `sbp_` (44 characters). `Read-Host`'s first argument is
       the prompt LABEL. The value goes at the prompt, never on the command
       line (a token prefix leaked that way once).
+    - **Ryan's windows are Windows PowerShell 5.1. Its `Read-Host` has no
+      `-MaskInput`:** it takes the word as part of the label and ECHOES the
+      pasted token in clear. A staging token reached the chat that way on
+      2026-10-23 (plan §E14). The only token prompt is the two-line
+      `$s = Read-Host "Paste token" -AsSecureString` form (P1–P3 runbook
+      §0.5). Never offer `-MaskInput`, not even as an alternative. Any token
+      value in a paste is a STOP: the token is deleted at once.
     - Bind every deploy by its `deploy-context` deployId. A "published"
       report can come before the build finishes (about 3 minutes).
     - Production C5 (P5) runs from docs/security/stage0-c5-runbook.md (a
@@ -359,9 +366,11 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     or a SQL-error body), it names the committed prefix and the one
     reviewed recovery, or STOP. Classify every send with rule 3′,
     `node scripts/manual/stage0-classify.mjs <results file>` (Codex item 2;
-    docs/security/stage0-item2-classifier-plan.md §3). It is implemented
-    locally and NOT yet reviewed by Codex, so no window relies on it yet; the
-    old regex (P1–P3 runbook §0.7 rule 3) is history. In precedence order:
+    docs/security/stage0-item2-classifier-plan.md §3). Codex accepted it at
+    L 1042d2c. The capture commit that extends SUPPORT is for review, and no
+    production window relies on rule 3′ until items 2, 3, 4(c) and 6 are
+    reviewed. The old regex (P1–P3 runbook §0.7 rule 3) is history. In
+    precedence order:
     - R1 UNRESOLVED: the file is not exactly the sender's 14-field record
       (plus `cancelTemplate` for a cancel), holds a duplicate key, or does
       not bind to the pinned text, ref, endpoint and policy; or it has a
@@ -373,8 +382,17 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       a STATE with `ledger_md5_ok false` is R2 that still stops;
     - R3 RESOLVED SQL error: an observed status (400 only), a body of
       exactly `{"message"}`, and an envelope inside SUPPORT, an
-      evidence-backed subset. Today that is only `ERROR` with one
-      `PL/pgSQL function inline_code_block line N at RAISE` frame. It is not
+      evidence-backed subset. At L that was only `ERROR` with one
+      `PL/pgSQL function inline_code_block line N at RAISE` frame. The
+      capture commit (for review) adds, each from a staging receipt:
+      - FATAL;
+      - the field-less envelope;
+      - single-line DETAIL and HINT;
+      - the verbatim `SQL statement "…"` frame, paired with its EXECUTE
+        frame, or with its PERFORM frame through a per-text
+        `PERFORM_QUERIES` entry.
+
+      A LINE position block, QUERY and other frame kinds stay R4. R3 is not
       a retry, and not proof of an unchanged prefix;
     - R4 UNRESOLVED: everything else, gateway text quoting an error
       included.
@@ -417,8 +435,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     and the regex failed it. Every P2/RB error after the `set_config`
     preamble is raised inside PL/pgSQL (the guards AND `execute f`), so it
     carries that line. The classifier fix, with a real-refusal fixture, is
-    Codex item 2: rule 3′, implemented locally for Codex's review. The
-    refusal is a fixture in scripts/tests/fixtures/stage0-classify/real/.
+    Codex item 2: rule 3′, accepted at L 1042d2c. The refusal and the 15
+    staging capture receipts (plan §E14) are fixtures in
+    scripts/tests/fixtures/stage0-classify/real/.
   - **A strings-kept SQL view does not decode E-string escapes.** An
     escape that runs into a word (`E'…\ndelete …'`, `\x64elete`) hides
     it from a word match. The item 2 probes' M-6d decodes them, and its

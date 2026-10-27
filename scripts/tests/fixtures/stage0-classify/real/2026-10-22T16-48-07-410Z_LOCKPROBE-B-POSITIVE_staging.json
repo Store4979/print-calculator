@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-B-POSITIVE",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "f18e4ee1a898c7168c7bc65978fc4684",
+  "requestBytes": 4871,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-22T16:48:07.410Z",
+  "finishedAt": "2026-10-22T16:48:07.980Z",
+  "httpStatus": 201,
+  "body": "[{\"set_config\":\"45s\"}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

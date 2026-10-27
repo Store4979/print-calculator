@@ -1,0 +1,16 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "LOCKPROBE-SETUP",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "d5a8c9de513479429cac9410090666d1",
+  "requestBytes": 991,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-23T15:27:47.027Z",
+  "finishedAt": "2026-10-23T15:27:47.326Z",
+  "httpStatus": 201,
+  "body": "[{\"setup\":\"stage0_lockprobe ready\"}]",
+  "error": null,
+  "tokenRedactedFromResponse": false
+}

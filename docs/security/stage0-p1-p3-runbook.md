@@ -294,14 +294,22 @@ Window setup (§3), in each window:
 $Host.UI.RawUI.WindowTitle = "STAGE0 R - read token"     # window W: "STAGE0 W - write token"
 git rev-parse HEAD
 git status --short
-# PowerShell 7.1 or later:
-$env:SUPABASE_ACCESS_TOKEN = Read-Host "Paste token" -MaskInput
-# Windows PowerShell 5.1 (no -MaskInput): use these two lines instead
-#   $s = Read-Host "Paste token" -AsSecureString
-#   $env:SUPABASE_ACCESS_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)); Remove-Variable s
+$s = Read-Host "Paste token" -AsSecureString
+$env:SUPABASE_ACCESS_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)); Remove-Variable s
 $env:SUPABASE_ACCESS_TOKEN.StartsWith("sbp_")
 $env:SUPABASE_ACCESS_TOKEN.Length
 ```
+
+**The token prompt is the `-AsSecureString` form only** (Codex's capture
+review of 2026-10-23, §4). It masks in Windows PowerShell 5.1 and in 7.
+- **Never `Read-Host … -MaskInput`.** Windows PowerShell 5.1 has no such
+  parameter: it took the word as part of the prompt label and **echoed the
+  pasted token in clear** (2026-10-23, phase T go 2; plan §E14). Earlier
+  revisions of this block offered that line first, for 7.1 or later.
+- **Any token value in the console, a paste or the chat is a STOP,** even
+  after `True` and `44`. Delete the token at once, remove the variable,
+  close the window and clear Win+V. A new attempt needs a new go, token and
+  window.
 
 A send, with `<TEXT>` from §0.7 (window R for P0 and STATE, window W for the
 rest):
