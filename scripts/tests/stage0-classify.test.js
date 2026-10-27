@@ -946,11 +946,14 @@ test("CL-28 the profile check's mutation companion: removing or broadening it mi
   const dir = mkdtempSync(join(tmpdir(), "stage0-classify-profile-mutants-"));
   try {
     for (const [n, [name, edits, must]] of PROFILE_MUTANTS.entries()) {
-      assert.ok(PROFILE_NEG.some(([x]) => x === must), `${name}: names a fixture in PROFILE_NEG`);
+      const named = PROFILE_NEG.find(([x]) => x === must);
+      assert.ok(named, `${name}: names a fixture in PROFILE_NEG`);
+      assert.equal(negClass(C, ctx, named), "R4", `${name}: "${must}" is R4 without the mutation`);
       const X = await mutantModule(edits, dir, `profile-${n}`);
       const xctx = X.contextFor(M, { cwd: ROOT });
-      const flipped = PROFILE_NEG.filter((neg) => negClass(X, xctx, neg) !== "R4").map(([x]) => x);
-      assert.ok(flipped.includes(must), `${name}: the mutant must make "${must}" R3; it changed ${JSON.stringify(flipped)}`);
+      // Exactly R3: a mutant that made it R1 or R2 (a tooling error, say) is
+      // not evidence of a permissive classification (Codex, review of 9404ee5).
+      assert.equal(negClass(X, xctx, named), "R3", `${name}: the mutant must make "${must}" exactly R3`);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
