@@ -392,8 +392,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         frame, or with its PERFORM frame through a per-text
         `PERFORM_QUERIES` entry.
 
-      A LINE position block, QUERY and other frame kinds stay R4. R3 is not
-      a retry, and not proof of an unchanged prefix;
+      **Supported elements do NOT compose** (Codex C-COMB, review of
+      95ecd65). A parsed envelope is R3 only when its whole structure
+      (severity, ordered fields, ordered frames and their count) is one of
+      the five witnessed `PROFILES`:
+      - field-less ERROR (B1);
+      - re-raised ERROR (P2-01 send 2, A2, A3);
+      - DETAIL/HINT re-raised ERROR (B4);
+      - executed-input ERROR (B2);
+      - FATAL 25P04 with T2's bound PERFORM (T2).
+
+      A new profile needs its own receipt and review. A LINE position block,
+      QUERY and other frame kinds stay R4. R3 is not a retry, and not proof
+      of an unchanged prefix;
     - R4 UNRESOLVED: everything else, gateway text quoting an error
       included.
     The sender's exit 0 on any 201 is a transport fact, not a class.

@@ -33,6 +33,10 @@
 //   CL-25 the recorded progression of B, A, T and U replays through the gate
 //   CL-26 a PERFORM query binds to its own text; a statement frame pairs with
 //         the frame of the statement that ran it
+//   CL-27 C-COMB: R3 only for the five witnessed profiles; every other
+//         combination of supported elements is R4
+//   CL-28 the profile check's mutation companion: removing or broadening it
+//         misclassifies its named negative fixture
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -161,8 +165,8 @@ test("CL-3 coverage: one predicate entry per send-policy text, both ways; the re
   // each receipt time in it is a fixture's.
   const leaves = (o) => (typeof o === "string" ? [o] : o && typeof o === "object" ? Object.values(o).flatMap(leaves) : []);
   const stamps = (w) => w.match(/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z/g) || [];
-  const witnesses = [...leaves(C.SUPPORT), ...Object.values(C.PERFORM_QUERIES).flat().map((e) => e.witness), ...leaves(C.OBSERVED_STATUSES)];
-  assert.equal(witnesses.length, 13, "11 SUPPORT entries, 1 PERFORM binding, 1 status");
+  const witnesses = [...leaves(C.SUPPORT), ...Object.values(C.PERFORM_QUERIES).flat().map((e) => e.witness), ...leaves(C.OBSERVED_STATUSES), ...C.PROFILES.map((p) => p.witness)];
+  assert.equal(witnesses.length, 18, "11 SUPPORT entries, 1 PERFORM binding, 1 status, 5 profiles");
   for (const w of witnesses) {
     assert.ok(stamps(w).length, `a witness without a receipt time: ${w}`);
     for (const t of stamps(w)) assert.ok(Object.keys(REAL).some((f) => f.startsWith(t.split(":").join("-").split(".").join("-"))), `${t}: no fixture holds that receipt`);
@@ -347,15 +351,13 @@ test("CL-10 the envelope grammar: its accepted forms, its edges and bounds; the 
   assert.match(C.parseEnvelope(`${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function f() line 1 at RAISE\n`).why, /function is not a supported name/);
   assert.match(C.parseEnvelope(`${P}ERROR:  P0001: x\nCONTEXT:  PL/pgSQL function inline_code_block line 1 at FETCH\n`).why, /statement kind that is not supported/);
   assert.match(C.parseEnvelope(`${P}PANIC:  XX000: x\n`).why, /no ERROR or FATAL/);
-  // Through P2-01 send 2's receipt, under the observed status: a refusal is
-  // R4, and an accepted form that needs no candidate is R3. A statement frame
-  // quotes no input of P2-01's, so it is R4 there.
+  // Through P2-01 send 2's receipt, under the observed status, only an
+  // envelope that is one of PROFILES is R3 (CL-27). The others are R4,
+  // including FATAL, which parses but has no field-less profile, and every
+  // statement frame, which quotes no input of P2-01's.
   const s2 = rec(SEND2);
-  for (const [name, m, candidates, , okSupport] of GRAMMAR) {
-    if (!okSupport) assert.equal(cls({ ...s2, body: env(m) }).class, "R4", name);
-    else if (!candidates.length) assert.equal(cls({ ...s2, body: env(m) }).class, "R3", name);
-    else assert.equal(cls({ ...s2, body: env(m) }).class, "R4", `${name}, under another text`);
-  }
+  const R3_UNDER_P2_01 = ["the real P0001", "field-less", "DETAIL, HINT, CONTEXT in order"];
+  for (const [name, m] of GRAMMAR) assert.equal(cls({ ...s2, body: env(m) }).class, R3_UNDER_P2_01.includes(name) ? "R3" : "R4", name);
 });
 
 test("CL-11 success is not acceptance: R2 read-backs pass or STOP on their values; a P0 type error is R4", () => {
@@ -848,9 +850,107 @@ test("CL-26 a PERFORM query is a candidate for its own text only, bound to its o
   assert.equal(asT2(t2m.replace("at PERFORM", "at EXECUTE")), "R4", "the PERFORM query, then an EXECUTE frame");
   assert.equal(asT2(t2m.replace("at PERFORM", "at RAISE")), "R4", "the PERFORM query, then a RAISE frame");
   assert.equal(asT2(t2m.replace(`SQL statement "${SLEEP}"\n`, "")), "R4", "the PERFORM frame without its statement frame");
-  assert.equal(asT2(t2m.replace("FATAL:  25P04", "ERROR:  57014")), "R3", "elements compose: the same frames under ERROR");
+  assert.equal(asT2(t2m.replace("FATAL:  25P04", "ERROR:  57014")), "R4", "the same frames under ERROR: no witnessed profile (C-COMB)");
   const b2 = rec(CAPTURE.B2[0]);
   const b2m = JSON.parse(b2.body).message;
   assert.equal(cls({ ...b2, body: env(b2m.replace("at EXECUTE", "at PERFORM")) }).class, "R4", "an executed input, then a PERFORM frame");
   assert.equal(cls({ ...b2, body: env(b2m.replace("select 1/0;", "select 1/1;")) }).class, "R4", "a statement frame quoting what was not executed");
+});
+
+// ── C-COMB: the witnessed profiles (Codex's review of 95ecd65) ──────────────
+
+const withFields = (m, fields) => { const n = m.indexOf("\n") + 1; return m.slice(0, n) + fields + m.slice(n); };
+const msgOf = (id) => JSON.parse(rec(CAPTURE[id][0]).body).message;
+// Each profile, and the held receipts that are it.
+const PROFILE_OF = {
+  "field-less": [CAPTURE.B1[0]],
+  "re-raised": [SEND2, CAPTURE.A2[0], CAPTURE.A3[0]],
+  "detail/hint re-raised": [CAPTURE.B4[0]],
+  "executed input": [CAPTURE.B2[0]],
+  "transaction-timeout PERFORM": [CAPTURE.T2[0]],
+};
+// A context in which a text has further bound PERFORM queries.
+const withPerforms = (c, extra) => ({ ...c, performs: { ...c.performs, ...extra } });
+// The named negatives: a held receipt with its message changed. They are
+// local mutations, not server output. [name, the receipt it is sent as, the
+// message, a context change]
+const UNBOUND = "T2's message under another text";
+const PROFILE_NEG = (() => {
+  const t2 = msgOf("T2");
+  const a2 = msgOf("A2");
+  const b2 = msgOf("B2");
+  const b1 = msgOf("B1");
+  return [
+    // Codex's five (review of 95ecd65, C-COMB)
+    ["a field-less FATAL", CAPTURE.T2[0], t2.slice(0, t2.indexOf("\n") + 1)],
+    ["ERROR with T2's PERFORM pair", CAPTURE.T2[0], t2.replace("FATAL:  25P04", "ERROR:  57014")],
+    ["FATAL with DETAIL and HINT added to T2's pair", CAPTURE.T2[0], withFields(t2, "DETAIL:  d\nHINT:  h\n")],
+    ["ERROR with DETAIL only and a RAISE frame", CAPTURE.A2[0], withFields(a2, "DETAIL:  d\n")],
+    ["ERROR with two RAISE frames", CAPTURE.A2[0], `${a2}PL/pgSQL function inline_code_block line 75 at RAISE\n`],
+    // further severity, field and frame combinations
+    ["FATAL with another SQLSTATE and T2's pair", CAPTURE.T2[0], t2.replace("FATAL:  25P04", "FATAL:  57P01")],
+    ["a re-raised FATAL", CAPTURE.A2[0], a2.replace("ERROR:  P0001", "FATAL:  P0001")],
+    ["a FATAL executed input", CAPTURE.B2[0], b2.replace("ERROR:  22012", "FATAL:  22012")],
+    ["DETAIL and HINT with the executed-input pair", CAPTURE.B2[0], withFields(b2, "DETAIL:  d\nHINT:  h\n")],
+    ["HINT only and a RAISE frame", CAPTURE.A2[0], withFields(a2, "HINT:  h\n")],
+    ["DETAIL and HINT with no CONTEXT", CAPTURE.B1[0], `${b1}DETAIL:  d\nHINT:  h\n`],
+    ["a RAISE frame after the executed-input pair", CAPTURE.B2[0], `${b2}PL/pgSQL function inline_code_block line 1 at RAISE\n`],
+    // the PERFORM binding
+    [UNBOUND, CAPTURE.A3[0], t2],
+    ["T2's message under another text that has the same PERFORM entry", CAPTURE.A3[0], t2, (c) => withPerforms(c, { "LOCKPROBE-B-STMTTIMEOUT": [SLEEP] })],
+    ["another bound PERFORM query under T2's text", CAPTURE.T2[0], t2.split(SLEEP).join("SELECT pg_sleep(31)"), (c) => withPerforms(c, { "LOCKPROBE-B-TXTIMEOUT": [SLEEP, "SELECT pg_sleep(31)"] })],
+  ];
+})();
+const negClass = (X, xctx, [, f, m, over]) => X.classifyText(asFile({ ...rec(f), body: env(m) }), over ? over(xctx) : xctx).class;
+
+test("CL-27 C-COMB: an envelope is R3 only as one of the five witnessed profiles; every other combination of supported elements is R4", () => {
+  assert.deepEqual(C.PROFILES.map((p) => p.name), Object.keys(PROFILE_OF), "exactly Codex's five, in its order");
+  assert.ok(Object.isFrozen(C.PROFILES) && C.PROFILES.every((p) => Object.isFrozen(p) && Object.isFrozen(p.fields) && Object.isFrozen(p.frames)), "a literal, frozen list");
+  // Each R3 fixture is its witness's profile, and every profile has its held witness.
+  for (const [name, files] of Object.entries(PROFILE_OF)) {
+    for (const f of files) {
+      const c = C.classifyText(real(f), ctx);
+      assert.equal(c.class, "R3", f);
+      assert.equal(c.profile, name, f);
+    }
+  }
+  const r3 = Object.keys(REAL).filter((f) => C.classifyText(real(f), ctx).class === "R3").sort();
+  assert.deepEqual(r3, Object.values(PROFILE_OF).flat().sort(), "every R3 fixture is listed under its profile");
+  assert.deepEqual(C.structureOf(C.classifyText(real(CAPTURE.T2[0]), ctx).sqlError), { fields: ["CONTEXT"], frames: ["SQL statement via PERFORM", "PL/pgSQL inline_code_block at PERFORM"] });
+  assert.deepEqual(C.structureOf(C.classifyText(real(CAPTURE.B4[0]), ctx).sqlError), { fields: ["DETAIL", "HINT", "CONTEXT"], frames: ["PL/pgSQL inline_code_block at RAISE"] });
+  // The named negatives, through classifyText with otherwise bound receipts.
+  for (const neg of PROFILE_NEG) {
+    const [name, f, m, over] = neg;
+    const c = C.classifyText(asFile({ ...rec(f), body: env(m) }), over ? over(ctx) : ctx);
+    assert.equal(c.class, "R4", name);
+    assert.match(c.reasons[0], name === UNBOUND ? /quotes no complete input of the bound text/ : /^supported elements in a combination no receipt shows: no witnessed profile is /, name);
+  }
+  // No normalization: inside an ERROR profile, the SQLSTATE, primary text and line number vary within the parser's bounds.
+  const a2 = msgOf("A2").replace("line 75", "line 999999").replace("ERROR:  P0001: lockprobe", "ERROR:  55P03: lockprobe");
+  assert.equal(cls({ ...rec(CAPTURE.A2[0]), body: env(a2) }).class, "R3", "another SQLSTATE, text and line, still re-raised");
+});
+
+// Each mutant removes or broadens one part of the profile check, and must
+// make its named negative R3. The parser's own mutants stay in CL-12.
+const PROFILE_MUTANTS = [
+  ["removing the profile check", [["    if (!prof.ok) return { class: \"R4\", outcome: \"UNRESOLVED\", reasons: [`supported elements in a combination no receipt shows: ${prof.why}`], ...base };\n", ""]], "a field-less FATAL"],
+  ["any severity", [["  const hits = PROFILES.filter((p) => p.severity === sqlError.severity\n", "  const hits = PROFILES.filter((p) => true\n"]], "a field-less FATAL"],
+  ["any SQLSTATE", [["    && (p.sqlstate === undefined || p.sqlstate === sqlError.sqlstate)\n", "    && true\n"]], "FATAL with another SQLSTATE and T2's pair"],
+  ["any fields", [["    && same(p.fields, fields)\n", "    && true\n"]], "DETAIL and HINT with the executed-input pair"],
+  ["a frame prefix", [["    && same(p.frames, frames)\n", "    && p.frames.every((f, n) => frames[n] === f)\n"]], "ERROR with two RAISE frames"],
+  ["any text for the PERFORM", [["p.perform.text === text && ", ""]], "T2's message under another text that has the same PERFORM entry"],
+  ["any bound PERFORM query", [["quoted === A.md5(p.perform.query)", "true"]], "another bound PERFORM query under T2's text"],
+];
+
+test("CL-28 the profile check's mutation companion: removing or broadening it misclassifies its named negative fixture", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "stage0-classify-profile-mutants-"));
+  try {
+    for (const [n, [name, edits, must]] of PROFILE_MUTANTS.entries()) {
+      assert.ok(PROFILE_NEG.some(([x]) => x === must), `${name}: names a fixture in PROFILE_NEG`);
+      const X = await mutantModule(edits, dir, `profile-${n}`);
+      const xctx = X.contextFor(M, { cwd: ROOT });
+      const flipped = PROFILE_NEG.filter((neg) => negClass(X, xctx, neg) !== "R4").map(([x]) => x);
+      assert.ok(flipped.includes(must), `${name}: the mutant must make "${must}" R3; it changed ${JSON.stringify(flipped)}`);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

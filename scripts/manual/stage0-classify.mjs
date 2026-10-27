@@ -394,18 +394,20 @@ const B1 = CAPTURE("B1", "ENVELOPE-PROBE-1", "2026-10-22T15:35:38.187Z");
 const B2 = CAPTURE("B2", "ENVELOPE-PROBE-2", "2026-10-22T15:43:05.120Z");
 const B3 = CAPTURE("B3", "ENVELOPE-PROBE-3", "2026-10-22T15:43:57.386Z");
 const B4 = CAPTURE("B4", "ENVELOPE-PROBE-4", "2026-10-22T15:44:50.624Z");
+const A2 = CAPTURE("A2", "LOCKPROBE-B-LOCKTIMEOUT", "2026-10-22T16:41:36.172Z");
+const A3 = CAPTURE("A3", "LOCKPROBE-B-STMTTIMEOUT", "2026-10-22T16:45:58.150Z");
 const T2 = CAPTURE("T2", "LOCKPROBE-B-TXTIMEOUT", "2026-10-23T15:31:55.289Z");
 
 /** The HTTP statuses an SQL error has been seen under, through the sender. */
 export const OBSERVED_STATUSES = Object.freeze({ 400: `${P2_01_SEND_2}; and all eight capture errors (B1-B5, A2, A3 and T2)` });
 
 /**
- * What the envelope parser accepts, each with the sender receipt that shows
- * it. A missing or null entry is not accepted. Elements compose: an envelope
- * is accepted when each of its elements is, even in a combination no receipt
- * shows (a field-less FATAL, for example). Not accepted: QUERY, a LINE
- * position block (B3 and B5 show its rendering; it stays unsupported), a
- * frame of another kind (B3's "JSON data"), and any other function name or
+ * The elements the envelope parser accepts, each with the sender receipt
+ * that shows it. A missing or null entry is not accepted. Accepting each
+ * element is not enough for R3: the whole envelope must also be one of
+ * PROFILES, the combinations a receipt shows. Not accepted at all: QUERY, a
+ * LINE position block (B3 and B5 show its rendering; it stays unsupported),
+ * a frame of another kind (B3's "JSON data"), and any other function name or
  * statement kind.
  */
 export const SUPPORT = Object.freeze({
@@ -454,6 +456,51 @@ export function performQueries(texts) {
     });
   }
   return out;
+}
+
+/**
+ * The envelope structures rule 3′ resolves: each is a whole combination a
+ * sender receipt shows (Codex's review of 95ecd65, C-COMB). A parsed envelope
+ * is R3 only when its severity, its ordered fields and its ordered frames,
+ * frame count included, are exactly one profile's. The supported elements in
+ * any other combination are R4. The list is written out: it is not generated
+ * from SUPPORT, and a new profile needs its own receipt and review.
+ *   - The transaction-timeout profile also binds its SQLSTATE and its one
+ *     PERFORM: that query, under that text.
+ *   - The other profiles take any SQLSTATE, primary text and line number,
+ *     each within the parser's bounds.
+ */
+export const PROFILES = Object.freeze([
+  Object.freeze({ name: "field-less", severity: "ERROR", fields: Object.freeze([]), frames: Object.freeze([]), witness: B1 }),
+  Object.freeze({ name: "re-raised", severity: "ERROR", fields: Object.freeze(["CONTEXT"]), frames: Object.freeze(["PL/pgSQL inline_code_block at RAISE"]), witness: `${P2_01_SEND_2}; ${A2}; ${A3}` }),
+  Object.freeze({ name: "detail/hint re-raised", severity: "ERROR", fields: Object.freeze(["DETAIL", "HINT", "CONTEXT"]), frames: Object.freeze(["PL/pgSQL inline_code_block at RAISE"]), witness: B4 }),
+  Object.freeze({ name: "executed input", severity: "ERROR", fields: Object.freeze(["CONTEXT"]), frames: Object.freeze(["SQL statement via EXECUTE", "PL/pgSQL inline_code_block at EXECUTE"]), witness: B2 }),
+  Object.freeze({
+    name: "transaction-timeout PERFORM", severity: "FATAL", sqlstate: "25P04", fields: Object.freeze(["CONTEXT"]),
+    frames: Object.freeze(["SQL statement via PERFORM", "PL/pgSQL inline_code_block at PERFORM"]),
+    perform: Object.freeze({ text: "LOCKPROBE-B-TXTIMEOUT", query: "SELECT pg_sleep(30)" }), witness: T2,
+  }),
+]);
+
+/** A parsed envelope's structure: its fields and its frames, in order. */
+export function structureOf(sqlError) {
+  return {
+    fields: FIELD_ORDER.filter((f) => (f === "CONTEXT" ? sqlError.context.length > 0 : own(sqlError, f.toLowerCase()))),
+    frames: sqlError.context.map((f) => (f.kind === "sqlstmt" ? `SQL statement via ${f.via}` : `PL/pgSQL ${f.fname} at ${f.stmt}`)),
+  };
+}
+
+/** The one profile a parsed envelope of `text` is: {ok: true, profile} or {ok: false, why}. */
+export function matchProfile(sqlError, text) {
+  const { fields, frames } = structureOf(sqlError);
+  const quoted = (sqlError.context.find((f) => f.kind === "sqlstmt") || {}).md5;
+  const hits = PROFILES.filter((p) => p.severity === sqlError.severity
+    && (p.sqlstate === undefined || p.sqlstate === sqlError.sqlstate)
+    && same(p.fields, fields)
+    && same(p.frames, frames)
+    && (!p.perform || (p.perform.text === text && quoted === A.md5(p.perform.query))));
+  if (hits.length === 1) return { ok: true, profile: hits[0].name };
+  return { ok: false, why: `${hits.length ? "more than one profile" : "no witnessed profile"} is ${sqlError.severity} ${sqlError.sqlstate} with fields [${fields.join(", ")}] and frames [${frames.join("; ")}] under ${text}` };
 }
 
 /** A text's statement-frame candidates: what its EXECUTEs run, then its bound PERFORM queries. */
@@ -620,8 +667,10 @@ function classifyChecked(fileText, ctx) {
     if (p.why) return { class: "R4", outcome: "UNRESOLVED", reasons: [p.why], ...base };
     if (!sameKeys(p.v, ["message"]) || typeof p.v.message !== "string") return { class: "R4", outcome: "UNRESOLVED", reasons: ['the body is not exactly {"message": <string>}'], ...base };
     const env = parseEnvelope(p.v.message, { candidates: candidatesFor(ctx, rec.text) });
-    if (env.ok) return { class: "R3", outcome: "RESOLVED SQL error", reasons: [], ...base, sqlError: env.sqlError };
-    return { class: "R4", outcome: "UNRESOLVED", reasons: [`not a supported SQL-error envelope: ${env.why}`], ...base };
+    if (!env.ok) return { class: "R4", outcome: "UNRESOLVED", reasons: [`not a supported SQL-error envelope: ${env.why}`], ...base };
+    const prof = matchProfile(env.sqlError, rec.text);
+    if (!prof.ok) return { class: "R4", outcome: "UNRESOLVED", reasons: [`supported elements in a combination no receipt shows: ${prof.why}`], ...base };
+    return { class: "R3", outcome: "RESOLVED SQL error", reasons: [], ...base, sqlError: env.sqlError, profile: prof.profile };
   }
   return { class: "R4", outcome: "UNRESOLVED", reasons: [`HTTP ${rec.httpStatus ?? "none"} is neither a success nor an observed SQL-error status`], ...base };
 }

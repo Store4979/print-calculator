@@ -2927,15 +2927,24 @@ matched, but that is not a claim that the whole operation complied.
   a send.
 - **The drafted-and-returned go** is in the capture runbook's §3.
 
-**The capture commit (this commit, local, for Codex's review; nothing is
-pushed):**
+**The capture commit `95ecd65` (local) holds:**
 - the 15 receipts as fixtures;
 - SUPPORT, within Codex's capture review §2;
 - the tests CL-24…26;
 - this record;
 - the procedure fixes.
 
-The classifier plan's §10 has the details.
+**Codex's review of it (2026-10-27,
+`reviews/2026-10-27-95ecd65-review.md`): AMEND, one blocker, C-COMB.**
+Accepted:
+- U's results;
+- the fixtures, this record and the push records in §E13;
+- the prompt fix;
+- the pairing check.
+
+**Commit N,** on top, restricts R3 to the five witnessed envelope profiles.
+Both commits are local, and the push is held until N is reviewed. The
+classifier plan's §10 has the details.
 
 ---
 
@@ -3171,13 +3180,50 @@ until approved:**
        - **The staging capture ran** B, A, T and U, 2026-10-22 to 27: 15
          MATCH (§E14). Codex accepted B, A and T's receipts and T2's
          disposition (2026-10-23).
-       - **The capture commit,** which extends SUPPORT from those
-         receipts, is local and for Codex's review. It is not pushed;
+       - **The capture commit `95ecd65`,** which extends SUPPORT from those
+         receipts, was reviewed by Codex on 2026-10-27: AMEND, one
+         blocker, C-COMB. Everything else was accepted. **Commit N**
+         restricts R3 to the five witnessed profiles, and is for Codex's
+         review. Neither commit is pushed: the push is held until N is
+         reviewed;
      - item 3: the staging read-token experiment, and a protocol revision
        if a Read PAT can write;
      - item 4(c): a rehearsal from the committed 01 state, with new pins, a
        fresh baseline, the recovery mapping, a revised runbook and the
-       exact head;
+       exact head.
+       - **Its classifier scope, confirmed by Codex** (review of
+         `95ecd65`, "Item 4(c): confirm the scope now"). The missing P1
+         and RB-43 PERFORM entries belong here.
+       - **Cover the actual new rehearsal from state 01, and the forward
+         and recovery texts its runbook uses.** The old P1 cannot be reused
+         over 01. Adding generic support to the obsolete text does not
+         cover the new rehearsal.
+       - **For each form the runbook relies on, 4(c) brings together:**
+         - the exact new or preserved SQL output, and its pins;
+         - each PERFORM's source and query, bound **per text**, with its
+           actual rendered SQL statement;
+         - named-function frames, such as the rehearsal's check function,
+           if that path uses them;
+         - the witnessed ordered envelope profile, and its receipt, not
+           just witnesses of the individual elements;
+         - the success and result predicates, the recovery mapping, and the
+           stop behaviour for unsupported cases;
+         - tests that refuse the same query or frame under another text,
+           or in an unreviewed combination.
+       - **These are reviewed before any production window relies on the
+         classifier resolving them.**
+         - A new profile needs its own reviewed evidence.
+         - A form deliberately left unsupported is stated as residual R4,
+           STOP-and-review. It is never called covered just because its
+           SQLSTATE parses.
+       - **CANCEL-STEP-TEMPLATE's optional cancellation forms** need their
+         own exact binding and profile review if a later runbook relies on
+         classifying them. They may stay unsupported while that optional
+         procedure is not relied on.
+       - **The uncaptured STMTTIMEOUT PERFORM stays R4.** It shares the
+         spelling `pg_sleep(30)` with T2, and that transfers no authority.
+       - **The order stays item 2 → 6 → 3 → 4(c).** This scope is not
+         production clearance;
      - item 6: the sender's deadline and window guards, with their tests;
      - the comment-stripping correction (Codex's review of `41153b8`,
        2026-10-15). The source-reading checks must use JavaScript/JSX-aware

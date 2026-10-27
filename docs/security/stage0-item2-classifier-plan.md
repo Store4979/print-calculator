@@ -663,15 +663,11 @@ This commit holds the concrete code, fixtures and record for review.
 
   B2 and T2 show the pairs; nothing showed another order. Three new
   mutants prove each check load-bearing (CL-12).
-- **Composition, for Codex to confirm.** SUPPORT's elements compose. An
-  envelope is R3 when each element is supported, even in a combination no
-  receipt shows:
-  - a field-less FATAL;
-  - T2's frames under ERROR (CL-26).
-
-  That is how the grammar treated ERROR before. Codex's bound was that the
-  supported captured FATAL form can classify; this widens that to its
-  elements.
+- **Composition, as `95ecd65` had it: withdrawn.** In `95ecd65`, SUPPORT's
+  elements composed: an envelope was R3 when each element was supported,
+  even in a combination no receipt shows (a field-less FATAL; T2's frames
+  under ERROR). Codex ruled that blocking (C-COMB), and N replaces it with
+  five witnessed profiles. See below.
 - **The assembler is unchanged,** so nothing is re-pinned, and every SQL
   output stays the same. The PERFORM binding lives in the classifier, which
   the manifest does not pin.
@@ -696,3 +692,63 @@ and the records keep that output. Under this commit B1, B2, B4 and T2 are
 R3, and B3 and B5 stay R4. T2's disposition as a resolved SQL failure is
 Codex's reviewed human decision of 2026-10-23. It is not a rewrite of L's
 output.
+
+**Codex's review of `95ecd65` (2026-10-27): AMEND, one blocker, C-COMB**
+(`reviews/2026-10-27-95ecd65-review.md`). Everything else was accepted:
+- U's results, the fixtures, the records and the prompt fix;
+- the pairing check;
+- the push records riding along.
+
+Codex confirmed point 4's PERFORM gap as item 4(c)'s scope (plan §I). The
+push of `95ecd65` is held until N is reviewed.
+
+**C-COMB.** Codex reproduced five R3s at `95ecd65` that no receipt
+witnesses as a whole:
+1. a field-less FATAL;
+2. ERROR with T2's PERFORM pair;
+3. FATAL with DETAIL and HINT added to T2's pair;
+4. ERROR with DETAIL only and a RAISE frame;
+5. ERROR with two RAISE frames.
+
+**Commit N, on top of `95ecd65`:**
+- **The profile set.** After the envelope parses, `matchProfile()` requires
+  it to be exactly one of `PROFILES`. A profile binds the severity, the
+  ordered fields and the ordered frames, frame count included, and names
+  its witness. The list is written out, never generated from SUPPORT.
+
+  | profile | severity | fields | frames | witness |
+  |---|---|---|---|---|
+  | field-less | ERROR | none | none | B1 |
+  | re-raised | ERROR | CONTEXT | `inline_code_block` at RAISE | P2-01 send 2; A2; A3 |
+  | detail/hint re-raised | ERROR | DETAIL, HINT, CONTEXT | `inline_code_block` at RAISE | B4 |
+  | executed input | ERROR | CONTEXT | a bound EXECUTE input, then `inline_code_block` at EXECUTE | B2 |
+  | transaction-timeout PERFORM | FATAL **25P04** | CONTEXT | `SELECT pg_sleep(30)`, under `LOCKPROBE-B-TXTIMEOUT` only, then `inline_code_block` at PERFORM | T2 |
+- **What the profiles bind:**
+  - the FATAL profile binds its SQLSTATE, its query and its text;
+  - the ERROR profiles keep any SQLSTATE, primary text and line number
+    within the parser's bounds. Nothing is normalized.
+- **What stays independent.** SUPPORT, candidate matching and the typed
+  pairing are still checked separately. A parse failure is reported as
+  before, and a parsed envelope outside the profiles is R4: "supported
+  elements in a combination no receipt shows". An R3 result now names its
+  `profile`.
+- **The tests:**
+  - **CL-27:** every R3 fixture is its witness's profile, and the 24
+    fixtures keep their classes. Fifteen named negatives are R4 through
+    `classifyText` with otherwise bound receipts:
+    - Codex's five;
+    - FATAL under another SQLSTATE, re-raised, or as an executed input;
+    - DETAIL/HINT with the EXECUTE pair, HINT only, or with no CONTEXT;
+    - a RAISE after the EXECUTE pair;
+    - T2's message under another text, both unbound and with the same
+      PERFORM entry added there;
+    - another bound PERFORM query under T2's own text;
+  - **CL-28:** seven mutants each remove or broaden one part of the check:
+    the whole check, the severity, the SQLSTATE, the fields, the exact
+    frames, the PERFORM's text and the PERFORM's query. Each must make its
+    named negative R3. CL-12's parser mutants (candidate-first, ambiguity,
+    pairing) are unchanged;
+  - **CL-10 and CL-26:** their composition expectations are replaced. CL-3
+    requires each profile's witness to be a held receipt.
+- **Unchanged:** the assembler, the manifest, every SQL text, and the
+  receipts and their classes, at L and now.

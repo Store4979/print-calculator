@@ -454,6 +454,16 @@ classifier plan's §10 has the details):
   `pgMetaFormat` declared. It stays unsupported, and its existence is
   recorded.
 - **No grammar correction was forced:** every capture was a MATCH.
+- **Commit N,** after Codex's review of `95ecd65` (C-COMB). The supported
+  elements do not compose. A parsed envelope is R3 only when its whole
+  structure is one of five witnessed profiles:
+  - B1's field-less ERROR;
+  - the re-raised ERROR of P2-01 send 2, A2 and A3;
+  - B4's DETAIL/HINT re-raised ERROR;
+  - B2's executed-input ERROR;
+  - T2's FATAL 25P04 with its bound PERFORM.
+
+  Any other combination is R4.
 
 ## 8. What the session cannot establish
 
