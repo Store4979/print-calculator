@@ -24,13 +24,14 @@
 // capture commit). A MATCH changes nothing in rule 3′'s SUPPORT, which grows
 // only in a reviewed capture commit.
 //
-// The progression gate (progress(), --progress) runs before every send. It
-// re-checks the phase's results files so far, in order, requires each to be
-// fresh and single-use against the phase's go, its deadline and the time each
-// command was issued, and names the one step that may be sent next, or the
-// stop (Codex, review of df401b3, K-R2). It is read-only. It does not enforce
-// a go: Ryan's go in chat is the authority, and the gate checks the receipts
-// against the times that go and each command carry.
+// The progression gate (progress(), --progress) re-checks the phase's results
+// files so far, in order, requires each to be fresh and single-use against
+// the phase's go, its deadline and the time each command was issued, and
+// names the one step that may be sent next, or the stop (Codex, review of
+// df401b3, K-R2). It is read-only. Since item 6 it is the HISTORICAL review
+// path for receipts without a guard block: it issues nothing. A go is issued
+// only by stage0-go.mjs, whose gate (stage0-guard.mjs guardedProgress) runs
+// checkStep() and nextStep() on the guarded journal instead.
 //
 // The declared error renderings follow postgres-meta's error formatting
 // (pgMetaFormat below). That the Management API's "Failed to run sql query: "
@@ -376,7 +377,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     process.stdout.write(`phase ${o.phase}; go ${o.goAt}; deadline ${o.deadline}; now ${new Date(now).toISOString()}\n`);
     for (const r of g.results) process.stdout.write(`  ${r.verdict} ${r.step} ${r.text}${r.reasons.length ? ` | ${r.reasons.join("; ")}` : ""}\n`);
     process.stdout.write(g.stop ? `STOP: ${g.reason}\n` : g.complete ? `COMPLETE: ${g.reason}\n` : `NEXT: ${g.reason}\n`);
-    process.stdout.write("Read-only: this names the step the runbook allows; Ryan's go and the runbook are the authority.\n");
+    process.stdout.write("Read-only and historical: it issues nothing. A go comes only from stage0-go.mjs issue; Ryan's go and the runbook are the authority.\n");
     process.exit(g.stop ? 3 : g.complete ? 4 : 0);
   }
   if (id === "--list") {

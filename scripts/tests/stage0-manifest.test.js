@@ -33,8 +33,11 @@
 //   M-12 the send policy the pinned sender enforces (review of 07574c1): every
 //       output exactly once; production texts to production only, lock probes
 //       and envelope probes to staging only, SIZE-PROBE to staging; read_only
-//       for P0, STATE, SIZE-PROBE and the envelope probes; the sender itself
-//       pinned
+//       for P0, STATE, SIZE-PROBE and the envelope probes; each text's window
+//       role, R, W or C (Codex item 6, Q2); the sender itself pinned
+//   M-13 the guard chain (Codex item 6, SG-6): exactly the files the three
+//       guarded entry points load, as acorn reads them; only node: built-ins
+//       besides; the tools' parser-free audit agrees with acorn file by file
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -59,11 +62,31 @@ const NAMES = {
   "M-7b": "the build-input binding: build scripts, the inventory's local import closure, and .env",
   "M-8": "the recorded repository state: baseline, apply order, rollback records, exact file set",
   "M-10": "every approved fresh-build rollback target carries the queue fix (orderQueue.js f99d16a9)",
-  "M-12": "the send policy: every output once, targets and read_only fixed, the sender pinned",
+  "M-12": "the send policy: every output once, targets, read_only and window fixed, the sender pinned",
+  "M-13": "the guard chain: exactly the guarded entry points' closure, pinned, built-ins only, audit equal to acorn",
 };
 for (const [k, name] of Object.entries(NAMES)) {
   test(`${k} ${name}`, () => assert.deepEqual(P[k], [], "\n  " + P[k].join("\n  ")));
 }
+
+test("M-12/M-13 catch a wrong window role, a dropped chain pin, an extra pin and a reordered list", () => {
+  const X = JSON.parse(JSON.stringify(M));
+  X.send.texts["LOCKPROBE-READBACK"].window = "R";
+  X.send.texts["CANCEL-INSPECT"].window = "W";
+  delete X.send.texts.P0.window;
+  X.guard.files = X.guard.files.filter((f) => f.path !== "scripts/manual/stage0-capture.mjs");
+  X.guard.files.push({ ...X.guard.files[0], path: "scripts/manual/stage0-record.mjs" });
+  const Q = checkManifest(ROOT, X);
+  assert.ok(Q["M-12"].includes('LOCKPROBE-READBACK: window must be W (Codex item 6, Q2); the policy says "R"'), Q["M-12"].join("\n"));
+  assert.ok(Q["M-12"].includes('CANCEL-INSPECT: window must be C (Codex item 6, Q2); the policy says "W"'));
+  assert.ok(Q["M-12"].includes("P0: window must be R (Codex item 6, Q2); the policy says undefined"));
+  assert.ok(Q["M-13"].includes("scripts/manual/stage0-capture.mjs is loaded by the guard chain but not pinned in guard.files"), Q["M-13"].join("\n"));
+  assert.ok(Q["M-13"].includes("scripts/manual/stage0-record.mjs is pinned in guard.files but no entry loads it"));
+  assert.ok(Q["M-13"].includes("guard.files is not a sorted list of distinct paths"));
+  const Y = JSON.parse(JSON.stringify(M));
+  Y.guard.entries = Y.guard.entries.slice(1);
+  assert.deepEqual(checkManifest(ROOT, Y)["M-13"], ["guard.entries is not stage0-guard.mjs's CHAIN_ENTRIES"]);
+});
 
 test("M-11 CANCEL-STEP is instantiated only for a stage-0 step and CANCEL-INSPECT's exact backend_start; the values are the only change", async () => {
   const A = await import("../manual/assemble-stage0.mjs");

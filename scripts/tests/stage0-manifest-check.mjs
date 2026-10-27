@@ -20,6 +20,7 @@ import { join, posix } from "node:path";
 import { createRequire } from "node:module";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as S from "../manual/stage0-send.mjs";
+import * as G from "../manual/stage0-guard.mjs";
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, eligibleMigrations, duplicateVersions } from "./supabase-migration-discovery.mjs";
 import { sqlCode, lexSql } from "./sql-lexer.mjs";
 
@@ -72,10 +73,12 @@ export const INVENTORY = "scripts/tests/inventory-check.mjs";
  * import() count. A module that does not parse, or a non-literal import(),
  * is returned in `unbound`. acorn is loaded only when this runs, so the
  * tools that import this module for its path helpers need no node_modules.
+ * `external` lists the specifiers that are not relative paths; `specsOf`
+ * each module's own.
  */
 export function localImportClosure(g, entry) {
   const { Parser } = createRequire(import.meta.url)("acorn");
-  const seen = new Set(), unbound = [], queue = [entry];
+  const seen = new Set(), unbound = [], queue = [entry], external = new Set(), specsOf = {};
   while (queue.length) {
     const p = queue.shift();
     if (seen.has(p)) continue;
@@ -99,9 +102,13 @@ export function localImportClosure(g, entry) {
       }
     };
     visit(ast);
-    for (const s of specs) if (/^\.\.?\//.test(s)) queue.push(posix.normalize(posix.join(posix.dirname(p), s)));
+    specsOf[p] = [...new Set(specs)].sort();
+    for (const s of specs) {
+      if (/^\.\.?\//.test(s)) queue.push(posix.normalize(posix.join(posix.dirname(p), s)));
+      else external.add(s);
+    }
   }
-  return { modules: [...seen], unbound };
+  return { modules: [...seen], unbound, external: [...external].sort(), specsOf };
 }
 
 // ── where each file must be in the recorded state ────────────────────────────
@@ -161,6 +168,13 @@ export function cancelStepProblems(text) {
 
 /** The item 2 envelope probes (classifier plan §6 B): staging only, read_only. */
 export const ENVELOPE_PROBES = ["ENVELOPE-PROBE-1", "ENVELOPE-PROBE-2", "ENVELOPE-PROBE-3", "ENVELOPE-PROBE-4", "ENVELOPE-PROBE-5"];
+/**
+ * The window each sendable text goes from (Codex item 6, Q2), listed, not
+ * derived from readOnly: LOCKPROBE-READBACK and CANCEL-INSPECT are not
+ * read_only and write nothing. R reads; W writes, or reads back inside a
+ * writing phase; C is the second caller that cancels.
+ */
+export const windowFor = (k) => (["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
 export const PROBE_WRITE_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare)\b|\bpg_\w+\s*\(/gi;
 
 const BACKSLASH = String.fromCharCode(92);
@@ -265,12 +279,16 @@ export function pinnedFiles(M) {
   files.push({ label: "proofs", entry: M.proofs, path: M.proofs.path, frozenPath: M.proofs.path });
   files.push({ label: "assembler", entry: M.assembler, path: M.assembler.path, frozenPath: M.assembler.path });
   if (M.sender) files.push({ label: "sender", entry: M.sender, path: M.sender.path, frozenPath: M.sender.path });
+  const named = new Set(files.map((f) => f.path));
+  for (const f of (M.guard && Array.isArray(M.guard.files) ? M.guard.files : [])) {
+    if (!named.has(f.path)) files.push({ label: `guard chain ${f.path}`, entry: f, path: f.path, frozenPath: f.path });
+  }
   return files;
 }
 
 export function checkManifest(repo, M) {
   const g = gitIn(repo);
-  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [], "M-10": [], "M-12": [] };
+  const P = { "M-0": [], "M-1": [], "M-2": [], "M-3": [], "M-4": [], "M-5": [], "M-6": [], "M-6b": [], "M-7": [], "M-7b": [], "M-8": [], "M-10": [], "M-12": [], "M-13": [] };
   const say = (k, s) => P[k].push(s);
   if (g.tryTxt("rev-parse", "--is-inside-work-tree") !== "true") { say("M-0", `${repo} is not a git checkout`); return P; }
   const manifestCommit = g.lastChange(MANIFEST_PATH);
@@ -356,8 +374,41 @@ export function checkManifest(repo, M) {
     if (k === "SIZE-PROBE" && (!Array.isArray(e.targets) || !e.targets.includes("staging") || e.targets.some((t) => !["staging", "production"].includes(t)))) say("M-12", "SIZE-PROBE must include staging and name no other target than production");
     if ((e.readOnly === true) !== READ_ONLY.includes(k)) say("M-12", `${k}: readOnly must be ${READ_ONLY.includes(k)}`);
     if ((e.instantiate === "cancel") !== (k === "CANCEL-STEP-TEMPLATE") || (e.instantiate !== undefined && e.instantiate !== "cancel")) say("M-12", `${k}: only CANCEL-STEP-TEMPLATE is instantiated, and only by --cancel`);
-    const extra = Object.keys(e).filter((x) => !["targets", "readOnly", "instantiate"].includes(x));
+    if (e.window !== windowFor(k)) say("M-12", `${k}: window must be ${windowFor(k)} (Codex item 6, Q2); the policy says ${JSON.stringify(e.window)}`);
+    const extra = Object.keys(e).filter((x) => !["targets", "readOnly", "instantiate", "window"].includes(x));
     if (extra.length) say("M-12", `${k}: unknown policy fields ${extra.join(", ")}`);
+  }
+
+  // M-13 the guard chain (Codex item 6, SG-6): the manifest pins exactly the
+  // repository files the three guarded entry points load, transitively, as
+  // acorn reads them at HEAD; they load nothing but those files and the
+  // allowed node: modules; the parser-free audit the tools run before any
+  // go or request (stage0-guard.mjs importAudit) finds exactly acorn's
+  // specifiers in every pinned file; and the sender and assembler pins are
+  // the chain's.
+  const GC = M.guard;
+  if (!GC || JSON.stringify(GC.entries) !== JSON.stringify(G.CHAIN_ENTRIES)) say("M-13", "guard.entries is not stage0-guard.mjs's CHAIN_ENTRIES");
+  else {
+    const pinned = Array.isArray(GC.files) ? GC.files.map((f) => f && f.path) : [];
+    if (!pinned.length || JSON.stringify(pinned) !== JSON.stringify([...pinned].sort()) || new Set(pinned).size !== pinned.length) say("M-13", "guard.files is not a sorted list of distinct paths");
+    const closure = new Set();
+    for (const e of GC.entries) {
+      const c = localImportClosure(g, e);
+      for (const u of c.unbound) say("M-13", u);
+      for (const x of c.external) if (!G.BUILTINS.includes(x)) say("M-13", `${e} loads ${x}, which is not an allowed node: module`);
+      for (const p of c.modules) closure.add(p);
+      for (const [p, specs] of Object.entries(c.specsOf)) {
+        const a = G.importAudit(g.tryTxt("show", `HEAD:${p}`) ?? "", p);
+        for (const x of a.problems) say("M-13", x);
+        if (JSON.stringify([...new Set(a.specs)].sort()) !== JSON.stringify(specs)) say("M-13", `${p}: the audit's specifiers ${JSON.stringify(a.specs)} are not acorn's ${JSON.stringify(specs)}`);
+      }
+    }
+    for (const p of closure) if (!pinned.includes(p)) say("M-13", `${p} is loaded by the guard chain but not pinned in guard.files`);
+    for (const p of pinned) if (!closure.has(p)) say("M-13", `${p} is pinned in guard.files but no entry loads it`);
+    for (const [label, pin] of [["sender", M.sender], ["assembler", M.assembler]]) {
+      const f = (GC.files || []).find((x) => x && pin && x.path === pin.path);
+      if (!f || f.blob !== pin.blob) say("M-13", `the ${label} pin is not its guard-chain pin`);
+    }
   }
 
   // M-6 every output re-assembled from the frozen inputs has its pinned md5.

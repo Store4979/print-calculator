@@ -277,10 +277,52 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       - each one is created just before its step and deleted right after;
     - the sender posts to the endpoint execute_sql itself uses,
       /v1/projects/{ref}/database/query (MCP 0.13.0);
-    - the manifest's send policy (M-12) fixes each text's project and
-      read_only;
+    - the manifest's send policy (M-12) fixes each text's project,
+      read_only and window role (R, W, C);
     - execute_sql remains for small ad-hoc, unpinned read-backs, labelled as
       such.
+  - THE GUARDED SENDER (Codex item 6; docs/security/stage0-guarded-send-procedure.md;
+    plan docs/security/stage0-item6-sender-guards-plan.md §A). A live send
+    needs `--go <id>`; nothing else sends:
+    - Claude runs scripts/manual/stage0-go.mjs: `clock` (w32tm stripchart,
+      3 samples within ±2 s, valid 60 min), `phase` (Ryan's verbatim go line,
+      written to a file outside the checkout, recorded within 10 min of
+      arrival with ≥ 30 min left), `issue` (runs the exact-step gate, prints
+      the ONE send command), `void`, `dispose`, `status`. It refuses to run
+      where SUPABASE_ACCESS_TOKEN or STAGE0_SESSION is set;
+    - Ryan runs scripts/manual/stage0-window.mjs `open --role <R|W> --phase
+      <id>` in each window after the token and
+      `$env:STAGE0_SESSION = [guid]::NewGuid().ToString()`, and `close` at
+      every pause. The marker binds the PowerShell PROCESS that starts node
+      (Windows' pid + creation time), so node must be run directly in the
+      window, and a child shell is refused. `yarn run` (so `yarn test`)
+      puts a node.cmd shim first on PATH: through it node's parent is
+      cmd.exe and the guard refuses. A test that starts node from a real
+      window must name process.execPath (G-27 failed under `yarn test` until
+      it did);
+    - the state is ~/.stage0-guard (phases, markers, gos, the per-ref
+      journal), shared by every checkout. NEVER edit, move or delete it: a
+      PENDING claim or an R1/R4 writing outcome holds the whole project
+      until `dispose` with a review file naming the attempt id;
+    - only the capture workflow's phases are declared (stage0-guard.mjs
+      WORKFLOWS). A production or item 3 phase must be declared in code,
+      with its gate, in review, before a go can be recorded for it. No go
+      is ever issued for a cancel text;
+    - tests: scripts/tests/stage0-guard.test.js (G-1…G-26, counting fetch
+      stub, real child processes, a 14-mutant companion) and
+      stage0-guard.shell.test.js (G-27, real PowerShell windows; Windows
+      only).
+  - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
+    the 7 files stage0-send/-window/-go.mjs load (with the classifier and the
+    capture gate) are pinned in the manifest's `guard`. Each tool refuses
+    unless its closure, read by stage0-guard.mjs importAudit, is pinned
+    blob for blob. That audit fails closed on the RAW text: in those 7
+    files, never write the module keyword except as a one-line
+    `<keyword> … from "<spec>";` at column 0 or `<keyword>.meta.url`, and
+    never the CommonJS loader word, its create- form or the eval word, even
+    in a comment (say "loads", "imports" — plural is fine). After editing
+    any of them: stage the change, run
+    scripts/manual/stage0-manifest-generate.mjs, and re-run M-13.
   - C3 on staging (plan §E9, 2026-10-06/07) — facts production will meet:
     - "Disable JWT-based API keys" reaches the legacy service_role JWT AFTER
       A DELAY: still accepted at 70 s, refused by 242 s (78 s the second

@@ -912,8 +912,9 @@ STATE's recovery table around them.
   `node scripts/manual/stage0-classify.mjs <results file>`.
   - It sorts every send into R1–R4
     (`docs/security/stage0-item2-classifier-plan.md` §3).
-  - The sender does not import it until item 6. Its exit code (0 on any
-    201) is a transport fact, not a classification.
+  - Since item 6, the guarded sender's journal uses it to hold the project
+    after an UNRESOLVED writing send. The sender's exit code (0 on any 201)
+    is a transport fact, not a classification.
   - The classifier runs on every results file before anything follows it.
   - Rule 3′ is implemented locally and **not yet reviewed by Codex**. No
     window relies on it before that review.
@@ -2706,6 +2707,37 @@ window.**
     - staging was still deploy `6adb8761…` at `1042d2c`;
     - `ls-remote` showed the branch at `1042d2c`, `main` at `7ec5af4`, and
       no tags.
+- **Codex accepted N `9404ee5`, 2026-10-27** (`reviews/2026-10-27-9404ee5-review.md`).
+  C-COMB is closed, and item 2 is complete. Codex cleared the exact N tip,
+  which carries `95ecd65`, for the existing staging branch and build only.
+- **The push, Tue 2026-10-27, 17:34:19–23Z, under that clearance only:**
+  - **Before (17:34:09Z):**
+    - N's tree was `7f14fc00…`, and L was its ancestor;
+    - L..N held exactly `95ecd65` and `9404ee5`;
+    - `ls-remote` showed the branch at `1042d2c`, `main` at `7ec5af4`, and
+      no tags.
+  - **The command:**
+    `git push origin 9404ee5e482def25dd0bb04de88499d46dc085df:refs/heads/security/release-2-slice-2`
+    gave `1042d2c..9404ee5`, exit 0, with no force and no tags.
+  - **After:** the branch is at `9404ee5`, `main` is still at `7ec5af4`,
+    and there are no tags (17:34:23Z, and again 17:41:46Z).
+  - **Staging,** before at 17:34:24Z: deploy `6adb8761…` at `1042d2c`.
+    After, first seen 17:37:39Z: deploy **`6ae0e0a17979757d55abee7f`**,
+    commitRef `9404ee5…`, built 2026-10-27T17:37:11.890Z. Its permalink
+    reported the same at 17:41:41Z, with `contextAllowed`, `flagPresent` and
+    `flagEnabled` all true.
+  - **Production is unchanged,** at 17:34:34Z and again 17:41:41Z. The
+    live `index.html` (`d67e9e91…`), `main-DZt0oGiJ.js` (`47ab9406…`) and
+    `index-ftBg9V1i.js` (`57fb08e6…`) are byte-identical to deploy
+    `6ab020c5`'s permalink.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked.** He reported
+    it by about 13:57 EDT (17:57Z) on 2026-10-27. The time of the read
+    itself is not known (Ryan):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 

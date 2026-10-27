@@ -288,6 +288,13 @@ it:
 
 ### 0.5 Ryan's commands
 
+**Superseded for any new session by the guarded sender (Codex item 6).**
+Since the item 6 commit, `stage0-send.mjs` makes no live send without
+`--go <id>`, a window marker and a recorded phase. A new session follows
+`docs/security/stage0-guarded-send-procedure.md`, which keeps this
+section's token prompt and checks. The commands below are the record of the
+2026-10-08/09 session.
+
 Window setup (§3), in each window:
 
 ```powershell

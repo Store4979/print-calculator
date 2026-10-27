@@ -28,9 +28,15 @@
 // reasonable it looks. SUPPORT grows only in a reviewed capture commit, with
 // the receipt as its fixture.
 //
-// It makes no network call, no database call and no write. Until item 6 the
-// sender does not import it, and the sender's exit code (0 on any 201) is a
-// transport fact, not a classification.
+// It makes no network call, no database call and no write. The guarded
+// sender's journal (stage0-guard.mjs, Codex item 6) uses it to hold the
+// project after an UNRESOLVED writing send. The sender's exit code (0 on any
+// 201) is a transport fact, not a classification.
+//
+// A receipt from the guarded sender carries a `guard` block (the go, marker,
+// role and head that admitted it). R1 accepts that block only in its exact
+// shape. A receipt without one is a historical, pre-item-6 receipt: it still
+// classifies, but the guard's gate never advances a phase on it.
 //
 //   node scripts/manual/stage0-classify.mjs [--rev <commit>] <results file>…
 //
@@ -180,6 +186,27 @@ const FIELD_OK = {
   tokenRedactedFromResponse: (v) => typeof v === "boolean",
 };
 
+/**
+ * The guarded sender's block (stage0-guard.mjs; Codex item 6, SG-4): exactly
+ * these keys. This is its shape only; the guard's gate binds its values to
+ * the journal and the marker.
+ */
+export const GUARD_KEYS = ["attemptId", "goId", "phaseId", "step", "markerId", "role", "head", "issuedAt", "deadline"];
+function guardProblems(g, rec, policy) {
+  if (!isPlainObject(g)) return ["guard is not an object"];
+  const out = [];
+  if (JSON.stringify(Object.keys(g).sort()) !== JSON.stringify([...GUARD_KEYS].sort())) out.push("guard does not have exactly the guard keys");
+  const id = (v) => typeof v === "string" && /^[0-9a-f]{32}$/.test(v);
+  if (![g.attemptId, g.goId, g.phaseId, g.markerId].every(id)) out.push("a guard id is not 32 lower-case hex characters");
+  if (typeof g.step !== "string" || !/^[A-Z0-9][A-Z0-9-]{0,39}$/.test(g.step)) out.push("guard.step is not a step name");
+  if (!["R", "W", "C"].includes(g.role)) out.push("guard.role is not R, W or C");
+  if (typeof g.head !== "string" || !/^[0-9a-f]{40}$/.test(g.head)) out.push("guard.head is not a full commit id");
+  if (!isIso(g.issuedAt) || !isIso(g.deadline) || !(g.issuedAt < g.deadline)) out.push("guard.issuedAt and guard.deadline are not two ordered UTC times");
+  else if (isIso(rec.startedAt) && rec.startedAt < g.issuedAt) out.push("the send started before its go was issued");
+  if (policy && policy.window !== g.role) out.push("guard.role is not the text's window role in the send policy");
+  return out;
+}
+
 /** Every reason the record is not a bound sender record (R1); empty when it is. */
 export function receiptProblems(rec, ctx) {
   const out = [];
@@ -187,7 +214,8 @@ export function receiptProblems(rec, ctx) {
   const M = ctx.manifest;
   const policy = typeof rec.text === "string" && own(M.send.texts, rec.text) ? M.send.texts[rec.text] : null;
   const isCancel = Boolean(policy && policy.instantiate === "cancel");
-  const keys = [...RECEIPT_KEYS, ...(own(rec, "cancelTemplate") ? ["cancelTemplate"] : [])];
+  const keys = [...RECEIPT_KEYS, ...(own(rec, "cancelTemplate") ? ["cancelTemplate"] : []), ...(own(rec, "guard") ? ["guard"] : [])];
+  if (own(rec, "guard")) out.push(...guardProblems(rec.guard, rec, policy));
   for (const k of RECEIPT_KEYS) if (!own(rec, k)) out.push(`the field ${k} is missing`);
   for (const k of Object.keys(rec)) if (!keys.includes(k)) out.push(`the field ${k} is not the sender's`);
   for (const [k, ok] of Object.entries(FIELD_OK)) if (own(rec, k) && !ok(rec[k])) out.push(`the field ${k} has the wrong type or form`);

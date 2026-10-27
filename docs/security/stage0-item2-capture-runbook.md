@@ -225,6 +225,14 @@ machine-enforced guards before later work relies on them.
 Codex's six procedures (review of `df401b3`, K-R2) are P1–P6 below. Each is
 written into the steps where it applies.
 
+**Since the item 6 commit, a new phase runs on the guarded sender**
+(`docs/security/stage0-guarded-send-procedure.md`). That procedure's §0
+says which parts of P1–P6 the tools now refuse, and which stay a person's
+job: P5 (every pause is an exit) and "no history, no retype" stay
+procedures. The commands below, and `--progress` with issue times given by
+hand, are the record of phases B, A, T and U. `--progress` is now a
+historical review path: it issues nothing.
+
 **P1. One sitting, and a fresh window and token per phase.**
 - A phase runs in one sitting, from its token's creation to its deletion.
 - It gets a new PowerShell window, opened for this phase: never a window or

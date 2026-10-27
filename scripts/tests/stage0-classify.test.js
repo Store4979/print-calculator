@@ -568,7 +568,7 @@ test("CL-16 the declarations bind to the pinned texts: positions, CONTEXT lines,
     assert.ok(M.send.texts[st.text].targets.includes("staging") && !M.send.texts[st.text].targets.includes("production"), `${id}: ${st.text} is staging-only`);
     assert.equal(K.PHASES[st.phase].steps.includes(id), true);
   }
-  for (const n of [1, 2, 3, 4, 5]) assert.deepEqual(M.send.texts[`ENVELOPE-PROBE-${n}`], { targets: ["staging"], readOnly: true });
+  for (const n of [1, 2, 3, 4, 5]) assert.deepEqual(M.send.texts[`ENVELOPE-PROBE-${n}`], { targets: ["staging"], readOnly: true, window: "R" });
   assert.equal(K.PHASES.B.writes, false);
 });
 

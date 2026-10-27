@@ -6,12 +6,14 @@
 // size cannot be reproduced byte for byte by hand, and the manifest's md5 pins
 // mean nothing if the bytes that arrive are not the pinned ones.
 //
-// Ryan runs it in his own PowerShell. The session that prepares the steps
-// runs only --dry-run and reads the results files; it never holds the token.
+// Ryan runs it in his own PowerShell window. The session that prepares the
+// steps runs only --dry-run, issues each go (stage0-go.mjs) and reads the
+// results files; it never holds the token.
 //
 // In order, it:
-//   1. reads the manifest committed at HEAD, and refuses unless this file and
-//      the assembler are the blobs that manifest pins;
+//   1. reads the manifest committed at HEAD, and refuses unless everything
+//      this file loads is the blob that manifest's guard chain pins
+//      (stage0-guard.mjs selfCheck; Codex item 6, SG-6);
 //   2. assembles the named text from the manifest's frozen inputs (git blobs)
 //      and refuses unless its md5 and byte count equal the manifest's outputs
 //      entry. For --cancel it checks the pinned template the same way, then
@@ -20,18 +22,25 @@
 //      target, and — for a live send — --confirm-ref repeats the target's
 //      project ref;
 //   4. with --dry-run, stops there. It prints md5, bytes, target and ref and
-//      makes no network call;
+//      needs no token, window marker or go, and makes no network call;
 //   5. reads the token ONLY from the SUPABASE_ACCESS_TOKEN environment
 //      variable (never argv, never a file) and refuses when it is missing or
 //      is not a personal access token (sbp_…);
-//   6. POSTs {"query": <the checked text>} — plus "read_only": true for the
+//   6. refuses without --go <id>, then passes the send to the guards
+//      (stage0-guard.mjs guardedSend): the checkout, the clock, this window's
+//      marker and shell process, the text's window role, the go named by id,
+//      the project journal and the step's gate. Every refusal there comes
+//      before any request. The go is used up and a claim journalled before
+//      the request; the deadline is checked again immediately before fetch;
+//   7. POSTs {"query": <the checked text>} — plus "read_only": true for the
 //      texts the policy marks read-only — to the Management API endpoint
 //      https://api.supabase.com/v1/projects/<ref>/database/query. That is the
 //      endpoint and body shape the Supabase MCP server's execute_sql uses
 //      (@supabase/mcp-server-supabase 0.13.0; plan §E1);
-//   7. writes the request md5/bytes, target, ref, timestamps, HTTP status and
-//      raw response body to .stage0-send/ (gitignored), and prints a short
-//      summary.
+//   8. writes the request md5/bytes, target, ref, timestamps, HTTP status,
+//      raw response body and the guard block (go, marker, role, head) to a
+//      new file in .stage0-send/ (gitignored), records its sha256 as the
+//      attempt's outcome, and prints a short summary.
 //
 // The token goes out only in the Authorization header. This file prints and
 // writes no token, and a response that contains the token is redacted before
@@ -42,14 +51,19 @@
 // writing text committed. The plan's rule applies: read back with STATE,
 // through this sender, before anything else.
 //
+// Exit status: 0 HTTP 201, recorded; 1 another status or a transport error,
+// recorded; 2 refused, and no request was made; 5 a request was, or may have
+// been, made and its outcome is not recorded: the attempt holds the project.
+// None of these is a go.
+//
 //   node scripts/manual/stage0-send.mjs <TEXT> --target <production|staging> --dry-run
-//   node scripts/manual/stage0-send.mjs <TEXT> --target <t> --confirm-ref <ref>
-//   node scripts/manual/stage0-send.mjs --cancel <STEP> <BACKEND_START> --target production [--dry-run | --confirm-ref <ref>]
-import { execFileSync } from "node:child_process";
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+//   node scripts/manual/stage0-send.mjs <TEXT> --target <t> --confirm-ref <ref> --go <id>
+//   node scripts/manual/stage0-send.mjs --cancel <STEP> <BACKEND_START> --target production [--dry-run | --confirm-ref <ref> --go <id>]
+import { mkdirSync, openSync, writeSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as A from "./assemble-stage0.mjs";
+import * as G from "./stage0-guard.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const API_BASE = "https://api.supabase.com";
@@ -62,19 +76,9 @@ const TOKEN_SHAPE = /^sbp_\S+$/;
 const SAFE_ECHO = /^[A-Za-z0-9._-]{1,40}$/; // argv is echoed only in this shape
 const echo = (v) => (typeof v === "string" && SAFE_ECHO.test(v) && !v.startsWith("sbp_") ? `"${v}"` : "(value not echoed)");
 
-/** LF-normalized blob id of a working-tree file, as git would store it. */
-function blobOf(path, cwd) {
-  const lf = Buffer.from(readFileSync(join(cwd, path)).toString("utf8").replace(/\r\n/g, "\n"), "utf8");
-  return execFileSync("git", ["hash-object", "--stdin"], { cwd, input: lf }).toString().trim();
-}
-
-/** Refuse unless this sender and the assembler are the blobs the manifest pins. */
+/** Refuse unless everything the sender loads is pinned by the manifest's guard chain. */
 export function selfCheck(manifest, cwd = ROOT) {
-  for (const [label, pin] of [["sender", manifest.sender], ["assembler", manifest.assembler]]) {
-    if (!pin || !pin.path || !pin.blob) throw new Error(`the manifest pins no ${label}; refusing`);
-    const id = blobOf(pin.path, cwd);
-    if (id !== pin.blob) throw new Error(`${pin.path} is ${id}, but the manifest pins ${pin.blob}; refusing`);
-  }
+  G.selfCheck(manifest, cwd, SENDER_PATH);
 }
 
 const assembled = new WeakMap();
@@ -124,10 +128,16 @@ export function requestFor(plan, token, apiBase = API_BASE) {
   };
 }
 
-/** Send one plan. Returns the record; never throws on an HTTP or network failure. */
-export async function send(plan, { token, apiBase = API_BASE, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS, clock = () => new Date() } = {}) {
+/**
+ * Send one plan. Returns the record; never throws on an HTTP or network
+ * failure. `admit`, when given, runs after the request is built and
+ * immediately before fetch; if it throws, nothing is fetched and the error
+ * propagates.
+ */
+export async function send(plan, { token, apiBase = API_BASE, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS, clock = () => new Date(), admit = null } = {}) {
   if (!token) throw new Error(`${TOKEN_ENV} is not set; refusing`);
   const { url, init } = requestFor(plan, token, apiBase);
+  if (admit) admit();
   const startedAt = clock().toISOString();
   let httpStatus = null, body = null, error = null;
   try {
@@ -163,46 +173,51 @@ export async function send(plan, { token, apiBase = API_BASE, fetchImpl = global
   };
 }
 
-/** Write one record to the gitignored results directory; returns its path. */
+/** Write one record to a NEW file in the results directory (never over another); returns its path. */
 export function writeRecord(record, dir = RESULTS_DIR) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${record.startedAt.replace(/[:.]/g, "-")}_${record.text}_${record.target}.json`);
-  writeFileSync(file, JSON.stringify(record, null, 2) + "\n");
+  const fd = openSync(file, "wx");
+  try { writeSync(fd, JSON.stringify(record, null, 2) + "\n"); } finally { closeSync(fd); }
   return file;
 }
 
 function parseArgs(argv) {
   const a = [...argv];
-  const o = { name: null, target: null, confirmRef: null, dryRun: false, cancel: null };
+  const o = { name: null, target: null, confirmRef: null, dryRun: false, cancel: null, go: null };
   while (a.length) {
     const x = a.shift();
     if (x === "--dry-run") o.dryRun = true;
     else if (x === "--target") o.target = a.shift();
     else if (x === "--confirm-ref") o.confirmRef = a.shift();
+    else if (x === "--go") o.go = a.shift() ?? "";
     else if (x === "--cancel") { o.cancel = { step: a.shift(), backendStart: a.shift() }; o.name = o.name || "CANCEL-STEP-TEMPLATE"; }
     else if (x.startsWith("-")) throw new Error(`unknown option ${echo(x)}; the token is read only from ${TOKEN_ENV}`);
     else if (o.name === null) o.name = x;
     else throw new Error(`unexpected argument ${echo(x)}`);
   }
-  if (!o.name || !o.target) throw new Error("usage: stage0-send.mjs <TEXT> --target <production|staging> (--dry-run | --confirm-ref <ref>)");
+  if (!o.name || !o.target) throw new Error("usage: stage0-send.mjs <TEXT> --target <production|staging> (--dry-run | --confirm-ref <ref> --go <id>)");
+  if (o.go !== null && !/^[0-9a-f]{32}$/.test(o.go)) throw new Error("--go takes the 32-character go id stage0-go.mjs printed");
   return o;
 }
 
 /**
  * The command line. deps are for tests only: the command line itself passes
- * none, so the endpoint and the manifest cannot be redirected from argv or the
- * environment.
+ * none, so the endpoint, the manifest and the guard state cannot be
+ * redirected from argv or the environment.
  */
 export async function main(argv, env, deps = {}) {
   const out = deps.stdout || ((s) => process.stdout.write(s));
   const o = parseArgs(argv);
-  const manifest = deps.manifest || A.manifestAt("HEAD", ROOT);
-  selfCheck(manifest, ROOT);
-  const plan = planSend(manifest, o.name, o.target, { cancel: o.cancel });
+  const root = deps.root || ROOT;
+  const manifest = deps.manifest || A.manifestAt("HEAD", root);
+  G.selfCheck(manifest, root, SENDER_PATH);
+  const plan = planSend(manifest, o.name, o.target, { cancel: o.cancel, cwd: root });
   out(`text ${plan.name}${plan.template ? ` (instantiated from the template ${plan.template.md5} / ${plan.template.bytes} bytes)` : ""}\n`);
   out(`target ${plan.target} = ${plan.ref}; read_only ${plan.readOnly}\n`);
   out(`request md5 ${plan.md5}; ${plan.bytes} bytes\n`);
   if (o.dryRun) {
+    if (o.go !== null) throw new Error("--dry-run takes no --go; refusing");
     out("dry run: verified against the manifest; no network call made\n");
     return { dryRun: true, plan };
   }
@@ -210,19 +225,42 @@ export async function main(argv, env, deps = {}) {
   const token = env[TOKEN_ENV];
   if (!token) throw new Error(`${TOKEN_ENV} is not set; refusing`);
   if (!TOKEN_SHAPE.test(token)) throw new Error(`${TOKEN_ENV} is not a Supabase personal access token (sbp_…); refusing`);
-  const record = await send(plan, { token, apiBase: deps.apiBase, fetchImpl: deps.fetchImpl, clock: deps.clock });
-  const file = writeRecord(record, deps.resultsDir || RESULTS_DIR);
+  if (o.go === null) throw new G.Refusal("a live send needs --go <id>, the go stage0-go.mjs issued for this step; refusing");
+  const ctxCache = new Map();
+  const r = await G.guardedSend({
+    plan, goId: o.go, token, env, manifest, root,
+    stateDir: deps.stateDir, now: deps.now, identity: deps.identity, git: deps.git, workflows: deps.workflows,
+    execArgv: deps.execArgv, ppid: deps.ppid, selfStartMs: deps.selfStartMs, readReceipt: deps.readReceipt,
+    ctxAt: deps.ctxAt || ((h) => { if (!ctxCache.has(h)) ctxCache.set(h, (deps.contextAt || defaultContextAt)(h, root)); return ctxCache.get(h); }),
+    send: (p, extra) => send(p, { token, apiBase: deps.apiBase, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs, ...extra }),
+    writeReceipt: deps.writeReceipt || ((rec) => writeRecord(rec, deps.resultsDir || RESULTS_DIR)),
+  });
+  const record = r.record;
+  out(`${r.go.step} (go ${r.go.goId.slice(0, 8)}…, ${r.marker.role} window, attempt ${r.attemptId.slice(0, 8)}…)\n`);
   out(`${record.startedAt} → ${record.finishedAt}\n`);
   out(`HTTP ${record.httpStatus ?? "none"}${record.error ? ` | ${record.error}` : ""}\n`);
   out(`body (first 300 chars): ${String(record.body ?? "").slice(0, 300)}\n`);
-  if (!plan.readOnly) out("a writing text: read back before the next step. No response, or an unexpected one, means STATE first.\n");
-  out(`results file: ${file}\n`);
-  return { dryRun: false, plan, record, file };
+  out("This exit code is a transport fact, not a go. The next step needs its own go.\n");
+  out(`results file: ${r.file}\n`);
+  return { dryRun: false, plan, record, file: r.file, attemptId: r.attemptId };
+}
+
+/** The rule 3′ context at a head: the manifest committed there, assembled (stage0-classify.mjs). */
+function defaultContextAt(head, root) {
+  return G.contextAt(head, root);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main(process.argv.slice(2), process.env).then(
     (r) => process.exit(r.dryRun || r.record.httpStatus === 201 ? 0 : 1),
-    (e) => { process.stderr.write(`stage0-send: ${e.message}\n`); process.exit(2); },
+    (e) => {
+      process.stderr.write(`stage0-send: ${e.message}\n`);
+      if (e instanceof G.AfterDispatch) {
+        process.stderr.write("STOP: do not repeat this command, and send nothing else. The attempt holds the project until a reviewed disposition.\n");
+        process.exit(5);
+      }
+      process.stderr.write("No request was made.\n");
+      process.exit(2);
+    },
   );
 }

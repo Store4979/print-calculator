@@ -20,15 +20,19 @@
 //          or printed; a network failure is recorded, never thrown
 //   SEND-7 --cancel instantiates the pinned template only, for a stage-0 step
 //          and an exact backend_start
+//
+// Since item 6 a live send also needs its window's marker and a go named by
+// --go (stage0-guard.mjs); SEND-5 and SEND-6 set those up with the guard
+// fixture, and stage0-guard.test.js tests the guards themselves.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main, planSend, send, TOKEN_ENV } from "../manual/stage0-send.mjs";
 import { manifestAt, md5 } from "../manual/assemble-stage0.mjs";
+import { fixture, synthWorkflow, okBody, ctx, M as FM } from "./stage0-guard-fixture.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const M = manifestAt("HEAD", ROOT);
@@ -94,6 +98,7 @@ test("SEND-4 no request without the token, a personal access token and --confirm
   await assert.rejects(main(base, { [TOKEN_ENV]: "sb_secret_notapat" }, { fetchImpl: noFetch, stdout: () => {} }), /not a Supabase personal access token/);
   await assert.rejects(main(["SIZE-PROBE", "--target", "staging"], { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {} }), /--confirm-ref must repeat the target's project ref lboajqihpsfrokqvjgnl/);
   await assert.rejects(main(["P1", "--target", "production", "--confirm-ref", "lboajqihpsfrokqvjgnl"], { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {} }), /--confirm-ref must repeat/);
+  await assert.rejects(main(base, { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {} }), /a live send needs --go <id>/);
   for (const flag of ["--token", "--access-token", "--header"]) {
     const err = await main([...base, flag, TOKEN], {}, { fetchImpl: noFetch, stdout: () => {} }).catch((e) => e);
     assert.match(err.message, /unknown option|unexpected argument/, flag);
@@ -119,19 +124,58 @@ function mockServer(respond) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, seen, base: `http://127.0.0.1:${server.address().port}` })));
 }
 
+/** The text whose pinned bytes a request body carries. */
+const textOfQuery = (raw) => Object.keys(M.outputs).find((k) => ctx().texts[k] === JSON.parse(raw.toString("utf8")).query);
+
+/** A guard fixture with one phase per target, its windows open, ready to issue each step's go. */
+function guarded(steps) {
+  const wf = {
+    p: synthWorkflow("production", { P: steps.filter(([, , t]) => t === "production").map(([id, text]) => [id, text]) }),
+    s: synthWorkflow("staging", { S: steps.filter(([, , t]) => t === "staging").map(([id, text]) => [id, text]) }),
+  };
+  const fx = fixture({ workflows: wf });
+  fx.clock();
+  const phases = {};
+  const wins = {};
+  let pid = 6000;
+  for (const [w, name] of [["p", "P"], ["s", "S"]]) {
+    if (!wf[w].phases[name].steps.length) continue;
+    const ph = fx.phase(w, name);
+    phases[name] = ph;
+    for (const role of new Set(ph.steps.map((id) => FM.send.texts[wf[w].stepText(id)].window))) wins[`${name}:${role}`] = fx.window(role, ph.phaseId, { pid: ++pid, token: TOKEN });
+  }
+  /** Issue the step's go and send it through main(), as Ryan's command would. */
+  const run = (id, name, target, ref, deps) => {
+    const ph = phases[target === "production" ? "P" : "S"];
+    const go = fx.issue(ph.phaseId, id);
+    const win = wins[`${target === "production" ? "P" : "S"}:${go.role}`];
+    fx.add(1);
+    return main([name, "--target", target, "--confirm-ref", ref, "--go", go.goId], win.env, {
+      manifest: FM, root: ROOT, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, workflows: { ...wf }, ctxAt: fx.ctxAt,
+      execArgv: [], ppid: win.pid, selfStartMs: fx.now(), ...deps,
+    }).then((r) => { fx.add(1000); return r; });
+  };
+  return { fx, run };
+}
+
 test("SEND-5 against a mock server: exact manifest bytes in the body, read_only only where the policy says, the token only in Authorization", async () => {
-  const mock = await mockServer(() => ({ status: 201, body: JSON.stringify([{ ok: 1 }]) }));
-  const dir = mkdtempSync(join(tmpdir(), "s0-send-"));
+  const mock = await mockServer((raw) => ({ status: 201, body: okBody(textOfQuery(raw)) }));
+  const cases = [
+    ["Z1", "SIZE-PROBE", "staging", "lboajqihpsfrokqvjgnl", true],
+    ["S1", "P2-0304", "production", "gmxyisjjaxtpycsmmzef", false],
+    ["S2", "STATE", "production", "gmxyisjjaxtpycsmmzef", true],
+  ];
+  // One fixture per send: a receipt from the mock carries the mock's endpoint,
+  // which the guard's journal rightly does not accept as the policy's, so it
+  // would hold the next step of its phase.
+  const fxs = [];
   try {
-    const cases = [
-      ["SIZE-PROBE", "staging", "lboajqihpsfrokqvjgnl", true],
-      ["P2-0304", "production", "gmxyisjjaxtpycsmmzef", false],
-      ["STATE", "production", "gmxyisjjaxtpycsmmzef", true],
-    ];
-    for (const [name, target, ref, ro] of cases) {
+    for (const [id, name, target, ref, ro] of cases) {
+      const { fx, run } = guarded([[id, name, target]]);
+      fxs.push(fx);
+      const dir = join(fx.dir, "results");
       const c = capture();
-      const r = await main([name, "--target", target, "--confirm-ref", ref], { [TOKEN_ENV]: TOKEN },
-        { apiBase: mock.base, resultsDir: dir, stdout: c.out });
+      const r = await run(id, name, target, ref, { apiBase: mock.base, resultsDir: dir, stdout: c.out, fetchImpl: globalThis.fetch });
       const req = mock.seen.at(-1);
       assert.equal(req.method, "POST");
       assert.equal(req.url, `/v1/projects/${ref}/database/query`);
@@ -156,24 +200,26 @@ test("SEND-5 against a mock server: exact manifest bytes in the body, read_only 
       assert.equal(rec.requestBytes, M.outputs[name].bytes);
       assert.equal(rec.ref, ref);
       assert.ok(rec.startedAt && rec.finishedAt);
-      assert.equal(rec.body, JSON.stringify([{ ok: 1 }]));
+      assert.equal(rec.body, okBody(name));
+      assert.equal(rec.guard.step, id, "the receipt names the step and go that admitted it");
+      assert.ok(!JSON.stringify(rec.guard).includes(TOKEN), "the guard block holds no token");
+      assert.equal(readdirSync(dir).length, 1, "one results file per send");
     }
-    assert.equal(readdirSync(dir).length, cases.length, "one results file per send");
-  } finally { mock.server.closeAllConnections(); mock.server.close(); rmSync(dir, { recursive: true, force: true }); }
+    assert.equal(mock.seen.length, cases.length, "one request per send");
+  } finally { mock.server.closeAllConnections(); mock.server.close(); for (const fx of fxs) fx.cleanup(); }
 });
 
 test("SEND-6 a response that echoes the token is redacted; a network failure is recorded, not thrown", async () => {
   const mock = await mockServer(() => ({ status: 400, body: JSON.stringify({ message: "bad request from " + TOKEN }) }));
-  const dir = mkdtempSync(join(tmpdir(), "s0-send-"));
+  const { fx, run } = guarded([["S1", "P0", "production"]]);
   try {
     const c = capture();
-    const r = await main(["P0", "--target", "production", "--confirm-ref", "gmxyisjjaxtpycsmmzef"], { [TOKEN_ENV]: TOKEN },
-      { apiBase: mock.base, resultsDir: dir, stdout: c.out });
+    const r = await run("S1", "P0", "production", "gmxyisjjaxtpycsmmzef", { apiBase: mock.base, resultsDir: join(fx.dir, "results"), stdout: c.out, fetchImpl: globalThis.fetch });
     const file = readFileSync(r.file, "utf8");
     assert.ok(!file.includes(TOKEN) && !c.text().includes(TOKEN));
     assert.match(file, /REDACTED: the access token/);
     assert.equal(JSON.parse(file).tokenRedactedFromResponse, true);
-  } finally { mock.server.closeAllConnections(); mock.server.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { mock.server.closeAllConnections(); mock.server.close(); fx.cleanup(); }
   const plan = planSend(M, "SIZE-PROBE", "staging");
   const rec = await send(plan, { token: TOKEN, fetchImpl: async () => { throw new TypeError("fetch failed"); } });
   assert.equal(rec.httpStatus, null);

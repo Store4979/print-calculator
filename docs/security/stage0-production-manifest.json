@@ -250,10 +250,69 @@
   },
   "sender": {
     "path": "scripts/manual/stage0-send.mjs",
-    "blob": "9081e38631beebf029c087f7f494699489dc29f4",
-    "md5": "a10c533fb5ae1075ce333955f7ce5d26",
-    "bytes": 12005,
+    "blob": "654ba58422ada74fd1b0618515e3a32c2ca3efb1",
+    "md5": "ec92ef6b5d47097f983ea667fea30776",
+    "bytes": 14296,
     "pinnedAt": "manifest-commit"
+  },
+  "guard": {
+    "note": "Codex item 6, SG-6: the files stage0-send.mjs, stage0-window.mjs and stage0-go.mjs load, transitively. Each tool refuses before any go or request unless what it loads is exactly these blobs (stage0-guard.mjs selfCheck); M-13 checks this list against acorn's closure.",
+    "entries": [
+      "scripts/manual/stage0-send.mjs",
+      "scripts/manual/stage0-window.mjs",
+      "scripts/manual/stage0-go.mjs"
+    ],
+    "files": [
+      {
+        "path": "scripts/manual/assemble-stage0.mjs",
+        "blob": "242f3715529275508b376fb54714216df178b482",
+        "md5": "b605a19af297f7f9d5820c3e9c9d29c6",
+        "bytes": 57175,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-capture.mjs",
+        "blob": "5bf6ad8619153b5981d9e0502bd42aeea0f5f9b8",
+        "md5": "620599d7023b4a4af059676c50e20f1e",
+        "bytes": 26020,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-classify.mjs",
+        "blob": "720754c90e8ba27f3d4d9edd80ffee01261788ad",
+        "md5": "8bcd5f9197b19b10c918ae7a265c1a5a",
+        "bytes": 44241,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-go.mjs",
+        "blob": "01cd8bf96420ecc076a967f0933f30fda655ba45",
+        "md5": "a10a98e5076e626a73c2b2b6ae2a4ad9",
+        "bytes": 8090,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-guard.mjs",
+        "blob": "8b8f250628b21765c6457ba8a13c34419c998f75",
+        "md5": "3c5a88249b8f1b83443bb5c6ec9cb4db",
+        "bytes": 65270,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-send.mjs",
+        "blob": "654ba58422ada74fd1b0618515e3a32c2ca3efb1",
+        "md5": "ec92ef6b5d47097f983ea667fea30776",
+        "bytes": 14296,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-window.mjs",
+        "blob": "7efcbfca0b3ca6990119697ddc432584def9e683",
+        "md5": "76413416ee73495892e9d80158147045",
+        "bytes": 4801,
+        "pinnedAt": "manifest-commit"
+      }
+    ]
   },
   "functions": {
     "redeem": {
@@ -691,177 +750,207 @@
         "targets": [
           "production"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "P1": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "SIZE-PROBE": {
         "targets": [
           "staging"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "P2-01": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "P2-02": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "P2-0304": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "P2-05": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "STATE": {
         "targets": [
           "production"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "CANCEL-INSPECT": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "C"
       },
       "CANCEL-STEP-TEMPLATE": {
         "targets": [
           "production"
         ],
         "readOnly": false,
-        "instantiate": "cancel"
+        "instantiate": "cancel",
+        "window": "C"
       },
       "LOCKPROBE-SETUP": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-HOLD": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-B-LOCKTIMEOUT": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-B-STMTTIMEOUT": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-B-TXTIMEOUT": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-B-CANCEL": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-C-CANCEL": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-B-POSITIVE": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-READBACK": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "LOCKPROBE-CLEANUP": {
         "targets": [
           "staging"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "RB-5": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "RB-43": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "RB-2": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "RB-1": {
         "targets": [
           "production"
         ],
-        "readOnly": false
+        "readOnly": false,
+        "window": "W"
       },
       "ENVELOPE-PROBE-1": {
         "targets": [
           "staging"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "ENVELOPE-PROBE-2": {
         "targets": [
           "staging"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "ENVELOPE-PROBE-3": {
         "targets": [
           "staging"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "ENVELOPE-PROBE-4": {
         "targets": [
           "staging"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       },
       "ENVELOPE-PROBE-5": {
         "targets": [
           "staging"
         ],
-        "readOnly": true
+        "readOnly": true,
+        "window": "R"
       }
-    }
+    },
+    "windowNote": "Codex item 6 (Q2): each text is sent only from a window of its role, R, W or C. The role is listed per text, never derived from readOnly: LOCKPROBE-READBACK and CANCEL-INSPECT go without read_only and write nothing. M-12 fixes the mapping."
   }
 }
