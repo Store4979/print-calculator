@@ -151,7 +151,7 @@ function guarded(steps) {
     const win = wins[`${target === "production" ? "P" : "S"}:${go.role}`];
     fx.add(1);
     return main([name, "--target", target, "--confirm-ref", ref, "--go", go.goId], win.env, {
-      manifest: FM, root: ROOT, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, workflows: { ...wf }, ctxAt: fx.ctxAt,
+      manifest: FM, anchor: fx.anchor, root: ROOT, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, workflows: { ...wf }, ctxAt: fx.ctxAt,
       execArgv: [], ppid: win.pid, selfStartMs: fx.now(), ...deps,
     }).then((r) => { fx.add(1000); return r; });
   };

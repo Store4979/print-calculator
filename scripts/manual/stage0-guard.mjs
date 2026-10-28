@@ -2,59 +2,78 @@
 // before any request, and the records they read (Codex item 6: the incident
 // review of 2026-10-12, §6, and K-R2 of the review of df401b3; the plan
 // docs/security/stage0-item6-sender-guards-plan.md, as amended by Codex's
-// review of 2026-10-27, SG-1 to SG-6).
+// reviews of 2026-10-27: SG-1 to SG-6 on the plan, I6-R1 and I6-R2 on 78db6dc).
 //
 // It is a library. Three pinned command lines use it:
-//   stage0-go.mjs      (Claude) records the clock check and Ryan's phase go,
+//   stage0-go.mjs      (Claude) initializes the store once, records the clock
+//                      check, drafts approval ids, records Ryan's phase go,
 //                      issues one go per send, voids or disposes;
 //   stage0-window.mjs  (Ryan, in each PowerShell window) opens and closes
 //                      the window's marker;
 //   stage0-send.mjs    (Ryan) sends one pinned text, naming its go by id.
 //
-// The records live in one per-user directory outside every checkout
-// (~/.stage0-guard), so a new window, a new phase or a fresh clone reads the
-// same journal:
-//   clock.json, hwm.json   the last accepted clock check, and the latest time
-//                          a guard tool has seen;
+// THE STORE (I6-R1). The records live in one per-user directory outside every
+// checkout (~/.stage0-guard). It exists only once `stage0-go.mjs init` has
+// made it: no other command creates it, or any directory in it. Its identity
+// (store.json) is recorded in the repository (ANCHOR_PATH) in a reviewed
+// commit, and every live command refuses unless the store here is that one.
+// So a lost or replaced store is not a fresh start: `init` refuses while the
+// repository names an established store, and a replacement is made only by
+// `init --restore`, naming the lost store's id and a review file, and is
+// usable only once the repository's anchor names it.
+//   store.json             the store's id, creation time, the project refs,
+//                          and the store it replaced (if any);
+//   ledger.jsonl           one line per event, each with its sequence number
+//                          and the sha256 of the line before: every phase,
+//                          approval draft, marker, go, claim, outcome,
+//                          disposition and clock check, with the sha256 of
+//                          the file it wrote;
+//   hwm.json               the latest time a guard tool has seen;
+//   clock/<…>.json         each accepted clock check;
 //   phases/<id>.json       Ryan's go for one phase, with his message's exact
 //                          text beside it (<id>.go.txt);
-//   markers/<id>.json      one per window: its role (R, W or C), the phase,
-//                          the head and ref, the phase deadline, the window's
-//                          shell process as Windows reports it (pid, image,
-//                          creation time), and an HMAC of the token loaded in
-//                          it, keyed by the window's STAGE0_SESSION value;
-//   gos/<id>.json          one per send: the phase, the logical step, its
-//                          text, the marker, the head, the ref, the request's
-//                          md5/bytes and an absolute deadline. Using a go
-//                          moves it to gos/used/; voiding it, to gos/void/;
-//   journal/<ref>/         one claim per admitted send, written before any
-//                          request can be made, then its outcome (NOT_SENT,
-//                          or DISPATCHED with the receipt's sha256) and, after
-//                          a review, a disposition. These tools never delete
-//                          a journal file.
+//   approvals/<id>.json    the one phase registered for each approval id;
+//   markers/<id>.json      one per open window; a closed one moves to
+//                          markers/closed/;
+//   gos/<id>.json          one per send, unused; a used go moves to gos/used/,
+//                          a voided one to gos/void/;
+//   journal/<ref>/         the claim of each admitted send, written before any
+//                          request can be made, then its outcome and any
+//                          disposition.
+// storeCheck() replays the ledger and requires every file it names to exist
+// with its recorded sha256 where its lifecycle puts it, every file present to
+// be one it names, and every claim, outcome and disposition to belong to a go,
+// a claim and a phase it recorded. Any difference is DAMAGE: nothing is
+// issued, admitted or registered until a reviewed restoration.
 //
 // What the code checks, and what it does not:
 //   - Each check below throws a Refusal before any request. The one place a
-//     request can follow is guardedSend(), after the claim is written; from
+//     request can follow is guardedSend(), after the claim is journalled; from
 //     there on a failure is AfterDispatch, never "nothing was sent".
 //   - The marker binds a shell PROCESS: Windows' own record of the pid and
 //     creation time of the process that started node. A child shell that
 //     inherited the environment has another pid, so it is refused. A window
 //     a person walks away from still matches until the phase deadline. "Every
 //     pause is an exit" stays a procedure.
+//   - A go's deadline is the CAPTURE-PHASE ADMISSION CUTOFF: the phase
+//     deadline less MARGIN_MS. There are no per-step latest-start ceilings
+//     yet, so this is not the production deadline contract (Codex, review of
+//     78db6dc); no production phase is declared.
 //   - The deadline bounds admission on this machine's clock. The clock check
 //     compares that clock with a time server, within a stated tolerance; it
 //     is not a guarantee of when a server starts the work, and it cancels
 //     nothing.
-//   - Recording a phase checks that Ryan's message names the phase, head,
-//     ref, deadline and steps. It does not show who wrote the message.
-//   - Anyone who can edit these files, or the pinned code, can defeat them.
-//     The pins, review and the runbook procedures are the controls for that.
+//   - Recording a phase checks that Ryan's message names its approval id,
+//     the phase, head, ref, deadline and steps. It does not show who wrote
+//     the message.
+//   - Anyone who can edit these files together, or the pinned code, can
+//     defeat them. The pins, review and the runbook procedures are the
+//     controls for that.
 import { execFileSync } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync, openSync, writeSync, fsyncSync, closeSync, readdirSync, renameSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, openSync, writeSync, fsyncSync, closeSync, readdirSync, renameSync, unlinkSync, mkdirSync, existsSync, statSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname, posix } from "node:path";
+import { join, posix } from "node:path";
 import * as A from "./assemble-stage0.mjs";
 import * as C from "./stage0-classify.mjs";
 import * as K from "./stage0-capture.mjs";
@@ -70,12 +89,16 @@ export const SHELLS = Object.freeze(["powershell.exe", "pwsh.exe"]);
 export const SESSION_ENV = "STAGE0_SESSION";
 export const TOKEN_ENV = "SUPABASE_ACCESS_TOKEN";
 export const DEFAULT_STATE = join(homedir(), ".stage0-guard");
+/** The repository's record of the established store (I6-R1), read at HEAD. */
+export const ANCHOR_PATH = "docs/security/stage0-guard-store.json";
 /** The clock check (SG-5): three w32tm samples against the reference, each within the tolerance; valid for freshMs. */
 export const CLOCK = Object.freeze({ reference: "time.windows.com", samples: 3, toleranceMs: 2000, freshMs: 60 * 60 * 1000, backstepMs: 2000 });
-/** A go's deadline is this much before the phase deadline (Codex Q5: it only tightens the reviewed latest start). */
+/** A go's deadline is this much before the phase deadline: the capture-phase admission cutoff. */
 export const MARGIN_MS = 60 * 1000;
 /** Ryan's go is recorded within this long of its arrival, with at least the second value left (capture runbook §3). */
 export const PHASE_LIMITS = Object.freeze({ recordWithinMs: 10 * 60 * 1000, minRemainingMs: 30 * 60 * 1000 });
+/** How long a command waits for the store lock before it refuses. */
+export const LOCK_WAIT_MS = 10 * 1000;
 /** The command lines that create authority or admit a send; the manifest pins everything they load (SG-6). */
 export const CHAIN_ENTRIES = Object.freeze(["scripts/manual/stage0-send.mjs", "scripts/manual/stage0-window.mjs", "scripts/manual/stage0-go.mjs"]);
 export const BUILTINS = Object.freeze(["node:child_process", "node:crypto", "node:fs", "node:os", "node:path", "node:url"]);
@@ -90,6 +113,7 @@ const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const hex = (n) => (v) => typeof v === "string" && v.length === n && /^[0-9a-f]+$/.test(v);
 const isId = hex(32);
+const isApproval = hex(16);
 const isSha = hex(64);
 const isCommit = hex(40);
 const isRef = (v) => typeof v === "string" && /^[a-z]{20}$/.test(v);
@@ -97,6 +121,7 @@ const isName = (v) => typeof v === "string" && /^[A-Z0-9][A-Z0-9-]{0,39}$/.test(
 const isRole = (v) => ROLES.includes(v);
 const an = (role) => (role === "R" ? "an R" : `a ${role}`);
 const isInt = (v) => Number.isSafeInteger(v) && v >= 0;
+const isPos = (v) => Number.isSafeInteger(v) && v > 0;
 const isStr = (max) => (v) => typeof v === "string" && v.length > 0 && v.length <= max;
 const isBool = (v) => typeof v === "boolean";
 /** An absolute UTC time with milliseconds, as the tools write them: ms, or null. Total. */
@@ -127,20 +152,25 @@ function shapeProblems(o, spec, label) {
   return out;
 }
 
-const SHELL_SPEC = { pid: (v) => Number.isSafeInteger(v) && v > 0, image: (v) => SHELLS.includes(v), created: (v) => createdMs(v) !== null };
+const SHELL_SPEC = { pid: isPos, image: (v) => SHELLS.includes(v), created: (v) => createdMs(v) !== null };
 const isShell = (v) => shapeProblems(v, SHELL_SPEC, "shell").length === 0;
-const REQUEST_SPEC = { md5: hex(32), bytes: (v) => Number.isSafeInteger(v) && v > 0, readOnly: isBool, endpoint: isStr(200) };
+const REQUEST_SPEC = { md5: hex(32), bytes: isPos, readOnly: isBool, endpoint: isStr(200) };
 const isRequest = (v) => shapeProblems(v, REQUEST_SPEC, "request").length === 0;
 const isReviewed = (v) => v === null || shapeProblems(v, { path: isStr(1024), sha256: isSha }, "reviewed").length === 0;
+const isRefs = (v) => sameKeys(v, ["production", "staging"]) && isRef(v.production) && isRef(v.staging);
+const isPredecessor = (v) => v === null || (shapeProblems(v, { storeId: isId, reviewed: (r) => r !== null && isReviewed(r) }, "predecessor").length === 0);
 
+export const STORE_SPEC = { schema: (v) => v === "stage0-store/1", storeId: isId, createdAt: isUtc, refs: isRefs, predecessor: isPredecessor };
+export const ANCHOR_SPEC = { schema: (v) => v === "stage0-guard-anchor/1", storeId: isId, createdAt: isUtc, refs: isRefs, predecessor: isPredecessor };
 export const PHASE_SPEC = {
-  schema: (v) => v === "stage0-phase/1", phaseId: isId, workflow: isStr(40), phase: isStr(40),
+  schema: (v) => v === "stage0-phase/2", phaseId: isId, approvalId: isApproval, workflow: isStr(40), phase: isStr(40),
   steps: (v) => Array.isArray(v) && v.length > 0 && v.length <= 64 && v.every(isName) && new Set(v).size === v.length,
   target: isStr(40), ref: isRef, head: isCommit, checkout: isStr(1024),
   arrivedAt: isUtc, recordedAt: isUtc, deadline: isUtc,
   goText: (v) => shapeProblems(v, { sha256: isSha, bytes: isInt }, "goText").length === 0,
   reviewed: isReviewed,
 };
+const APPROVAL_SPEC = { schema: (v) => v === "stage0-approval/1", approvalId: isApproval, phaseId: isId };
 export const MARKER_SPEC = {
   schema: (v) => v === "stage0-marker/1", markerId: isId, role: isRole, phaseId: isId, phaseSha: isSha,
   target: isStr(40), ref: isRef, head: isCommit, checkout: isStr(1024), createdAt: isUtc, until: isUtc,
@@ -153,7 +183,7 @@ export const GO_SPEC = {
   gate: (v) => shapeProblems(v, { next: isName, after: (a) => Array.isArray(a) && a.every(isId) }, "gate").length === 0,
 };
 export const CLAIM_SPEC = {
-  schema: (v) => v === "stage0-claim/1", attemptId: isId, seq: (v) => Number.isSafeInteger(v) && v > 0, goId: isId, phaseId: isId,
+  schema: (v) => v === "stage0-claim/1", attemptId: isId, seq: isPos, goId: isId, phaseId: isId,
   step: isName, text: isName, target: isStr(40), ref: isRef, role: isRole, markerId: isId, shell: isShell,
   head: isCommit, checkout: isStr(1024), request: isRequest, issuedAt: isUtc, deadline: isUtc, claimedAt: isUtc,
 };
@@ -166,65 +196,388 @@ export const OUTCOME_SPEC = {
   },
 };
 export const DISPOSITION_SPEC = { schema: (v) => v === "stage0-disposition/1", attemptId: isId, reviewed: (v) => v !== null && isReviewed(v), recordedAt: isUtc };
+const CLOCK_SPEC = {
+  schema: (v) => v === "stage0-clock/1", at: isUtc, reference: (v) => v === CLOCK.reference, offsetsMs: (v) => Array.isArray(v) && v.length === CLOCK.samples && v.every(Number.isSafeInteger),
+  maxAbsOffsetMs: isInt, toleranceMs: (v) => v === CLOCK.toleranceMs, source: isStr(120), lastSync: isStr(120), leap: isStr(120),
+  hwmBefore: (v) => v === "missing" || v === "invalid" || isUtc(v),
+};
+const HWM_SPEC = { ms: isInt, at: isUtc };
 /** The receipt's guard block (SG-4): what the admission journal and marker bound. Never the token, the session value or the token HMAC. */
 export const RECEIPT_GUARD_SPEC = { attemptId: isId, goId: isId, phaseId: isId, step: isName, markerId: isId, role: isRole, head: isCommit, issuedAt: isUtc, deadline: isUtc };
+
+/** Each ledger event's own fields, besides seq, prev, at and kind. */
+const EVENT_SPECS = {
+  init: { storeId: isId },
+  clock: { file: (v) => typeof v === "string" && /^[0-9TZ-]{24}_[0-9a-f]{8}\.json$/.test(v), sha256: isSha },
+  draft: { approvalId: isApproval, workflow: isStr(40), phase: isStr(40), ref: isRef, head: isCommit },
+  phase: { phaseId: isId, approvalId: isApproval, ref: isRef, sha256: isSha, goTextSha256: isSha, approvalSha256: isSha },
+  "marker-open": { markerId: isId, phaseId: isId, ref: isRef, sha256: isSha },
+  "marker-close": { markerId: isId, reason: (v) => v === "close" || v === "gone" },
+  "go-issue": { goId: isId, phaseId: isId, step: isName, ref: isRef, markerId: isId, sha256: isSha },
+  "go-void": { goId: isId, reason: (v) => v === "void" || v === "expired" || v === "close" },
+  claim: { attemptId: isId, goId: isId, ref: isRef, claimSeq: isPos, sha256: isSha },
+  outcome: { attemptId: isId, state: (v) => v === "NOT_SENT" || v === "DISPATCHED", sha256: isSha },
+  disposition: { attemptId: isId, sha256: isSha },
+};
+const LINE_SPEC = { seq: isPos, prev: isSha, at: isUtc, kind: (v) => typeof v === "string" && own(EVENT_SPECS, v) };
+const ZERO = "0".repeat(64);
 
 // ── files ────────────────────────────────────────────────────────────────────
 
 export function statePaths(dir) {
   return {
     dir,
-    clock: join(dir, "clock.json"),
-    clockLog: join(dir, "clock"),
+    store: join(dir, "store.json"),
+    ledger: join(dir, "ledger.jsonl"),
     hwm: join(dir, "hwm.json"),
+    lock: join(dir, "lock"),
+    clockLog: join(dir, "clock"),
     phases: join(dir, "phases"),
+    approvals: join(dir, "approvals"),
     markers: join(dir, "markers"),
+    closed: join(dir, "markers", "closed"),
     gos: join(dir, "gos"),
     used: join(dir, "gos", "used"),
     voided: join(dir, "gos", "void"),
+    journalRoot: join(dir, "journal"),
     journal: (ref) => join(dir, "journal", ref),
-    lock: (ref) => join(dir, `lock-${ref}`),
   };
 }
+const SUBDIRS = (p, refs) => [p.clockLog, p.phases, p.approvals, p.markers, p.closed, p.gos, p.used, p.voided, p.journalRoot, ...refs.map((r) => p.journal(r))];
 
 /** The exact JSON of a state file, or throws. */
 export function readState(file) {
   return C.strictJson(readFileSync(file, "utf8"), { maxChars: 1 << 20 });
 }
 
-/** Write a new file, never over an existing one, and flush it to disk. */
+/** Write a new file, never over an existing one, and flush it. Creates no directory: the store's exist from init. */
 export function writeOnce(file, value) {
-  mkdirSync(dirname(file), { recursive: true });
   const fd = openSync(file, "wx");
   try { writeSync(fd, typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n"); fsyncSync(fd); } finally { closeSync(fd); }
 }
 
 function replaceFile(file, value) {
-  mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
   renameSync(tmp, file);
 }
 
-const listJson = (dir) => { try { return readdirSync(dir).filter((f) => f.endsWith(".json")); } catch { return []; } };
+const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 const newId = () => randomBytes(16).toString("hex");
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** Hold the project lock for fn. Exclusive create, so a second process is refused, never queued. */
-export function withLock(paths, ref, fn, now) {
-  const file = paths.lock(ref);
-  mkdirSync(paths.dir, { recursive: true });
-  let fd;
-  try { fd = openSync(file, "wx"); } catch {
-    let since = "an unknown time";
-    try { since = readFileSync(file, "utf8").trim().slice(0, 80); } catch { /* reported as unknown */ }
-    throw new Refusal(`another guard process holds the ${ref} lock (${since}). If none is running, the lock is stale: check with stage0-go.mjs status, then remove ${file} by hand; refusing`);
+/**
+ * Hold the store lock for fn: exclusive create, retried for up to waitMs,
+ * then a refusal. The lock serializes every change to the store: approval
+ * drafts, phase registration, markers, gos, claims, outcomes, dispositions
+ * and clock checks.
+ */
+export function withLock(paths, fn, now, waitMs = LOCK_WAIT_MS) {
+  if (!isDir(paths.dir)) throw new Refusal(`no guard store at ${paths.dir}; refusing`);
+  const until = Date.now() + waitMs;
+  let fd = null;
+  for (;;) {
+    try { fd = openSync(paths.lock, "wx"); break; } catch (e) {
+      if (!e || e.code !== "EEXIST") throw new Refusal(`the store lock cannot be taken (${e && e.code}); refusing`);
+      if (Date.now() >= until) {
+        let since = "an unknown time";
+        try { since = readFileSync(paths.lock, "utf8").trim().slice(0, 80); } catch { /* reported as unknown */ }
+        throw new Refusal(`another guard process has held the store lock for over ${waitMs / 1000} s (${since}). If none is running, the lock is stale: check with stage0-go.mjs status, then remove ${paths.lock} by hand and record it; refusing`);
+      }
+      sleep(25);
+    }
   }
   try { writeSync(fd, `pid ${process.pid} since ${iso(now)}`); } finally { closeSync(fd); }
-  try { return fn(); } finally { try { unlinkSync(file); } catch { /* already gone */ } }
+  try { return fn(); } finally { try { unlinkSync(paths.lock); } catch { /* already gone */ } }
 }
 
 /** Rule 3′'s context at a head: the manifest committed there, assembled and checked against its pins. */
 export const contextAt = (head, root) => C.contextAt(head, root);
+
+// ── the store: identity, anchor, ledger and its check (I6-R1) ───────────────
+
+/** The repository's anchor at HEAD: the established store's identity, or null when the repository records none. */
+export function anchorAt(root, rev = "HEAD") {
+  const git = (...a) => execFileSync("git", a, { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 20 }).toString("utf8");
+  let listed;
+  try { listed = git("ls-tree", "--name-only", rev, "--", ANCHOR_PATH).trim(); } catch (e) { throw new Refusal(`git could not read ${ANCHOR_PATH} at ${rev} (${String(e && e.message).split("\n")[0]}); refusing`); }
+  if (!listed) return null;
+  let a;
+  try { a = C.strictJson(git("show", `${rev}:${ANCHOR_PATH}`), { maxChars: 4096 }); } catch { throw new Refusal(`${ANCHOR_PATH} at ${rev} is not one strict JSON object; refusing`); }
+  const bad = shapeProblems(a, ANCHOR_SPEC, ANCHOR_PATH);
+  if (bad.length) throw new Refusal(`${bad.join("; ")}; refusing`);
+  return a;
+}
+
+/** The anchor text to commit for a store (the store's identity, under the anchor's schema). */
+export const anchorFor = (store) => ({ schema: "stage0-guard-anchor/1", storeId: store.storeId, createdAt: store.createdAt, refs: store.refs, predecessor: store.predecessor });
+
+/**
+ * Make the store, explicitly (I6-R1). Refuses when anything exists at its
+ * path. A first store needs the repository to record none; a replacement
+ * (`restore`) needs the repository to record the lost store's id, and a
+ * review file that names it. The store is built beside its path and renamed
+ * into place, so two concurrent inits cannot both succeed. It returns the
+ * new store record; the repository's anchor must then be committed, in
+ * review, before any live command accepts it.
+ */
+export function initStore({ paths, manifest, anchor, now, restore = null }) {
+  const refs = { production: manifest.send.targets.production, staging: manifest.send.targets.staging };
+  if (!isRefs(refs)) throw new Refusal("the manifest does not name the production and staging refs; refusing");
+  let predecessor = null;
+  if (restore === null) {
+    if (anchor) throw new Refusal(`the repository records an established store (${anchor.storeId}). A lost or damaged store is replaced only by a reviewed restoration: init --restore; refusing`);
+  } else {
+    if (!anchor) throw new Refusal("the repository records no established store, so there is nothing to restore; refusing");
+    if (restore.predecessor !== anchor.storeId) throw new Refusal(`the repository records store ${anchor.storeId}, not ${String(restore.predecessor).slice(0, 32)}; refusing`);
+    if (!Buffer.isBuffer(restore.reviewedBytes) || !restore.reviewedBytes.toString("utf8").includes(anchor.storeId)) throw new Refusal("the review file does not name the lost store's id; refusing");
+    predecessor = { storeId: anchor.storeId, reviewed: { path: restore.reviewedPath, sha256: sha256(restore.reviewedBytes) } };
+  }
+  if (existsSync(paths.dir)) throw new Refusal(`${paths.dir} exists. A store is made only where nothing is; a damaged one is moved aside, as evidence, by hand and on the record; refusing`);
+  const store = { schema: "stage0-store/1", storeId: newId(), createdAt: iso(now), refs, predecessor };
+  const tmp = `${paths.dir}.init-${newId().slice(0, 8)}`;
+  const t = statePaths(tmp);
+  try {
+    mkdirSync(tmp);
+    for (const d of SUBDIRS(t, [refs.production, refs.staging])) mkdirSync(d);
+    writeOnce(t.store, store);
+    writeOnce(t.hwm, { ms: now, at: iso(now) });
+    const line = JSON.stringify({ seq: 1, prev: ZERO, at: iso(now), kind: "init", storeId: store.storeId });
+    writeOnce(t.ledger, line + "\n");
+    renameSync(tmp, paths.dir);
+  } catch (e) {
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort: a leftover .init- directory is not the store */ }
+    if (e instanceof Refusal) throw e;
+    throw new Refusal(`the store could not be made (${e && e.code ? e.code : e && e.message}); refusing`);
+  }
+  return store;
+}
+
+/** The ledger's events, checked line by line: strict JSON, exact shape, consecutive sequence, and each line's prev the sha256 of the line before. */
+export function readLedger(paths) {
+  let raw;
+  try { raw = readFileSync(paths.ledger, "utf8"); } catch (e) { return { events: [], problems: [`the ledger is missing or unreadable (${e && e.code})`], seq: 0, tail: ZERO }; }
+  const problems = [];
+  const lines = raw.split("\n");
+  const last = lines.pop();
+  if (last !== "") problems.push("the ledger's last line is incomplete");
+  const events = [];
+  let prev = ZERO;
+  for (const [i, line] of lines.entries()) {
+    let ev = null;
+    try { ev = C.strictJson(line, { maxChars: 1 << 16 }); } catch (e) { problems.push(`ledger line ${i + 1} is not strict JSON (${e.message})`); break; }
+    const spec = isObj(ev) && own(EVENT_SPECS, ev.kind) ? { ...LINE_SPEC, ...EVENT_SPECS[ev.kind] } : LINE_SPEC;
+    const bad = shapeProblems(ev, spec, `ledger line ${i + 1}`);
+    if (bad.length) { problems.push(...bad); break; }
+    if (ev.seq !== i + 1) { problems.push(`ledger line ${i + 1} has sequence ${ev.seq}`); break; }
+    if (ev.prev !== prev) { problems.push(`ledger line ${i + 1} does not follow line ${i}: the chain is broken`); break; }
+    prev = sha256(Buffer.from(line, "utf8"));
+    events.push(ev);
+  }
+  if (!events.length && !problems.length) problems.push("the ledger is empty");
+  return { events, problems, seq: events.length, tail: prev };
+}
+
+/** Append one event (the store lock is held, and chk is this lock's storeCheck). Throws on any failure. */
+function appendEvent(paths, chk, kind, fields, now) {
+  const ev = { seq: chk.seq + 1, prev: chk.tail, at: iso(now), kind, ...fields };
+  const bad = shapeProblems(ev, { ...LINE_SPEC, ...EVENT_SPECS[kind] }, `the ${kind} event`);
+  if (bad.length) throw new Refusal(`${bad.join("; ")}; refusing`);
+  const line = JSON.stringify(ev);
+  const fd = openSync(paths.ledger, "a");
+  try { writeSync(fd, line + "\n"); fsyncSync(fd); } finally { closeSync(fd); }
+  chk.seq += 1;
+  chk.tail = sha256(Buffer.from(line, "utf8"));
+  return ev;
+}
+
+/**
+ * Write the files of one event, then record it; if recording fails, undo the
+ * writes and refuse. `steps` are [do, undo] pairs, run in order.
+ */
+function logged(paths, chk, kind, fields, steps, now) {
+  const done = [];
+  try {
+    for (const [doIt, undo] of steps) { doIt(); done.push(undo); }
+    return appendEvent(paths, chk, kind, fields, now);
+  } catch (e) {
+    for (const undo of done.reverse()) { try { undo(); } catch { /* the check below reports what is left */ } }
+    if (e instanceof Refusal) throw e;
+    throw new Refusal(`the ${kind} could not be recorded (${e && e.code ? e.code : e && e.message}); nothing was changed that the ledger does not record; refusing`);
+  }
+}
+const fileStep = (file, value) => [() => writeOnce(file, value), () => unlinkSync(file)];
+const moveStep = (from, to) => [() => renameSync(from, to), () => renameSync(to, from)];
+
+/**
+ * The store, checked against its ledger (I6-R1). Returns { ok, problems,
+ * store, seq, tail, index }. `ok` is true only when: the store and every
+ * directory exist; the store is the one the repository's anchor names, for
+ * the manifest's refs; the ledger chains from its init event; each event
+ * follows the lifecycle (a draft before its phase, a phase before its
+ * markers and gos, a go issued before it is used or voided, a claim before
+ * its outcome and disposition, each once); every file an event names exists
+ * where its lifecycle puts it, with the recorded sha256 and the ids the
+ * event names; and no file is present that no event names. A disposition
+ * releases a hold; it never excuses a problem found here.
+ */
+export function storeCheck({ paths, anchor, manifest }) {
+  const problems = [];
+  const say = (s) => problems.push(s);
+  const index = { drafts: new Map(), phases: new Map(), approvals: new Map(), markers: new Map(), gos: new Map(), claims: new Map(), outcomes: new Map(), dispositions: new Map(), clocks: [], claimSeq: {} };
+  const result = (store, L) => ({ ok: problems.length === 0, problems, store, seq: L ? L.seq : 0, tail: L ? L.tail : ZERO, index });
+  if (!isDir(paths.dir)) { say(`no guard store at ${paths.dir}: it was never made here (stage0-go.mjs init), or it is lost`); return result(null, null); }
+  let store = null;
+  try { store = readState(paths.store); } catch { say("store.json is missing or not strict JSON"); return result(null, null); }
+  const sbad = shapeProblems(store, STORE_SPEC, "store.json");
+  if (sbad.length) { problems.push(...sbad); return result(null, null); }
+  if (!anchor) say(`the repository records no established store at HEAD (${ANCHOR_PATH})`);
+  else if (JSON.stringify(anchorFor(store)) !== JSON.stringify(anchor)) say(`the store here (${store.storeId}) is not the one the repository records (${anchor.storeId})`);
+  if (manifest && (store.refs.production !== manifest.send.targets.production || store.refs.staging !== manifest.send.targets.staging)) say("the store's refs are not the manifest's");
+  const refs = [store.refs.production, store.refs.staging];
+  for (const d of SUBDIRS(paths, refs)) if (!isDir(d)) say(`${d.slice(paths.dir.length + 1)} is missing or not a directory`);
+  const L = readLedger(paths);
+  problems.push(...L.problems);
+  if (problems.length) return result(store, L);
+  const ev0 = L.events[0];
+  if (ev0.kind !== "init" || ev0.storeId !== store.storeId) say("the ledger does not start with this store's init");
+
+  // Replay the ledger into what must exist.
+  const expect = new Map(); // path → { sha, check(value) }
+  const want = (file, sha, check = null) => { expect.set(file, { sha, check }); };
+  const del = (file) => expect.delete(file);
+  const rel = (i, s) => say(`ledger line ${i + 1}: ${s}`);
+  const idsMatch = (spec, fields, label) => (v) => {
+    const bad = shapeProblems(v, spec, label);
+    for (const [k, x] of Object.entries(fields)) if (!bad.length && v[k] !== x) bad.push(`${label}.${k} is not the ledger's`);
+    return bad;
+  };
+  for (const [i, ev] of L.events.entries()) {
+    if (i === 0) continue;
+    const ref = ev.ref;
+    if (ref !== undefined && !refs.includes(ref)) { rel(i, `ref ${ref} is not this store's`); continue; }
+    switch (ev.kind) {
+      case "init": rel(i, "a second init"); break;
+      case "clock":
+        if (index.clocks.some((c) => c.file === ev.file)) rel(i, "a clock check recorded twice");
+        index.clocks.push(ev);
+        want(join(paths.clockLog, ev.file), ev.sha256, (v) => shapeProblems(v, CLOCK_SPEC, `clock/${ev.file}`));
+        break;
+      case "draft":
+        if (index.drafts.has(ev.approvalId)) rel(i, `approval ${ev.approvalId} drafted twice`);
+        index.drafts.set(ev.approvalId, ev);
+        break;
+      case "phase": {
+        const d = index.drafts.get(ev.approvalId);
+        if (!d) rel(i, `phase ${ev.phaseId} names approval ${ev.approvalId}, which was never drafted`);
+        else if (d.ref !== ref) rel(i, `phase ${ev.phaseId}'s ref is not its approval's`);
+        if (index.approvals.has(ev.approvalId)) rel(i, `approval ${ev.approvalId} registered twice`);
+        if (index.phases.has(ev.phaseId)) rel(i, `phase ${ev.phaseId} registered twice`);
+        index.approvals.set(ev.approvalId, ev.phaseId);
+        index.phases.set(ev.phaseId, ev);
+        want(join(paths.phases, `${ev.phaseId}.json`), ev.sha256, idsMatch(PHASE_SPEC, { phaseId: ev.phaseId, approvalId: ev.approvalId, ref }, `phase ${ev.phaseId}`));
+        want(join(paths.phases, `${ev.phaseId}.go.txt`), ev.goTextSha256);
+        want(join(paths.approvals, `${ev.approvalId}.json`), ev.approvalSha256, idsMatch(APPROVAL_SPEC, { approvalId: ev.approvalId, phaseId: ev.phaseId }, `approval ${ev.approvalId}`));
+        break;
+      }
+      case "marker-open": {
+        const ph = index.phases.get(ev.phaseId);
+        if (!ph) rel(i, `marker ${ev.markerId} names phase ${ev.phaseId}, which was never registered`);
+        else if (ph.ref !== ref) rel(i, `marker ${ev.markerId}'s ref is not its phase's`);
+        if (index.markers.has(ev.markerId)) rel(i, `marker ${ev.markerId} opened twice`);
+        index.markers.set(ev.markerId, { open: true, ev });
+        want(join(paths.markers, `${ev.markerId}.json`), ev.sha256, idsMatch(MARKER_SPEC, { markerId: ev.markerId, phaseId: ev.phaseId, ref }, `marker ${ev.markerId}`));
+        break;
+      }
+      case "marker-close": {
+        const m = index.markers.get(ev.markerId);
+        if (!m || !m.open) { rel(i, `marker ${ev.markerId} is closed but was not open`); break; }
+        m.open = false;
+        const e = expect.get(join(paths.markers, `${ev.markerId}.json`));
+        del(join(paths.markers, `${ev.markerId}.json`));
+        want(join(paths.closed, `${ev.markerId}.json`), e.sha, e.check);
+        break;
+      }
+      case "go-issue": {
+        const ph = index.phases.get(ev.phaseId);
+        if (!ph) rel(i, `go ${ev.goId} names phase ${ev.phaseId}, which was never registered`);
+        else if (ph.ref !== ref) rel(i, `go ${ev.goId}'s ref is not its phase's`);
+        if (!index.markers.has(ev.markerId)) rel(i, `go ${ev.goId} names marker ${ev.markerId}, which was never opened`);
+        if (index.gos.has(ev.goId)) rel(i, `go ${ev.goId} issued twice`);
+        index.gos.set(ev.goId, { state: "live", ev });
+        want(join(paths.gos, `${ev.goId}.json`), ev.sha256, idsMatch(GO_SPEC, { goId: ev.goId, phaseId: ev.phaseId, step: ev.step, ref, markerId: ev.markerId }, `go ${ev.goId}`));
+        break;
+      }
+      case "go-void": case "claim": {
+        const g = index.gos.get(ev.goId);
+        if (!g || g.state !== "live") { rel(i, `go ${ev.goId} is ${ev.kind === "claim" ? "used" : "voided"} but is not a live go`); break; }
+        g.state = ev.kind === "claim" ? "used" : "void";
+        const e = expect.get(join(paths.gos, `${ev.goId}.json`));
+        del(join(paths.gos, `${ev.goId}.json`));
+        want(join(g.state === "used" ? paths.used : paths.voided, `${ev.goId}.json`), e.sha, e.check);
+        if (ev.kind === "go-void") break;
+        if (g.ev.ref !== ref) rel(i, `claim ${ev.attemptId}'s ref is not its go's`);
+        if (index.claims.has(ev.attemptId)) rel(i, `attempt ${ev.attemptId} claimed twice`);
+        index.claimSeq[ref] = (index.claimSeq[ref] || 0) + 1;
+        if (ev.claimSeq !== index.claimSeq[ref]) rel(i, `claim ${ev.attemptId} has sequence ${ev.claimSeq}; ${index.claimSeq[ref]} is next for ${ref}`);
+        index.claims.set(ev.attemptId, { ev, go: g.ev });
+        g.attemptId = ev.attemptId;
+        want(join(paths.journal(ref), `${ev.attemptId}.claim.json`), ev.sha256, idsMatch(CLAIM_SPEC, { attemptId: ev.attemptId, goId: ev.goId, ref, seq: ev.claimSeq, phaseId: g.ev.phaseId, step: g.ev.step, markerId: g.ev.markerId }, `claim ${ev.attemptId}`));
+        break;
+      }
+      case "outcome": case "disposition": {
+        const c = index.claims.get(ev.attemptId);
+        if (!c) { rel(i, `${ev.kind} for attempt ${ev.attemptId}, which was never claimed`); break; }
+        const map = ev.kind === "outcome" ? index.outcomes : index.dispositions;
+        if (map.has(ev.attemptId)) rel(i, `a second ${ev.kind} for attempt ${ev.attemptId}`);
+        map.set(ev.attemptId, ev);
+        const cref = c.ev.ref;
+        const spec = ev.kind === "outcome" ? OUTCOME_SPEC[ev.state] : DISPOSITION_SPEC;
+        want(join(paths.journal(cref), `${ev.attemptId}.${ev.kind}.json`), ev.sha256, (v) => {
+          const bad = shapeProblems(v, spec, `${ev.kind} ${ev.attemptId}`);
+          if (!bad.length && v.attemptId !== ev.attemptId) bad.push(`${ev.kind} ${ev.attemptId} names another attempt`);
+          if (!bad.length && ev.kind === "outcome" && v.state !== ev.state) bad.push(`outcome ${ev.attemptId}'s state is not the ledger's`);
+          return bad;
+        });
+        break;
+      }
+      default: rel(i, `unknown kind ${ev.kind}`);
+    }
+  }
+
+  // Every expected file, as recorded; and nothing else.
+  for (const [file, e] of expect) {
+    const label = file.slice(paths.dir.length + 1);
+    let buf;
+    try { buf = readFileSync(file); } catch { say(`${label} is missing: the ledger records it`); continue; }
+    if (sha256(buf) !== e.sha) { say(`${label} is not the file the ledger records`); continue; }
+    if (e.check) {
+      let v = null;
+      try { v = C.strictJson(buf.toString("utf8"), { maxChars: 1 << 20 }); } catch { say(`${label} is not strict JSON`); continue; }
+      for (const b of e.check(v)) say(b);
+    }
+  }
+  const listing = (dir, skip = []) => { try { return readdirSync(dir).filter((n) => !skip.includes(n)); } catch { say(`${dir.slice(paths.dir.length + 1)} cannot be listed`); return []; } };
+  for (const [dir, skip] of [[paths.clockLog, []], [paths.phases, []], [paths.approvals, []], [paths.markers, ["closed"]], [paths.closed, []], [paths.gos, ["used", "void"]], [paths.used, []], [paths.voided, []], ...refs.map((r) => [paths.journal(r), []])]) {
+    for (const n of listing(dir, skip)) if (!expect.has(join(dir, n))) say(`${join(dir, n).slice(paths.dir.length + 1)} is present, but the ledger does not record it`);
+  }
+  for (const n of listing(paths.journalRoot)) if (!refs.includes(n)) say(`journal/${n} is not one of the store's refs`);
+  for (const n of listing(paths.dir)) {
+    if (["store.json", "ledger.jsonl", "hwm.json", "lock", "clock", "phases", "approvals", "markers", "gos", "journal"].includes(n) || /^hwm\.json\.[0-9]+\.tmp$/.test(n)) continue;
+    say(`${n} is present in the store, but is not one of its files`);
+  }
+  return result(store, L);
+}
+
+/** The checked store, or a refusal naming the damage. */
+export function requireStore({ paths, anchor, manifest }) {
+  const chk = storeCheck({ paths, anchor, manifest });
+  if (!chk.ok) {
+    const list = chk.problems.slice(0, 5).join("; ") + (chk.problems.length > 5 ? `; and ${chk.problems.length - 5} more` : "");
+    throw new Refusal(`the guard store is DAMAGED or not the established one: ${list}. Nothing is registered, issued or sent until a reviewed restoration; refusing`);
+  }
+  return chk;
+}
 
 // ── the policy's window roles (Q2) ──────────────────────────────────────────
 
@@ -347,6 +700,12 @@ export function plantedTools(dirs) {
   return out;
 }
 
+/** The cheap checks every live command runs before it starts any program (Codex's ordering note on 78db6dc). */
+export function preflight({ execArgv, env, dirs }) {
+  const pre = [...processProblems({ execArgv, env }), ...plantedTools(dirs)];
+  if (pre.length) throw new Refusal(`${pre.join("; ")}; refusing`);
+}
+
 /** HEAD and the tracked changes (staged, unstaged, deleted, unmerged). Untracked files are not listed (Q4). */
 export function gitState(root) {
   const g = (...a) => execFileSync("git", a, { cwd: root, maxBuffer: 1 << 24 }).toString("utf8");
@@ -383,47 +742,63 @@ export function measureClock(run = (args) => execFileSync(W32TM, args, { windows
   return { status, stripchart };
 }
 
-/** Accept a measurement as the clock check, or refuse; writes clock.json and resets the high-water mark. */
-export function recordClock(paths, measurement, now) {
+/** The high-water record: { ms } when present and valid, else "missing" or "invalid". */
+function readHwm(paths) {
+  let h;
+  try { h = readState(paths.hwm); } catch (e) { return e && e.code === "ENOENT" ? "missing" : "invalid"; }
+  return shapeProblems(h, HWM_SPEC, "hwm.json").length || iso(h.ms) !== h.at ? "invalid" : h;
+}
+
+/**
+ * Accept a measurement as the clock check, or refuse (an established, intact
+ * store only). It records the check in the ledger and sets the high-water
+ * mark to now: a check against the time server is the one thing that may
+ * re-establish a missing or invalid high-water record, and the record keeps
+ * what it found (hwmBefore). It repairs nothing about send history.
+ */
+export function recordClock({ paths, anchor, manifest, measurement, now }) {
   const offsets = parseStripchart(measurement && measurement.stripchart);
   if (!offsets || offsets.length !== CLOCK.samples) throw new Refusal(`w32tm did not give ${CLOCK.samples} readable samples against ${CLOCK.reference}; the clock cannot be established; refusing`);
   const maxAbs = Math.max(...offsets.map(Math.abs));
   if (maxAbs > CLOCK.toleranceMs) throw new Refusal(`this machine's clock is ${maxAbs} ms from ${CLOCK.reference}, beyond the ${CLOCK.toleranceMs} ms tolerance; resynchronize it, then check again; refusing`);
   const pick = (re) => { const m = re.exec(String(measurement.status || "")); return m ? m[1].trim().slice(0, 120) : "not reported"; };
-  const rec = {
-    schema: "stage0-clock/1", at: iso(now), reference: CLOCK.reference, offsetsMs: offsets, maxAbsOffsetMs: maxAbs, toleranceMs: CLOCK.toleranceMs,
-    source: pick(/^Source:\s*(.+)$/m), lastSync: pick(/^Last Successful Sync Time:\s*(.+)$/m), leap: pick(/^Leap Indicator:\s*(.+)$/m),
-  };
-  writeOnce(join(paths.clockLog, `${rec.at.replace(/[:.]/g, "-")}_${newId().slice(0, 8)}.json`), rec);
-  replaceFile(paths.clock, rec);
-  replaceFile(paths.hwm, { ms: now, at: iso(now) });
-  return rec;
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    const h = readHwm(paths);
+    const rec = {
+      schema: "stage0-clock/1", at: iso(now), reference: CLOCK.reference, offsetsMs: offsets, maxAbsOffsetMs: maxAbs, toleranceMs: CLOCK.toleranceMs,
+      source: pick(/^Source:\s*(.+)$/m), lastSync: pick(/^Last Successful Sync Time:\s*(.+)$/m), leap: pick(/^Leap Indicator:\s*(.+)$/m),
+      hwmBefore: typeof h === "string" ? h : h.at,
+    };
+    const file = `${rec.at.replace(/[:.]/g, "-")}_${newId().slice(0, 8)}.json`;
+    const text = JSON.stringify(rec, null, 2) + "\n";
+    logged(paths, chk, "clock", { file, sha256: sha256(Buffer.from(text, "utf8")) }, [fileStep(join(paths.clockLog, file), text)], now);
+    try { replaceFile(paths.hwm, { ms: now, at: iso(now) }); } catch (e) { throw new Refusal(`the clock check is recorded, but the high-water record could not be written (${e && e.code}); refusing`); }
+    return rec;
+  }, now);
 }
 
-const CLOCK_SPEC = {
-  schema: (v) => v === "stage0-clock/1", at: isUtc, reference: (v) => v === CLOCK.reference, offsetsMs: (v) => Array.isArray(v) && v.length === CLOCK.samples && v.every(Number.isSafeInteger),
-  maxAbsOffsetMs: isInt, toleranceMs: (v) => v === CLOCK.toleranceMs, source: isStr(120), lastSync: isStr(120), leap: isStr(120),
-};
-
 /**
- * Refuse unless a clock check is recorded, fresh, not in the future, and the
- * clock has not gone back past the latest time a guard tool saw. A backward
- * step refuses until a new clock check; a forward step only makes deadlines
- * pass sooner. Advances the high-water mark.
+ * Refuse unless the latest recorded clock check is fresh and not later than
+ * now, and the high-water record exists, is valid, and is not more than
+ * backstepMs ahead of now. A missing or invalid high-water record refuses
+ * until a new clock check; so does failing to advance it. `chk` is a passing
+ * storeCheck.
  */
-export function checkClock(paths, now) {
+export function checkClock(paths, now, chk) {
   if (!Number.isFinite(now)) throw new Refusal("no current time; refusing");
-  let rec;
-  try { rec = readState(paths.clock); } catch { throw new Refusal("no clock check is recorded: run `node scripts/manual/stage0-go.mjs clock` first; refusing"); }
-  const bad = shapeProblems(rec, CLOCK_SPEC, "the clock check");
-  if (bad.length || rec.maxAbsOffsetMs > CLOCK.toleranceMs || Math.max(...rec.offsetsMs.map(Math.abs)) !== rec.maxAbsOffsetMs) throw new Refusal("the recorded clock check is malformed; run a new one; refusing");
+  const last = chk.index.clocks[chk.index.clocks.length - 1];
+  if (!last) throw new Refusal("no clock check is recorded: run `node scripts/manual/stage0-go.mjs clock` first; refusing");
+  const rec = readState(join(paths.clockLog, last.file));
   const at = utcMs(rec.at);
   if (now < at) throw new Refusal(`the clock check (${rec.at}) is later than now: the clock went back; run a new clock check; refusing`);
   if (now - at >= CLOCK.freshMs) throw new Refusal(`the clock check (${rec.at}) is older than ${CLOCK.freshMs / 60000} min; run a new one; refusing`);
-  let hwm = null;
-  try { const h = readState(paths.hwm); if (sameKeys(h, ["ms", "at"]) && isInt(h.ms)) hwm = h.ms; } catch { /* none yet */ }
-  if (hwm !== null && now < hwm - CLOCK.backstepMs) throw new Refusal(`the clock is ${hwm - now} ms behind a time a guard tool already saw (${iso(hwm)}): it went back; run a new clock check; refusing`);
-  if (hwm === null || now > hwm) { try { replaceFile(paths.hwm, { ms: now, at: iso(now) }); } catch { /* best effort: the next check reads the older mark */ } }
+  const h = readHwm(paths);
+  if (typeof h === "string") throw new Refusal(`the clock high-water record is ${h}: run a new clock check (stage0-go.mjs clock); refusing`);
+  if (now < h.ms - CLOCK.backstepMs) throw new Refusal(`the clock is ${h.ms - now} ms behind a time a guard tool already saw (${h.at}): it went back; run a new clock check; refusing`);
+  if (now > h.ms) {
+    try { replaceFile(paths.hwm, { ms: now, at: iso(now) }); } catch (e) { throw new Refusal(`the clock high-water record could not be advanced (${e && e.code}); refusing`); }
+  }
   return rec;
 }
 
@@ -479,8 +854,8 @@ function sessionOf(env) {
 /**
  * The workflows a go can be issued for, each with its reviewed phases and its
  * gate. Only the item 2 capture phases are declared. No production phase is:
- * the next production runbook declares its own, with their gate, in review,
- * and until then a production go refuses.
+ * production also needs per-step latest-start ceilings (an item 6 follow-up)
+ * and item 4(c)'s reviewed numbers, and until then a production go refuses.
  */
 export const WORKFLOWS = Object.freeze({
   capture: Object.freeze({
@@ -492,46 +867,92 @@ export const WORKFLOWS = Object.freeze({
   }),
 });
 
-// ── phases ───────────────────────────────────────────────────────────────────
+// ── approvals and phases (I6-R2) ────────────────────────────────────────────
 
 const minuteUtc = (ms) => iso(ms).slice(0, 16).replace("T", " ") + " UTC";
+const APPROVAL_IN_TEXT = /\bapproval ([0-9a-f]{16})\b/g;
 
 /**
- * Record Ryan's go for one phase from his message's exact text. Refuses
- * unless the text names the phase ("GO phase <P> "), the head (7 characters),
- * the ref, every step and the deadline as "YYYY-MM-DD HH:MM UTC"; the go is
- * recorded within PHASE_LIMITS.recordWithinMs of its arrival, with at least
- * PHASE_LIMITS.minRemainingMs left; and a phase that needs a reviewed decision
- * names one. A token-shaped value in the text refuses.
+ * Draft a fresh approval id for one phase (Claude, before drafting Ryan's go
+ * line). The line must carry `approval <id>`. One id registers at most one
+ * phase; a restart needs a newly drafted id and a newly approved line.
  */
-export function recordPhase({ paths, manifest, workflows = WORKFLOWS, workflow, phase, goText, arrivedAt, deadline, reviewed = null, head, checkout, now }) {
+export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, workflow, phase, head, now }) {
+  const wf = isObj(workflows) && own(workflows, workflow) ? workflows[workflow] : null;
+  if (!wf || !own(wf.phases, phase)) throw new Refusal(`no reviewed workflow phase ${JSON.stringify(`${String(workflow).slice(0, 20)} ${String(phase).slice(0, 20)}`)} is declared; refusing`);
+  const ref = manifest.send.targets[wf.target];
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    checkClock(paths, now, chk);
+    let approvalId;
+    do { approvalId = randomBytes(8).toString("hex"); } while (chk.index.drafts.has(approvalId));
+    logged(paths, chk, "draft", { approvalId, workflow, phase, ref, head }, [], now);
+    return { approvalId, workflow, phase, ref, head };
+  }, now);
+}
+
+/**
+ * Register Ryan's go for one phase from his message's exact text (I6-R2).
+ * The text must carry exactly one `approval <id>`, drafted in this store for
+ * this workflow, phase, head and ref. If that approval is already registered,
+ * the SAME phase is returned, with its progress, provided the text is the
+ * same; another text with a used id refuses. A new registration also refuses
+ * unless the text names the phase ("GO phase <P> "), the head (7
+ * characters), the ref, every step and the deadline as "YYYY-MM-DD HH:MM
+ * UTC"; the go is recorded within PHASE_LIMITS.recordWithinMs of its arrival,
+ * with at least PHASE_LIMITS.minRemainingMs left; and a phase that needs a
+ * reviewed decision names one. A token-shaped value in the text refuses.
+ * Neither the text nor the arrival time is the approval's identity.
+ */
+export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, workflow, phase, goText, arrivedAt, deadline, reviewed = null, head, checkout, now }) {
   const wf = isObj(workflows) && own(workflows, workflow) ? workflows[workflow] : null;
   if (!wf) throw new Refusal(`no reviewed workflow ${JSON.stringify(String(workflow).slice(0, 20))} is declared for the guarded sender; refusing`);
   const p = own(wf.phases, phase) ? wf.phases[phase] : null;
   if (!p) throw new Refusal(`workflow ${workflow} declares no phase ${JSON.stringify(String(phase).slice(0, 20))}; refusing`);
-  const ref = manifest.send.targets[wf.target];
-  if (!isRef(ref)) throw new Refusal(`the manifest has no ref for ${wf.target}; refusing`);
-  const arrived = utcMs(arrivedAt);
-  const dl = utcMs(deadline);
-  if (arrived === null || dl === null) throw new Refusal("the arrival and the deadline must be UTC times, YYYY-MM-DDTHH:MM:SS.sssZ; refusing");
-  if (dl % 60000 !== 0) throw new Refusal("the deadline must be a whole minute, as the go states it; refusing");
-  if (arrived > now) throw new Refusal("the go's arrival is later than now; refusing");
-  if (now - arrived > PHASE_LIMITS.recordWithinMs) throw new Refusal(`the go arrived more than ${PHASE_LIMITS.recordWithinMs / 60000} min ago; a late record needs a new go; refusing`);
-  if (dl - now < PHASE_LIMITS.minRemainingMs) throw new Refusal(`less than ${PHASE_LIMITS.minRemainingMs / 60000} min remain before the deadline; refusing`);
   if (typeof goText !== "string" || !goText.length || goText.length > 4096) throw new Refusal("the go text is missing or too long; refusing");
   if (/sbp_|sb_secret_/.test(goText)) throw new Refusal("the go text holds a token-shaped value: STOP, delete that token; refusing");
-  const missing = [`GO phase ${phase} `, head.slice(0, 7), ref, minuteUtc(dl), ...p.steps].filter((s) => !goText.includes(s));
-  if (missing.length) throw new Refusal(`the go text does not name ${missing.map((s) => JSON.stringify(s)).join(", ")}; refusing`);
-  if (p.requires && reviewed === null) throw new Refusal(`phase ${phase} needs ${p.requires}; name it (--reviewed); refusing`);
-  const rec = {
-    schema: "stage0-phase/1", phaseId: newId(), workflow, phase, steps: [...p.steps], target: wf.target, ref, head, checkout,
-    arrivedAt, recordedAt: iso(now), deadline, goText: { sha256: sha256(Buffer.from(goText, "utf8")), bytes: Buffer.byteLength(goText) }, reviewed,
-  };
-  const bad = shapeProblems(rec, PHASE_SPEC, "the phase");
-  if (bad.length) throw new Refusal(`${bad.join("; ")}; refusing`);
-  writeOnce(join(paths.phases, `${rec.phaseId}.go.txt`), goText);
-  writeOnce(join(paths.phases, `${rec.phaseId}.json`), rec);
-  return rec;
+  const ids = [...goText.matchAll(APPROVAL_IN_TEXT)].map((m) => m[1]);
+  if (ids.length !== 1) throw new Refusal(`the go text must carry exactly one "approval <16 hex>" (it carries ${ids.length}); refusing`);
+  const approvalId = ids[0];
+  const ref = manifest.send.targets[wf.target];
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    if (chk.index.approvals.has(approvalId)) {
+      const existing = loadPhase(paths, chk.index.approvals.get(approvalId));
+      if (existing.phase.goText.sha256 !== sha256(Buffer.from(goText, "utf8"))) throw new Refusal(`approval ${approvalId} is already registered (phase ${existing.phase.phaseId}) with another text: a used approval id with new words is not a new approval; refusing`);
+      return { phase: existing.phase, existing: true };
+    }
+    checkClock(paths, now, chk);
+    const draft = chk.index.drafts.get(approvalId);
+    if (!draft) throw new Refusal(`approval ${approvalId} was never drafted in this store; refusing`);
+    if (draft.workflow !== workflow || draft.phase !== phase || draft.ref !== ref || draft.head !== head) throw new Refusal(`approval ${approvalId} was drafted for ${draft.workflow} ${draft.phase} at ${draft.head.slice(0, 7)} on ${draft.ref}; refusing`);
+    if (!isRef(ref)) throw new Refusal(`the manifest has no ref for ${wf.target}; refusing`);
+    const arrived = utcMs(arrivedAt);
+    const dl = utcMs(deadline);
+    if (arrived === null || dl === null) throw new Refusal("the arrival and the deadline must be UTC times, YYYY-MM-DDTHH:MM:SS.sssZ; refusing");
+    if (dl % 60000 !== 0) throw new Refusal("the deadline must be a whole minute, as the go states it; refusing");
+    if (arrived < utcMs(draft.at)) throw new Refusal("the go arrived before its approval id was drafted; refusing");
+    if (arrived > now) throw new Refusal("the go's arrival is later than now; refusing");
+    if (now - arrived > PHASE_LIMITS.recordWithinMs) throw new Refusal(`the go arrived more than ${PHASE_LIMITS.recordWithinMs / 60000} min ago; a late record needs a new go; refusing`);
+    if (dl - now < PHASE_LIMITS.minRemainingMs) throw new Refusal(`less than ${PHASE_LIMITS.minRemainingMs / 60000} min remain before the deadline; refusing`);
+    const missing = [`GO phase ${phase} `, head.slice(0, 7), ref, minuteUtc(dl), ...p.steps].filter((s) => !goText.includes(s));
+    if (missing.length) throw new Refusal(`the go text does not name ${missing.map((s) => JSON.stringify(s)).join(", ")}; refusing`);
+    if (p.requires && reviewed === null) throw new Refusal(`phase ${phase} needs ${p.requires}; name it (--reviewed); refusing`);
+    const rec = {
+      schema: "stage0-phase/2", phaseId: newId(), approvalId, workflow, phase, steps: [...p.steps], target: wf.target, ref, head, checkout,
+      arrivedAt, recordedAt: iso(now), deadline, goText: { sha256: sha256(Buffer.from(goText, "utf8")), bytes: Buffer.byteLength(goText) }, reviewed,
+    };
+    const bad = shapeProblems(rec, PHASE_SPEC, "the phase");
+    if (bad.length) throw new Refusal(`${bad.join("; ")}; refusing`);
+    const recText = JSON.stringify(rec, null, 2) + "\n";
+    const apText = JSON.stringify({ schema: "stage0-approval/1", approvalId, phaseId: rec.phaseId }, null, 2) + "\n";
+    logged(paths, chk, "phase", { phaseId: rec.phaseId, approvalId, ref, sha256: sha256(Buffer.from(recText, "utf8")), goTextSha256: rec.goText.sha256, approvalSha256: sha256(Buffer.from(apText, "utf8")) }, [
+      fileStep(join(paths.phases, `${rec.phaseId}.go.txt`), goText),
+      fileStep(join(paths.phases, `${rec.phaseId}.json`), recText),
+      fileStep(join(paths.approvals, `${approvalId}.json`), apText),
+    ], now);
+    return { phase: rec, existing: false };
+  }, now);
 }
 
 /** A phase record and its sha256, checked against its stored go text; throws a Refusal on any problem. */
@@ -551,7 +972,9 @@ export function loadPhase(paths, phaseId) {
 
 function readMarkers(paths) {
   const out = [];
-  for (const f of listJson(paths.markers)) {
+  let names;
+  try { names = readdirSync(paths.markers).filter((f) => f.endsWith(".json")); } catch { throw new Refusal("the markers directory cannot be listed; refusing"); }
+  for (const f of names) {
     let m = null;
     try { m = readState(join(paths.markers, f)); } catch { /* malformed: below */ }
     const bad = shapeProblems(m, MARKER_SPEC, `marker ${f}`);
@@ -562,43 +985,48 @@ function readMarkers(paths) {
 
 /**
  * Open this window's marker for one phase (Ryan, after loading the token and
- * setting STAGE0_SESSION). Refuses on a malformed or foreign phase, a role
- * the phase never sends, a missing session value or token, a shell that is
- * not a PowerShell window, a second marker for this shell or session, and a
- * live window of the same role in the phase. A marker whose window is gone
- * is removed.
+ * setting STAGE0_SESSION). Refuses on a damaged store, a malformed or foreign
+ * phase, a role the phase never sends, a missing session value or token, a
+ * shell that is not a PowerShell window, a second marker for this shell or
+ * session, and a live window of the same role in the phase. A marker whose
+ * window is gone is closed (moved to markers/closed/, recorded).
  */
-export function openMarker({ paths, manifest, phaseId, role, env, head, checkout, now, identity, ppid, selfStartMs, workflows = WORKFLOWS }) {
-  const { phase, sha } = loadPhase(paths, phaseId);
-  if (phase.head !== head || phase.checkout !== checkout) throw new Refusal(`phase ${phaseId} was recorded for ${phase.head.slice(0, 7)} in ${phase.checkout}; this is ${head.slice(0, 7)} in ${checkout}; refusing`);
-  if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
-  if (now >= utcMs(phase.deadline)) throw new Refusal(`phase ${phase.phase}'s deadline ${phase.deadline} has passed; refusing`);
+export function openMarker({ paths, anchor, manifest, phaseId, role, env, head, checkout, now, identity, ppid, selfStartMs, workflows = WORKFLOWS }) {
   if (!isRole(role)) throw new Refusal("the role is R, W or C; refusing");
-  const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
-  const texts = phase.steps.map((s) => (wf ? wf.stepText(s) : null));
-  if (!texts.some((t) => t && roleOf(manifest, t) === role)) throw new Refusal(`phase ${phase.phase} sends nothing from ${an(role)} window; refusing`);
   const nonce = sessionOf(env);
   const token = env[TOKEN_ENV];
   if (typeof token !== "string" || !TOKEN_SHAPE.test(token)) throw new Refusal(`${TOKEN_ENV} is not a personal access token in this window; load it first; refusing`);
   const shell = invokingShell({ identity, ppid, selfStartMs });
-  const sessionId = sessionIdOf(nonce);
-  const removed = [];
-  for (const e of readMarkers(paths)) {
-    if (!e.marker) throw new Refusal(`a malformed marker is present (${e.problems[0]}); inspect it with stage0-go.mjs status; refusing`);
-    const m = e.marker;
-    if (m.sessionId === sessionId || sameShell(m.shell, shell)) throw new Refusal(`this window already has marker ${m.markerId} (role ${m.role}); close it first; refusing`);
-    if (m.phaseId === phaseId && m.role === role) {
-      if (now < utcMs(m.until) && sameShell(identity(m.shell.pid), m.shell)) throw new Refusal(`a live ${role} window for this phase already exists (marker ${m.markerId}); refusing`);
-      unlinkSync(e.file);
-      removed.push(m.markerId);
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    checkClock(paths, now, chk);
+    const { phase, sha } = loadPhase(paths, phaseId);
+    if (phase.head !== head || phase.checkout !== checkout) throw new Refusal(`phase ${phaseId} was recorded for ${phase.head.slice(0, 7)} in ${phase.checkout}; this is ${head.slice(0, 7)} in ${checkout}; refusing`);
+    if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
+    if (now >= utcMs(phase.deadline)) throw new Refusal(`phase ${phase.phase}'s deadline ${phase.deadline} has passed; refusing`);
+    const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
+    const texts = phase.steps.map((s) => (wf ? wf.stepText(s) : null));
+    if (!texts.some((t) => t && roleOf(manifest, t) === role)) throw new Refusal(`phase ${phase.phase} sends nothing from ${an(role)} window; refusing`);
+    const sessionId = sessionIdOf(nonce);
+    const removed = [];
+    for (const e of readMarkers(paths)) {
+      const m = e.marker;
+      if (!m) throw new Refusal(`a malformed marker is present (${e.problems[0]}); refusing`);
+      if (m.sessionId === sessionId || sameShell(m.shell, shell)) throw new Refusal(`this window already has marker ${m.markerId} (role ${m.role}); close it first; refusing`);
+      if (m.phaseId === phaseId && m.role === role) {
+        if (now < utcMs(m.until) && sameShell(identity(m.shell.pid), m.shell)) throw new Refusal(`a live ${role} window for this phase already exists (marker ${m.markerId}); refusing`);
+        logged(paths, chk, "marker-close", { markerId: m.markerId, reason: "gone" }, [moveStep(e.file, join(paths.closed, `${m.markerId}.json`))], now);
+        removed.push(m.markerId);
+      }
     }
-  }
-  const marker = {
-    schema: "stage0-marker/1", markerId: newId(), role, phaseId, phaseSha: sha, target: phase.target, ref: phase.ref, head, checkout,
-    createdAt: iso(now), until: phase.deadline, sessionId, tokenTag: tokenTagOf(nonce, token), shell,
-  };
-  writeOnce(join(paths.markers, `${marker.markerId}.json`), marker);
-  return { marker, removed };
+    const marker = {
+      schema: "stage0-marker/1", markerId: newId(), role, phaseId, phaseSha: sha, target: phase.target, ref: phase.ref, head, checkout,
+      createdAt: iso(now), until: phase.deadline, sessionId, tokenTag: tokenTagOf(nonce, token), shell,
+    };
+    const text = JSON.stringify(marker, null, 2) + "\n";
+    logged(paths, chk, "marker-open", { markerId: marker.markerId, phaseId, ref: phase.ref, sha256: sha256(Buffer.from(text, "utf8")) }, [fileStep(join(paths.markers, `${marker.markerId}.json`), text)], now);
+    return { marker, removed };
+  }, now);
 }
 
 /** The well-formed markers of this window's session value (none when it is unset). */
@@ -609,20 +1037,39 @@ export function sessionMarkers(paths, env) {
   return readMarkers(paths).filter((e) => e.marker && e.marker.sessionId === sid).map((e) => e.marker);
 }
 
-/** Remove this session's markers and their unused gos. No pin, head or clock check: closing must always work. */
-export function closeSession({ paths, env }) {
+/**
+ * Close this session's markers and void their unused gos: each is moved, as
+ * evidence, and recorded. It checks no pin, head, clock or store integrity,
+ * so it can run when those fail. When the ledger cannot be read, or the lock
+ * cannot be taken, it changes nothing and reports why: the marker then stays
+ * where it is, and binds only this window's process, which is about to exit.
+ */
+export function closeSession({ paths, env, now }) {
   const nonce = env[SESSION_ENV];
-  if (typeof nonce !== "string" || !SESSION_SHAPE.test(nonce)) return { markers: [], gos: [] };
+  const out = { markers: [], gos: [], problems: [] };
+  if (typeof nonce !== "string" || !SESSION_SHAPE.test(nonce)) return out;
   const sid = sessionIdOf(nonce);
-  const markers = [];
-  for (const e of readMarkers(paths)) if (e.marker && e.marker.sessionId === sid) { unlinkSync(e.file); markers.push(e.marker.markerId); }
-  const gos = [];
-  for (const f of listJson(paths.gos)) {
-    let g = null;
-    try { g = readState(join(paths.gos, f)); } catch { /* not this session's */ }
-    if (isObj(g) && markers.includes(g.markerId)) { unlinkSync(join(paths.gos, f)); gos.push(g.goId); }
-  }
-  return { markers, gos };
+  try {
+    withLock(paths, () => {
+      const L = readLedger(paths);
+      if (L.problems.length) throw new Refusal(`the ledger is damaged (${L.problems[0]})`);
+      const chk = { seq: L.seq, tail: L.tail };
+      for (const e of readMarkers(paths)) {
+        if (!e.marker || e.marker.sessionId !== sid) continue;
+        const mid = e.marker.markerId;
+        for (const f of readdirSync(paths.gos).filter((n) => n.endsWith(".json"))) {
+          let g = null;
+          try { g = readState(join(paths.gos, f)); } catch { continue; }
+          if (!isObj(g) || g.markerId !== mid || f !== `${g.goId}.json`) continue;
+          logged(paths, chk, "go-void", { goId: g.goId, reason: "close" }, [moveStep(join(paths.gos, f), join(paths.voided, f))], now);
+          out.gos.push(g.goId);
+        }
+        logged(paths, chk, "marker-close", { markerId: mid, reason: "close" }, [moveStep(e.file, join(paths.closed, `${mid}.json`))], now);
+        out.markers.push(mid);
+      }
+    }, now, 2000);
+  } catch (e) { out.problems.push(e.message); }
+  return out;
 }
 
 // ── the journal (SG-2) ──────────────────────────────────────────────────────
@@ -630,8 +1077,8 @@ export function closeSession({ paths, env }) {
 /** Every attempt in the project's journal, by claim order, each with its problems (a malformed file is a problem, never skipped). */
 export function readJournal(paths, ref) {
   const dir = paths.journal(ref);
-  let names = [];
-  try { names = readdirSync(dir); } catch { return []; }
+  let names;
+  try { names = readdirSync(dir); } catch (e) { throw new Refusal(`the ${ref} journal cannot be listed (${e && e.code}): the store is damaged; refusing`); }
   const by = new Map();
   const get = (id) => { if (!by.has(id)) by.set(id, { attemptId: id, claim: null, outcome: null, disposition: null, problems: [] }); return by.get(id); };
   for (const n of names) {
@@ -682,18 +1129,20 @@ export function boundReceipt(entry, readReceipt = RECEIPT_READER) {
 }
 
 /**
- * What holds the project: every attempt without a disposition that is
- * PENDING (a claim and no outcome: in flight, or crashed), or HOLD (a
- * problem in its files; a DISPATCHED receipt that is missing, altered or not
+ * What holds the project: every attempt with a problem in its files (a
+ * disposition does not excuse one: I6-R1), and every attempt without a
+ * disposition that is PENDING (a claim and no outcome: in flight, or
+ * crashed), or HOLD (a DISPATCHED receipt that is missing, altered or not
  * bound to its claim; or a writing send, as the classifier counts writing,
- * that rule 3′ classifies R1 or R4). NOT_SENT holds nothing.
+ * that rule 3′ classifies R1 or R4). NOT_SENT holds nothing. Callers run it
+ * only on a store that passed storeCheck.
  */
 export function holdsOf(entries, { readReceipt = RECEIPT_READER, ctxAt }) {
   const out = [];
   for (const e of entries) {
-    if (e.disposition) continue;
     const hold = (why) => out.push({ attemptId: e.attemptId, kind: "HOLD", why });
     if (e.problems.length) { hold(e.problems.join("; ")); continue; }
+    if (e.disposition) continue;
     if (!e.outcome) { out.push({ attemptId: e.attemptId, kind: "PENDING", why: `${e.claim.step} (${e.claim.text}) was claimed at ${e.claim.claimedAt} and has no recorded outcome` }); continue; }
     if (e.outcome.state === "NOT_SENT") continue;
     const b = boundReceipt(e, readReceipt);
@@ -776,44 +1225,48 @@ function liveMarkers(paths, phaseId, role, now, identity) {
   return out;
 }
 
+const heldMessage = (holds) => `the project is held: ${holds.map((h) => `${h.kind} ${h.attemptId.slice(0, 8)}: ${h.why}`).join("; ")}`;
+
 /**
- * Issue the one go for the next step of a recorded phase (Claude). Refuses
- * unless: the phase is this checkout's and HEAD's, before its deadline; the
+ * Issue the one go for the next step of a recorded phase (Claude). Under the
+ * store lock, refuses unless: the store passes storeCheck; the clock check
+ * holds; the phase is this checkout's and HEAD's, before its deadline; the
  * step is the one the gate names; exactly one live marker of the step's role
  * exists for the phase, with its window still running; the project has no
  * pending or held attempt; and no unused go is outstanding for the ref (an
- * expired one is voided). The deadline is the phase deadline less MARGIN_MS,
- * never after the marker's end. `planFor(text, target)` is the sender's
- * planSend: the go binds that request's md5, bytes and read_only.
+ * expired one is voided, recorded). The deadline is the capture-phase
+ * admission cutoff: the phase deadline less MARGIN_MS, never after the
+ * marker's end. `planFor(text, target)` is the sender's planSend: the go
+ * binds that request's md5, bytes and read_only.
  */
-export function issueGo({ paths, manifest, phaseId, step, head, checkout, now, identity, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, planFor }) {
-  const { phase, sha } = loadPhase(paths, phaseId);
-  if (phase.head !== head || phase.checkout !== checkout) throw new Refusal(`phase ${phaseId} was recorded for ${phase.head.slice(0, 7)} in ${phase.checkout}; refusing`);
-  if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
-  const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
-  if (!wf || !phase.steps.includes(step)) throw new Refusal(`phase ${phase.phase} has no step ${isName(step) ? step : "of that name"}; refusing`);
-  const text = wf.stepText(step);
-  const role = roleOf(manifest, text);
-  if (role === "C") throw new Refusal("no reviewed phase sends a cancel: live cancellation is not approved (P1-P3 runbook §R 6), and no exception to the in-flight hold is defined; refusing");
-  const plan = planFor(text, phase.target);
-  if (plan.ref !== phase.ref || plan.template) throw new Refusal(`${text} does not plan to ${phase.ref}; refusing`);
-  const markers = liveMarkers(paths, phaseId, role, now, identity);
-  if (markers.length !== 1) throw new Refusal(`${markers.length} live ${role} windows are open for this phase; exactly one is needed; refusing`);
-  const marker = markers[0];
-  if (marker.head !== head || marker.ref !== phase.ref || marker.phaseSha !== sha || !(utcMs(marker.createdAt) <= now)) throw new Refusal(`marker ${marker.markerId} is not bound to this phase, head and ref; refusing`);
-  const deadline = Math.min(utcMs(phase.deadline) - MARGIN_MS, utcMs(marker.until));
-  if (!(now < deadline)) throw new Refusal(`the step's latest start ${iso(deadline)} has passed; refusing`);
-  return withLock(paths, phase.ref, () => {
+export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout, now, identity, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, planFor }) {
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    checkClock(paths, now, chk);
+    const { phase, sha } = loadPhase(paths, phaseId);
+    if (phase.head !== head || phase.checkout !== checkout) throw new Refusal(`phase ${phaseId} was recorded for ${phase.head.slice(0, 7)} in ${phase.checkout}; refusing`);
+    if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
+    const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
+    if (!wf || !phase.steps.includes(step)) throw new Refusal(`phase ${phase.phase} has no step ${isName(step) ? step : "of that name"}; refusing`);
+    const text = wf.stepText(step);
+    const role = roleOf(manifest, text);
+    if (role === "C") throw new Refusal("no reviewed phase sends a cancel: live cancellation is not approved (P1-P3 runbook §R 6), and no exception to the in-flight hold is defined; refusing");
+    const plan = planFor(text, phase.target);
+    if (plan.ref !== phase.ref || plan.template) throw new Refusal(`${text} does not plan to ${phase.ref}; refusing`);
+    const markers = liveMarkers(paths, phaseId, role, now, identity);
+    if (markers.length !== 1) throw new Refusal(`${markers.length} live ${role} windows are open for this phase; exactly one is needed; refusing`);
+    const marker = markers[0];
+    if (marker.head !== head || marker.ref !== phase.ref || marker.phaseSha !== sha || !(utcMs(marker.createdAt) <= now)) throw new Refusal(`marker ${marker.markerId} is not bound to this phase, head and ref; refusing`);
+    const deadline = Math.min(utcMs(phase.deadline) - MARGIN_MS, utcMs(marker.until));
+    if (!(now < deadline)) throw new Refusal(`the phase's admission cutoff ${iso(deadline)} has passed; refusing`);
     const entries = readJournal(paths, phase.ref);
     const holds = holdsOf(entries, { readReceipt, ctxAt });
-    if (holds.length) throw new Refusal(`the project is held: ${holds.map((h) => `${h.kind} ${h.attemptId.slice(0, 8)}: ${h.why}`).join("; ")}. A reviewed disposition (stage0-go.mjs dispose) releases it; refusing`);
-    for (const f of listJson(paths.gos)) {
-      let g = null;
-      try { g = readState(join(paths.gos, f)); } catch { throw new Refusal(`an unreadable go ${f} is outstanding; refusing`); }
-      if (!isObj(g) || g.ref !== phase.ref) continue;
-      if (now < utcMs(g.deadline)) throw new Refusal(`go ${g.goId} (${g.step}) is outstanding until ${g.deadline}; it is used or voided first; refusing`);
-      mkdirSync(paths.voided, { recursive: true });
-      renameSync(join(paths.gos, f), join(paths.voided, f));
+    if (holds.length) throw new Refusal(`${heldMessage(holds)}. A reviewed disposition (stage0-go.mjs dispose) releases it; refusing`);
+    for (const [goId, g] of chk.index.gos) {
+      if (g.state !== "live" || g.ev.ref !== phase.ref) continue;
+      const live = readGo(paths, goId);
+      if (now < utcMs(live.deadline)) throw new Refusal(`go ${goId} (${live.step}) is outstanding until ${live.deadline}; it is used or voided first; refusing`);
+      logged(paths, chk, "go-void", { goId, reason: "expired" }, [moveStep(join(paths.gos, `${goId}.json`), join(paths.voided, `${goId}.json`))], now);
     }
     const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
     if (gate.stop || gate.complete || gate.next !== step) throw new Refusal(`the gate does not name ${step}: ${gate.stop ? `STOP: ${gate.reason}` : gate.complete ? gate.reason : `the next step is ${gate.next}`}; refusing`);
@@ -824,32 +1277,40 @@ export function issueGo({ paths, manifest, phaseId, step, head, checkout, now, i
       cancel: null,
       gate: { next: gate.next, after: entries.filter((e) => e.claim && e.claim.phaseId === phaseId).map((e) => e.attemptId) },
     };
-    writeOnce(join(paths.gos, `${go.goId}.json`), go);
+    const goText = JSON.stringify(go, null, 2) + "\n";
+    logged(paths, chk, "go-issue", { goId: go.goId, phaseId, step, ref: phase.ref, markerId: marker.markerId, sha256: sha256(Buffer.from(goText, "utf8")) }, [fileStep(join(paths.gos, `${go.goId}.json`), goText)], now);
     return go;
   }, now);
 }
 
-/** Void an unused go (Claude). The go is kept in gos/void/. */
-export function voidGo(paths, goId) {
-  readGo(paths, goId);
-  mkdirSync(paths.voided, { recursive: true });
-  renameSync(join(paths.gos, `${goId}.json`), join(paths.voided, `${goId}.json`));
+/** Void an unused go (Claude). The go moves to gos/void/, recorded. */
+export function voidGo({ paths, anchor, manifest, goId, now }) {
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    readGo(paths, goId);
+    logged(paths, chk, "go-void", { goId, reason: "void" }, [moveStep(join(paths.gos, `${goId}.json`), join(paths.voided, `${goId}.json`))], now);
+  }, now);
 }
 
 /**
- * Record a reviewed disposition of one held or pending attempt. The review
- * file must name the attempt id; its sha256 is recorded. That the file is a
- * genuine review is a human check.
+ * Record a reviewed disposition of one held or pending attempt, on an intact
+ * store only: a disposition is not a restoration. The review file must name
+ * the attempt id; its sha256 is recorded. That the file is a genuine review
+ * is a human check.
  */
-export function dispose({ paths, ref, attemptId, reviewedPath, reviewedBytes, now }) {
+export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath, reviewedBytes, now }) {
   if (!isId(attemptId)) throw new Refusal("not an attempt id; refusing");
-  const e = readJournal(paths, ref).find((x) => x.attemptId === attemptId);
-  if (!e) throw new Refusal(`attempt ${attemptId} is not in the ${ref} journal; refusing`);
-  if (e.disposition) throw new Refusal(`attempt ${attemptId} already has a disposition; refusing`);
   if (!Buffer.isBuffer(reviewedBytes) || !reviewedBytes.toString("utf8").includes(attemptId)) throw new Refusal("the review file does not name the attempt id; refusing");
-  const d = { schema: "stage0-disposition/1", attemptId, reviewed: { path: reviewedPath, sha256: sha256(reviewedBytes) }, recordedAt: iso(now) };
-  writeOnce(join(paths.journal(ref), `${attemptId}.disposition.json`), d);
-  return d;
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    const c = chk.index.claims.get(attemptId);
+    if (!c || c.ev.ref !== ref) throw new Refusal(`attempt ${attemptId} is not in the ${ref} journal; refusing`);
+    if (chk.index.dispositions.has(attemptId)) throw new Refusal(`attempt ${attemptId} already has a disposition; refusing`);
+    const d = { schema: "stage0-disposition/1", attemptId, reviewed: { path: reviewedPath, sha256: sha256(reviewedBytes) }, recordedAt: iso(now) };
+    const text = JSON.stringify(d, null, 2) + "\n";
+    logged(paths, chk, "disposition", { attemptId, sha256: sha256(Buffer.from(text, "utf8")) }, [fileStep(join(paths.journal(ref), `${attemptId}.disposition.json`), text)], now);
+    return d;
+  }, now);
 }
 
 // ── admission and the send (SG-1 to SG-5) ───────────────────────────────────
@@ -857,13 +1318,14 @@ export function dispose({ paths, ref, attemptId, reviewedPath, reviewedBytes, no
 /**
  * Admit one live send and make it. Before any request, in order: the process
  * and the programs it starts; the checkout (clean, at a full commit); the
- * clock; the window (session value, exactly one marker, the same shell
- * process, the same token, the marker's head, ref and end); the text's role;
- * the go named by id (unused, this marker's, this phase's, step, text, head,
- * ref and request, issued before now, before its deadline). Under the
- * project lock: no pending or held attempt, and the gate names the go's step.
- * Then the go is moved to gos/used/ and the claim is written. Immediately
- * before fetch, inside send(), the deadline and the marker's end are checked
+ * store (storeCheck) and the clock; the window (session value, exactly one
+ * marker, the same shell process, the same token, the marker's head, ref and
+ * end); the text's role; the go named by id (unused, this marker's, this
+ * phase's, step, text, head, ref and request, issued before now, before its
+ * deadline). Under the store lock: the store again, no pending or held
+ * attempt, and the gate names the go's step. Then the go is moved to
+ * gos/used/ and the claim is written and recorded. Immediately before fetch,
+ * inside send(), the deadline, the marker's end and the clock are checked
  * again; a failure there records NOT_SENT. After that point every failure is
  * AfterDispatch: the claim stays pending, which holds the project.
  *
@@ -871,16 +1333,16 @@ export function dispose({ paths, ref, attemptId, reviewedPath, reviewedBytes, no
  * writes the receipt and returns its path.
  */
 export async function guardedSend(o) {
-  const { plan, goId, token, env, manifest, root, now = Date.now, identity = shellIdentity, git = gitState, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER } = o;
+  const { plan, goId, token, env, anchor, manifest, root, now = Date.now, identity = shellIdentity, git = gitState, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER } = o;
   const paths = statePaths(o.stateDir || DEFAULT_STATE);
   const execArgv = o.execArgv || process.execArgv;
   const ppid = o.ppid ?? process.ppid;
   const selfStartMs = o.selfStartMs ?? Date.now() - process.uptime() * 1000;
   const t0 = now();
-  const pre = [...processProblems({ execArgv, env }), ...plantedTools([root, process.cwd()])];
-  if (pre.length) throw new Refusal(`${pre.join("; ")}; refusing`);
+  preflight({ execArgv, env, dirs: [root, process.cwd()] });
   const head = checkoutHead(git, root);
-  checkClock(paths, t0);
+  const chk0 = requireStore({ paths, anchor, manifest });
+  checkClock(paths, t0, chk0);
   const nonce = sessionOf(env);
   const sid = sessionIdOf(nonce);
   const mine = readMarkers(paths).filter((e) => !e.marker || e.marker.sessionId === sid);
@@ -911,25 +1373,36 @@ export async function guardedSend(o) {
   if (!(utcMs(phase.recordedAt) <= created && created <= issued && issued <= t0)) throw new Refusal(`go ${goId} was issued later than now, or before its marker: the clock went back; refusing`);
   if (!(dl <= until && dl <= utcMs(phase.deadline) && issued < dl)) throw new Refusal(`go ${goId}'s deadline is after its marker's or phase's end; refusing`);
   if (!(t0 < dl)) throw new Refusal(`go ${goId}'s deadline ${go.deadline} has passed; refusing`);
-  const claim = withLock(paths, plan.ref, () => {
+  const claim = withLock(paths, () => {
     const t1 = now();
+    const chk = requireStore({ paths, anchor, manifest });
     const entries = readJournal(paths, plan.ref);
     const holds = holdsOf(entries, { readReceipt, ctxAt });
-    if (holds.length) throw new Refusal(`the project is held: ${holds.map((h) => `${h.kind} ${h.attemptId.slice(0, 8)}: ${h.why}`).join("; ")}; refusing`);
+    if (holds.length) throw new Refusal(`${heldMessage(holds)}; refusing`);
     const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now: t1 });
     if (gate.stop || gate.next !== go.step) throw new Refusal(`the gate does not name ${go.step}: ${gate.stop ? `STOP: ${gate.reason}` : gate.complete ? gate.reason : `the next step is ${gate.next}`}; refusing`);
     if (!(t1 < dl && t1 < until)) throw new Refusal(`go ${goId}'s deadline ${go.deadline} has passed; refusing`);
-    mkdirSync(paths.used, { recursive: true });
-    try { renameSync(join(paths.gos, `${goId}.json`), join(paths.used, `${goId}.json`)); } catch { throw new Refusal(`go ${goId} was used by another command; refusing`); }
+    const g = chk.index.gos.get(goId);
+    if (!g || g.state !== "live") throw new Refusal(`go ${goId} was used by another command; refusing`);
+    const claimSeq = (chk.index.claimSeq[plan.ref] || 0) + 1;
     const c = {
-      schema: "stage0-claim/1", attemptId: newId(), seq: entries.reduce((n, e) => Math.max(n, e.claim ? e.claim.seq : 0), 0) + 1,
+      schema: "stage0-claim/1", attemptId: newId(), seq: claimSeq,
       goId, phaseId: phase.phaseId, step: go.step, text: plan.name, target: plan.target, ref: plan.ref, role, markerId: marker.markerId, shell,
       head, checkout: root, request, issuedAt: go.issuedAt, deadline: go.deadline, claimedAt: iso(t1),
     };
-    try { writeOnce(join(paths.journal(plan.ref), `${c.attemptId}.claim.json`), c); } catch (e) { throw new Refusal(`go ${goId} is used, but its claim could not be written (${e.message}); nothing was sent; refusing`); }
+    const text = JSON.stringify(c, null, 2) + "\n";
+    logged(paths, chk, "claim", { attemptId: c.attemptId, goId, ref: plan.ref, claimSeq, sha256: sha256(Buffer.from(text, "utf8")) }, [
+      moveStep(join(paths.gos, `${goId}.json`), join(paths.used, `${goId}.json`)),
+      fileStep(join(paths.journal(plan.ref), `${c.attemptId}.claim.json`), text),
+    ], t1);
     return c;
   }, t0);
-  const journalFile = (kind) => join(paths.journal(plan.ref), `${claim.attemptId}.${kind}.json`);
+  // Record one outcome, under the lock, against a store that still checks.
+  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    const text = JSON.stringify(value, null, 2) + "\n";
+    logged(paths, chk, "outcome", { attemptId: claim.attemptId, state: value.state, sha256: sha256(Buffer.from(text, "utf8")) }, [fileStep(join(paths.journal(plan.ref), `${claim.attemptId}.outcome.json`), text)], t);
+  }, t, waitMs);
   // The last check, called by send() after it builds the request and
   // immediately before fetch.
   const admit = () => {
@@ -937,9 +1410,9 @@ export async function guardedSend(o) {
     let why = null;
     if (!(t < dl)) why = `go ${goId}'s deadline ${go.deadline} passed before the request`;
     else if (!(t < until)) why = `marker ${marker.markerId} ended before the request`;
-    else { try { checkClock(paths, t); } catch (e) { why = e.message; } }
+    else { try { checkClock(paths, t, chk0); } catch (e) { why = e.message; } }
     if (why === null) return;
-    try { writeOnce(journalFile("outcome"), { schema: "stage0-outcome/1", attemptId: claim.attemptId, state: "NOT_SENT", at: iso(t), reason: why.slice(0, 500) }); }
+    try { recordOutcome({ schema: "stage0-outcome/1", attemptId: claim.attemptId, state: "NOT_SENT", at: iso(t), reason: why.slice(0, 500) }, t, LOCK_WAIT_MS); }
     catch (e) { throw new NotSent(`${why}; no request was made, but NOT_SENT could not be recorded (${e.message}), so attempt ${claim.attemptId} stays pending and holds the project until a reviewed disposition`); }
     throw new NotSent(`${why}; no request was made, and attempt ${claim.attemptId} is recorded NOT_SENT`);
   };
@@ -953,21 +1426,34 @@ export async function guardedSend(o) {
   try { file = o.writeReceipt(record); } catch (e) { throw new AfterDispatch(`the request was dispatched (HTTP ${record.httpStatus ?? "none"}), but its receipt could not be written (${e.message}); attempt ${claim.attemptId} stays pending: HOLD`); }
   try {
     const buf = readFileSync(file);
-    writeOnce(journalFile("outcome"), { schema: "stage0-outcome/1", attemptId: claim.attemptId, state: "DISPATCHED", at: iso(now()), receipt: { file, sha256: sha256(buf), bytes: buf.length }, httpStatus: record.httpStatus });
+    const t = now();
+    recordOutcome({ schema: "stage0-outcome/1", attemptId: claim.attemptId, state: "DISPATCHED", at: iso(t), receipt: { file, sha256: sha256(buf), bytes: buf.length }, httpStatus: record.httpStatus }, t, 3 * LOCK_WAIT_MS);
   } catch (e) { throw new AfterDispatch(`the request was dispatched and its receipt written to ${file}, but its outcome could not be recorded (${e.message}); attempt ${claim.attemptId} stays pending: HOLD`); }
   return { record, file, attemptId: claim.attemptId, go, marker };
 }
 
-/** A summary of the guard state for one ref, for the status command. Read-only. */
-export function status({ paths, ref, ctxAt, readReceipt = RECEIPT_READER, now }) {
+/**
+ * The guard state for one ref, for the status command. Read-only. On a store
+ * that fails storeCheck it reports DAMAGED with the problems and no holds
+ * list: an empty list would claim a history that is not known to be intact.
+ */
+export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECEIPT_READER, now }) {
+  const chk = storeCheck({ paths, anchor, manifest });
+  if (!chk.ok) return { intact: false, damaged: chk.problems, lock: existsSync(paths.lock) };
   const entries = readJournal(paths, ref);
-  const gos = [];
-  for (const f of listJson(paths.gos)) { try { const g = readState(join(paths.gos, f)); if (isObj(g) && g.ref === ref) gos.push(g); } catch { gos.push({ goId: f, unreadable: true }); } }
+  const gos = [...chk.index.gos].filter(([, g]) => g.ev.ref === ref && g.state === "live").map(([goId]) => {
+    const g = readState(join(paths.gos, `${goId}.json`));
+    return { goId, step: g.step, deadline: g.deadline, live: now < utcMs(g.deadline) };
+  });
   return {
+    intact: true,
+    storeId: chk.store.storeId,
+    events: chk.seq,
     holds: holdsOf(entries, { readReceipt, ctxAt }),
     attempts: entries.map((e) => ({ attemptId: e.attemptId, seq: e.claim && e.claim.seq, step: e.claim && e.claim.step, state: e.outcome ? e.outcome.state : e.claim ? "PENDING" : "MALFORMED", disposed: Boolean(e.disposition) })),
-    gos: gos.map((g) => ({ goId: g.goId, step: g.step, deadline: g.deadline, live: !g.unreadable && now < utcMs(g.deadline) })),
+    gos,
     markers: readMarkers(paths).map((e) => (e.marker ? { markerId: e.marker.markerId, role: e.marker.role, phaseId: e.marker.phaseId, until: e.marker.until, ref: e.marker.ref } : { malformed: e.problems[0] })),
-    lock: existsSync(paths.lock(ref)),
+    lock: existsSync(paths.lock),
   };
 }
+

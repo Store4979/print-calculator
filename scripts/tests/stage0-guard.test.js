@@ -4,7 +4,9 @@
 // send goes to a fetch stub that counts requests, and "refused" means a
 // Refusal with ZERO requests. Clocks, shell processes and HEAD are injected;
 // stage0-guard.shell.test.js runs the shell binding through real PowerShell
-// processes on Windows.
+// processes on Windows, and stage0-guard.store.test.js covers the store's
+// integrity and one-registration-per-approval (Codex's review of 78db6dc,
+// I6-R1 and I6-R2).
 //
 //   G-1  Q2: each text goes only from a window of its policy role
 //   G-2  Q2: a missing or unknown role refuses; read_only never decides it
@@ -34,7 +36,7 @@
 //   G-26 the mutation companion: each named check removed admits a request the original refuses
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, mkdtempSync, rmSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -64,18 +66,25 @@ async function refused(fn, re, label = "") {
   return err;
 }
 
-/** A go file written by hand (not by the issuer), bound as the sender checks; `over` changes fields. */
-function forgeGo(fx, { phase, marker, step, text, target, over = {} }) {
-  const plan = S.planSend(M, text, target, { cwd: ROOT });
-  const go = {
-    schema: "stage0-go/1", goId: hex32(), phaseId: phase.phaseId, phaseSha: marker.phaseSha, workflow: phase.workflow, phase: phase.phase, step, text, target,
-    ref: plan.ref, head: HEAD, checkout: ROOT, role: G.roleOf(M, text), markerId: marker.markerId, issuedAt: G.iso(fx.now()),
-    deadline: G.iso(Math.min(G.utcMs(phase.deadline) - G.MARGIN_MS, G.utcMs(marker.until))),
-    request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: M.send.endpoint.replace("{ref}", plan.ref) },
-    cancel: null, gate: { next: step, after: [] }, ...over,
-  };
-  G.writeOnce(join(fx.paths.gos, `${go.goId}.json`), go);
-  return go;
+/** A go written by hand, with its ledger line (the fixture's forgeGo): only the sender's own checks can refuse it. */
+const forgeGo = (fx, o) => fx.forgeGo(o);
+
+/**
+ * Rewrite the ledger as a deliberate, consistent edit would: `edit(events)`
+ * changes events in place, and every line is re-chained.
+ */
+function rechain(fx, edit) {
+  const L = G.readLedger(fx.paths);
+  assert.deepEqual(L.problems, []);
+  const events = L.events.map((e) => ({ ...e }));
+  edit(events);
+  let prev = "0".repeat(64);
+  const lines = events.map((e, i) => {
+    const line = JSON.stringify({ ...e, seq: i + 1, prev });
+    prev = G.sha256(Buffer.from(line, "utf8"));
+    return line;
+  });
+  writeFileSync(fx.paths.ledger, lines.join("\n") + "\n");
 }
 
 const holds = (fx, ref = PROD) => G.holdsOf(G.readJournal(fx.paths, ref), { ctxAt: fx.ctxAt });
@@ -194,20 +203,19 @@ test("G-4 SG-1: a go issued for another phase, or for a step the gate does not n
     await refused(() => fx.send(G, { text: "STATE", target: "production", win: RX, goId: wrongPhase.goId }), /its phaseId differs/);
     const notInPhase = forgeGo(fx, { phase: X, marker: RX.marker, step: "Y1", text: "STATE", target: "production" });
     await refused(() => fx.send(G, { text: "STATE", target: "production", win: RX, goId: notInPhase.goId }), /step is not in its phase/);
-    for (const [k, v] of [["text", "P0"], ["target", "staging"], ["ref", STAGING], ["head", "f".repeat(40)], ["checkout", ROOT + "-other"], ["phaseSha", "0".repeat(64)], ["workflow", "capture"], ["phase", "Y"]]) {
+    for (const [k, v] of [["text", "P0"], ["target", "staging"], ["head", "f".repeat(40)], ["checkout", ROOT + "-other"], ["phaseSha", "0".repeat(64)], ["workflow", "capture"], ["phase", "Y"]]) {
       const g = forgeGo(fx, { phase: X, marker: RX.marker, step: "S1", text: "STATE", target: "production", over: { [k]: v } });
       await refused(() => fx.send(G, { text: "STATE", target: "production", win: RX, goId: g.goId }), new RegExp(`its ${k} differs`), k);
     }
-    const badReq = forgeGo(fx, { phase: X, marker: RX.marker, step: "S1", text: "STATE", target: "production" });
-    const f = join(fx.paths.gos, `${badReq.goId}.json`);
-    const g = JSON.parse(readFileSync(f, "utf8"));
-    g.request.bytes += 1;
-    unlinkSync(f);
-    G.writeOnce(f, g);
+    const plan = S.planSend(M, "STATE", "production", { cwd: ROOT });
+    const badReq = forgeGo(fx, { phase: X, marker: RX.marker, step: "S1", text: "STATE", target: "production", over: { request: { md5: plan.md5, bytes: plan.bytes + 1, readOnly: true, endpoint: M.send.endpoint.replace("{ref}", PROD) } } });
     await refused(() => fx.send(G, { text: "STATE", target: "production", win: RX, goId: badReq.goId }), /request is not this send's/);
     await refused(() => fx.send(G, { text: "STATE", target: "production", win: RX, goId: hex32() }), /no go [0-9a-f]{32} was issued/);
-    G.voidGo(fx.paths, gy.goId);
+    fx.void(gy.goId);
     await refused(() => fx.send(G, { text: "STATE", target: "production", win: RY, goId: gy.goId }), /was voided/);
+    // A go whose ref is not its phase's is caught by the store check itself.
+    const wrongRef = forgeGo(fx, { phase: X, marker: RX.marker, step: "S1", text: "STATE", target: "production", over: { ref: STAGING } });
+    await refused(() => fx.send(G, { text: "STATE", target: "production", win: RX, goId: wrongRef.goId }), /DAMAGED.*go [0-9a-f]{32}'s ref is not its phase's/, "ref");
     assert.equal(fx.calls.length, 0, "no request");
   } finally { fx.cleanup(); }
 });
@@ -223,7 +231,7 @@ test("G-5 SG-1: a replayed issuance is refused; at most one usable go per projec
     fx.add(1000);
     await refused(() => fx.issue(ph.phaseId, "S1"), /the gate does not name S1: the next step is S2/, "the S1 issuance replayed after S1 was sent");
     const g2 = fx.issue(ph.phaseId, "S2");
-    G.voidGo(fx.paths, g2.goId);
+    fx.void(g2.goId);
     const g2b = fx.issue(ph.phaseId, "S2");
     assert.notEqual(g2b.goId, g2.goId);
     assert.equal(liveGos(fx).length, 1);
@@ -332,10 +340,13 @@ test("G-7 SG-2: while a claimed request is in flight, no go is issued and no sen
   } finally { fx.cleanup(); }
 });
 
-/** After an unknown outcome: closing every window, opening new ones (new session values and shells) in a NEW phase, nothing is issued or admitted. */
+/**
+ * After an unknown outcome: closing every window, opening new ones (new
+ * session values and shells) in a NEW phase, nothing is issued or admitted.
+ */
 async function heldAcrossSessions(fx, label) {
   const before = fx.calls.length;
-  for (const pid of [1001, 1002]) G.closeSession({ paths: fx.paths, env: { [G.SESSION_ENV]: nonce(pid) } });
+  for (const pid of [1001, 1002]) G.closeSession({ paths: fx.paths, env: { [G.SESSION_ENV]: nonce(pid) }, now: fx.now() });
   assert.deepEqual(readdirSync(fx.paths.markers).filter((f) => f.endsWith(".json")), [], `${label}: closed`);
   fx.add(1000);
   const ph2 = fx.phase("t", "P");
@@ -347,8 +358,24 @@ async function heldAcrossSessions(fx, label) {
   const forgedR = forgeGo(fx, { phase: ph2, marker: R2.marker, step: "A1", text: "STATE", target: "production" });
   await refused(() => fx.send(G, { text: "STATE", target: "production", win: R2, goId: forgedR.goId }), /the project is held|is not for this send|gate does not name/, `${label}: a read`);
   assert.equal(fx.calls.length, before, `${label}: no request`);
-  for (const g of [forged, forgedR]) G.voidGo(fx.paths, g.goId);
+  for (const g of [forged, forgedR]) fx.void(g.goId);
   return { ph2, R2, W2 };
+}
+
+/** On a DAMAGED store: closing, a new phase, a window, a go and a send are each refused, with no request. */
+async function refusedWhileDamaged(fx, label, { ph, W }) {
+  const before = fx.calls.length;
+  assert.equal(fx.check().ok, false, `${label}: the store check fails`);
+  const st = fx.status();
+  assert.equal(st.intact, false, `${label}: status reports damage`);
+  assert.ok(!("holds" in st), `${label}: status prints no holds list`);
+  fx.add(1000);
+  await refused(() => fx.draft("t", "P"), /DAMAGED/, `${label}: a new approval`);
+  await refused(() => fx.issue(ph.phaseId, "A2"), /DAMAGED/, `${label}: issuance`);
+  await refused(() => fx.window("R", ph.phaseId, { pid: 5003 }), /DAMAGED/, `${label}: a new window`);
+  const g = fx.forgeGo({ phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production" });
+  await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: g.goId }), /DAMAGED/, `${label}: a send`);
+  assert.equal(fx.calls.length, before, `${label}: no request`);
 }
 
 test("G-8 SG-2: a process killed after its claim leaves PENDING, which holds across close, reopen, a new marker and a new phase until a reviewed disposition", async () => {
@@ -364,9 +391,9 @@ test("G-8 SG-2: a process killed after its claim leaves PENDING, which holds acr
     await heldAcrossSessions(fx, "after a crash");
     const review = join(fx.dir, "review.md");
     writeFileSync(review, "no reviewed text names it");
-    await refused(() => G.dispose({ paths: fx.paths, ref: PROD, attemptId: h[0].attemptId, reviewedPath: review, reviewedBytes: readFileSync(review), now: fx.now() }), /does not name the attempt id/);
+    await refused(() => fx.dispose(h[0].attemptId, review), /does not name the attempt id/);
     writeFileSync(review, `Disposition of attempt ${h[0].attemptId}: reviewed.`);
-    G.dispose({ paths: fx.paths, ref: PROD, attemptId: h[0].attemptId, reviewedPath: review, reviewedBytes: readFileSync(review), now: fx.now() });
+    fx.dispose(h[0].attemptId, review);
     assert.deepEqual(holds(fx), []);
   } finally { fx.cleanup(); }
 });
@@ -415,12 +442,13 @@ test("G-10 SG-2: a receipt or an outcome that cannot be written after the reques
       assert.ok(e instanceof G.AfterDispatch, String(e));
       assert.match(e.message, /its outcome could not be recorded/);
       assert.deepEqual(holds(fx).map((h) => h.kind), ["HOLD"]);
-      await heldAcrossSessions(fx, "no outcome");
+      // The planted outcome file is no outcome the ledger records: the store is damaged.
+      await refusedWhileDamaged(fx, "no outcome", { ph, W });
     } finally { fx.cleanup(); }
   }
 });
 
-test("G-11 SG-2: a missing or altered receipt, a malformed claim and an unknown journal file each hold the project", async () => {
+test("G-11 SG-2/I6-R1: a missing or altered receipt holds the project; a malformed claim or an unknown journal file is damage", async () => {
   const { fx, ph, W } = setupP();
   try {
     const g1 = fx.issue(ph.phaseId, "A1");
@@ -440,10 +468,11 @@ test("G-11 SG-2: a missing or altered receipt, a malformed claim and an unknown 
     for (const f of readdirSync(jdir)) if (!f.startsWith(r.attemptId)) unlinkSync(join(jdir, f));
     writeFileSync(join(jdir, "notes.txt"), "x");
     assert.match(holds(fx)[0].why, /an unknown journal file notes\.txt/);
+    assert.match(fx.check().problems.join(" "), /journal.gmxyisjjaxtpycsmmzef.notes\.txt is present, but the ledger does not record it/);
     fx.add(1000);
-    await refused(() => fx.issue(ph2.phaseId, "A1"), /the project is held: HOLD/);
+    await refused(() => fx.issue(ph2.phaseId, "A1"), /DAMAGED/);
     const a2 = forgeGo(fx, { phase: ph2, marker: R2.marker, step: "A2", text: "STATE", target: "production" });
-    await refused(() => fx.send(G, { text: "STATE", target: "production", win: R2, goId: a2.goId }), /the project is held: HOLD/);
+    await refused(() => fx.send(G, { text: "STATE", target: "production", win: R2, goId: a2.goId }), /DAMAGED/);
     assert.equal(fx.calls.length, 1);
   } finally { fx.cleanup(); }
 });
@@ -479,8 +508,8 @@ test("G-13 SG-2: an R4 writing send holds the project, an R4 read does not; a re
     await refused(() => fx.issue(ph.phaseId, "A2"), /the project is held: HOLD/);
     const review = join(fx.dir, "review.md");
     writeFileSync(review, `Reviewed: attempt ${h[0].attemptId} is disposed of.`);
-    G.dispose({ paths: fx.paths, ref: PROD, attemptId: h[0].attemptId, reviewedPath: review, reviewedBytes: readFileSync(review), now: fx.now() });
-    await refused(() => G.dispose({ paths: fx.paths, ref: PROD, attemptId: h[0].attemptId, reviewedPath: review, reviewedBytes: readFileSync(review), now: fx.now() }), /already has a disposition/);
+    fx.dispose(h[0].attemptId, review);
+    await refused(() => fx.dispose(h[0].attemptId, review), /already has a disposition/);
     assert.deepEqual(holds(fx), []);
     await refused(() => fx.issue(ph.phaseId, "A2"), /the gate does not name A2: STOP: A1 was STOP|the gate does not name A2: STOP/, "the phase itself still stops; a new phase needs a new go");
     // A read: STATE answered with a body that is not its contract is R4, and holds nothing.
@@ -539,11 +568,13 @@ test("G-14b SG-3: a window that is gone is replaced on open; a live one of the s
     await refused(() => fx.window("R", ph.phaseId, { pid: 1005 }), new RegExp(`a live R window for this phase already exists \\(marker ${R1.marker.markerId}\\)`));
     fx.shells.delete(1001);
     const R2 = fx.window("R", ph.phaseId, { pid: 1006 });
-    assert.ok(!existsSync(join(fx.paths.markers, `${R1.marker.markerId}.json`)), "the dead window's marker is removed");
+    assert.ok(!existsSync(join(fx.paths.markers, `${R1.marker.markerId}.json`)), "the dead window's marker is closed");
+    assert.ok(existsSync(join(fx.paths.closed, `${R1.marker.markerId}.json`)), "and kept, as evidence");
     assert.ok(existsSync(join(fx.paths.markers, `${R2.marker.markerId}.json`)));
-    const closed = G.closeSession({ paths: fx.paths, env: R2.env });
+    const closed = G.closeSession({ paths: fx.paths, env: R2.env, now: fx.now() });
     assert.deepEqual(closed.markers, [R2.marker.markerId]);
-    assert.deepEqual(G.closeSession({ paths: fx.paths, env: {} }), { markers: [], gos: [] }, "closing with no session value removes nothing");
+    assert.deepEqual(G.closeSession({ paths: fx.paths, env: {}, now: fx.now() }), { markers: [], gos: [], problems: [] }, "closing with no session value changes nothing");
+    assert.equal(fx.check().ok, true, "every close is recorded");
   } finally { fx.cleanup(); }
 });
 
@@ -583,7 +614,11 @@ test("G-15 SG-4: R1 accepts a guard block only in its exact shape; without one, 
   }
 });
 
-/** Rewrite one attempt's receipt (and its outcome's sha, consistently, as a deliberate edit would). */
+/**
+ * Rewrite one attempt's receipt, its outcome's sha256 and the ledger line
+ * that records the outcome, consistently, as a deliberate edit would: the
+ * store check passes, so only the receipt's binding to its claim can catch it.
+ */
 function tamper(fx, attemptId, edit) {
   const of = join(fx.paths.journal(PROD), `${attemptId}.outcome.json`);
   const o = G.readState(of);
@@ -591,8 +626,10 @@ function tamper(fx, attemptId, edit) {
   const text = typeof edit === "function" ? (edit(rec), JSON.stringify(rec, null, 2) + "\n") : edit;
   writeFileSync(o.receipt.file, text);
   const buf = readFileSync(o.receipt.file);
-  unlinkSync(of);
-  G.writeOnce(of, { ...o, receipt: { ...o.receipt, sha256: G.sha256(buf), bytes: buf.length } });
+  const outText = JSON.stringify({ ...o, receipt: { ...o.receipt, sha256: G.sha256(buf), bytes: buf.length } }, null, 2) + "\n";
+  writeFileSync(of, outText);
+  rechain(fx, (events) => { events.find((e) => e.kind === "outcome" && e.attemptId === attemptId).sha256 = G.sha256(Buffer.from(outText, "utf8")); });
+  assert.equal(fx.check().ok, true, "the edit is consistent with the store");
 }
 
 test("G-16 SG-4: guarded progression stops, and the project holds, on a stripped guard, a swapped window, a wrong role, go, phase, step or head, and a historical receipt", async () => {
@@ -703,26 +740,29 @@ test("G-19 SG-5: authority from the future refuses; the clock check must exist, 
   {
     const fx = fixture({ workflows: WF() });
     try {
-      assert.throws(() => G.checkClock(fx.paths, fx.now()), /no clock check is recorded/);
+      const cc = (t) => G.checkClock(fx.paths, t, fx.check());
+      assert.throws(() => cc(fx.now()), /no clock check is recorded/);
       fx.clock();
       fx.add(60 * MIN);
-      assert.throws(() => G.checkClock(fx.paths, fx.now()), /older than 60 min/);
+      assert.throws(() => cc(fx.now()), /older than 60 min/);
       fx.add(-60 * MIN);
       fx.add(-5000);
-      assert.throws(() => G.checkClock(fx.paths, fx.now()), /later than now: the clock went back/);
+      assert.throws(() => cc(fx.now()), /later than now: the clock went back/);
       fx.add(5000);
-      G.checkClock(fx.paths, fx.now() + 30000);
-      assert.throws(() => G.checkClock(fx.paths, fx.now() + 27999), /2001 ms behind a time a guard tool already saw/);
-      G.checkClock(fx.paths, fx.now() + 28000);
+      cc(fx.now() + 30000);
+      assert.throws(() => cc(fx.now() + 27999), /2001 ms behind a time a guard tool already saw/);
+      cc(fx.now() + 28000);
       fx.add(25000);
       fx.clock();
-      G.checkClock(fx.paths, fx.now());
+      cc(fx.now());
       assert.throws(() => fx.clock(["+02.0010000", "+00.0010000", "+00.0010000"]), /2001 ms from time\.windows\.com, beyond the 2000 ms tolerance/);
       assert.throws(() => fx.clock(["+00.0010000", "+00.0010000"]), /did not give 3 readable samples/);
-      assert.throws(() => G.recordClock(fx.paths, { status: null, stripchart: "10:00:00, error: 0x800705B4\n" }, fx.now()), /did not give 3 readable samples/);
-      const ok = G.recordClock(fx.paths, { status: "unavailable: access denied", stripchart: "10:00:00, -01.9990000s\n10:00:02, +00.0000000s\n10:00:04, +01.5000000s\n" }, fx.now());
+      const rc = (measurement) => G.recordClock({ paths: fx.paths, anchor: fx.anchor, manifest: M, measurement, now: fx.now() });
+      assert.throws(() => rc({ status: null, stripchart: "10:00:00, error: 0x800705B4\n" }), /did not give 3 readable samples/);
+      const ok = rc({ status: "unavailable: access denied", stripchart: "10:00:00, -01.9990000s\n10:00:02, +00.0000000s\n10:00:04, +01.5000000s\n" });
       assert.deepEqual(ok.offsetsMs, [-1999, 0, 1500]);
       assert.equal(ok.source, "not reported");
+      assert.equal(fx.check().ok, true, "every clock check is recorded");
     } finally { fx.cleanup(); }
   }
   {
@@ -733,9 +773,10 @@ test("G-19 SG-5: authority from the future refuses; the clock check must exist, 
       await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: g1.goId }), /ended at|deadline .* has passed/, "a clock that jumped forward");
       fx.add(-50 * MIN + 1000);
       await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: g1.goId }), /it went back; run a new clock check/, "and back");
-      const deps = { manifest: M, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, execArgv: [], stdout: () => {}, workflows: fx.workflows, ctxAt: fx.ctxAt };
+      const deps = { manifest: M, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, execArgv: [], stdout: () => {}, workflows: fx.workflows, ctxAt: fx.ctxAt };
       await refused(() => GO.main(["issue", "--phase", ph.phaseId, "--step", "A2"], {}, deps), /it went back; run a new clock check/, "the issuer, too");
-      await refused(() => WIN.main(["open", "--role", "R", "--phase", ph.phaseId], { [G.SESSION_ENV]: nonce(7003), [G.TOKEN_ENV]: TOKEN }, { ...deps, ppid: 1001 }), /it went back; run a new clock check/, "and a window's setup");
+      fx.shell(7003);
+      await refused(() => WIN.main(["open", "--role", "R", "--phase", ph.phaseId], { [G.SESSION_ENV]: nonce(7003), [G.TOKEN_ENV]: TOKEN }, { ...deps, ppid: 7003, selfStartMs: fx.now() }), /it went back; run a new clock check/, "and a window's setup");
       fx.clock();
       const r = await fx.send(G, { text: "P2-01", target: "production", win: W, goId: g1.goId });
       assert.equal(r.record.httpStatus, 201, "after a new clock check");
@@ -753,21 +794,24 @@ test("G-20 SG-5: the time and state parsers are total: an impossible or offset t
   const fx = fixture({ workflows: WF() });
   try {
     fx.clock();
+    const ap = fx.draft("t", "X");
     for (const s of bad.slice(0, 8)) {
-      await refused(() => G.recordPhase({ paths: fx.paths, manifest: M, workflows: { ...G.WORKFLOWS, ...fx.workflows }, workflow: "t", phase: "X", goText: "x", arrivedAt: s, deadline: "2026-10-28T14:45:00.000Z", head: HEAD, checkout: ROOT, now: fx.now() }), /must be UTC times/, `arrival ${s}`);
+      await refused(() => G.recordPhase({ paths: fx.paths, anchor: fx.anchor, manifest: M, workflows: { ...G.WORKFLOWS, ...fx.workflows }, workflow: "t", phase: "X", goText: `GO phase X approval ${ap}`, arrivedAt: s, deadline: "2026-10-28T14:45:00.000Z", head: HEAD, checkout: ROOT, now: fx.now() }), /must be UTC times/, `arrival ${s}`);
     }
-    const ph = fx.phase("t", "P");
-    const W = fx.window("W", ph.phaseId, { pid: 1002 });
-    for (const [k, v] of [["deadline", "2026-13-01T00:00:00.000Z"], ["issuedAt", "2026-10-28T14:00:00Z"], ["goId", 7], ["request", null], ["cancel", {}], ["extra", 1]]) {
-      const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { [k]: v } });
-      const goId = typeof go.goId === "string" ? go.goId : hex32();
-      if (k === "goId") writeFileSync(join(fx.paths.gos, `${goId}.json`), JSON.stringify({ ...go, goId: 7 }));
-      await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId }), /is malformed|no go/, k);
-    }
-    writeFileSync(join(fx.paths.markers, `${hex32()}.json`), '{"schema":"stage0-marker/1","until":"2026-02-30T00:00:00.000Z"}');
-    await refused(() => fx.issue(ph.phaseId, "A1"), /a malformed marker is present/);
     assert.equal(fx.calls.length, 0);
   } finally { fx.cleanup(); }
+  // A go or marker file that is malformed, even with its ledger line, is damage: every send and go refuses.
+  for (const [k, v] of [["deadline", "2026-13-01T00:00:00.000Z"], ["issuedAt", "2026-10-28T14:00:00Z"], ["goId", 7], ["request", null], ["cancel", {}], ["extra", 1], ["marker", null]]) {
+    const { fx: f2, ph, W } = setupP();
+    try {
+      let goId = hex32();
+      if (k === "marker") writeFileSync(join(f2.paths.markers, `${hex32()}.json`), '{"schema":"stage0-marker/1","until":"2026-02-30T00:00:00.000Z"}');
+      else { const go = f2.forgeGo({ phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { [k]: v } }); if (typeof go.goId === "string") goId = go.goId; }
+      await refused(() => f2.send(G, { text: "P2-01", target: "production", win: W, goId }), /DAMAGED/, k);
+      await refused(() => f2.issue(ph.phaseId, "A1"), /DAMAGED/, `${k}: issuance`);
+      assert.equal(f2.calls.length, 0, k);
+    } finally { f2.cleanup(); }
+  }
 });
 
 // ── SG-6 ─────────────────────────────────────────────────────────────────────
@@ -818,10 +862,10 @@ test("G-21 SG-6: each entry's chain is pinned; an edit, a dropped pin, an unpinn
       await refused(() => fx.main(["P2-01", "--target", "production", "--confirm-ref", PROD, "--go", g1.goId], W.env, { ppid: W.pid, root: dir }), /the pinned chain does not hold/, "the sender");
       assert.equal(fx.calls.length, 0);
       const markers = readdirSync(fx.paths.markers).length;
-      await refused(() => WIN.main(["open", "--role", "R", "--phase", ph.phaseId], { [G.SESSION_ENV]: nonce(7001), [G.TOKEN_ENV]: TOKEN }, { root: dir, manifest: M, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, ppid: 1001, git: fx.git, execArgv: [], stdout: () => {} }), /the pinned chain does not hold/, "the window");
+      await refused(() => WIN.main(["open", "--role", "R", "--phase", ph.phaseId], { [G.SESSION_ENV]: nonce(7001), [G.TOKEN_ENV]: TOKEN }, { root: dir, manifest: M, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, ppid: 1001, git: fx.git, execArgv: [], stdout: () => {} }), /the pinned chain does not hold/, "the window");
       assert.equal(readdirSync(fx.paths.markers).length, markers);
-      G.voidGo(fx.paths, g1.goId);
-      await refused(() => GO.main(["issue", "--phase", ph.phaseId, "--step", "A1"], {}, { root: dir, manifest: M, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, execArgv: [], stdout: () => {}, workflows: fx.workflows }), /the pinned chain does not hold/, "the issuer");
+      fx.void(g1.goId);
+      await refused(() => GO.main(["issue", "--phase", ph.phaseId, "--step", "A1"], {}, { root: dir, manifest: M, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, execArgv: [], stdout: () => {}, workflows: fx.workflows }), /the pinned chain does not hold/, "the issuer");
       assert.equal(liveGos(fx).length, 0);
       // Closing a window needs no pin, head or clock check: it works against the edited copy.
       const closed = WIN.main(["close"], W.env, { root: dir, stateDir: fx.stateDir, stdout: () => {} });
@@ -841,12 +885,12 @@ test("G-22 Q4: tracked changes, node options, NODE_OPTIONS and a planted program
     await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: g1.goId, over: { git: () => ({ head: "abc", dirty: [] }) } }), /full HEAD commit/);
     await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: g1.goId, over: { execArgv: ["--import", "x.mjs"] } }), /node was started with 2 option\(s\)/);
     await refused(() => fx.send(G, { text: "P2-01", target: "production", win: { ...W, env: { ...W.env, NODE_OPTIONS: "--require x.js" } }, goId: g1.goId }), /NODE_OPTIONS is set/);
-    const goDeps = { manifest: M, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, execArgv: [], stdout: () => {}, workflows: fx.workflows };
-    G.voidGo(fx.paths, g1.goId);
+    const goDeps = { manifest: M, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, execArgv: [], stdout: () => {}, workflows: fx.workflows };
+    fx.void(g1.goId);
     await refused(() => GO.main(["issue", "--phase", ph.phaseId, "--step", "A1"], {}, { ...goDeps, git: dirty }), /tracked changes/);
     await refused(() => GO.main(["issue", "--phase", ph.phaseId, "--step", "A1"], { [G.TOKEN_ENV]: TOKEN }, { ...goDeps, git: fx.git }), /holds no token and no window session/);
     await refused(() => GO.main(["issue", "--phase", ph.phaseId, "--step", "A1"], { [G.SESSION_ENV]: nonce(1) }, { ...goDeps, git: fx.git }), /holds no token and no window session/);
-    await refused(() => WIN.main(["open", "--role", "R", "--phase", ph.phaseId], { [G.SESSION_ENV]: nonce(7002), [G.TOKEN_ENV]: TOKEN }, { manifest: M, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, ppid: 1001, git: dirty, execArgv: [], stdout: () => {} }), /tracked changes/);
+    await refused(() => WIN.main(["open", "--role", "R", "--phase", ph.phaseId], { [G.SESSION_ENV]: nonce(7002), [G.TOKEN_ENV]: TOKEN }, { manifest: M, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, ppid: 1001, git: dirty, execArgv: [], stdout: () => {} }), /tracked changes/);
     assert.equal(fx.calls.length, 0);
     assert.equal(liveGos(fx).length, 0);
     const planted = mkdtempSync(join(tmpdir(), "s0-planted-"));
@@ -872,8 +916,8 @@ test("G-23 Q7: no go is issued for a cancel text; a C window exists only to keep
   } finally { fx.cleanup(); }
 });
 
-test("G-24 the dry run needs no token, marker, go, clock or clean tree, and makes no request; a live send needs a well-formed --go", async () => {
-  const fx = fixture();
+test("G-24 the dry run needs no token, marker, go, clock, store or clean tree, and makes no request; a live send needs a well-formed --go", async () => {
+  const fx = fixture({ init: false });
   try {
     let n = 0;
     const r = await S.main(["P2-0304", "--target", "production", "--dry-run"], {}, { manifest: M, stdout: () => {}, fetchImpl: () => { n++; }, stateDir: fx.stateDir, git: () => { throw new Error("no git"); } });
@@ -900,8 +944,7 @@ test("G-25 the 2026-10-09 incident, replayed at its real times and windows: ever
     const fx = fixture({ workflows: wf, t0: at("2026-10-09T01:33:00.000Z") });
     fx.clock();
     fx.set(at("2026-10-09T01:34:14.000Z"));
-    const deadline = at("2026-10-09T02:20:00.000Z");
-    const ph = G.recordPhase({ paths: fx.paths, manifest: M, workflows: { ...G.WORKFLOWS, ...wf }, workflow: "t", phase: "P", goText: fx.goText("t", "P", deadline), arrivedAt: G.iso(fx.now()), deadline: G.iso(deadline), head: HEAD, checkout: ROOT, now: fx.now() });
+    const ph = fx.register("t", "P", { deadline: at("2026-10-09T02:20:00.000Z") }).phase;
     fx.add(30000);
     const R = fx.window("R", ph.phaseId, { pid: 4001 });
     const W = fx.window("W", ph.phaseId, { pid: 4002 });
@@ -932,7 +975,7 @@ test("G-25 the 2026-10-09 incident, replayed at its real times and windows: ever
       s.fx.set(at("2026-10-09T15:17:00.000Z"));
       s.fx.clock();
       await refused(() => s.fx.issue(s.ph.phaseId, "STATE-1"), /0 live R windows are open for this phase/, "nothing can be issued the next morning");
-      G.voidGo(s.fx.paths, s.go.goId);
+      s.fx.void(s.go.goId);
       await refused(() => s.fx.window("W", s.ph.phaseId, { pid: 4003 }), /deadline 2026-10-09T02:20:00\.000Z has passed/, "a reopened window cannot rejoin the phase");
     } finally { s.fx.cleanup(); }
   }
@@ -953,6 +996,18 @@ async function mutant(edits, dir, n) {
   const p = join(dir, `mutant-${n}.mjs`);
   writeFileSync(p, s);
   return import(pathToFileURL(p).href);
+}
+
+/** A PENDING attempt in phase Y (its receipt cannot be written after the request); returns its attempt id. */
+async function pendingInY(fx) {
+  const Y = fx.phase("t", "Y");
+  const RY = fx.window("R", Y.phaseId, { pid: 1003 });
+  const gy = fx.issue(Y.phaseId, "Y1");
+  const e = await fx.send(G, { text: "STATE", target: "production", win: RY, goId: gy.goId, over: { writeReceipt: () => { throw new Error("disk full"); } } }).catch((x) => x);
+  assert.ok(e instanceof G.AfterDispatch, String(e));
+  const h = holds(fx);
+  assert.equal(h[0].kind, "PENDING");
+  return h[0].attemptId;
 }
 
 /** Each scenario sets up with the real guard and sends with `X`; it returns the result or the error and the request count. */
@@ -981,11 +1036,14 @@ const SCENARIOS = {
   },
   "a pending attempt in another phase": async (X) => {
     const { fx, ph, W } = setupP();
-    const other = fx.phase("t", "Y");
-    G.writeOnce(join(fx.paths.journal(PROD), `${"e".repeat(32)}.claim.json`), {
-      schema: "stage0-claim/1", attemptId: "e".repeat(32), seq: 1, goId: hex32(), phaseId: other.phaseId, step: "Y1", text: "STATE", target: "production", ref: PROD, role: "R", markerId: hex32(),
-      shell: { pid: 9, image: "powershell.exe", created: SHELL_CREATED }, head: HEAD, checkout: ROOT, request: { md5: "0".repeat(32), bytes: 1, readOnly: true, endpoint: "x" }, issuedAt: G.iso(fx.now()), deadline: G.iso(fx.now() + MIN), claimedAt: G.iso(fx.now()),
-    });
+    await pendingInY(fx);
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production" });
+    return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
+  },
+  "a pending attempt whose claim is lost": async (X) => {
+    const { fx, ph, W } = setupP();
+    const id = await pendingInY(fx);
+    renameSync(join(fx.paths.journal(PROD), `${id}.claim.json`), join(fx.dir, "lost-claim.json"));
     const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production" });
     return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
   },
@@ -1028,7 +1086,7 @@ const SCENARIOS = {
   "a clock that went back": async (X) => {
     const { fx, ph, W } = setupP();
     const go = fx.issue(ph.phaseId, "A1");
-    G.checkClock(fx.paths, fx.now() + 30000);
+    G.checkClock(fx.paths, fx.now() + 30000, fx.check());
     fx.add(10000);
     return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
   },
@@ -1062,16 +1120,24 @@ const GUARD_MUTANTS = [
     ["    if (!(t1 < dl && t1 < until)) throw", "    if (!(t1 < until)) throw"],
     ["    if (!(t < dl)) why =", "    if (false) why ="],
   ]],
-  ["the project hold in the sender", "a pending attempt in another phase", [["    if (holds.length) throw new Refusal(`the project is held: ${holds.map((h) => `${h.kind} ${h.attemptId.slice(0, 8)}: ${h.why}`).join(\"; \")}; refusing`);\n", ""]]],
+  ["the project hold in the sender", "a pending attempt in another phase", [["    if (holds.length) throw new Refusal(`${heldMessage(holds)}; refusing`);\n", ""]]],
+  ["the store check in the sender (I6-R1)", "a pending attempt whose claim is lost", [
+    ["  const chk0 = requireStore({ paths, anchor, manifest });", "  const chk0 = storeCheck({ paths, anchor, manifest });"],
+    ["    const chk = requireStore({ paths, anchor, manifest });\n    const entries = readJournal(paths, plan.ref);", "    const chk = storeCheck({ paths, anchor, manifest });\n    const entries = readJournal(paths, plan.ref);"],
+    ["  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = requireStore({ paths, anchor, manifest });", "  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = storeCheck({ paths, anchor, manifest });"],
+  ]],
   ["the gate in the sender", "a go for a step the gate does not name", [["    if (gate.stop || gate.next !== go.step) throw", "    if (false) throw"]]],
   ["single use", "a used go whose step is still next", [
     ["  const live = join(paths.gos, `${goId}.json`);\n  if (!existsSync(live)) {", "  const live = existsSync(join(paths.gos, `${goId}.json`)) ? join(paths.gos, `${goId}.json`) : join(paths.used, `${goId}.json`);\n  if (!existsSync(live)) {"],
-    ["    try { renameSync(join(paths.gos, `${goId}.json`), join(paths.used, `${goId}.json`)); } catch { throw new Refusal(`go ${goId} was used by another command; refusing`); }", "    try { renameSync(join(paths.gos, `${goId}.json`), join(paths.used, `${goId}.json`)); } catch { /* mutant */ }"],
+    ["    if (!g || g.state !== \"live\") throw new Refusal(`go ${goId} was used by another command; refusing`);\n", ""],
+    ["      moveStep(join(paths.gos, `${goId}.json`), join(paths.used, `${goId}.json`)),\n      fileStep(join(paths.journal(plan.ref)", "      fileStep(join(paths.journal(plan.ref)"],
+    // the second claim of one go is itself damage, so the outcome is recorded without the check
+    ["  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = requireStore({ paths, anchor, manifest });", "  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = storeCheck({ paths, anchor, manifest });"],
   ]],
-  ["the HEAD binding", "another HEAD", [["  const head = checkoutHead(git, root);\n  checkClock(paths, t0);", "  checkoutHead(git, root);\n  const head = readMarkers(paths).find((e) => e.marker).marker.head;\n  checkClock(paths, t0);"]]],
+  ["the HEAD binding", "another HEAD", [["  const head = checkoutHead(git, root);\n  const chk0 = requireStore(", "  checkoutHead(git, root);\n  const head = readMarkers(paths).find((e) => e.marker).marker.head;\n  const chk0 = requireStore("]]],
   ["clean tracked files", "tracked changes", [["  if (s.dirty.length) throw", "  if (false) throw"]]],
   ["the clock check's freshness", "a stale clock check", [["  if (now - at >= CLOCK.freshMs) throw", "  if (false) throw"]]],
-  ["the backward-clock check", "a clock that went back", [["  if (hwm !== null && now < hwm - CLOCK.backstepMs) throw", "  if (false) throw"]]],
+  ["the backward-clock check", "a clock that went back", [["  if (now < h.ms - CLOCK.backstepMs) throw", "  if (false) throw"]]],
   ["the issue time", "a go issued in the future", [["created <= issued && issued <= t0))", "created <= issued))"]]],
   ["NODE_OPTIONS", "NODE_OPTIONS", [["  if (typeof env.NODE_OPTIONS === \"string\" && env.NODE_OPTIONS.trim()) out.push", "  if (false) out.push"]]],
   ["the pre-fetch check", "the deadline passing before fetch", [["  const admit = () => {\n", "  const admit = () => {\n    return;\n"]]],
@@ -1083,17 +1149,19 @@ test("G-26 the mutation companion: each named check, removed, admits exactly one
     for (const [n, [name, scenario, edits]] of GUARD_MUTANTS.entries()) {
       const [fx0, run0] = await SCENARIOS[scenario](G);
       try {
+        const before = fx0.calls.length;
         await refused(run0, null, `${name}: the original refuses "${scenario}"`);
-        assert.equal(fx0.calls.length, 0, `${name}: no request under the original`);
+        assert.equal(fx0.calls.length, before, `${name}: no request under the original`);
       } finally { fx0.cleanup(); }
       const X = await mutant(edits, dir, n);
       const [fx1, run1] = await SCENARIOS[scenario](X);
       try {
         // Exactly one request and a recorded result: a tooling error under
         // the mutant is not evidence of a permissive check (Codex, SG-6).
+        const before = fx1.calls.length;
         const r = await run1().catch((e) => { throw new Error(`${name}: the mutant must admit "${scenario}"; it threw ${e && e.constructor.name}: ${e && e.message}`); });
         assert.ok(r && r.record, `${name}: a recorded send`);
-        assert.equal(fx1.calls.length, 1, `${name}: exactly one request under the mutant`);
+        assert.equal(fx1.calls.length, before + 1, `${name}: exactly one request under the mutant`);
       } finally { fx1.cleanup(); }
       assert.ok(X);
     }

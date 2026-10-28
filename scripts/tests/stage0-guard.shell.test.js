@@ -31,15 +31,16 @@ const F = await import(process.env.S0_FIXTURE);
 const G = await import(process.env.S0_GUARD);
 const [mode, goId] = process.argv.slice(2);
 const wf = { t: F.synthWorkflow("production", { X: [["S1", "STATE"], ["S2", "P0"]] }) };
+if (mode === "setup") G.initStore({ paths: G.statePaths(process.env.S0_STATE), manifest: F.M, anchor: null, now: Date.now() });
 const fx = F.fixture({ workflows: wf, t0: Date.now(), identity: G.shellIdentity, attach: { stateDir: process.env.S0_STATE, results: process.env.S0_RESULTS } });
-const phaseFile = process.env.S0_STATE + "/phase-id.txt";
+const phaseFile = process.env.S0_STATE + ".phase-id.txt"; // beside the store: a file inside it is damage
 const say = (o) => process.stdout.write(JSON.stringify({ mode, ppid: process.ppid, ...o }) + "\\n");
 try {
   if (mode === "setup") {
     fx.clock();
     const ph = fx.phase("t", "X");
     writeFileSync(phaseFile, ph.phaseId);
-    const r = G.openMarker({ paths: fx.paths, manifest: F.M, phaseId: ph.phaseId, role: "R", env: process.env, head: F.HEAD, checkout: F.ROOT, now: fx.now(), identity: G.shellIdentity, ppid: process.ppid, selfStartMs: Date.now() - process.uptime() * 1000, workflows: { ...G.WORKFLOWS, ...wf } });
+    const r = G.openMarker({ paths: fx.paths, anchor: fx.anchor, manifest: F.M, phaseId: ph.phaseId, role: "R", env: process.env, head: F.HEAD, checkout: F.ROOT, now: fx.now(), identity: G.shellIdentity, ppid: process.ppid, selfStartMs: Date.now() - process.uptime() * 1000, workflows: { ...G.WORKFLOWS, ...wf } });
     say({ ok: true, marker: { pid: r.marker.shell.pid, image: r.marker.shell.image, created: r.marker.shell.created } });
   } else if (mode === "issue") {
     const g = fx.issue(readFileSync(phaseFile, "utf8"), process.argv[3]);

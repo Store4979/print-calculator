@@ -282,14 +282,19 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     - execute_sql remains for small ad-hoc, unpinned read-backs, labelled as
       such.
   - THE GUARDED SENDER (Codex item 6; docs/security/stage0-guarded-send-procedure.md;
-    plan docs/security/stage0-item6-sender-guards-plan.md §A). A live send
-    needs `--go <id>`; nothing else sends:
-    - Claude runs scripts/manual/stage0-go.mjs: `clock` (w32tm stripchart,
-      3 samples within ±2 s, valid 60 min), `phase` (Ryan's verbatim go line,
-      written to a file outside the checkout, recorded within 10 min of
-      arrival with ≥ 30 min left), `issue` (runs the exact-step gate, prints
-      the ONE send command), `void`, `dispose`, `status`. It refuses to run
-      where SUPABASE_ACCESS_TOKEN or STAGE0_SESSION is set;
+    plan docs/security/stage0-item6-sender-guards-plan.md §A, §B). A live
+    send needs `--go <id>`; nothing else sends:
+    - Claude runs scripts/manual/stage0-go.mjs: `init` (ONCE, then the
+      printed anchor is committed in review as
+      docs/security/stage0-guard-store.json; not yet run on this machine),
+      `clock` (w32tm stripchart, 3 samples within ±2 s, valid 60 min),
+      `draft` (an approval id for one phase; Ryan's go line carries
+      `approval <id>`), `phase` (Ryan's verbatim go line, written to a file
+      outside the checkout, recorded within 10 min of arrival with ≥ 30 min
+      left; the same approval again RETURNS the same phase and its
+      progress, never a second one: I6-R2), `issue` (runs the exact-step
+      gate, prints the ONE send command), `void`, `dispose`, `status`. It
+      refuses to run where SUPABASE_ACCESS_TOKEN or STAGE0_SESSION is set;
     - Ryan runs scripts/manual/stage0-window.mjs `open --role <R|W> --phase
       <id>` in each window after the token and
       `$env:STAGE0_SESSION = [guid]::NewGuid().ToString()`, and `close` at
@@ -300,18 +305,31 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       cmd.exe and the guard refuses. A test that starts node from a real
       window must name process.execPath (G-27 failed under `yarn test` until
       it did);
-    - the state is ~/.stage0-guard (phases, markers, gos, the per-ref
-      journal), shared by every checkout. NEVER edit, move or delete it: a
+    - the state is the STORE ~/.stage0-guard, shared by every checkout,
+      made only by `init` and checked on every live command against its
+      hash-chained ledger.jsonl BOTH ways (every recorded file present with
+      its sha256 where its lifecycle puts it; nothing unrecorded) and
+      against the repository's anchor (I6-R1). Any difference is DAMAGE:
+      nothing is drafted, registered, issued or sent, and `status` prints no
+      holds list. NEVER edit, move or delete it, and never write a file
+      into it (a test's stray phase-id.txt there was damage). A lost store
+      is not a fresh start: `init` refuses while the anchor exists; only a
+      reviewed `init --restore` and a new anchor commit replace it. A
       PENDING claim or an R1/R4 writing outcome holds the whole project
       until `dispose` with a review file naming the attempt id;
+    - a go's deadline is the CAPTURE-PHASE ADMISSION CUTOFF (phase deadline
+      less 60 s). Per-step latest starts are NOT implemented: the production
+      deadline contract is incomplete until the item 6 follow-up and item
+      4(c);
     - only the capture workflow's phases are declared (stage0-guard.mjs
       WORKFLOWS). A production or item 3 phase must be declared in code,
       with its gate, in review, before a go can be recorded for it. No go
       is ever issued for a cancel text;
     - tests: scripts/tests/stage0-guard.test.js (G-1…G-26, counting fetch
-      stub, real child processes, a 14-mutant companion) and
-      stage0-guard.shell.test.js (G-27, real PowerShell windows; Windows
-      only).
+      stub, real child processes, a 15-mutant companion),
+      stage0-guard.store.test.js (ST-*, AP-*, ORD: every Codex reproduction
+      of the store and approval blockers) and stage0-guard.shell.test.js
+      (G-27, real PowerShell windows; Windows only).
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 7 files stage0-send/-window/-go.mjs load (with the classifier and the
     capture gate) are pinned in the manifest's `guard`. Each tool refuses

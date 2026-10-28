@@ -526,3 +526,77 @@ error under the mutant does not count.
   review.
 - That nobody edited the pinned files, the state directory or the
   environment on purpose: the pins, review and the procedures cover that.
+
+---
+
+## B. Codex's review of 78db6dc, and commit O
+
+**The ruling** (`reviews/2026-10-27-78db6dc-review.md`): AMEND, two blockers,
+I6-R1 and I6-R2; push held. SG-3, SG-4, SG-6, Q2, Q3, Q4, Q6 and Q7 are
+accepted. Ryan's instructions for O: don't amend `78db6dc`, add O on top;
+leave per-step deadlines out of O; say that the production deadline contract
+is not complete.
+
+### B.1 I6-R1: the store fails closed
+
+| Codex's requirement | what O does | tests |
+|---|---|---|
+| 1. an explicitly initialized store with a project identity; an absent or unreadable journal is not an empty one | `store.json` holds the store's id, creation time, refs and predecessor. The repository records it at `docs/security/stage0-guard-store.json` (the anchor), read at HEAD, and every live command refuses unless the store is the anchored one, for the manifest's refs. Every journal and store directory must exist, as a directory. Admission and issuance check the store under the store lock they hold for the claim or the go. | ST-1, ST-2, ST-3 |
+| 2. no silent creation; first use explicit; loss needs a reviewed restoration | Only `stage0-go.mjs init` makes the store, built beside its path and renamed into place, and only where nothing exists. No write creates a directory. While an anchor exists, `init` refuses; `init --restore` needs the anchored store's id and a review file naming it, and the new store works only once a reviewed commit anchors it. | ST-1, ST-1b, ST-3b, ST-8 |
+| 3. persistent bookkeeping and cross-checks; a disposition does not hide damage | `ledger.jsonl` records every change, hash-chained, with each file's sha256. `storeCheck()` replays it and requires every recorded file, where its lifecycle puts it, with its ids; no unrecorded file; each claim on a live go, each outcome and disposition on a claim, once, in sequence. `holdsOf()` reports an attempt's problems before it looks at its disposition. | ST-3, ST-3c, ST-5 |
+| 4. the high-water record: missing, invalid or unwritable refuses | `checkClock()` refuses a missing or invalid record, and refuses when it cannot advance it. Only a clock check (`recordClock`) re-establishes it, recording what it found (`hwmBefore`). | ST-4 |
+| 5. close available on damage; status never says "no holds" unless intact | `closeSession()` checks no store integrity; it records where the ledger reads, and otherwise changes nothing and says why (exit 3). `status` on damage reports the problems and no holds list. | ST-6 |
+
+Every damage case asserts, for **both** the issuer and the sender, no usable
+new go and zero further requests: in the old phase, a fresh phase, a fresh
+window, and another checkout of the same commit. The whole-store-loss case
+runs the ordinary setup (clock, draft, phase, window) and an immediate send,
+and `init` too: each refuses, and nothing recreates the store (ST-3b).
+Serialization: one store lock for every change; concurrent `init` makes one
+store (ST-1b); a ledger that cannot be written refuses and undoes the file it
+wrote (ST-7). The mutation companion gains "the store check in the sender",
+admitting a request only when that check is removed (G-26).
+
+### B.2 I6-R2: one registration per human approval
+
+`stage0-go.mjs draft` allocates an approval id (16 hex) for one workflow,
+phase, head and ref, recorded in the ledger. Ryan's go line carries
+`approval <id>`. `recordPhase()`, under the store lock:
+- the same id again, with the same text, returns the SAME phase and its
+  progress; with other words it refuses;
+- a new registration needs a draft of this store for this workflow, phase,
+  head and ref, drafted before the go arrived;
+- `approvals/<id>.json` is written with `wx`, and `storeCheck()` refuses a
+  second phase for one approval.
+
+Neither the text nor the arrival time is the identity. A restart needs a new
+draft, a new line and Ryan's new go (AP-4). Tests: AP-1 (sequential replay,
+other words, none, two, undrafted and foreign ids), AP-2 (Codex's
+reproduction: after A1, close, the same go again with a new window: the same
+phase, A1 refused with no request, A2 next; and after completion), AP-3
+(three processes registering one approval: one phase).
+
+### B.3 The ordering note
+
+`preflight()` (node options, NODE_OPTIONS, planted `git`, `powershell` or
+`w32tm`) now runs before any program in all three command lines: the sender
+before it reads the manifest with git (live sends; a dry run creates no
+authority), the window and the issuer before anything else. ORD runs the real
+command lines from a copy that is not a git repository: each refuses with
+the preflight's reason, not a git error.
+
+### B.4 Deferred: per-step deadlines
+
+**The production deadline contract is not complete.** A go's deadline is the
+capture-phase admission cutoff (the phase deadline less 60 s), the same for
+every step. Per-step latest-start ceilings, bound to the recorded phase and
+go and re-checked by the sender, come in a separate item 6 follow-up commit
+after O. Item 4(c) supplies and reviews the production numbers and the
+whole-remaining-path budget. No production phase is declared before both.
+
+### B.5 What O does not do
+
+- It does not run `init`: no store exists on this machine, and no anchor is
+  committed. Every live command refuses until both are in place, and that
+  commit is reviewed with item 3's runbook.
+- No push, token, send or database change.

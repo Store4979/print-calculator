@@ -27,11 +27,14 @@
 //      variable (never argv, never a file) and refuses when it is missing or
 //      is not a personal access token (sbp_…);
 //   6. refuses without --go <id>, then passes the send to the guards
-//      (stage0-guard.mjs guardedSend): the checkout, the clock, this window's
+//      (stage0-guard.mjs guardedSend): the checkout, the guard store (the
+//      established one, consistent with its ledger), the clock, this window's
 //      marker and shell process, the text's window role, the go named by id,
 //      the project journal and the step's gate. Every refusal there comes
 //      before any request. The go is used up and a claim journalled before
-//      the request; the deadline is checked again immediately before fetch;
+//      the request; the deadline is checked again immediately before fetch.
+//      For a live send, node options and planted programs are refused before
+//      step 1 starts git;
 //   7. POSTs {"query": <the checked text>} — plus "read_only": true for the
 //      texts the policy marks read-only — to the Management API endpoint
 //      https://api.supabase.com/v1/projects/<ref>/database/query. That is the
@@ -210,6 +213,9 @@ export async function main(argv, env, deps = {}) {
   const out = deps.stdout || ((s) => process.stdout.write(s));
   const o = parseArgs(argv);
   const root = deps.root || ROOT;
+  // A live send refuses node options and planted programs before it starts
+  // any program, git included (Codex's ordering note on 78db6dc).
+  if (!o.dryRun) G.preflight({ execArgv: deps.execArgv || process.execArgv, env, dirs: [root, process.cwd()] });
   const manifest = deps.manifest || A.manifestAt("HEAD", root);
   G.selfCheck(manifest, root, SENDER_PATH);
   const plan = planSend(manifest, o.name, o.target, { cancel: o.cancel, cwd: root });
@@ -227,8 +233,9 @@ export async function main(argv, env, deps = {}) {
   if (!TOKEN_SHAPE.test(token)) throw new Error(`${TOKEN_ENV} is not a Supabase personal access token (sbp_…); refusing`);
   if (o.go === null) throw new G.Refusal("a live send needs --go <id>, the go stage0-go.mjs issued for this step; refusing");
   const ctxCache = new Map();
+  const anchor = deps.anchor !== undefined ? deps.anchor : G.anchorAt(root);
   const r = await G.guardedSend({
-    plan, goId: o.go, token, env, manifest, root,
+    plan, goId: o.go, token, env, anchor, manifest, root,
     stateDir: deps.stateDir, now: deps.now, identity: deps.identity, git: deps.git, workflows: deps.workflows,
     execArgv: deps.execArgv, ppid: deps.ppid, selfStartMs: deps.selfStartMs, readReceipt: deps.readReceipt,
     ctxAt: deps.ctxAt || ((h) => { if (!ctxCache.has(h)) ctxCache.set(h, (deps.contextAt || defaultContextAt)(h, root)); return ctxCache.get(h); }),
