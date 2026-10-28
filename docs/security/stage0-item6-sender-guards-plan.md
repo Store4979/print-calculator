@@ -724,3 +724,131 @@ behaviour any later change must keep.
 - No `init`, no anchor, no token, send, push or database change. The first
   `init` and its anchor commit come with the item 3 plan, in their own
   review.
+
+---
+
+## D. Codex's review of P, and commit Q
+
+**The ruling** (`reviews/2026-10-28-30c0eba-review.md`):
+- **Mechanism:** the ceiling mechanism, ST-9 and the tail-loss text are
+  accepted.
+- **AMEND, and the exact-P push is held,** for P-R1.
+- **Required before any production phase:** Q-P1, Ryan's explicit go times;
+  and a tighter per-send not-after.
+- **Required for every new phase:** Q-P2, declared ceilings. The capture
+  phases keep their cutoff as a legacy exception.
+
+Ryan's instructions: commit Q on top of P, without amending P, completing
+item 6's generic deadline support.
+
+### D.1 P-R1: ceilings need not follow execution order
+
+- **Removed:** the cross-step rule from `ceilingReserve()` (a later step may
+  not reserve more) and from `loadPhase()` (nondecreasing ceilings). Under
+  P, the P1–P3 runbook's own binding map was refused:
+  - P1 18:40;
+  - P2-01 and P2-02 19:20;
+  - P2-0304 19:17;
+  - P2-05 19:08.
+- **Kept:**
+  - exact step coverage;
+  - whole-minute values, now bounded to 60 s to 24 h;
+  - each ceiling after the phase's recording and at least 60 s before its
+    deadline;
+  - the independent recomputation;
+  - the execution-order gate;
+  - every exclusive check.
+- **Registration** refuses once ANY step's ceiling has passed, which need
+  not be the first step's.
+- **Tests:**
+  - **CE-1** now registers the runbook's map as a positive case: it
+    computes those five times and drafts;
+  - **CE-8:**
+    - a two-step phase whose second step reserves more, before, at and after
+      that step's ceiling, at registration, at the issuer and at the sender;
+    - one minute after A2's ceiling, A1 still starts, but A2 is never issued,
+      and A1 is not issued again. The phase stops; nothing is reordered or
+      skipped.
+
+### D.2 Q-P1: the go line binds the whole time map
+
+- For every phase that declares ceilings, `draft` takes the deadline
+  (`--deadline`), records it, and prints the one defined line (`goLine()`):
+  - the phase, workflow, approval id, head, target and ref;
+  - every step in order with its absolute latest start, in UTC to the minute
+    with its Eastern time;
+  - the phase deadline, apart from the step limits.
+- **The Eastern time** is formatted by `Intl` for America/New_York. Its
+  offset is checked against the abbreviation, EDT −4 or EST −5; anything
+  else refuses.
+- **Registration** requires the drafted deadline, and a message EXACTLY
+  equal to the line recomputed from the declaration and that deadline. So
+  the registered map equals the recomputed one, and any other content
+  refuses: a substring match is not used.
+- **Re-registration** keeps O's idempotence: the same text and deadline
+  return the same phase, with its ceilings. The same id with another
+  deadline refuses.
+- **CE-9** tests each of these refusals, with no phase recorded:
+  - a wrong time;
+  - swapped step/time pairs;
+  - a duplicated step;
+  - a missing step;
+  - an extra step;
+  - other words after the line;
+  - another Eastern zone;
+  - the legacy hand-written form;
+  - a longer deadline, in the text or registered as such;
+  - re-registration with a longer deadline.
+- **The legacy capture phases** keep their hand-written line (the substring
+  checks of O).
+
+### D.3 The per-send not-after
+
+- `issueGo({ notAfter })`, from `stage0-go.mjs issue --not-after <UTC>`, is
+  an earlier bound for one send: the latest start that Claude's current
+  whole-path check allows.
+- **The issuer refuses** a value that has already passed, or that is later
+  than the step's ceiling, the window's end or the phase deadline.
+- **The go (`stage0-go/3`)** records `notAfter`, and its deadline is that
+  value.
+- **A production phase requires it,** at the issuer and again in the
+  sender. The sender also requires a recorded not-after to equal the go's
+  deadline, then enforces that deadline at all three of its checks.
+- **The code binds the value it is given;** it computes no path. Claude
+  states the computation (procedure §4).
+- **CE-10:**
+  - the bound recorded, at the ceiling allowed, after it refused, already
+    passed refused, missing for production refused;
+  - a staging go without one;
+  - before, at and after the not-after while the ceiling is still open: one
+    request, or none;
+  - a forged production go without one, or ending after its not-after;
+  - a tighter go issued after a NOT_SENT leaves the used go used;
+  - a pending attempt still holds against a tighter go.
+
+### D.4 Q-P2: every new phase declares its ceilings
+
+- `LEGACY_CUTOFF_PHASES` names capture's B, A, T and U. `isLegacyPhase()`
+  requires the capture workflow OBJECT itself, so another workflow named
+  `capture`, or a new capture phase, gets no exception.
+- Any other phase without `ceilings` refuses, at `draft`, `phase`, `issue`
+  and the sender, whatever its target.
+- **CE-1** covers:
+  - production and staging phases without ceilings;
+  - a look-alike capture workflow;
+  - a legacy phase drafted without a deadline, and refusing one.
+- **The fixture's `synthWorkflow`** declares 60 s per step for any phase a
+  test does not name. A production `issue()` passes the latest bound the
+  issuer admits, unless a test gives one.
+
+### D.5 The mutation companion and the rest
+
+- **G-26** gains two checks, 20 in all:
+  - the go's not-after in the sender;
+  - the production not-after in the sender.
+- **The store:** draft events gain `deadline` (null for a legacy phase).
+  Q changes neither the store's identity record, its `init` event nor the
+  anchor format. Those are all the store made by the first init on
+  2026-10-28 (`3389bb8f8df9280e7608c455249678f5`) holds so far.
+- **No production phase, ceilings or not-after values** are declared or
+  supplied: that is item 4(c).

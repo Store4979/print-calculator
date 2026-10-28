@@ -4,7 +4,7 @@
 // repository would record for it, a settable clock, Windows shell processes
 // by pid, a clean HEAD, and a fetch stub that counts every request. Nothing
 // here reaches the network, the real ~/.stage0-guard or a real window.
-import { mkdtempSync, rmSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,16 +39,16 @@ export const okBody = (text) => (/^(P2-|RB-)/.test(text) || text === "LOCKPROBE-
  * MATCHes when its receipt binds (not R1) and is HTTP 201; any other result,
  * or an UNRESOLVED writing send, stops the phase, as the capture gate does.
  * `ceilings` gives a phase's per-step reserves ({ <phase>: { <step>: ms } },
- * or null for none). A production phase must declare them, so one the test
- * does not name reserves MARGIN_MS for every step: the capture-phase
- * admission cutoff, as a declared ceiling.
+ * or null for none). Every phase must declare them, so one the test does not
+ * name reserves MARGIN_MS for every step: the capture-phase admission
+ * cutoff, as a declared ceiling.
  */
 export function synthWorkflow(target, phases, { ceilings = {} } = {}) {
   const textOf = {};
   const decl = {};
   for (const [name, steps] of Object.entries(phases)) {
     const ids = steps.map(([id]) => id);
-    const c = Object.hasOwn(ceilings, name) ? ceilings[name] : target === "production" ? Object.fromEntries(ids.map((id) => [id, G.MARGIN_MS])) : undefined;
+    const c = Object.hasOwn(ceilings, name) ? ceilings[name] : Object.fromEntries(ids.map((id) => [id, G.MARGIN_MS]));
     decl[name] = { steps: ids, requires: null, ...(c === undefined ? {} : { ceilings: c }) };
     for (const [id, text] of steps) textOf[id] = text;
   }
@@ -111,18 +111,22 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
       return G.recordClock({ paths, anchor: fx.anchor, manifest: M, measurement: { status: "Leap Indicator: 0(no warning)\nLast Successful Sync Time: 10/28/2026 9:00:00 AM\nSource: time.windows.com,0x9\n", stripchart: offsets.map((o, i) => `10:00:0${i}, ${o}s`).join("\n") + "\n" }, now: t });
     },
     check: () => G.storeCheck({ paths, anchor: fx.anchor, manifest: M }),
-    draft(workflow, phase) {
-      return G.draftApproval({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, head: HEAD, now: t }).approvalId;
+    /** Draft an approval id; a phase that declares ceilings is drafted with its deadline (default: 45 min ahead, to the minute). */
+    draft(workflow, phase, deadline = Math.floor((t + 45 * 60000) / 60000) * 60000) {
+      const legacy = G.isLegacyPhase(all()[workflow], phase);
+      return G.draftApproval({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, head: HEAD, deadline: legacy ? null : G.iso(deadline), now: t }).approvalId;
     },
+    /** Ryan's go line: goLine() for a phase that declares ceilings, the old hand-written form for a legacy capture phase. */
     goText(workflow, phase, deadline, approvalId) {
       const wf = all()[workflow];
       const ref = M.send.targets[wf.target];
-      return `GO phase ${phase} at X ${HEAD.slice(0, 7)}, approval ${approvalId}: steps ${wf.phases[phase].steps.join(", ")} to ${wf.target} ${ref} only. Deadline ${G.iso(deadline).slice(0, 16).replace("T", " ")} UTC.`;
+      if (G.isLegacyPhase(wf, phase)) return `GO phase ${phase} at X ${HEAD.slice(0, 7)}, approval ${approvalId}: steps ${wf.phases[phase].steps.join(", ")} to ${wf.target} ${ref} only. Deadline ${G.iso(deadline).slice(0, 16).replace("T", " ")} UTC.`;
+      return G.goLine({ workflow, phase, approvalId, head: HEAD, target: wf.target, ref, steps: wf.phases[phase].steps, ceilings: G.stepCeilings(wf, phase, deadline), deadline });
     },
     /** Draft an approval and register its phase; returns { phase, existing, goText, approvalId }. */
     register(workflow, phase, { minutes = 45, reviewed = null, goText = null, approvalId = null, arrivedAt = null, deadline = null } = {}) {
       const dl = deadline ?? Math.floor((t + minutes * 60000) / 60000) * 60000;
-      const id = approvalId ?? (goText === null ? fx.draft(workflow, phase) : null);
+      const id = approvalId ?? (goText === null ? fx.draft(workflow, phase, dl) : null);
       const text = goText ?? fx.goText(workflow, phase, dl, id);
       const r = G.recordPhase({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, goText: text, arrivedAt: arrivedAt ?? G.iso(t), deadline: G.iso(dl), reviewed, head: HEAD, checkout: ROOT, now: t });
       return { ...r, goText: text, approvalId: id };
@@ -135,8 +139,25 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
       const r = G.openMarker({ paths, anchor: fx.anchor, manifest: M, phaseId, role, env, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, ppid: pid, selfStartMs: t, workflows: all() });
       return { env, pid, marker: r.marker };
     },
-    issue(phaseId, step) {
-      return G.issueGo({ paths, anchor: fx.anchor, manifest: M, phaseId, step, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, workflows: all(), ctxAt: fx.ctxAt, planFor: (text, target) => S.planSend(M, text, target, { cwd: ROOT }) });
+    /**
+     * Issue a go. A production go needs a not-after: unless the test gives
+     * one (null for none), the fixture passes the latest the issuer admits,
+     * the step's ceiling or its window's end if earlier; if it cannot read
+     * them, none, and the issuer refuses for its own reason.
+     */
+    issue(phaseId, step, { notAfter } = {}) {
+      let na = notAfter === undefined ? null : notAfter;
+      if (notAfter === undefined) {
+        try {
+          const { phase } = G.loadPhase(paths, phaseId);
+          if (phase.target === "production") {
+            const role = G.roleOf(M, all()[phase.workflow].stepText(step));
+            const ends = readdirSync(paths.markers).filter((f) => f.endsWith(".json")).map((f) => G.readState(join(paths.markers, f))).filter((m) => m.phaseId === phaseId && m.role === role).map((m) => G.utcMs(m.until));
+            na = Math.min(G.utcMs(phase.ceilings[step]), ...ends);
+          }
+        } catch { na = null; }
+      }
+      return G.issueGo({ paths, anchor: fx.anchor, manifest: M, phaseId, step, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, workflows: all(), ctxAt: fx.ctxAt, planFor: (text, target) => S.planSend(M, text, target, { cwd: ROOT }), notAfter: Number.isFinite(na) ? na : null });
     },
     void: (goId) => G.voidGo({ paths, anchor: fx.anchor, manifest: M, goId, now: t }),
     dispose: (attemptId, reviewedPath, ref = M.send.targets.production) => G.dispose({ paths, anchor: fx.anchor, manifest: M, ref, attemptId, reviewedPath, reviewedBytes: readFileSync(reviewedPath), now: t }),
@@ -144,18 +165,21 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
     /**
      * Write a go by hand, with its ledger line, as an issuer that skipped its
      * checks would: the store stays consistent, so only the sender's own
-     * checks can refuse it. `over` changes fields.
+     * checks can refuse it. `over` changes fields. Unless `over` names it,
+     * notAfter is the go's final deadline for a production phase (as the
+     * fixture's issue() gives) and null otherwise.
      */
     forgeGo({ phase, marker, step, text, target, over = {} }) {
       const plan = S.planSend(M, text, target, { cwd: ROOT });
       const go = {
-        schema: "stage0-go/2", goId: randomBytes(16).toString("hex"), phaseId: phase.phaseId, phaseSha: marker.phaseSha, workflow: phase.workflow, phase: phase.phase, step, text, target,
+        schema: "stage0-go/3", goId: randomBytes(16).toString("hex"), phaseId: phase.phaseId, phaseSha: marker.phaseSha, workflow: phase.workflow, phase: phase.phase, step, text, target,
         ref: plan.ref, head: HEAD, checkout: ROOT, role: G.roleOf(M, text), markerId: marker.markerId, issuedAt: G.iso(t),
-        ceiling: ceilingIn(phase, step),
+        ceiling: ceilingIn(phase, step), notAfter: null,
         deadline: G.iso(Math.min(G.utcMs(ceilingIn(phase, step)), G.utcMs(marker.until))),
         request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: M.send.endpoint.replace("{ref}", plan.ref) },
         cancel: null, gate: { next: step, after: [] }, ...over,
       };
+      if (!Object.hasOwn(over, "notAfter")) go.notAfter = phase.target === "production" ? go.deadline : null;
       const textOut = JSON.stringify(go, null, 2) + "\n";
       writeFileSync(join(paths.gos, `${go.goId}.json`), textOut);
       fx.ledger("go-issue", { goId: go.goId, phaseId: go.phaseId, step: go.step, ref: go.ref, markerId: go.markerId, sha256: G.sha256(Buffer.from(textOut, "utf8")) });

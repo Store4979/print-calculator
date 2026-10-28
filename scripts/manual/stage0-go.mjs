@@ -5,9 +5,9 @@
 //
 //   node scripts/manual/stage0-go.mjs init [--restore --predecessor <store id> --reviewed <file>]
 //   node scripts/manual/stage0-go.mjs clock
-//   node scripts/manual/stage0-go.mjs draft --workflow capture --phase <P>
-//   node scripts/manual/stage0-go.mjs phase --workflow capture --phase <P> --go-text <file> --arrived <UTC> --deadline <UTC> [--reviewed <file>]
-//   node scripts/manual/stage0-go.mjs issue --phase <phase id> --step <STEP>
+//   node scripts/manual/stage0-go.mjs draft --workflow <w> --phase <P> [--deadline <UTC>]
+//   node scripts/manual/stage0-go.mjs phase --workflow <w> --phase <P> --go-text <file> --arrived <UTC> --deadline <UTC> [--reviewed <file>]
+//   node scripts/manual/stage0-go.mjs issue --phase <phase id> --step <STEP> [--not-after <UTC>]
 //   node scripts/manual/stage0-go.mjs void --go <go id>
 //   node scripts/manual/stage0-go.mjs dispose --target <t> --attempt <attempt id> --reviewed <file>
 //   node scripts/manual/stage0-go.mjs status --target <t>
@@ -22,21 +22,28 @@
 //          (three samples, each within 2 s) and records the check. The guard
 //          tools refuse when it is missing, older than 60 min, or later than
 //          now, and when the clock has gone back.
-// draft    allocates a fresh approval id for one phase. Ryan's go line must
-//          carry `approval <id>`; one id registers at most one phase.
+// draft    allocates a fresh approval id for one phase; one id registers at
+//          most one phase. For a phase that declares ceilings it takes the
+//          phase deadline (--deadline, a whole minute) and prints Ryan's go
+//          line in its one defined form: every step with its latest start,
+//          and the deadline. Ryan approves that line word for word. For a
+//          legacy capture phase (B, A, T, U) the line is written by hand and
+//          carries `approval <id>`.
 // phase    registers Ryan's go for one phase from the file holding his
 //          message's exact text, with the time it arrived (UTC) and its
-//          deadline (UTC). The same approval again returns the same phase,
-//          with its progress. It prints the phase id, each step's ceiling and
-//          the window commands.
+//          deadline (UTC); a phase that declares ceilings registers only if
+//          the text is exactly the drafted line. The same approval again
+//          returns the same phase, with its progress and ceilings. It prints
+//          the phase id, each step's ceiling and the window commands.
 // issue    runs the phase's exact-step gate on the journal and, when it names
 //          this step, writes the step's one go and prints the one send
 //          command, which names the go by id. The go's deadline is the
-//          step's ceiling: the phase deadline less what the phase's
-//          declaration reserves for the remaining path from that step, or
-//          less 60 s where it declares none (the capture-phase admission
-//          cutoff). The sender recomputes it. The production ceilings are
-//          item 4(c)'s, in review.
+//          step's ceiling (the phase deadline less what the declaration
+//          reserves for the remaining path from that step; 60 s for a legacy
+//          capture phase), or --not-after when given: an earlier latest start
+//          from the current whole-path check, which a production go needs.
+//          The sender re-checks both. The production ceilings are item
+//          4(c)'s, in review.
 // void     moves an unused go to gos/void/.
 // dispose  records a reviewed disposition of one held or pending attempt;
 //          the review file must name the attempt id.
@@ -131,10 +138,12 @@ export function main(argv, env, deps = {}) {
     return { store };
   }
   if (cmd === "draft") {
-    const o = args(rest, ["workflow", "phase"]);
+    const o = args(rest, ["workflow", "phase", "deadline"]);
     need(o, ["workflow", "phase"], "draft");
-    const d = G.draftApproval({ paths, anchor, manifest, workflows: deps.workflows, workflow: o.workflow, phase: o.phase, head, now: t });
-    out(`approval ${d.approvalId}: for ${d.workflow} ${d.phase} at ${d.head.slice(0, 7)} on ${d.ref}. Ryan's go line carries "approval ${d.approvalId}"; it registers one phase, once.\n`);
+    const d = G.draftApproval({ paths, anchor, manifest, workflows: deps.workflows, workflow: o.workflow, phase: o.phase, head, deadline: own(o, "deadline") ? o.deadline : null, now: t });
+    out(`approval ${d.approvalId}: for ${d.workflow} ${d.phase} at ${d.head.slice(0, 7)} on ${d.ref}; it registers one phase, once.\n`);
+    if (d.line) out(`Ryan's go line, to approve word for word (each step's latest start, then the phase deadline):\n${d.line}\n`);
+    else out(`Ryan's go line (legacy capture form) carries "approval ${d.approvalId}".\n`);
     return { draft: d };
   }
   if (cmd === "phase") {
@@ -151,13 +160,18 @@ export function main(argv, env, deps = {}) {
     return { phase: p, existing: r.existing };
   }
   if (cmd === "issue") {
-    const o = args(rest, ["phase", "step"]);
+    const o = args(rest, ["phase", "step", "not-after"]);
     need(o, ["phase", "step"], "issue");
+    let notAfter = null;
+    if (own(o, "not-after")) {
+      notAfter = G.utcMs(o["not-after"]);
+      if (notAfter === null) throw new G.Refusal("--not-after must be a UTC time, YYYY-MM-DDTHH:MM:SS.sssZ; refusing");
+    }
     const go = G.issueGo({
       paths, anchor, manifest, phaseId: o.phase, step: o.step, head, checkout: root, now: t, identity, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt,
-      planFor: (text, target) => planSend(manifest, text, target, { cwd: root }),
+      planFor: (text, target) => planSend(manifest, text, target, { cwd: root }), notAfter,
     });
-    out(`go ${go.goId}: ${go.step} (${go.text}) from the ${go.role} window, marker ${go.markerId.slice(0, 8)}…, before ${go.deadline} (${go.step}'s ceiling ${go.ceiling})\n`);
+    out(`go ${go.goId}: ${go.step} (${go.text}) from the ${go.role} window, marker ${go.markerId.slice(0, 8)}…, before ${go.deadline} (${go.step}'s ceiling ${go.ceiling}${go.notAfter ? `; not-after ${go.notAfter}` : ""})\n`);
     out(`Run once, in the ${go.role} window:\n`);
     out(`node scripts/manual/stage0-send.mjs ${go.text} --target ${go.target} --confirm-ref ${go.ref} --go ${go.goId}\n`);
     return { go };

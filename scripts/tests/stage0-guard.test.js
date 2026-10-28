@@ -1050,6 +1050,20 @@ const SCENARIOS = {
     const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { ceiling: G.iso(c1 - 5 * MIN), deadline: G.iso(c1 - 5 * MIN) } });
     return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
   },
+  "a production go whose deadline passes its not-after": async (X) => {
+    const { fx, ph, c1 } = setupCeil();
+    const W = fx.window("W", ph.phaseId, { pid: 1002 });
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { notAfter: G.iso(c1 - 20 * MIN) } });
+    fx.set(c1 - 10 * MIN);
+    fx.clock();
+    return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
+  },
+  "a production go with no not-after": async (X) => {
+    const { fx, ph } = setupCeil();
+    const W = fx.window("W", ph.phaseId, { pid: 1002 });
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { notAfter: null } });
+    return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
+  },
   "a phase record with an altered ceiling": async (X) => {
     const { fx, ph } = setupCeil();
     const text = JSON.stringify({ ...ph, ceilings: { ...ph.ceilings, A2: G.iso(G.utcMs(ph.ceilings.A2) + 5 * MIN) } }, null, 2) + "\n";
@@ -1191,6 +1205,8 @@ const GUARD_MUTANTS = [
   ["the step's ceiling in the sender", "a go whose deadline passes its step's ceiling", [["  if (!(dl <= ceiling)) throw", "  if (false) throw"]]],
   ["the go's recorded ceiling", "a go recording a stale ceiling", [["  if (go.ceiling !== iso(ceiling)) throw", "  if (false) throw"]]],
   ["the phase's recorded ceilings (ceilingOf)", "a phase record with an altered ceiling", [["  for (const [s, ms] of Object.entries(want)) if (phase.ceilings[s] !== iso(ms)) throw", "  for (const [s, ms] of Object.entries(want)) if (false) throw"]]],
+  ["the go's not-after in the sender", "a production go whose deadline passes its not-after", [["  if (go.notAfter !== null && go.deadline !== go.notAfter) throw", "  if (false) throw"]]],
+  ["the production not-after in the sender", "a production go with no not-after", [["  if (phase.target === \"production\" && go.notAfter === null) throw", "  if (false) throw"]]],
 ];
 
 test("G-26 the mutation companion: each named check, removed, admits exactly one request in the scenario where the original allows none", async () => {

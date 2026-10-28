@@ -7,16 +7,20 @@
 // declaration: a go can never extend it. Every negative asserts a Refusal and
 // ZERO requests on the fixture's counting fetch stub.
 //
-//   CE-1  the declaration: capture phases reserve 60 s; a production phase
-//         must declare one ceiling per step; a malformed one refuses
-//   CE-2  registration records every ceiling; before/at/after the first one
+//   CE-1  the declaration: only capture B, A, T, U keep 60 s; every other
+//         phase declares its ceilings; the runbook's map, where a later step
+//         reserves more, is valid (Codex, review of 30c0eba: P-R1, Q-P2)
+//   CE-2  registration records every ceiling; before/at/after the earliest
 //   CE-3  the issuer: before/at/after each step's ceiling
 //   CE-4  the sender: before/at/after each step's ceiling, at admission,
 //         under the store lock and immediately before fetch
 //   CE-5  a late early step: the phase is live, the step's ceiling is not
 //   CE-6  stale or enlarged ceilings, in the go, the phase record or the
 //         declaration, refuse at the issuer and the sender
-//   CE-7  the command lines print the ceilings
+//   CE-7  the command lines: the drafted line, --not-after
+//   CE-8  a later step with an earlier ceiling (P-R1)
+//   CE-9  the go line binds every step's latest start and the deadline (Q-P1)
+//   CE-10 the per-send not-after (Codex's tighter-bound ruling)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
@@ -87,39 +91,64 @@ const at = (s, ms) => { s.fx.set(ms); s.fx.clock(); };
 
 // ── CE-1 ─────────────────────────────────────────────────────────────────────
 
-test("CE-1 the declaration: every capture phase reserves 60 s per step; a production phase must declare one ceiling per step, in whole minutes, at least 60 s, never longer for a later step", async () => {
+/** The P1–P3 runbook's binding latest starts before its 20:15 end (§B; Codex, review of 30c0eba, P-R1): later steps reserve MORE. */
+const RUNBOOK = { "P1": 95, "P2-01": 55, "P2-02": 55, "P2-0304": 58, "P2-05": 67 };
+const RUNBOOK_WF = () => ({ r: synthWorkflow("production", { R: Object.keys(RUNBOOK).map((s) => [s, "STATE"]) }, { ceilings: { R: Object.fromEntries(Object.entries(RUNBOOK).map(([s, m]) => [s, m * MIN])) } }) });
+
+test("CE-1 the declaration: only the reviewed capture phases B, A, T, U keep 60 s per step; every other phase declares one ceiling per step, in whole minutes from 60 s to 24 h; a later step may reserve more (P-R1, Q-P2)", async () => {
+  assert.deepEqual(Object.keys(G.WORKFLOWS.capture.phases).sort(), [...G.LEGACY_CUTOFF_PHASES].sort(), "the legacy exception names exactly the declared capture phases");
   for (const [name, p] of Object.entries(G.WORKFLOWS.capture.phases)) {
     assert.deepEqual(G.stepCeilings(G.WORKFLOWS.capture, name, T0), Object.fromEntries(p.steps.map((s) => [s, T0 - G.MARGIN_MS])), `capture ${name}: the admission cutoff`);
   }
   assert.deepEqual(G.ceilingReserve(WF().t, "P"), CEIL.P);
-  assert.deepEqual(G.ceilingReserve(synthWorkflow("staging", { S: STEPS }), "S"), { A1: G.MARGIN_MS, A2: G.MARGIN_MS, A3: G.MARGIN_MS }, "a staging phase may declare none");
+  {
+    const end = Date.parse("2026-10-28T20:15:00.000Z");
+    const want = { "P1": "18:40", "P2-01": "19:20", "P2-02": "19:20", "P2-0304": "19:17", "P2-05": "19:08" };
+    const got = G.stepCeilings(RUNBOOK_WF().r, "R", end);
+    for (const [s, hm] of Object.entries(want)) assert.equal(G.iso(got[s]).slice(11, 16), hm, `the runbook's ${s}`);
+    const fx = fixture({ workflows: RUNBOOK_WF() });
+    try {
+      fx.clock();
+      assert.match(fx.draft("r", "R", end), /^[0-9a-f]{16}$/, "the runbook's map drafts");
+    } finally { fx.cleanup(); }
+  }
   const bad = [
-    ["none, for production", null, /targets production and declares no per-step ceilings/],
-    ["a step left out", { A1: 50 * MIN, A2: 20 * MIN }, /do not name exactly its steps/],
-    ["a step it does not have", { ...CEIL.P, A4: 5 * MIN }, /do not name exactly its steps/],
-    ["not whole minutes", { ...CEIL.P, A2: 20 * MIN + 1 }, /is not a whole number of minutes/],
-    ["less than 60 s", { ...CEIL.P, A3: 0 }, /is not a whole number of minutes, at least 60 s/],
-    ["a later step longer than an earlier one", { ...CEIL.P, A2: 55 * MIN }, /no longer than the step's before it/],
-    ["not a number", { ...CEIL.P, A1: "50" }, /is not a whole number of minutes/],
-    ["not an object", [50 * MIN, 20 * MIN, 10 * MIN], /do not name exactly its steps/],
+    ["none, for production", WF({ P: null }), /phase P declares no per-step ceilings; only the reviewed capture phases B, A, T, U keep the 60 s cutoff/],
+    ["none, for a new staging phase", { t: synthWorkflow("staging", { P: STEPS }, { ceilings: { P: null } }) }, /phase P declares no per-step ceilings/],
+    ["none, for a phase named B in another workflow named capture", { capture: synthWorkflow("staging", { B: STEPS }, { ceilings: { B: null } }) }, /phase B declares no per-step ceilings/, "capture", "B"],
+    ["a step left out", WF({ P: { A1: 50 * MIN, A2: 20 * MIN } }), /do not name exactly its steps/],
+    ["a step it does not have", WF({ P: { ...CEIL.P, A4: 5 * MIN } }), /do not name exactly its steps/],
+    ["not whole minutes", WF({ P: { ...CEIL.P, A2: 20 * MIN + 1 } }), /is not a whole number of minutes/],
+    ["less than 60 s", WF({ P: { ...CEIL.P, A3: 0 } }), /is not a whole number of minutes from 60 s to 24 h/],
+    ["more than 24 h", WF({ P: { ...CEIL.P, A1: 24 * 60 * MIN + MIN } }), /is not a whole number of minutes from 60 s to 24 h/],
+    ["not a number", WF({ P: { ...CEIL.P, A1: "50" } }), /is not a whole number of minutes/],
+    ["not an object", WF({ P: [50 * MIN, 20 * MIN, 10 * MIN] }), /do not name exactly its steps/],
   ];
-  for (const [label, decl, re] of bad) {
-    const wf = WF({ P: decl });
-    assert.throws(() => G.ceilingReserve(wf.t, "P"), (e) => e instanceof G.Refusal && re.test(e.message), label);
-    const fx = fixture({ workflows: wf });
+  for (const [label, workflows, re, wname = "t", pname = "P"] of bad) {
+    assert.throws(() => G.ceilingReserve(workflows[wname], pname), (e) => e instanceof G.Refusal && re.test(e.message), label);
+    const fx = fixture({ workflows });
     try {
       fx.clock();
       const lines = readFileSync(fx.paths.ledger, "utf8");
-      await refused(() => fx.draft("t", "P"), re, `${label}: no approval is drafted`);
+      await refused(() => fx.draft(wname, pname), re, `${label}: no approval is drafted`);
       assert.equal(readFileSync(fx.paths.ledger, "utf8"), lines, `${label}: nothing recorded`);
       assert.equal(fx.calls.length, 0);
+    } finally { fx.cleanup(); }
+  }
+  {
+    // A legacy capture phase is drafted without a deadline, and refuses one.
+    const fx = fixture();
+    try {
+      fx.clock();
+      assert.match(fx.draft("capture", "B"), /^[0-9a-f]{16}$/);
+      await refused(() => G.draftApproval({ paths: fx.paths, anchor: fx.anchor, manifest: M, workflow: "capture", phase: "B", head: "1234567890abcdef1234567890abcdef12345678", deadline: G.iso(T0 + 60 * MIN), now: fx.now() }), /keeps its legacy go line/);
     } finally { fx.cleanup(); }
   }
 });
 
 // ── CE-2 ─────────────────────────────────────────────────────────────────────
 
-test("CE-2 registration records every step's ceiling from the declaration and the deadline; it refuses at or after the first step's ceiling", async () => {
+test("CE-2 registration records every step's ceiling from the declaration and the deadline; it refuses at or after the earliest one", async () => {
   const s = setup();
   try {
     assert.equal(s.ph.schema, "stage0-phase/3");
@@ -131,8 +160,9 @@ test("CE-2 registration records every step's ceiling from the declaration and th
     const fx = fixture({ workflows: WF() });
     try {
       fx.clock();
+      const id = fx.draft("t", "P", D);
       fx.set(c1 + delta);
-      const run = () => fx.register("t", "P", { deadline: D });
+      const run = () => fx.register("t", "P", { deadline: D, approvalId: id });
       if (ok) assert.equal(run().phase.ceilings.A1, G.iso(c1), `A1's ceiling ${delta}`);
       else {
         await refused(run, /step A1's ceiling 2026-10-28T14:40:00\.000Z has already passed: the phase cannot run/, `A1's ceiling ${delta}`);
@@ -154,8 +184,9 @@ test("CE-3 the issuer: a step's go is issued strictly before its ceiling, record
         const label = `${step}, ceiling ${delta}`;
         if (delta < 0) {
           const go = s.fx.issue(s.ph.phaseId, step);
-          assert.equal(go.schema, "stage0-go/2", label);
+          assert.equal(go.schema, "stage0-go/3", label);
           assert.equal(go.ceiling, G.iso(s.c[step]), label);
+          assert.equal(go.notAfter, G.iso(s.c[step]), `${label}: the fixture's not-after is the ceiling`);
           assert.equal(go.deadline, G.iso(s.c[step]), `${label}: the go ends at the ceiling`);
         } else {
           await refused(() => s.fx.issue(s.ph.phaseId, step), new RegExp(`step ${step}'s ceiling ${G.iso(s.c[step]).replace(/\./g, "\\.")} has passed`), label);
@@ -300,20 +331,204 @@ test("CE-6 stale or enlarged ceilings refuse: in the go (later, earlier, or a de
 
 // ── CE-7 ─────────────────────────────────────────────────────────────────────
 
-test("CE-7 the command lines: phase prints every step's ceiling; issue prints the go's ceiling and deadline", async () => {
+test("CE-7 the command lines: draft prints the line to approve; phase registers exactly it and prints every ceiling; issue takes --not-after and prints it", async () => {
   const fx = fixture({ workflows: WF() });
   try {
     fx.clock();
     const out = [];
     const deps = { manifest: M, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, git: fx.git, execArgv: [], stdout: (x) => out.push(x), workflows: fx.workflows, ctxAt: fx.ctxAt, identity: fx.identity };
-    const { draft } = GO.main(["draft", "--workflow", "t", "--phase", "P"], {}, deps);
     const D = T0 + 90 * MIN;
+    await refused(() => GO.main(["draft", "--workflow", "t", "--phase", "P"], {}, deps), /drafted with its deadline/, "no --deadline");
+    const { draft } = GO.main(["draft", "--workflow", "t", "--phase", "P", "--deadline", G.iso(D)], {}, deps);
+    const line = `GO phase P (t), approval ${draft.approvalId}: head 1234567, production gmxyisjjaxtpycsmmzef. Latest starts: A1 2026-10-28 14:40 UTC (10:40 EDT 2026-10-28); A2 2026-10-28 15:10 UTC (11:10 EDT 2026-10-28); A3 2026-10-28 15:20 UTC (11:20 EDT 2026-10-28). Phase deadline 2026-10-28 15:30 UTC (11:30 EDT 2026-10-28).`;
+    assert.equal(draft.line, line, "the one defined form");
+    assert.ok(out.join("").includes(`to approve word for word (each step's latest start, then the phase deadline):\n${line}\n`));
     const goFile = join(fx.dir, "go.txt");
-    writeFileSync(goFile, fx.goText("t", "P", D, draft.approvalId));
+    writeFileSync(goFile, line + "\n");
     const { phase } = GO.main(["phase", "--workflow", "t", "--phase", "P", "--go-text", goFile, "--arrived", G.iso(fx.now()), "--deadline", G.iso(D)], {}, deps);
     assert.match(out.join(""), /ceilings \(latest starts\): A1 before 2026-10-28T14:40:00\.000Z; A2 before 2026-10-28T15:10:00\.000Z; A3 before 2026-10-28T15:20:00\.000Z/);
     fx.window("W", phase.phaseId, { pid: 1002 });
-    const { go } = GO.main(["issue", "--phase", phase.phaseId, "--step", "A1"], {}, deps);
-    assert.match(out.join(""), new RegExp(`go ${go.goId}: A1 \\(P2-01\\) from the W window, .* before 2026-10-28T14:40:00\\.000Z \\(A1's ceiling 2026-10-28T14:40:00\\.000Z\\)`));
+    await refused(() => GO.main(["issue", "--phase", phase.phaseId, "--step", "A1"], {}, deps), /a production go needs --not-after/, "no --not-after");
+    const { go } = GO.main(["issue", "--phase", phase.phaseId, "--step", "A1", "--not-after", "2026-10-28T14:30:00.000Z"], {}, deps);
+    assert.match(out.join(""), new RegExp(`go ${go.goId}: A1 \\(P2-01\\) from the W window, .* before 2026-10-28T14:30:00\\.000Z \\(A1's ceiling 2026-10-28T14:40:00\\.000Z; not-after 2026-10-28T14:30:00\\.000Z\\)`));
   } finally { fx.cleanup(); }
+});
+
+// ── CE-8 ─────────────────────────────────────────────────────────────────────
+
+/** A2 runs after A1 but reserves more, so its ceiling comes first: with the 90-minute deadline, A1's is T0 + 70 min and A2's T0 + 50 min. */
+const EARLY2 = () => ({ t: synthWorkflow("production", { P: [["A1", "P2-01"], ["A2", "STATE"]] }, { ceilings: { P: { A1: 20 * MIN, A2: 40 * MIN } } }) });
+
+test("CE-8 P-R1: a later step with an earlier ceiling: registration needs every ceiling ahead; A2 is issued and sent strictly before its own ceiling; after it, A1 can still start but A2 is never issued, and nothing is reordered or skipped", async () => {
+  const D = T0 + 90 * MIN;
+  const c2 = D - 40 * MIN;
+  for (const [delta, ok] of [[-1, true], [0, false], [1, false]]) {
+    const fx = fixture({ workflows: EARLY2() });
+    try {
+      fx.clock();
+      const id = fx.draft("t", "P", D);
+      fx.set(c2 + delta);
+      const run = () => fx.register("t", "P", { deadline: D, approvalId: id });
+      if (ok) assert.equal(run().phase.ceilings.A2, G.iso(c2), `registration, A2's ceiling ${delta}`);
+      else await refused(run, /step A2's ceiling .* has already passed: the phase cannot run/, `registration, A2's ceiling ${delta}`);
+    } finally { fx.cleanup(); }
+  }
+  for (const delta of [-1, 0, 1]) {
+    const s = setup({ workflows: EARLY2() });
+    try {
+      await sendBefore(s, "A2");
+      at(s, s.c.A2 + delta);
+      if (delta < 0) assert.equal(s.fx.issue(s.ph.phaseId, "A2").deadline, G.iso(s.c.A2), "the issuer, before");
+      else await refused(() => s.fx.issue(s.ph.phaseId, "A2"), /step A2's ceiling .* has passed/, `the issuer, ${delta}`);
+    } finally { s.fx.cleanup(); }
+  }
+  for (const [delta, calls] of [[-1, 1], [0, 0], [1, 0]]) {
+    const s = setup({ workflows: EARLY2() });
+    try {
+      await sendBefore(s, "A2");
+      const before = s.fx.calls.length;
+      const go = s.fx.issue(s.ph.phaseId, "A2");
+      at(s, s.c.A2 + delta);
+      const run = () => s.fx.send(G, { text: "STATE", target: "production", win: s.win.R, goId: go.goId });
+      if (calls) assert.equal((await run()).record.httpStatus, 201, "the sender, before");
+      else await refused(run, /deadline .* has passed/, `the sender, ${delta}`);
+      assert.equal(s.fx.calls.length, before + calls, `the sender, ${delta}`);
+    } finally { s.fx.cleanup(); }
+  }
+  {
+    const s = setup({ workflows: EARLY2() });
+    try {
+      at(s, s.c.A2 + MIN);
+      assert.ok(s.c.A2 + MIN < s.c.A1, "A1's ceiling is still open");
+      const g1 = s.fx.issue(s.ph.phaseId, "A1");
+      assert.equal((await s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: g1.goId })).record.httpStatus, 201, "A1 still starts");
+      await refused(() => s.fx.issue(s.ph.phaseId, "A2"), /step A2's ceiling .* has passed/, "A2 can no longer be issued");
+      await refused(() => s.fx.issue(s.ph.phaseId, "A1"), /the gate does not name A1/, "nor A1 again: the phase stops there");
+      assert.equal(s.fx.calls.length, 1);
+    } finally { s.fx.cleanup(); }
+  }
+});
+
+// ── CE-9 ─────────────────────────────────────────────────────────────────────
+
+test("CE-9 Q-P1: a phase that declares ceilings registers only its drafted line, exactly: a wrong, swapped, duplicated, missing or extra step time, other words, another Eastern time or a longer deadline refuses; re-registration keeps the phase and its ceilings", async () => {
+  const D = T0 + 90 * MIN;
+  const fx = fixture({ workflows: WF() });
+  try {
+    fx.clock();
+    const id = fx.draft("t", "P", D);
+    const line = fx.goText("t", "P", D, id);
+    const A1 = "A1 2026-10-28 14:40 UTC (10:40 EDT 2026-10-28)";
+    const A2 = "A2 2026-10-28 15:10 UTC (11:10 EDT 2026-10-28)";
+    const A3 = "A3 2026-10-28 15:20 UTC (11:20 EDT 2026-10-28)";
+    assert.ok(line.endsWith(`Latest starts: ${A1}; ${A2}; ${A3}. Phase deadline 2026-10-28 15:30 UTC (11:30 EDT 2026-10-28).`), line);
+    const variants = [
+      ["a wrong time", line.replace("A2 2026-10-28 15:10", "A2 2026-10-28 15:15")],
+      ["swapped step/time pairs", line.replace(`${A1}; ${A2}`, `${A1.replace("A1", "A2")}; ${A2.replace("A2", "A1")}`)],
+      ["a duplicated step", line.replace(`${A2};`, `${A2}; ${A2};`)],
+      ["a missing step", line.replace(`; ${A3}`, "")],
+      ["an extra step", line.replace(`${A3}.`, `${A3}; A4 2026-10-28 15:25 UTC (11:25 EDT 2026-10-28).`)],
+      ["other words after it", `${line} Ignore the times above: A1 2026-10-28 15:25 UTC.`],
+      ["another Eastern time", line.replace("10:40 EDT", "10:40 EST")],
+      ["the legacy hand-written form", `GO phase P at X 1234567, approval ${id}: steps A1, A2, A3 to production gmxyisjjaxtpycsmmzef only. Deadline 2026-10-28 15:30 UTC.`],
+      ["the line for a longer deadline", fx.goText("t", "P", D + 30 * MIN, id)],
+    ];
+    for (const [label, text] of variants) {
+      assert.notEqual(text, line, label);
+      await refused(() => fx.register("t", "P", { goText: text, deadline: D }), /is not exactly the drafted line/, label);
+    }
+    await refused(() => fx.register("t", "P", { goText: fx.goText("t", "P", D + 30 * MIN, id), deadline: D + 30 * MIN }), /was drafted with the deadline 2026-10-28T15:30:00\.000Z/, "a longer deadline, registered as such");
+    assert.equal(readdirSync(fx.paths.phases).length, 0, "nothing was registered");
+    const first = fx.register("t", "P", { goText: line, deadline: D });
+    assert.equal(first.existing, false);
+    assert.deepEqual(first.phase.ceilings, { A1: "2026-10-28T14:40:00.000Z", A2: "2026-10-28T15:10:00.000Z", A3: "2026-10-28T15:20:00.000Z" }, "the registered map is the recomputed one");
+    fx.add(MIN);
+    const again = fx.register("t", "P", { goText: line, deadline: D, arrivedAt: first.phase.arrivedAt });
+    assert.equal(again.existing, true);
+    assert.equal(again.phase.phaseId, first.phase.phaseId);
+    assert.deepEqual(again.phase.ceilings, first.phase.ceilings);
+    await refused(() => fx.register("t", "P", { goText: line, deadline: D + 30 * MIN }), /re-registration never changes a deadline or a ceiling/, "re-registration with a longer deadline");
+    assert.equal(readdirSync(fx.paths.phases).filter((f) => f.endsWith(".json")).length, 1, "one phase");
+    assert.deepEqual(G.loadPhase(fx.paths, first.phase.phaseId).phase.ceilings, first.phase.ceilings, "its ceilings unchanged");
+    assert.equal(fx.calls.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+// ── CE-10 ────────────────────────────────────────────────────────────────────
+
+test("CE-10 the per-send not-after: the issuer binds an earlier bound, never a later one, and production needs one; the sender enforces it while the ceiling is still open; a tighter go never re-arms a used go or releases a hold", async () => {
+  {
+    const s = setup();
+    try {
+      const na = T0 + 10 * MIN;
+      const go = s.fx.issue(s.ph.phaseId, "A1", { notAfter: na });
+      assert.deepEqual([go.ceiling, go.notAfter, go.deadline], [G.iso(s.c.A1), G.iso(na), G.iso(na)]);
+      s.fx.void(go.goId);
+      await refused(() => s.fx.issue(s.ph.phaseId, "A1", { notAfter: s.c.A1 + 1 }), /is later than step A1's ceiling, its window's end or the phase deadline/, "1 ms after the ceiling");
+      const atCeiling = s.fx.issue(s.ph.phaseId, "A1", { notAfter: s.c.A1 });
+      assert.equal(atCeiling.deadline, G.iso(s.c.A1), "at the ceiling");
+      s.fx.void(atCeiling.goId);
+      await refused(() => s.fx.issue(s.ph.phaseId, "A1", { notAfter: s.fx.now() }), /--not-after .* has already passed/, "already reached");
+      await refused(() => s.fx.issue(s.ph.phaseId, "A1", { notAfter: null }), /a production go needs --not-after/, "missing, for production");
+      assert.equal(s.fx.calls.length, 0);
+    } finally { s.fx.cleanup(); }
+  }
+  {
+    const fx = fixture({ workflows: { s: synthWorkflow("staging", { S: [["S1", "SIZE-PROBE"]] }) } });
+    try {
+      fx.clock();
+      const ph = fx.phase("s", "S");
+      fx.window("R", ph.phaseId, { pid: 1001 });
+      const go = fx.issue(ph.phaseId, "S1");
+      assert.deepEqual([go.notAfter, go.deadline], [null, ph.ceilings.S1], "a staging go may go without one; its ceiling bounds it");
+    } finally { fx.cleanup(); }
+  }
+  for (const [delta, calls] of [[-1, 1], [0, 0], [1, 0]]) {
+    const s = setup();
+    try {
+      const na = T0 + 10 * MIN;
+      const go = s.fx.issue(s.ph.phaseId, "A1", { notAfter: na });
+      at(s, na + delta);
+      assert.ok(na + delta < s.c.A1, "A1's ceiling is still open");
+      const run = () => s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: go.goId });
+      if (calls) assert.equal((await run()).record.httpStatus, 201, "before the not-after");
+      else await refused(run, /deadline .* has passed/, `the not-after ${delta}`);
+      assert.equal(s.fx.calls.length, calls, `the not-after ${delta}`);
+    } finally { s.fx.cleanup(); }
+  }
+  {
+    const s = setup();
+    try {
+      const none = s.fx.forgeGo({ phase: s.ph, marker: s.win.W.marker, step: "A1", text: "P2-01", target: "production", over: { notAfter: null } });
+      await refused(() => s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: none.goId }), /is a production go with no not-after/, "a production go without one");
+      const loose = s.fx.forgeGo({ phase: s.ph, marker: s.win.W.marker, step: "A1", text: "P2-01", target: "production", over: { notAfter: G.iso(T0 + 10 * MIN) } });
+      at(s, T0 + 20 * MIN);
+      await refused(() => s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: loose.goId }), /is not its recorded not-after/, "a deadline past its not-after");
+      assert.equal(s.fx.calls.length, 0);
+    } finally { s.fx.cleanup(); }
+  }
+  {
+    const s = setup();
+    try {
+      const D1 = T0 + 20 * MIN;
+      const g1 = s.fx.issue(s.ph.phaseId, "A1", { notAfter: D1 });
+      s.fx.set(D1 - 1);
+      let k = 0;
+      await refused(() => s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: g1.goId, over: { now: () => (++k <= 2 ? D1 - 1 : D1) } }), /is recorded NOT_SENT/, "g1 reaches its not-after before fetch");
+      const g2 = s.fx.issue(s.ph.phaseId, "A1", { notAfter: T0 + 25 * MIN });
+      await refused(() => s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: g1.goId }), /already used/, "the used go stays used");
+      assert.equal((await s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: g2.goId })).record.httpStatus, 201);
+      assert.equal(s.fx.calls.length, 1);
+    } finally { s.fx.cleanup(); }
+  }
+  {
+    const s = setup();
+    try {
+      const g1 = s.fx.issue(s.ph.phaseId, "A1");
+      const e = await s.fx.send(G, { text: "P2-01", target: "production", win: s.win.W, goId: g1.goId, over: { writeReceipt: () => { throw new Error("synthetic receipt-disk failure"); } } }).catch((x) => x);
+      assert.ok(e instanceof G.AfterDispatch);
+      await refused(() => s.fx.issue(s.ph.phaseId, "A1", { notAfter: T0 + 5 * MIN }), /the project is held: PENDING/, "a tighter go does not release a pending attempt");
+      assert.equal(s.fx.calls.length, 1);
+    } finally { s.fx.cleanup(); }
+  }
 });

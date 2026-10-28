@@ -282,11 +282,14 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     - execute_sql remains for small ad-hoc, unpinned read-backs, labelled as
       such.
   - THE GUARDED SENDER (Codex item 6; docs/security/stage0-guarded-send-procedure.md;
-    plan docs/security/stage0-item6-sender-guards-plan.md §A, §B, §C). A live
+    plan docs/security/stage0-item6-sender-guards-plan.md §A–§D). A live
     send needs `--go <id>`; nothing else sends:
     - Claude runs scripts/manual/stage0-go.mjs: `init` (ONCE, then the
       printed anchor is committed in review as
-      docs/security/stage0-guard-store.json; not yet run on this machine),
+      docs/security/stage0-guard-store.json. It RAN on this machine on
+      2026-10-28 under Codex's narrow clearance: store
+      3389bb8f8df9280e7608c455249678f5. NEVER run init again; a rebuilt
+      implementation reuses this store),
       `clock` (w32tm stripchart, 3 samples within ±2 s, valid 60 min),
       `draft` (an approval id for one phase; Ryan's go line carries
       `approval <id>`), `phase` (Ryan's verbatim go line, written to a file
@@ -328,26 +331,41 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       asserts the rollback passes;
     - each step's go ends at the step's CEILING (its latest start): the
       phase deadline less what the phase declaration's `ceilings` reserves
-      for the remaining path from that step; with none declared (every
-      capture phase) the deadline less 60 s, the capture-phase admission
-      cutoff. The phase records every ceiling, the go its step's, and the
+      for the remaining path from that step. A LATER step may reserve MORE,
+      so its ceiling can come first (the P1–P3 runbook's own map: P2-05
+      before P2-01; Codex P-R1). Never add an ordering rule between
+      ceilings. The phase records every ceiling, the go its step's, and the
       issuer AND the sender recompute it from the declaration (ceilingOf):
       a stale or enlarged value refuses, and no go outlives its step's
-      ceiling. A production phase must declare one per step; the numbers
-      and the whole-path budget are item 4(c)'s, so the production deadline
+      ceiling;
+    - EVERY phase declares `ceilings`, except capture's B, A, T, U
+      (LEGACY_CUTOFF_PHASES, matched by the capture workflow OBJECT), which
+      keep the 60 s cutoff and the hand-written go line (Q-P2);
+    - for every other phase, `draft --deadline <UTC>` prints Ryan's go line
+      (goLine: every step with its UTC latest start + Eastern time, then
+      the phase deadline). Registration requires his message to be EXACTLY
+      that line, and the drafted deadline; re-registration can't change
+      the deadline (Q-P1, CE-9);
+    - `issue --not-after <UTC>` binds an earlier per-send bound from
+      Claude's current whole-path check; REQUIRED for production, checked
+      again by the sender; it can only tighten (CE-10). The numbers and the
+      whole-path budget are item 4(c)'s, so the production deadline
       contract is complete only with them;
     - only the capture workflow's phases are declared (stage0-guard.mjs
       WORKFLOWS). A production or item 3 phase must be declared in code,
-      with its gate (and, for production, its ceilings), in review, before
-      a go can be recorded for it. No go is ever issued for a cancel text;
+      with its gate and its ceilings, in review, before a go can be
+      recorded for it. No go is ever issued for a cancel text;
     - tests: scripts/tests/stage0-guard.test.js (G-1…G-26, counting fetch
-      stub, real child processes, an 18-mutant companion),
+      stub, real child processes, a 20-mutant companion),
       stage0-guard.store.test.js (ST-*, AP-*, ORD: every Codex reproduction
       of the store and approval blockers), stage0-guard.ceiling.test.js
-      (CE-*: before/at/after every ceiling, a late early step, stale and
-      enlarged ceilings) and stage0-guard.shell.test.js (G-27, real
-      PowerShell windows; Windows only). synthWorkflow("production", …)
-      in the fixture declares 60 s per step unless a test names ceilings.
+      (CE-*: before/at/after every ceiling, a late early step, a later step
+      with an earlier ceiling, stale and enlarged ceilings, the exact go
+      line, the not-after) and stage0-guard.shell.test.js (G-27, real
+      PowerShell windows; Windows only). synthWorkflow(…) in the fixture
+      declares 60 s per step for any phase a test does not name (`null`
+      declares none), and fx.issue() gives a production go the latest
+      not-after the issuer admits unless the test passes one.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 7 files stage0-send/-window/-go.mjs load (with the classifier and the
     capture gate) are pinned in the manifest's `guard`. Each tool refuses

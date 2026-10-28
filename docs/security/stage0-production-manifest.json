@@ -286,16 +286,16 @@
       },
       {
         "path": "scripts/manual/stage0-go.mjs",
-        "blob": "94379ea1dfb9c1579d5fd794265d87eee3d6a93b",
-        "md5": "a6896b46828e341f7abedaaf961a1e21",
-        "bytes": 11196,
+        "blob": "8b41f10dcc32b3b1cf0b342e0880e41a34a3a52a",
+        "md5": "5fd464e67f89cf44ceb3b796e90d5f40",
+        "bytes": 12298,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-guard.mjs",
-        "blob": "38e1b07114f513019acbd4b2ade7fa5f14e01de9",
-        "md5": "1cd7e2800b5b4fefb08d416fbf2698ae",
-        "bytes": 101680,
+        "blob": "7526b10a2e88b6cc0cc275cfa7194953eeed2253",
+        "md5": "9529c2f87978a262890576671b24dd75",
+        "bytes": 109398,
         "pinnedAt": "manifest-commit"
       },
       {

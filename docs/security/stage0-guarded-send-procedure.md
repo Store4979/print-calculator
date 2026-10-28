@@ -1,20 +1,31 @@
 # Stage 0 — the guarded sender: the procedure for every later session
 
 **Status: DRAFT, for Codex's review with the item 6 implementation, its
-correction O (accepted, `22610f8`) and the per-step-ceiling follow-up P.**
-It clears no session, token, send or window. Item 3's staging experiment is
-the first session expected to run under it, under its own reviewed runbook
-and go.
+correction O (accepted, `22610f8`), the per-step-ceiling follow-up P
+(`30c0eba`, AMEND) and its correction Q.** It clears no session, token, send
+or window. Item 3's staging experiment is the first session expected to run
+under it, under its own reviewed runbook and go.
 
-**Per-step ceilings (P).** Each step's go ends at the step's **ceiling**, its
-latest start: the phase deadline less what the phase's declaration reserves
-for the whole remaining path from that step. The phase records every step's
-ceiling and the go records its own. The issuer and the sender each recompute
-it from the pinned declaration and the phase's deadline, and refuse a stale
-or enlarged value: a go never outlives its step's ceiling. The capture
-phases declare none, so each of their steps has the **capture-phase
-admission cutoff**, the deadline less 60 s. A production phase must declare
-one ceiling per step.
+**Per-step ceilings (P, Q).** Each step's go ends at the step's **ceiling**,
+its latest start: the phase deadline less what the phase's declaration
+reserves for the whole remaining path from that step.
+- A later step may reserve more, so its ceiling may come EARLIER than an
+  earlier step's. The steps still run in their declared order: past a
+  step's ceiling, that step is not issued, and nothing later is.
+- The phase records every step's ceiling and the go records its own. The
+  issuer and the sender each recompute it from the pinned declaration and the
+  phase's deadline, and refuse a stale or enlarged value. A go never outlives
+  its step's ceiling.
+- **Every phase declares its ceilings**, except the reviewed item 2 capture
+  phases B, A, T and U. Those keep the **capture-phase admission cutoff**,
+  the deadline less 60 s, as a named legacy exception.
+- **The go line** for a phase that declares ceilings is drafted by
+  `stage0-go.mjs draft`. It gives every step with its absolute latest start,
+  then the phase deadline. Ryan approves it word for word, and it registers
+  only if his message is exactly that line (§2).
+- **A go may carry an earlier not-after:** the latest start that Claude's
+  current whole-path check allows. A production go must carry one (§4). It
+  can only tighten the ceiling, the window's end and the phase deadline.
 
 **The production deadline contract is complete only with item 4(c).** Its
 review supplies the production ceilings and the whole-remaining-path budget
@@ -42,7 +53,7 @@ token, prompt and paste checks (V-SCOPE, V-PROMPT, V-MASK, V-PREFIX, V-CLIP,
 | **P1** a fresh window and token per phase | A marker binds one PowerShell process (Windows' pid, image and creation time) and an HMAC of the token loaded in it. A child shell, a later window, another token, a closed window: each is refused. One live window per role per phase. The marker ends at the phase deadline. | Checking the token's page: the project, the level, the expiry. |
 | **P2** one current command at a time | Every send names its go by id. A go is single-use, bound to one phase, step, text, window, head, ref and request, and expires. A used, voided, unknown, expired or foreign go is refused. | Nothing tells running the current command apart from retyping it: **no history, no up-arrow, no retype, no command from an earlier message**. |
 | **P3** the gate before every send | `stage0-go.mjs issue` runs the phase's gate on the journal, and the sender runs it again under the store lock. Only the step the gate names is issued or admitted. | — |
-| **the time rule** (per-step ceilings) | Each step has a ceiling, its latest start, from the reviewed declaration and the phase deadline. Nothing is issued at or after it. The sender recomputes it, and refuses at or after it (at admission, under the store lock and immediately before fetch), and refuses a go that records another ceiling or ends later. | That the declared reserves are right: item 4(c)'s review for production. Claude still states at each step that the remaining path fits, since a slow session can need more than was reserved. |
+| **the time rule** (per-step ceilings) | Each step has a ceiling, its latest start, from the reviewed declaration and the phase deadline. Nothing is issued at or after it. The sender recomputes it, and refuses at or after it (at admission, under the store lock and immediately before fetch), and refuses a go that records another ceiling or ends later. A go's not-after, when given, is its deadline, and the sender enforces it the same way. A production go without one refuses. | That the declared reserves are right: item 4(c)'s review for production. The current whole-path check: Claude computes, at each step, the latest start that still fits at the session's actual pace, and passes it as `--not-after`. The code binds that value; it does not compute it. |
 | **P4** only this session's fresh results | The gate reads receipts through the journal: each by its recorded sha256, with a guard block equal to its claim. A receipt without one, a stripped or edited one, or a historical one stops the phase. | — |
 | **P5** every pause is an exit | Nothing detects a person stepping away. The marker's end (the phase deadline) and the clock check's 60 minutes bound how long a forgotten window stays usable. | **Every pause is an exit (§5).** |
 | **P6** exit codes and banners are not authorization | The sender's banner now says so. An unresolved writing outcome holds the project until a reviewed disposition (§6), in every window and every later phase. | Reading the classification and the step's check before asking for the next go. |
@@ -67,8 +78,12 @@ node scripts/manual/stage0-go.mjs init
 - **No other command makes the store, or any directory in it.** While the
   repository records an established store, `init` refuses: a lost store is
   never replaced by running `init` again (§7).
-- `init` is not part of a session. It has not been run on this machine; the
-  commit that carries the anchor is reviewed with item 3's runbook.
+- `init` is not part of a session. On this machine it ran once, on
+  2026-10-28, under Codex's narrow first-init clearance, from a clean
+  checkout of O. It made store `3389bb8f8df9280e7608c455249678f5`. The
+  verbatim record is kept with the item 3 implementation commit, which
+  carries the anchor for review. A rebuilt implementation reuses this store;
+  nothing justifies another first init.
 
 ## 1. Before the session (CLAUDE)
 
@@ -106,52 +121,75 @@ node scripts/manual/stage0-go.mjs init
 
 1. **RYAN** reports the token's name, scope, level and actual expiry, as
    before.
-2. **CLAUDE** drafts a fresh approval id for the phase:
+2. **CLAUDE** drafts a fresh approval id for the phase, and with it the go
+   line. For a phase that declares ceilings, the draft takes the phase
+   deadline: a whole minute, inside the token's expiry.
 
    ```bash
-   node scripts/manual/stage0-go.mjs draft --workflow capture --phase <P>
+   node scripts/manual/stage0-go.mjs draft --workflow <w> --phase <P> --deadline <UTC>
    ```
 
-   It prints `approval <16 hex>`. The id is recorded in the store, for this
-   workflow, phase, head and ref. It registers one phase, once.
-3. **CLAUDE** drafts the complete go line. It must contain, exactly:
+   The id is recorded in the store for this workflow, phase, head, ref and
+   deadline. It registers one phase, once. The draft prints Ryan's go line
+   in its one defined form:
+
+   ```text
+   GO phase <P> (<w>), approval <id>: head <7>, <target> <ref>. Latest starts: <S1> YYYY-MM-DD HH:MM UTC (HH:MM EDT YYYY-MM-DD); <S2> …. Phase deadline YYYY-MM-DD HH:MM UTC (HH:MM EDT YYYY-MM-DD).
+   ```
+
+   - Every step appears, in order, with its absolute latest start. The phase
+     deadline comes last, apart from the step limits.
+   - Each Eastern time is computed from the UTC time by the tool, which
+     checks the offset (EDT is UTC−4, EST UTC−5). The UTC values are the
+     binding ones.
+   - A draft refuses when a step's latest start has already passed for that
+     deadline.
+3. **The legacy capture phases (B, A, T, U)** are drafted without
+   `--deadline`, and their line is still written by hand. It must contain,
+   exactly:
    - `GO phase <P> ` (with the space);
    - `approval <id>`, the id from point 2, once;
    - the head's first 7 characters;
    - the target's ref;
    - every step id of the phase;
    - the deadline as `YYYY-MM-DD HH:MM UTC`, with the Eastern time beside it
-     and both dates (October is UTC−4; after 1 November 2026, UTC−5).
+     and both dates.
 
-   The deadline is the phase's end, inside the token's expiry. Each step's
-   ceiling follows from it and the reviewed declaration (§4); `phase` prints
-   them. For a capture phase every ceiling is the deadline less 60 s.
-4. **RYAN** returns it word for word. Its arrival is the go time.
+   Their ceilings are all the deadline less 60 s.
+4. **CLAUDE** shows Ryan the complete line before he approves it, and
+   **RYAN** returns it word for word. Its arrival is the go time.
 5. **CLAUDE** writes Ryan's message, exactly, to a file outside the
    checkout, and records it within 10 minutes of its arrival, with at least
    30 minutes left:
 
    ```bash
-   node scripts/manual/stage0-go.mjs phase --workflow capture --phase <P> --go-text <file> --arrived <UTC> --deadline <UTC> [--reviewed <file>]
+   node scripts/manual/stage0-go.mjs phase --workflow <w> --phase <P> --go-text <file> --arrived <UTC> --deadline <UTC> [--reviewed <file>]
    ```
 
-   It refuses unless the text names everything in point 3, its approval id
-   was drafted for this phase, and no step's ceiling has passed. A phase
-   that needs a reviewed decision (U) names the review file. A token-shaped
-   value in the text is a STOP. It prints the phase id and every step's
-   ceiling, which Claude reports to Ryan. Recording checks what the message
-   says; it does not show who sent it, which stays Ryan's chat.
+   It refuses unless:
+   - the approval id was drafted for this phase;
+   - **for a phase that declares ceilings:** the deadline is the drafted
+     one, and the message is EXACTLY the drafted line. Any of these refuses:
+     a wrong, swapped, duplicated, missing or extra step time; other words;
+     another Eastern time; a longer deadline (CE-9);
+   - **for a legacy capture phase:** the text names everything in point 3;
+   - no step's ceiling has passed.
+
+   A phase that needs a reviewed decision (U) names the review file. A
+   token-shaped value in the text is a STOP. It prints the phase id and
+   every step's ceiling. Recording checks what the message says; it does not
+   show who sent it, which stays Ryan's chat.
    - **The same approval again** (the same line recorded twice, by mistake or
-     from history) returns the SAME phase, with its progress: it never makes
-     a second phase or restarts its steps. The same id with other words
-     refuses.
+     from history) returns the SAME phase, with its progress and ceilings: it
+     never makes a second phase or restarts its steps. The same id with other
+     words, or with another deadline, refuses.
    - **A restart** needs a new approval: a newly drafted id, a newly drafted
      line, and Ryan's new go. Neither the wording nor the arrival time is the
      approval's identity.
 
    Only the item 2 capture phases are declared today. A production phase,
-   or item 3's, is declared in code with its gate, in review, before any go
-   for it can be recorded.
+   or item 3's, is declared in code with its gate and its ceilings, in
+   review, before any go for it can be recorded.
 
 ## 3. Each window (RYAN)
 
@@ -192,11 +230,21 @@ issued for a cancel text.
 
 ## 4. Each step
 
-1. **CLAUDE** issues the step's go:
+1. **CLAUDE** states the current whole-path check: the latest start for
+   this step at which the whole remaining path still fits, taking the larger
+   of the budgeted duration and the slowest pace actually seen. Then Claude
+   issues the step's go with that bound:
 
    ```bash
-   node scripts/manual/stage0-go.mjs issue --phase <phase id> --step <STEP>
+   node scripts/manual/stage0-go.mjs issue --phase <phase id> --step <STEP> [--not-after <UTC>]
    ```
+
+   - `--not-after` is **required for a production phase**. On staging it is
+     optional, and without it the go ends at the step's ceiling.
+   - It must be later than now, and no later than the step's ceiling, the
+     window's end or the phase deadline. It can only tighten them.
+     Extending a ceiling needs a newly reviewed and approved phase, never an
+     edited go.
 
    It refuses unless the gate names this step, exactly one live window of
    the step's role is open for the phase, the project holds nothing, no
@@ -207,14 +255,19 @@ issued for a cancel text.
    node scripts/manual/stage0-send.mjs <TEXT> --target <t> --confirm-ref <ref> --go <32-character id>
    ```
 
-   The go's deadline is the step's ceiling. The sender recomputes that
-   ceiling from the declaration and the phase's deadline, and refuses a go
-   that records another or ends later. Past the ceiling the step is not
-   sent, even while the phase and its windows are still open, and the gate
-   does not skip ahead to a later step: nothing more is issued in that
-   phase (CE-5). Claude also
-   states that the remaining path fits; the tools enforce only the reviewed
-   reserves.
+   The go's deadline is its not-after, or else the step's ceiling. The sender
+   recomputes the ceiling from the declaration and the phase's deadline. It
+   refuses a go that records another ceiling or ends later, a go whose
+   deadline is not its recorded not-after, and a production go without one.
+   It enforces the go's deadline at admission, under the store lock and
+   immediately before fetch (CE-10).
+   - Past the deadline the step is not sent, even while the phase and its
+     windows are still open.
+   - Past a step's ceiling the gate does not skip ahead to a later step:
+     nothing more is issued in that phase (CE-5, CE-8). That is a stop, and
+     the reviewed recovery protocol follows. Steps are never reordered.
+   - A tighter go never re-arms a used go, and never releases a pending or
+     held attempt.
 2. **RYAN** runs that command once, in the window it names, and pastes the
    sender's lines. They carry no secret.
 3. **The exit code:**

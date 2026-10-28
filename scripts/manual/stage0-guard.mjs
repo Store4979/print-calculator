@@ -57,15 +57,22 @@
 //     pause is an exit" stays a procedure.
 //   - Each step has a CEILING, its latest start: the phase deadline less the
 //     time its workflow declaration reserves for the whole remaining path
-//     from that step (stepCeilings). A phase that declares none, as every
-//     capture phase does, gives each step the capture-phase admission cutoff:
-//     the deadline less MARGIN_MS. A production phase must declare one per
-//     step. The phase records its ceilings, the go records its step's, and
-//     the issuer and the sender each recompute it from the pinned declaration
-//     and the phase's deadline, refusing any other value: a go's deadline is
-//     never later than its step's ceiling. The production NUMBERS, and the
-//     whole-path budget they come from, are item 4(c)'s, in review; no
-//     production phase is declared.
+//     from that step (stepCeilings). A later step may have an earlier
+//     ceiling. Every phase declares its ceilings, except the reviewed capture
+//     phases B, A, T and U, which keep the capture-phase admission cutoff
+//     (the deadline less MARGIN_MS). The phase records its ceilings, the go
+//     records its step's, and the issuer and the sender each recompute it
+//     from the pinned declaration and the phase's deadline, refusing any
+//     other value: a go's deadline is never later than its step's ceiling.
+//   - Ryan's go line for a phase that declares ceilings is drafted by the
+//     tool (goLine) with every step's latest start and the deadline, and is
+//     registered only if his message is exactly that line.
+//   - A go may carry an earlier NOT-AFTER, the latest start Claude's current
+//     whole-path check allows; it is required for production. The sender
+//     enforces the go's deadline, whichever bound set it. The code binds the
+//     value; it does not compute the path.
+//   - The production NUMBERS, and the whole-path budget they come from, are
+//     item 4(c)'s, in review; no production phase is declared.
 //   - The deadline bounds admission on this machine's clock. The clock check
 //     compares that clock with a time server, within a stated tolerance; it
 //     is not a guarantee of when a server starts the work, and it cancels
@@ -185,9 +192,9 @@ export const MARKER_SPEC = {
   sessionId: isSha, tokenTag: isSha, shell: isShell,
 };
 export const GO_SPEC = {
-  schema: (v) => v === "stage0-go/2", goId: isId, phaseId: isId, phaseSha: isSha, workflow: isStr(40), phase: isStr(40),
+  schema: (v) => v === "stage0-go/3", goId: isId, phaseId: isId, phaseSha: isSha, workflow: isStr(40), phase: isStr(40),
   step: isName, text: isName, target: isStr(40), ref: isRef, head: isCommit, checkout: isStr(1024), role: isRole, markerId: isId,
-  issuedAt: isUtc, ceiling: isUtc, deadline: isUtc, request: isRequest, cancel: (v) => v === null,
+  issuedAt: isUtc, ceiling: isUtc, notAfter: (v) => v === null || isUtc(v), deadline: isUtc, request: isRequest, cancel: (v) => v === null,
   gate: (v) => shapeProblems(v, { next: isName, after: (a) => Array.isArray(a) && a.every(isId) }, "gate").length === 0,
 };
 export const CLAIM_SPEC = {
@@ -217,7 +224,7 @@ export const RECEIPT_GUARD_SPEC = { attemptId: isId, goId: isId, phaseId: isId, 
 const EVENT_SPECS = {
   init: { storeId: isId },
   clock: { file: (v) => typeof v === "string" && /^[0-9TZ-]{24}_[0-9a-f]{8}\.json$/.test(v), sha256: isSha },
-  draft: { approvalId: isApproval, workflow: isStr(40), phase: isStr(40), ref: isRef, head: isCommit },
+  draft: { approvalId: isApproval, workflow: isStr(40), phase: isStr(40), ref: isRef, head: isCommit, deadline: (v) => v === null || isUtc(v) },
   phase: { phaseId: isId, approvalId: isApproval, ref: isRef, sha256: isSha, goTextSha256: isSha, approvalSha256: isSha },
   "marker-open": { markerId: isId, phaseId: isId, ref: isRef, sha256: isSha },
   "marker-close": { markerId: isId, reason: (v) => v === "close" || v === "gone" },
@@ -861,10 +868,9 @@ function sessionOf(env) {
 
 /**
  * The workflows a go can be issued for, each with its reviewed phases and its
- * gate. A phase may declare `ceilings` (stepCeilings). Only the item 2
- * capture phases are declared, with none. No production phase is: it needs
- * item 4(c)'s reviewed ceilings, and until one is declared a production go
- * refuses.
+ * gate. Every phase declares `ceilings` (ceilingReserve), except the item 2
+ * capture phases in LEGACY_CUTOFF_PHASES. Only the capture workflow is
+ * declared. No production phase is: it needs item 4(c)'s reviewed ceilings.
  */
 export const WORKFLOWS = Object.freeze({
   capture: Object.freeze({
@@ -879,27 +885,39 @@ export const WORKFLOWS = Object.freeze({
 // ── per-step ceilings ───────────────────────────────────────────────────────
 
 /**
+ * The reviewed item 2 capture phases that keep the 60 s admission cutoff for
+ * every step, and their old go-line form (Codex, review of 30c0eba, Q-P2).
+ * The exception names the capture workflow object itself, not a name: any
+ * other workflow, or a new capture phase, declares its ceilings.
+ */
+export const LEGACY_CUTOFF_PHASES = Object.freeze(["B", "A", "T", "U"]);
+export const isLegacyPhase = (wf, phaseName) => wf === WORKFLOWS.capture && LEGACY_CUTOFF_PHASES.includes(phaseName);
+/** The longest reserve a declaration may give one step. */
+export const MAX_RESERVE_MS = 24 * 60 * 60 * 1000;
+
+/**
  * What a phase's declaration reserves before its deadline for each step, in
  * ms: `ceilings: { <step>: ms }`, the time the whole remaining path from that
- * step needs. A phase that declares none gets MARGIN_MS for every step; a
- * production phase must declare them. A declaration refuses unless it names
- * exactly the phase's steps, each a whole number of minutes, at least
- * MARGIN_MS, and none longer than the step's before it.
+ * step needs. A later step may reserve MORE than an earlier one (its
+ * recovery can take longer), so its ceiling may come earlier: each ceiling
+ * is its own admission limit, and the steps still run in their declared
+ * order (Codex, review of 30c0eba, P-R1). A phase that declares none refuses,
+ * except a legacy capture phase (isLegacyPhase), which gets MARGIN_MS for
+ * every step. A declaration refuses unless it names exactly the phase's
+ * steps, each a whole number of minutes from MARGIN_MS to MAX_RESERVE_MS.
  */
 export function ceilingReserve(wf, phaseName) {
   const p = isObj(wf) && isObj(wf.phases) && own(wf.phases, phaseName) ? wf.phases[phaseName] : null;
   if (!p || !Array.isArray(p.steps)) throw new Refusal(`no declared phase ${JSON.stringify(String(phaseName).slice(0, 20))}; refusing`);
   const decl = own(p, "ceilings") && p.ceilings !== undefined ? p.ceilings : null;
   if (decl === null) {
-    if (wf.target === "production") throw new Refusal(`phase ${phaseName} targets production and declares no per-step ceilings; refusing`);
-    return Object.fromEntries(p.steps.map((s) => [s, MARGIN_MS]));
+    if (isLegacyPhase(wf, phaseName)) return Object.fromEntries(p.steps.map((s) => [s, MARGIN_MS]));
+    throw new Refusal(`phase ${phaseName} declares no per-step ceilings; only the reviewed capture phases ${LEGACY_CUTOFF_PHASES.join(", ")} keep the 60 s cutoff; refusing`);
   }
   if (!sameKeys(decl, p.steps)) throw new Refusal(`phase ${phaseName}'s ceilings do not name exactly its steps; refusing`);
-  let before = Infinity;
   for (const s of p.steps) {
     const v = decl[s];
-    if (!Number.isSafeInteger(v) || v < MARGIN_MS || v % 60000 !== 0 || v > before) throw new Refusal(`phase ${phaseName}'s ceiling for ${s} is not a whole number of minutes, at least ${MARGIN_MS / 1000} s, and no longer than the step's before it; refusing`);
-    before = v;
+    if (!Number.isSafeInteger(v) || v < MARGIN_MS || v > MAX_RESERVE_MS || v % 60000 !== 0) throw new Refusal(`phase ${phaseName}'s ceiling for ${s} is not a whole number of minutes from ${MARGIN_MS / 1000} s to ${MAX_RESERVE_MS / 3600000} h; refusing`);
   }
   return Object.fromEntries(p.steps.map((s) => [s, decl[s]]));
 }
@@ -929,24 +947,71 @@ export function ceilingOf(wf, phase, step) {
 
 const minuteUtc = (ms) => iso(ms).slice(0, 16).replace("T", " ") + " UTC";
 const APPROVAL_IN_TEXT = /\bapproval ([0-9a-f]{16})\b/g;
+const EASTERN = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
 
 /**
- * Draft a fresh approval id for one phase (Claude, before drafting Ryan's go
- * line). The line must carry `approval <id>`. One id registers at most one
- * phase; a restart needs a newly drafted id and a newly approved line.
+ * A whole-minute UTC time as Eastern wall time, "HH:MM EDT YYYY-MM-DD", for
+ * the reader only. The offset is checked against the abbreviation (EDT is
+ * UTC-4, EST UTC-5); any other result refuses.
  */
-export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, workflow, phase, head, now }) {
+export function easternOf(ms) {
+  const p = Object.fromEntries(EASTERN.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute));
+  const hours = (wall - ms) / 3600000;
+  if (!((p.timeZoneName === "EDT" && hours === -4) || (p.timeZoneName === "EST" && hours === -5))) throw new Refusal(`the Eastern time of ${iso(ms)} could not be checked (${p.timeZoneName}, ${hours} h); refusing`);
+  return `${p.hour}:${p.minute} ${p.timeZoneName} ${p.year}-${p.month}-${p.day}`;
+}
+
+/**
+ * Ryan's go line for a phase that declares ceilings, in its one defined form
+ * (Codex, review of 30c0eba, Q-P1): the phase, its workflow, the approval id,
+ * the head, the target and ref; every step in order with its absolute latest
+ * start; and the phase deadline, apart from the step limits. Each time is UTC
+ * to the minute, with its Eastern time beside it. Registration requires the
+ * message to be exactly this text, so a missing, extra, duplicated, swapped
+ * or wrong time, or any other words, refuses.
+ */
+export function goLine({ workflow, phase, approvalId, head, target, ref, steps, ceilings, deadline }) {
+  const at = (ms) => `${minuteUtc(ms)} (${easternOf(ms)})`;
+  return `GO phase ${phase} (${workflow}), approval ${approvalId}: head ${head.slice(0, 7)}, ${target} ${ref}. Latest starts: ${steps.map((s) => `${s} ${at(ceilings[s])}`).join("; ")}. Phase deadline ${at(deadline)}.`;
+}
+
+/**
+ * Draft a fresh approval id for one phase (Claude, before Ryan approves its
+ * go line). One id registers at most one phase; a restart needs a newly
+ * drafted id and a newly approved line.
+ *
+ * A legacy capture phase takes no deadline here: its line is written by hand
+ * and must carry `approval <id>`. Every other phase is drafted WITH its
+ * deadline (a whole minute), which the draft records, and the draft returns
+ * the exact line (goLine) with every step's latest start, to be shown to
+ * Ryan before he approves it. It refuses when a step's ceiling has already
+ * passed.
+ */
+export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, workflow, phase, head, deadline = null, now }) {
   const wf = isObj(workflows) && own(workflows, workflow) ? workflows[workflow] : null;
   if (!wf || !own(wf.phases, phase)) throw new Refusal(`no reviewed workflow phase ${JSON.stringify(`${String(workflow).slice(0, 20)} ${String(phase).slice(0, 20)}`)} is declared; refusing`);
   ceilingReserve(wf, phase);
+  const legacy = isLegacyPhase(wf, phase);
   const ref = manifest.send.targets[wf.target];
   return withLock(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
     checkClock(paths, now, chk);
+    const dl = legacy ? null : utcMs(deadline);
+    if (legacy && deadline !== null) throw new Refusal(`capture phase ${phase} keeps its legacy go line; it is drafted without a deadline; refusing`);
+    if (!legacy && (dl === null || dl % 60000 !== 0)) throw new Refusal("this phase is drafted with its deadline, a whole-minute UTC time, YYYY-MM-DDTHH:MM:00.000Z (--deadline); refusing");
+    let line = null;
+    if (!legacy) {
+      const ceilings = stepCeilings(wf, phase, dl);
+      const late = wf.phases[phase].steps.filter((s) => !(now < ceilings[s]));
+      if (late.length) throw new Refusal(`step ${late[0]}'s ceiling ${iso(ceilings[late[0]])} has already passed for that deadline; refusing`);
+      line = (approvalId) => goLine({ workflow, phase, approvalId, head, target: wf.target, ref, steps: wf.phases[phase].steps, ceilings, deadline: dl });
+      line("0".repeat(16)); // rendered once before anything is recorded: a time that cannot be shown refuses here
+    }
     let approvalId;
     do { approvalId = randomBytes(8).toString("hex"); } while (chk.index.drafts.has(approvalId));
-    logged(paths, chk, "draft", { approvalId, workflow, phase, ref, head }, [], now);
-    return { approvalId, workflow, phase, ref, head };
+    logged(paths, chk, "draft", { approvalId, workflow, phase, ref, head, deadline: legacy ? null : iso(dl) }, [], now);
+    return { approvalId, workflow, phase, ref, head, deadline: legacy ? null : iso(dl), line: line ? line(approvalId) : null };
   }, now);
 }
 
@@ -954,14 +1019,19 @@ export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, 
  * Register Ryan's go for one phase from his message's exact text (I6-R2).
  * The text must carry exactly one `approval <id>`, drafted in this store for
  * this workflow, phase, head and ref. If that approval is already registered,
- * the SAME phase is returned, with its progress, provided the text is the
- * same; another text with a used id refuses. A new registration also refuses
- * unless the text names the phase ("GO phase <P> "), the head (7
- * characters), the ref, every step and the deadline as "YYYY-MM-DD HH:MM
- * UTC"; the go is recorded within PHASE_LIMITS.recordWithinMs of its arrival,
- * with at least PHASE_LIMITS.minRemainingMs left and no step's ceiling
- * passed; and a phase that needs a reviewed decision names one. A
- * token-shaped value in the text refuses. Neither the text nor the arrival
+ * the SAME phase is returned, with its progress and ceilings, provided the
+ * text and the deadline are the same; another text or deadline with a used
+ * id refuses. A new registration also refuses unless:
+ *   - for a phase that declares ceilings: the deadline is the drafted one,
+ *     and the text is EXACTLY goLine() for that draft, so every step's
+ *     latest start in it equals the map recomputed here (Q-P1);
+ *   - for a legacy capture phase: the text names the phase ("GO phase
+ *     <P> "), the head (7 characters), the ref, every step and the deadline
+ *     as "YYYY-MM-DD HH:MM UTC";
+ *   - the go is recorded within PHASE_LIMITS.recordWithinMs of its arrival,
+ *     with at least PHASE_LIMITS.minRemainingMs left and no step's ceiling
+ *     passed; and a phase that needs a reviewed decision names one.
+ * A token-shaped value in the text refuses. Neither the text nor the arrival
  * time is the approval's identity. The phase records every step's ceiling
  * (stepCeilings), computed from the declaration and the deadline.
  */
@@ -981,6 +1051,7 @@ export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, wo
     if (chk.index.approvals.has(approvalId)) {
       const existing = loadPhase(paths, chk.index.approvals.get(approvalId));
       if (existing.phase.goText.sha256 !== sha256(Buffer.from(goText, "utf8"))) throw new Refusal(`approval ${approvalId} is already registered (phase ${existing.phase.phaseId}) with another text: a used approval id with new words is not a new approval; refusing`);
+      if (deadline !== existing.phase.deadline) throw new Refusal(`approval ${approvalId} is already registered (phase ${existing.phase.phaseId}) with the deadline ${existing.phase.deadline}: re-registration never changes a deadline or a ceiling; refusing`);
       return { phase: existing.phase, existing: true };
     }
     checkClock(paths, now, chk);
@@ -999,8 +1070,14 @@ export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, wo
     const ceilings = stepCeilings(wf, phase, dl);
     const late = p.steps.filter((s) => !(now < ceilings[s]));
     if (late.length) throw new Refusal(`step ${late[0]}'s ceiling ${iso(ceilings[late[0]])} has already passed: the phase cannot run; refusing`);
-    const missing =[`GO phase ${phase} `, head.slice(0, 7), ref, minuteUtc(dl), ...p.steps].filter((s) => !goText.includes(s));
-    if (missing.length) throw new Refusal(`the go text does not name ${missing.map((s) => JSON.stringify(s)).join(", ")}; refusing`);
+    if (isLegacyPhase(wf, phase)) {
+      const missing = [`GO phase ${phase} `, head.slice(0, 7), ref, minuteUtc(dl), ...p.steps].filter((s) => !goText.includes(s));
+      if (missing.length) throw new Refusal(`the go text does not name ${missing.map((s) => JSON.stringify(s)).join(", ")}; refusing`);
+    } else {
+      if (draft.deadline !== deadline) throw new Refusal(`approval ${approvalId} was drafted with the deadline ${draft.deadline}; this registration gives ${deadline}; refusing`);
+      const want = goLine({ workflow, phase, approvalId, head, target: wf.target, ref, steps: p.steps, ceilings, deadline: dl });
+      if (goText !== want) throw new Refusal(`the go text is not exactly the drafted line, so its step times, steps or deadline are not the ones this phase would record; it must read: ${want}; refusing`);
+    }
     if (p.requires && reviewed === null) throw new Refusal(`phase ${phase} needs ${p.requires}; name it (--reviewed); refusing`);
     const rec = {
       schema: "stage0-phase/3", phaseId: newId(), approvalId, workflow, phase, steps: [...p.steps], target: wf.target, ref, head, checkout,
@@ -1030,7 +1107,7 @@ export function loadPhase(paths, phaseId) {
   const ar = utcMs(rec.arrivedAt), rc = utcMs(rec.recordedAt), dl = utcMs(rec.deadline);
   if (!(ar <= rc && rc < dl)) throw new Refusal(`phase ${phaseId}'s times are out of order; refusing`);
   const cs = rec.steps.map((s) => (own(rec.ceilings, s) ? utcMs(rec.ceilings[s]) : null));
-  if (!sameKeys(rec.ceilings, rec.steps) || cs.some((c, i) => !(rc < c && c <= dl - MARGIN_MS && (i === 0 || cs[i - 1] <= c)))) throw new Refusal(`phase ${phaseId}'s ceilings are not one per step, in order, after its record and at least ${MARGIN_MS / 1000} s before its deadline; refusing`);
+  if (!sameKeys(rec.ceilings, rec.steps) || cs.some((c) => !(rc < c && c <= dl - MARGIN_MS))) throw new Refusal(`phase ${phaseId}'s ceilings are not one per step, each after its record and at least ${MARGIN_MS / 1000} s before its deadline; refusing`);
   return { phase: rec, sha: sha256(raw) };
 }
 
@@ -1302,11 +1379,20 @@ const heldMessage = (holds) => `the project is held: ${holds.map((h) => `${h.kin
  * pending or held attempt; no unused go is outstanding for the ref (an
  * expired one is voided, recorded); and the step's ceiling, recomputed by
  * ceilingOf(), has not passed. The go records that ceiling, and its deadline
- * is the ceiling, or the marker's end if that is earlier. `planFor(text,
- * target)` is the sender's planSend: the go binds that request's md5, bytes
- * and read_only.
+ * is the ceiling, or the marker's end if that is earlier.
+ *
+ * `notAfter` (ms), when given, is an EARLIER bound for this one send: the
+ * latest start the current whole-path check allows, which Claude states
+ * (Codex, review of 30c0eba). It must be later than now and no later than
+ * the step's ceiling, the marker's end and the phase deadline; the go records
+ * it and it becomes the go's deadline. It is required for a production
+ * phase. The code binds the value it is given; it does not compute the path.
+ * A tighter bound never re-arms a used go or releases a hold.
+ *
+ * `planFor(text, target)` is the sender's planSend: the go binds that
+ * request's md5, bytes and read_only.
  */
-export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout, now, identity, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, planFor }) {
+export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout, now, identity, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, planFor, notAfter = null }) {
   return withLock(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
     checkClock(paths, now, chk);
@@ -1325,8 +1411,14 @@ export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout
     if (markers.length !== 1) throw new Refusal(`${markers.length} live ${role} windows are open for this phase; exactly one is needed; refusing`);
     const marker = markers[0];
     if (marker.head !== head || marker.ref !== phase.ref || marker.phaseSha !== sha || !(utcMs(marker.createdAt) <= now)) throw new Refusal(`marker ${marker.markerId} is not bound to this phase, head and ref; refusing`);
-    const deadline = Math.min(ceiling, utcMs(marker.until));
+    let deadline = Math.min(ceiling, utcMs(marker.until));
     if (!(now < deadline)) throw new Refusal(`step ${step}'s ceiling ${iso(deadline)} has passed; refusing`);
+    if (notAfter !== null) {
+      if (!Number.isSafeInteger(notAfter)) throw new Refusal("--not-after must be a UTC time, YYYY-MM-DDTHH:MM:SS.sssZ; refusing");
+      if (!(notAfter <= deadline && notAfter <= utcMs(phase.deadline))) throw new Refusal(`--not-after ${iso(notAfter)} is later than step ${step}'s ceiling, its window's end or the phase deadline (${iso(deadline)}): it can only tighten them; refusing`);
+      if (!(now < notAfter)) throw new Refusal(`--not-after ${iso(notAfter)} has already passed; refusing`);
+      deadline = notAfter;
+    } else if (phase.target === "production") throw new Refusal(`a production go needs --not-after: the latest start the current whole-path check allows for ${step}; refusing`);
     const entries = readJournal(paths, phase.ref);
     const holds = holdsOf(entries, { readReceipt, ctxAt });
     if (holds.length) throw new Refusal(`${heldMessage(holds)}. A reviewed disposition (stage0-go.mjs dispose) releases it; refusing`);
@@ -1339,8 +1431,9 @@ export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout
     const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
     if (gate.stop || gate.complete || gate.next !== step) throw new Refusal(`the gate does not name ${step}: ${gate.stop ? `STOP: ${gate.reason}` : gate.complete ? gate.reason : `the next step is ${gate.next}`}; refusing`);
     const go = {
-      schema: "stage0-go/2", goId: newId(), phaseId, phaseSha: sha, workflow: phase.workflow, phase: phase.phase, step, text,
-      target: phase.target, ref: phase.ref, head, checkout, role, markerId: marker.markerId, issuedAt: iso(now), ceiling: iso(ceiling), deadline: iso(deadline),
+      schema: "stage0-go/3", goId: newId(), phaseId, phaseSha: sha, workflow: phase.workflow, phase: phase.phase, step, text,
+      target: phase.target, ref: phase.ref, head, checkout, role, markerId: marker.markerId, issuedAt: iso(now), ceiling: iso(ceiling),
+      notAfter: notAfter === null ? null : iso(notAfter), deadline: iso(deadline),
       request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) },
       cancel: null,
       gate: { next: gate.next, after: entries.filter((e) => e.claim && e.claim.phaseId === phaseId).map((e) => e.attemptId) },
@@ -1392,7 +1485,8 @@ export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath,
  * phase's, step, text, head, ref and request, issued before now, before its
  * deadline); the step's ceiling, recomputed here by ceilingOf() from the
  * declaration and the phase's deadline, which the go must record exactly and
- * its deadline must not pass. Under the store lock: the store again, no
+ * its deadline must not pass; a recorded not-after must be the go's deadline,
+ * and a production go must have one. Under the store lock: the store again, no
  * pending or held attempt, and the gate names the go's step. Then the go is
  * moved to gos/used/ and the claim is written and recorded. Immediately
  * before fetch, inside send(), the deadline, the marker's end and the clock
@@ -1441,6 +1535,8 @@ export async function guardedSend(o) {
   if (!wf) throw new Refusal(`workflow ${phase.workflow} is not declared; refusing`);
   const ceiling = ceilingOf(wf, phase, go.step);
   if (go.ceiling !== iso(ceiling)) throw new Refusal(`go ${goId} records ${go.step}'s ceiling as ${go.ceiling}; its declaration gives ${iso(ceiling)}: a stale or altered go; refusing`);
+  if (go.notAfter !== null && go.deadline !== go.notAfter) throw new Refusal(`go ${goId}'s deadline ${go.deadline} is not its recorded not-after ${go.notAfter}; refusing`);
+  if (phase.target === "production" && go.notAfter === null) throw new Refusal(`go ${goId} is a production go with no not-after; refusing`);
   const request ={ md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) };
   if (JSON.stringify(go.request) !== JSON.stringify(request) || plan.template !== null) throw new Refusal(`go ${goId}'s request is not this send's; refusing`);
   const issued = utcMs(go.issuedAt), dl = utcMs(go.deadline);
@@ -1518,7 +1614,7 @@ export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECE
   const entries = readJournal(paths, ref);
   const gos = [...chk.index.gos].filter(([, g]) => g.ev.ref === ref && g.state === "live").map(([goId]) => {
     const g = readState(join(paths.gos, `${goId}.json`));
-    return { goId, step: g.step, ceiling: g.ceiling, deadline: g.deadline, live: now < utcMs(g.deadline) };
+    return { goId, step: g.step, ceiling: g.ceiling, notAfter: g.notAfter, deadline: g.deadline, live: now < utcMs(g.deadline) };
   });
   return {
     intact: true,
