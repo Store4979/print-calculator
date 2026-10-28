@@ -38,12 +38,18 @@ export const okBody = (text) => (/^(P2-|RB-)/.test(text) || text === "LOCKPROBE-
  * A workflow declared for a test: phases of [step id, text] pairs. A step
  * MATCHes when its receipt binds (not R1) and is HTTP 201; any other result,
  * or an UNRESOLVED writing send, stops the phase, as the capture gate does.
+ * `ceilings` gives a phase's per-step reserves ({ <phase>: { <step>: ms } },
+ * or null for none). A production phase must declare them, so one the test
+ * does not name reserves MARGIN_MS for every step: the capture-phase
+ * admission cutoff, as a declared ceiling.
  */
-export function synthWorkflow(target, phases) {
+export function synthWorkflow(target, phases, { ceilings = {} } = {}) {
   const textOf = {};
   const decl = {};
   for (const [name, steps] of Object.entries(phases)) {
-    decl[name] = { steps: steps.map(([id]) => id), requires: null };
+    const ids = steps.map(([id]) => id);
+    const c = Object.hasOwn(ceilings, name) ? ceilings[name] : target === "production" ? Object.fromEntries(ids.map((id) => [id, G.MARGIN_MS])) : undefined;
+    decl[name] = { steps: ids, requires: null, ...(c === undefined ? {} : { ceilings: c }) };
     for (const [id, text] of steps) textOf[id] = text;
   }
   return {
@@ -66,6 +72,9 @@ export function synthWorkflow(target, phases) {
     },
   };
 }
+
+/** The phase's recorded ceiling for a step; for a step it does not have, its admission cutoff. */
+const ceilingIn = (phase, step) => (Object.hasOwn(phase.ceilings, step) ? phase.ceilings[step] : G.iso(G.utcMs(phase.deadline) - G.MARGIN_MS));
 
 /**
  * A guard store made by init (or `attach`ed to an existing one, in a child
@@ -140,9 +149,10 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
     forgeGo({ phase, marker, step, text, target, over = {} }) {
       const plan = S.planSend(M, text, target, { cwd: ROOT });
       const go = {
-        schema: "stage0-go/1", goId: randomBytes(16).toString("hex"), phaseId: phase.phaseId, phaseSha: marker.phaseSha, workflow: phase.workflow, phase: phase.phase, step, text, target,
+        schema: "stage0-go/2", goId: randomBytes(16).toString("hex"), phaseId: phase.phaseId, phaseSha: marker.phaseSha, workflow: phase.workflow, phase: phase.phase, step, text, target,
         ref: plan.ref, head: HEAD, checkout: ROOT, role: G.roleOf(M, text), markerId: marker.markerId, issuedAt: G.iso(t),
-        deadline: G.iso(Math.min(G.utcMs(phase.deadline) - G.MARGIN_MS, G.utcMs(marker.until))),
+        ceiling: ceilingIn(phase, step),
+        deadline: G.iso(Math.min(G.utcMs(ceilingIn(phase, step)), G.utcMs(marker.until))),
         request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: M.send.endpoint.replace("{ref}", plan.ref) },
         cancel: null, gate: { next: step, after: [] }, ...over,
       };

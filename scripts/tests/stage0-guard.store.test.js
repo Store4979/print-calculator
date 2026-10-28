@@ -21,6 +21,8 @@
 //         works where the ledger reads, and changes nothing where it does not
 //   ST-7  a failed ledger write leaves nothing unrecorded; a held lock refuses
 //   ST-8  a reviewed restoration: init --restore, and the anchor to follow
+//   ST-9  Codex's tail-loss ruling: the newest claim and its ledger line lost
+//         together is damage; the newest outcome and its line, PENDING
 //   AP-1  an approval id registers one phase; the same text returns it; other
 //         words, no id, two ids, an undrafted or foreign id refuse
 //   AP-2  Codex's reproduction: the same go recorded again after A1, close
@@ -442,6 +444,63 @@ test("ST-8 I6-R1: a reviewed restoration: init --restore names the lost store an
     b.fx.clock();
     assert.equal(b.fx.check().ok, true, "with the reviewed anchor");
   } finally { b.fx.cleanup(); }
+});
+
+// ── ST-9 ─────────────────────────────────────────────────────────────────────
+
+// Codex's tail-loss ruling (review of 22610f8). Losing the newest claim's
+// ledger line together with its claim file leaves the go in gos/used/ while
+// the shortened ledger expects it live: the records disagree, so it is
+// damage. Losing the newest outcome's line and file together leaves records
+// that agree, but the claim is PENDING again, which holds the project.
+// A COHERENT rollback (the used go moved back as well, so the store is a
+// valid earlier prefix) is not detected: nothing in or beside the store
+// witnesses its latest sequence. That limit is deliberately not asserted
+// here, so no test protects it. Any known or suspected restore, sync
+// rollback or storage loss is STOP-and-review (procedure §7).
+test("ST-9 Codex's tail-loss ruling: the newest claim and its ledger line lost together is damage; the newest outcome and its line lost together leaves the attempt PENDING; neither gives a go or a request", async () => {
+  const cutLast = (fx, kind) => {
+    const lines = readFileSync(fx.paths.ledger, "utf8").trimEnd().split("\n");
+    assert.equal(JSON.parse(lines.pop()).kind, kind, `the newest event is the ${kind}`);
+    writeFileSync(fx.paths.ledger, lines.join("\n") + "\n");
+  };
+  {
+    const b = await pendingBase();
+    try {
+      cutLast(b.fx, "claim");
+      renameSync(join(b.fx.paths.journal(PROD), `${b.attemptId}.claim.json`), join(b.fx.dir, "lost-claim.json"));
+      const chk = b.fx.check();
+      assert.equal(chk.ok, false);
+      assert.match(chk.problems.join(" "), new RegExp(`gos.${b.go.goId}\\.json is missing: the ledger records it`));
+      assert.match(chk.problems.join(" "), new RegExp(`gos.used.${b.go.goId}\\.json is present, but the ledger does not record it`));
+      await noGoNoRequest(b.fx, b, "the newest claim and its ledger line lost together");
+      assert.equal(b.fx.calls.length, 1, "only the original request");
+    } finally { b.fx.cleanup(); }
+  }
+  {
+    const fx = fixture({ workflows: WF() });
+    try {
+      fx.clock();
+      const ph = fx.phase("t", "P");
+      const W = fx.window("W", ph.phaseId, { pid: 1001 });
+      const go = fx.issue(ph.phaseId, "A1");
+      const r = await fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId });
+      assert.deepEqual(fx.status().holds, [], "a recorded, resolved send holds nothing");
+      cutLast(fx, "outcome");
+      renameSync(join(fx.paths.journal(PROD), `${r.attemptId}.outcome.json`), join(fx.dir, "lost-outcome.json"));
+      assert.equal(fx.check().ok, true, "the remaining records agree");
+      assert.deepEqual(fx.status().holds.map((h) => [h.kind, h.attemptId]), [["PENDING", r.attemptId]], "but the claim is PENDING again");
+      fx.add(1000);
+      fx.window("R", ph.phaseId, { pid: 1003 });
+      await refused(() => fx.issue(ph.phaseId, "A2"), /the project is held: PENDING/, "the issuer");
+      await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId }), /already used/, "the used go");
+      const q = fx.phase("t", "Q");
+      fx.window("W", q.phaseId, { pid: 1002 });
+      await refused(() => fx.issue(q.phaseId, "B1"), /the project is held: PENDING/, "a fresh phase and window");
+      assert.equal(fx.status().holds.length, 1, "still held");
+      assert.equal(fx.calls.length, 1, "only the original request");
+    } finally { fx.cleanup(); }
+  }
 });
 
 // ── AP: one registration per human approval (I6-R2) ─────────────────────────

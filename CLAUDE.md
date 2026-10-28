@@ -282,7 +282,7 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     - execute_sql remains for small ad-hoc, unpinned read-backs, labelled as
       such.
   - THE GUARDED SENDER (Codex item 6; docs/security/stage0-guarded-send-procedure.md;
-    plan docs/security/stage0-item6-sender-guards-plan.md §A, §B). A live
+    plan docs/security/stage0-item6-sender-guards-plan.md §A, §B, §C). A live
     send needs `--go <id>`; nothing else sends:
     - Claude runs scripts/manual/stage0-go.mjs: `init` (ONCE, then the
       printed anchor is committed in review as
@@ -317,19 +317,37 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       reviewed `init --restore` and a new anchor commit replace it. A
       PENDING claim or an R1/R4 writing outcome holds the whole project
       until `dispose` with a review file naming the attempt id;
-    - a go's deadline is the CAPTURE-PHASE ADMISSION CUTOFF (phase deadline
-      less 60 s). Per-step latest starts are NOT implemented: the production
-      deadline contract is incomplete until the item 6 follow-up and item
-      4(c);
+    - THE STORE CANNOT SEE A COHERENT ROLLBACK (Codex, review of 22610f8):
+      a whole store put back to a valid earlier state passes every check,
+      because nothing records its latest sequence. Any known or suspected
+      profile/store restore, sync rollback or storage loss is
+      STOP-and-review; NEVER restore a backup or snapshot of it in place, even
+      if storeCheck passes; an unresolved send known from outside the store
+      stays unresolved whatever `status` says (UO-1). Losing the newest
+      claim WITH its ledger line IS detected (ST-9). Don't write a test that
+      asserts the rollback passes;
+    - each step's go ends at the step's CEILING (its latest start): the
+      phase deadline less what the phase declaration's `ceilings` reserves
+      for the remaining path from that step; with none declared (every
+      capture phase) the deadline less 60 s, the capture-phase admission
+      cutoff. The phase records every ceiling, the go its step's, and the
+      issuer AND the sender recompute it from the declaration (ceilingOf):
+      a stale or enlarged value refuses, and no go outlives its step's
+      ceiling. A production phase must declare one per step; the numbers
+      and the whole-path budget are item 4(c)'s, so the production deadline
+      contract is complete only with them;
     - only the capture workflow's phases are declared (stage0-guard.mjs
       WORKFLOWS). A production or item 3 phase must be declared in code,
-      with its gate, in review, before a go can be recorded for it. No go
-      is ever issued for a cancel text;
+      with its gate (and, for production, its ceilings), in review, before
+      a go can be recorded for it. No go is ever issued for a cancel text;
     - tests: scripts/tests/stage0-guard.test.js (G-1…G-26, counting fetch
-      stub, real child processes, a 15-mutant companion),
+      stub, real child processes, an 18-mutant companion),
       stage0-guard.store.test.js (ST-*, AP-*, ORD: every Codex reproduction
-      of the store and approval blockers) and stage0-guard.shell.test.js
-      (G-27, real PowerShell windows; Windows only).
+      of the store and approval blockers), stage0-guard.ceiling.test.js
+      (CE-*: before/at/after every ceiling, a late early step, stale and
+      enlarged ceilings) and stage0-guard.shell.test.js (G-27, real
+      PowerShell windows; Windows only). synthWorkflow("production", …)
+      in the fixture declares 60 s per step unless a test names ceilings.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 7 files stage0-send/-window/-go.mjs load (with the classifier and the
     capture gate) are pinned in the manifest's `guard`. Each tool refuses

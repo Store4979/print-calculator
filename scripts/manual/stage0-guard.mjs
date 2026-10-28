@@ -55,10 +55,17 @@
 //     inherited the environment has another pid, so it is refused. A window
 //     a person walks away from still matches until the phase deadline. "Every
 //     pause is an exit" stays a procedure.
-//   - A go's deadline is the CAPTURE-PHASE ADMISSION CUTOFF: the phase
-//     deadline less MARGIN_MS. There are no per-step latest-start ceilings
-//     yet, so this is not the production deadline contract (Codex, review of
-//     78db6dc); no production phase is declared.
+//   - Each step has a CEILING, its latest start: the phase deadline less the
+//     time its workflow declaration reserves for the whole remaining path
+//     from that step (stepCeilings). A phase that declares none, as every
+//     capture phase does, gives each step the capture-phase admission cutoff:
+//     the deadline less MARGIN_MS. A production phase must declare one per
+//     step. The phase records its ceilings, the go records its step's, and
+//     the issuer and the sender each recompute it from the pinned declaration
+//     and the phase's deadline, refusing any other value: a go's deadline is
+//     never later than its step's ceiling. The production NUMBERS, and the
+//     whole-path budget they come from, are item 4(c)'s, in review; no
+//     production phase is declared.
 //   - The deadline bounds admission on this machine's clock. The clock check
 //     compares that clock with a time server, within a stated tolerance; it
 //     is not a guarantee of when a server starts the work, and it cancels
@@ -93,7 +100,7 @@ export const DEFAULT_STATE = join(homedir(), ".stage0-guard");
 export const ANCHOR_PATH = "docs/security/stage0-guard-store.json";
 /** The clock check (SG-5): three w32tm samples against the reference, each within the tolerance; valid for freshMs. */
 export const CLOCK = Object.freeze({ reference: "time.windows.com", samples: 3, toleranceMs: 2000, freshMs: 60 * 60 * 1000, backstepMs: 2000 });
-/** A go's deadline is this much before the phase deadline: the capture-phase admission cutoff. */
+/** No step's ceiling is later than the phase deadline less this. A step with no declared ceiling has exactly this one: the capture-phase admission cutoff. */
 export const MARGIN_MS = 60 * 1000;
 /** Ryan's go is recorded within this long of its arrival, with at least the second value left (capture runbook §3). */
 export const PHASE_LIMITS = Object.freeze({ recordWithinMs: 10 * 60 * 1000, minRemainingMs: 30 * 60 * 1000 });
@@ -163,10 +170,11 @@ const isPredecessor = (v) => v === null || (shapeProblems(v, { storeId: isId, re
 export const STORE_SPEC = { schema: (v) => v === "stage0-store/1", storeId: isId, createdAt: isUtc, refs: isRefs, predecessor: isPredecessor };
 export const ANCHOR_SPEC = { schema: (v) => v === "stage0-guard-anchor/1", storeId: isId, createdAt: isUtc, refs: isRefs, predecessor: isPredecessor };
 export const PHASE_SPEC = {
-  schema: (v) => v === "stage0-phase/2", phaseId: isId, approvalId: isApproval, workflow: isStr(40), phase: isStr(40),
+  schema: (v) => v === "stage0-phase/3", phaseId: isId, approvalId: isApproval, workflow: isStr(40), phase: isStr(40),
   steps: (v) => Array.isArray(v) && v.length > 0 && v.length <= 64 && v.every(isName) && new Set(v).size === v.length,
   target: isStr(40), ref: isRef, head: isCommit, checkout: isStr(1024),
   arrivedAt: isUtc, recordedAt: isUtc, deadline: isUtc,
+  ceilings: (v) => isObj(v) && Object.keys(v).length > 0 && Object.keys(v).length <= 64 && Object.entries(v).every(([k, x]) => isName(k) && isUtc(x)),
   goText: (v) => shapeProblems(v, { sha256: isSha, bytes: isInt }, "goText").length === 0,
   reviewed: isReviewed,
 };
@@ -177,9 +185,9 @@ export const MARKER_SPEC = {
   sessionId: isSha, tokenTag: isSha, shell: isShell,
 };
 export const GO_SPEC = {
-  schema: (v) => v === "stage0-go/1", goId: isId, phaseId: isId, phaseSha: isSha, workflow: isStr(40), phase: isStr(40),
+  schema: (v) => v === "stage0-go/2", goId: isId, phaseId: isId, phaseSha: isSha, workflow: isStr(40), phase: isStr(40),
   step: isName, text: isName, target: isStr(40), ref: isRef, head: isCommit, checkout: isStr(1024), role: isRole, markerId: isId,
-  issuedAt: isUtc, deadline: isUtc, request: isRequest, cancel: (v) => v === null,
+  issuedAt: isUtc, ceiling: isUtc, deadline: isUtc, request: isRequest, cancel: (v) => v === null,
   gate: (v) => shapeProblems(v, { next: isName, after: (a) => Array.isArray(a) && a.every(isId) }, "gate").length === 0,
 };
 export const CLAIM_SPEC = {
@@ -853,9 +861,10 @@ function sessionOf(env) {
 
 /**
  * The workflows a go can be issued for, each with its reviewed phases and its
- * gate. Only the item 2 capture phases are declared. No production phase is:
- * production also needs per-step latest-start ceilings (an item 6 follow-up)
- * and item 4(c)'s reviewed numbers, and until then a production go refuses.
+ * gate. A phase may declare `ceilings` (stepCeilings). Only the item 2
+ * capture phases are declared, with none. No production phase is: it needs
+ * item 4(c)'s reviewed ceilings, and until one is declared a production go
+ * refuses.
  */
 export const WORKFLOWS = Object.freeze({
   capture: Object.freeze({
@@ -866,6 +875,55 @@ export const WORKFLOWS = Object.freeze({
     next: (phase, results) => K.nextStep(phase, results),
   }),
 });
+
+// ── per-step ceilings ───────────────────────────────────────────────────────
+
+/**
+ * What a phase's declaration reserves before its deadline for each step, in
+ * ms: `ceilings: { <step>: ms }`, the time the whole remaining path from that
+ * step needs. A phase that declares none gets MARGIN_MS for every step; a
+ * production phase must declare them. A declaration refuses unless it names
+ * exactly the phase's steps, each a whole number of minutes, at least
+ * MARGIN_MS, and none longer than the step's before it.
+ */
+export function ceilingReserve(wf, phaseName) {
+  const p = isObj(wf) && isObj(wf.phases) && own(wf.phases, phaseName) ? wf.phases[phaseName] : null;
+  if (!p || !Array.isArray(p.steps)) throw new Refusal(`no declared phase ${JSON.stringify(String(phaseName).slice(0, 20))}; refusing`);
+  const decl = own(p, "ceilings") && p.ceilings !== undefined ? p.ceilings : null;
+  if (decl === null) {
+    if (wf.target === "production") throw new Refusal(`phase ${phaseName} targets production and declares no per-step ceilings; refusing`);
+    return Object.fromEntries(p.steps.map((s) => [s, MARGIN_MS]));
+  }
+  if (!sameKeys(decl, p.steps)) throw new Refusal(`phase ${phaseName}'s ceilings do not name exactly its steps; refusing`);
+  let before = Infinity;
+  for (const s of p.steps) {
+    const v = decl[s];
+    if (!Number.isSafeInteger(v) || v < MARGIN_MS || v % 60000 !== 0 || v > before) throw new Refusal(`phase ${phaseName}'s ceiling for ${s} is not a whole number of minutes, at least ${MARGIN_MS / 1000} s, and no longer than the step's before it; refusing`);
+    before = v;
+  }
+  return Object.fromEntries(p.steps.map((s) => [s, decl[s]]));
+}
+
+/** Each step's ceiling, its latest start, in ms: the phase deadline less its reserve. */
+export function stepCeilings(wf, phaseName, deadlineMs) {
+  const reserve = ceilingReserve(wf, phaseName);
+  return Object.fromEntries(Object.entries(reserve).map(([s, v]) => [s, deadlineMs - v]));
+}
+
+/**
+ * A recorded phase's ceiling for one step, recomputed from the declaration
+ * and the phase's deadline. Refuses unless the phase recorded exactly the
+ * declared ceilings, every step's: a stale or altered record is never used.
+ */
+export function ceilingOf(wf, phase, step) {
+  const dl = utcMs(phase.deadline);
+  if (dl === null || !isObj(phase.ceilings)) throw new Refusal(`phase ${phase.phaseId} has no readable deadline or ceilings; refusing`);
+  const want = stepCeilings(wf, phase.phase, dl);
+  if (!sameKeys(phase.ceilings, Object.keys(want))) throw new Refusal(`phase ${phase.phaseId}'s ceilings are not one per declared step; refusing`);
+  for (const [s, ms] of Object.entries(want)) if (phase.ceilings[s] !== iso(ms)) throw new Refusal(`phase ${phase.phaseId} records ${s}'s ceiling as ${phase.ceilings[s]}; its declaration gives ${iso(ms)}: a stale or altered ceiling; refusing`);
+  if (!own(want, step)) throw new Refusal(`phase ${phase.phase} has no step ${isName(step) ? step : "of that name"}; refusing`);
+  return want[step];
+}
 
 // ── approvals and phases (I6-R2) ────────────────────────────────────────────
 
@@ -880,6 +938,7 @@ const APPROVAL_IN_TEXT = /\bapproval ([0-9a-f]{16})\b/g;
 export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, workflow, phase, head, now }) {
   const wf = isObj(workflows) && own(workflows, workflow) ? workflows[workflow] : null;
   if (!wf || !own(wf.phases, phase)) throw new Refusal(`no reviewed workflow phase ${JSON.stringify(`${String(workflow).slice(0, 20)} ${String(phase).slice(0, 20)}`)} is declared; refusing`);
+  ceilingReserve(wf, phase);
   const ref = manifest.send.targets[wf.target];
   return withLock(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
@@ -900,9 +959,11 @@ export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, 
  * unless the text names the phase ("GO phase <P> "), the head (7
  * characters), the ref, every step and the deadline as "YYYY-MM-DD HH:MM
  * UTC"; the go is recorded within PHASE_LIMITS.recordWithinMs of its arrival,
- * with at least PHASE_LIMITS.minRemainingMs left; and a phase that needs a
- * reviewed decision names one. A token-shaped value in the text refuses.
- * Neither the text nor the arrival time is the approval's identity.
+ * with at least PHASE_LIMITS.minRemainingMs left and no step's ceiling
+ * passed; and a phase that needs a reviewed decision names one. A
+ * token-shaped value in the text refuses. Neither the text nor the arrival
+ * time is the approval's identity. The phase records every step's ceiling
+ * (stepCeilings), computed from the declaration and the deadline.
  */
 export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, workflow, phase, goText, arrivedAt, deadline, reviewed = null, head, checkout, now }) {
   const wf = isObj(workflows) && own(workflows, workflow) ? workflows[workflow] : null;
@@ -935,12 +996,15 @@ export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, wo
     if (arrived > now) throw new Refusal("the go's arrival is later than now; refusing");
     if (now - arrived > PHASE_LIMITS.recordWithinMs) throw new Refusal(`the go arrived more than ${PHASE_LIMITS.recordWithinMs / 60000} min ago; a late record needs a new go; refusing`);
     if (dl - now < PHASE_LIMITS.minRemainingMs) throw new Refusal(`less than ${PHASE_LIMITS.minRemainingMs / 60000} min remain before the deadline; refusing`);
-    const missing = [`GO phase ${phase} `, head.slice(0, 7), ref, minuteUtc(dl), ...p.steps].filter((s) => !goText.includes(s));
+    const ceilings = stepCeilings(wf, phase, dl);
+    const late = p.steps.filter((s) => !(now < ceilings[s]));
+    if (late.length) throw new Refusal(`step ${late[0]}'s ceiling ${iso(ceilings[late[0]])} has already passed: the phase cannot run; refusing`);
+    const missing =[`GO phase ${phase} `, head.slice(0, 7), ref, minuteUtc(dl), ...p.steps].filter((s) => !goText.includes(s));
     if (missing.length) throw new Refusal(`the go text does not name ${missing.map((s) => JSON.stringify(s)).join(", ")}; refusing`);
     if (p.requires && reviewed === null) throw new Refusal(`phase ${phase} needs ${p.requires}; name it (--reviewed); refusing`);
     const rec = {
-      schema: "stage0-phase/2", phaseId: newId(), approvalId, workflow, phase, steps: [...p.steps], target: wf.target, ref, head, checkout,
-      arrivedAt, recordedAt: iso(now), deadline, goText: { sha256: sha256(Buffer.from(goText, "utf8")), bytes: Buffer.byteLength(goText) }, reviewed,
+      schema: "stage0-phase/3", phaseId: newId(), approvalId, workflow, phase, steps: [...p.steps], target: wf.target, ref, head, checkout,
+      arrivedAt, recordedAt: iso(now), deadline, ceilings: Object.fromEntries(p.steps.map((s) => [s, iso(ceilings[s])])), goText: { sha256: sha256(Buffer.from(goText, "utf8")), bytes: Buffer.byteLength(goText) }, reviewed,
     };
     const bad = shapeProblems(rec, PHASE_SPEC, "the phase");
     if (bad.length) throw new Refusal(`${bad.join("; ")}; refusing`);
@@ -965,6 +1029,8 @@ export function loadPhase(paths, phaseId) {
   if (sha256(text) !== rec.goText.sha256 || text.length !== rec.goText.bytes) throw new Refusal(`phase ${phaseId}'s go text is not the one recorded; refusing`);
   const ar = utcMs(rec.arrivedAt), rc = utcMs(rec.recordedAt), dl = utcMs(rec.deadline);
   if (!(ar <= rc && rc < dl)) throw new Refusal(`phase ${phaseId}'s times are out of order; refusing`);
+  const cs = rec.steps.map((s) => (own(rec.ceilings, s) ? utcMs(rec.ceilings[s]) : null));
+  if (!sameKeys(rec.ceilings, rec.steps) || cs.some((c, i) => !(rc < c && c <= dl - MARGIN_MS && (i === 0 || cs[i - 1] <= c)))) throw new Refusal(`phase ${phaseId}'s ceilings are not one per step, in order, after its record and at least ${MARGIN_MS / 1000} s before its deadline; refusing`);
   return { phase: rec, sha: sha256(raw) };
 }
 
@@ -1233,11 +1299,12 @@ const heldMessage = (holds) => `the project is held: ${holds.map((h) => `${h.kin
  * holds; the phase is this checkout's and HEAD's, before its deadline; the
  * step is the one the gate names; exactly one live marker of the step's role
  * exists for the phase, with its window still running; the project has no
- * pending or held attempt; and no unused go is outstanding for the ref (an
- * expired one is voided, recorded). The deadline is the capture-phase
- * admission cutoff: the phase deadline less MARGIN_MS, never after the
- * marker's end. `planFor(text, target)` is the sender's planSend: the go
- * binds that request's md5, bytes and read_only.
+ * pending or held attempt; no unused go is outstanding for the ref (an
+ * expired one is voided, recorded); and the step's ceiling, recomputed by
+ * ceilingOf(), has not passed. The go records that ceiling, and its deadline
+ * is the ceiling, or the marker's end if that is earlier. `planFor(text,
+ * target)` is the sender's planSend: the go binds that request's md5, bytes
+ * and read_only.
  */
 export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout, now, identity, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, planFor }) {
   return withLock(paths, () => {
@@ -1248,6 +1315,7 @@ export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout
     if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
     const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
     if (!wf || !phase.steps.includes(step)) throw new Refusal(`phase ${phase.phase} has no step ${isName(step) ? step : "of that name"}; refusing`);
+    const ceiling = ceilingOf(wf, phase, step);
     const text = wf.stepText(step);
     const role = roleOf(manifest, text);
     if (role === "C") throw new Refusal("no reviewed phase sends a cancel: live cancellation is not approved (P1-P3 runbook §R 6), and no exception to the in-flight hold is defined; refusing");
@@ -1257,8 +1325,8 @@ export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout
     if (markers.length !== 1) throw new Refusal(`${markers.length} live ${role} windows are open for this phase; exactly one is needed; refusing`);
     const marker = markers[0];
     if (marker.head !== head || marker.ref !== phase.ref || marker.phaseSha !== sha || !(utcMs(marker.createdAt) <= now)) throw new Refusal(`marker ${marker.markerId} is not bound to this phase, head and ref; refusing`);
-    const deadline = Math.min(utcMs(phase.deadline) - MARGIN_MS, utcMs(marker.until));
-    if (!(now < deadline)) throw new Refusal(`the phase's admission cutoff ${iso(deadline)} has passed; refusing`);
+    const deadline = Math.min(ceiling, utcMs(marker.until));
+    if (!(now < deadline)) throw new Refusal(`step ${step}'s ceiling ${iso(deadline)} has passed; refusing`);
     const entries = readJournal(paths, phase.ref);
     const holds = holdsOf(entries, { readReceipt, ctxAt });
     if (holds.length) throw new Refusal(`${heldMessage(holds)}. A reviewed disposition (stage0-go.mjs dispose) releases it; refusing`);
@@ -1271,8 +1339,8 @@ export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout
     const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
     if (gate.stop || gate.complete || gate.next !== step) throw new Refusal(`the gate does not name ${step}: ${gate.stop ? `STOP: ${gate.reason}` : gate.complete ? gate.reason : `the next step is ${gate.next}`}; refusing`);
     const go = {
-      schema: "stage0-go/1", goId: newId(), phaseId, phaseSha: sha, workflow: phase.workflow, phase: phase.phase, step, text,
-      target: phase.target, ref: phase.ref, head, checkout, role, markerId: marker.markerId, issuedAt: iso(now), deadline: iso(deadline),
+      schema: "stage0-go/2", goId: newId(), phaseId, phaseSha: sha, workflow: phase.workflow, phase: phase.phase, step, text,
+      target: phase.target, ref: phase.ref, head, checkout, role, markerId: marker.markerId, issuedAt: iso(now), ceiling: iso(ceiling), deadline: iso(deadline),
       request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) },
       cancel: null,
       gate: { next: gate.next, after: entries.filter((e) => e.claim && e.claim.phaseId === phaseId).map((e) => e.attemptId) },
@@ -1322,12 +1390,14 @@ export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath,
  * marker, the same shell process, the same token, the marker's head, ref and
  * end); the text's role; the go named by id (unused, this marker's, this
  * phase's, step, text, head, ref and request, issued before now, before its
- * deadline). Under the store lock: the store again, no pending or held
- * attempt, and the gate names the go's step. Then the go is moved to
- * gos/used/ and the claim is written and recorded. Immediately before fetch,
- * inside send(), the deadline, the marker's end and the clock are checked
- * again; a failure there records NOT_SENT. After that point every failure is
- * AfterDispatch: the claim stays pending, which holds the project.
+ * deadline); the step's ceiling, recomputed here by ceilingOf() from the
+ * declaration and the phase's deadline, which the go must record exactly and
+ * its deadline must not pass. Under the store lock: the store again, no
+ * pending or held attempt, and the gate names the go's step. Then the go is
+ * moved to gos/used/ and the claim is written and recorded. Immediately
+ * before fetch, inside send(), the deadline, the marker's end and the clock
+ * are checked again; a failure there records NOT_SENT. After that point every
+ * failure is AfterDispatch: the claim stays pending, which holds the project.
  *
  * `send(plan, {clock, admit})` is the sender's send(); `writeReceipt(record)`
  * writes the receipt and returns its path.
@@ -1367,10 +1437,15 @@ export async function guardedSend(o) {
   for (const [k, v] of Object.entries(want)) if (go[k] !== v) throw new Refusal(`go ${goId} is not for this send: its ${k} differs; refusing`);
   if (marker.phaseSha !== sha || phase.head !== head || phase.ref !== plan.ref) throw new Refusal(`go ${goId}'s phase is not this marker's, head and ref; refusing`);
   if (!phase.steps.includes(go.step)) throw new Refusal(`go ${goId}'s step is not in its phase; refusing`);
-  const request = { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) };
+  const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
+  if (!wf) throw new Refusal(`workflow ${phase.workflow} is not declared; refusing`);
+  const ceiling = ceilingOf(wf, phase, go.step);
+  if (go.ceiling !== iso(ceiling)) throw new Refusal(`go ${goId} records ${go.step}'s ceiling as ${go.ceiling}; its declaration gives ${iso(ceiling)}: a stale or altered go; refusing`);
+  const request ={ md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) };
   if (JSON.stringify(go.request) !== JSON.stringify(request) || plan.template !== null) throw new Refusal(`go ${goId}'s request is not this send's; refusing`);
   const issued = utcMs(go.issuedAt), dl = utcMs(go.deadline);
   if (!(utcMs(phase.recordedAt) <= created && created <= issued && issued <= t0)) throw new Refusal(`go ${goId} was issued later than now, or before its marker: the clock went back; refusing`);
+  if (!(dl <= ceiling)) throw new Refusal(`go ${goId}'s deadline ${go.deadline} is after step ${go.step}'s ceiling ${iso(ceiling)}: a go never extends it; refusing`);
   if (!(dl <= until && dl <= utcMs(phase.deadline) && issued < dl)) throw new Refusal(`go ${goId}'s deadline is after its marker's or phase's end; refusing`);
   if (!(t0 < dl)) throw new Refusal(`go ${goId}'s deadline ${go.deadline} has passed; refusing`);
   const claim = withLock(paths, () => {
@@ -1443,7 +1518,7 @@ export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECE
   const entries = readJournal(paths, ref);
   const gos = [...chk.index.gos].filter(([, g]) => g.ev.ref === ref && g.state === "live").map(([goId]) => {
     const g = readState(join(paths.gos, `${goId}.json`));
-    return { goId, step: g.step, deadline: g.deadline, live: now < utcMs(g.deadline) };
+    return { goId, step: g.step, ceiling: g.ceiling, deadline: g.deadline, live: now < utcMs(g.deadline) };
   });
   return {
     intact: true,

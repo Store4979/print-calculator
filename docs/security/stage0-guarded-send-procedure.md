@@ -1,17 +1,25 @@
 # Stage 0 — the guarded sender: the procedure for every later session
 
-**Status: DRAFT, for Codex's review with the item 6 implementation and its
-correction O.** It clears no session, token, send or window. Item 3's staging
-experiment is the first session expected to run under it, under its own
-reviewed runbook and go.
+**Status: DRAFT, for Codex's review with the item 6 implementation, its
+correction O (accepted, `22610f8`) and the per-step-ceiling follow-up P.**
+It clears no session, token, send or window. Item 3's staging experiment is
+the first session expected to run under it, under its own reviewed runbook
+and go.
 
-**The production deadline contract is NOT complete.** A go's deadline is the
-**capture-phase admission cutoff**: the phase deadline less 60 s, the same
-for every step of the phase. There are no per-step latest-start ceilings
-yet. They come in a separate item 6 follow-up commit, and item 4(c) supplies
-and reviews the production numbers and the whole-remaining-path budget.
-Until both are in place no production phase is declared, so no production go
-can be issued (Codex, review of `78db6dc`).
+**Per-step ceilings (P).** Each step's go ends at the step's **ceiling**, its
+latest start: the phase deadline less what the phase's declaration reserves
+for the whole remaining path from that step. The phase records every step's
+ceiling and the go records its own. The issuer and the sender each recompute
+it from the pinned declaration and the phase's deadline, and refuse a stale
+or enlarged value: a go never outlives its step's ceiling. The capture
+phases declare none, so each of their steps has the **capture-phase
+admission cutoff**, the deadline less 60 s. A production phase must declare
+one ceiling per step.
+
+**The production deadline contract is complete only with item 4(c).** Its
+review supplies the production ceilings and the whole-remaining-path budget
+they come from. Until then no production phase is declared, so no production
+go can be issued (Codex, reviews of `78db6dc` and `22610f8`).
 
 **Sources:**
 - the item 6 plan, `docs/security/stage0-item6-sender-guards-plan.md`, as
@@ -33,11 +41,12 @@ token, prompt and paste checks (V-SCOPE, V-PROMPT, V-MASK, V-PREFIX, V-CLIP,
 |---|---|---|
 | **P1** a fresh window and token per phase | A marker binds one PowerShell process (Windows' pid, image and creation time) and an HMAC of the token loaded in it. A child shell, a later window, another token, a closed window: each is refused. One live window per role per phase. The marker ends at the phase deadline. | Checking the token's page: the project, the level, the expiry. |
 | **P2** one current command at a time | Every send names its go by id. A go is single-use, bound to one phase, step, text, window, head, ref and request, and expires. A used, voided, unknown, expired or foreign go is refused. | Nothing tells running the current command apart from retyping it: **no history, no up-arrow, no retype, no command from an earlier message**. |
-| **P3** the gate before every send | `stage0-go.mjs issue` runs the phase's gate on the journal, and the sender runs it again under the store lock. Only the step the gate names is issued or admitted. | Whether the whole remaining path fits before the reserve's end (the time rule) is Claude's stated check, not code. |
+| **P3** the gate before every send | `stage0-go.mjs issue` runs the phase's gate on the journal, and the sender runs it again under the store lock. Only the step the gate names is issued or admitted. | — |
+| **the time rule** (per-step ceilings) | Each step has a ceiling, its latest start, from the reviewed declaration and the phase deadline. Nothing is issued at or after it. The sender recomputes it, and refuses at or after it (at admission, under the store lock and immediately before fetch), and refuses a go that records another ceiling or ends later. | That the declared reserves are right: item 4(c)'s review for production. Claude still states at each step that the remaining path fits, since a slow session can need more than was reserved. |
 | **P4** only this session's fresh results | The gate reads receipts through the journal: each by its recorded sha256, with a guard block equal to its claim. A receipt without one, a stripped or edited one, or a historical one stops the phase. | — |
 | **P5** every pause is an exit | Nothing detects a person stepping away. The marker's end (the phase deadline) and the clock check's 60 minutes bound how long a forgotten window stays usable. | **Every pause is an exit (§5).** |
 | **P6** exit codes and banners are not authorization | The sender's banner now says so. An unresolved writing outcome holds the project until a reviewed disposition (§6), in every window and every later phase. | Reading the classification and the step's check before asking for the next go. |
-| **the store** (I6-R1) | Only `init` makes the store; the repository's anchor must name it. Every live command checks the store against its ledger, both ways: a lost, altered or unrecorded file is DAMAGE, and nothing is registered, issued or sent. | Never editing, moving or deleting the store; a restoration is reviewed (§7). |
+| **the store** (I6-R1) | Only `init` makes the store; the repository's anchor must name it. Every live command checks the store against its ledger, both ways: a lost, altered or unrecorded file is DAMAGE, and nothing is registered, issued or sent. | Never editing, moving or deleting the store; a restoration is reviewed (§7). A whole store rolled back to a valid earlier state is NOT detected: never restore a backup or snapshot of it in place, and treat any suspected restore, sync rollback or storage loss as STOP-and-review (§7). |
 | **one approval, one phase** (I6-R2) | Ryan's go line carries an approval id drafted for that phase. The same id again returns the same phase, with its progress; it never makes a second one. | That the line came from Ryan, in chat. |
 
 The guards are a mistake barrier, not a sandbox. Anyone who edits the pinned
@@ -114,9 +123,9 @@ node scripts/manual/stage0-go.mjs init
    - the deadline as `YYYY-MM-DD HH:MM UTC`, with the Eastern time beside it
      and both dates (October is UTC−4; after 1 November 2026, UTC−5).
 
-   The deadline is the phase's end, inside the token's expiry. Every step's go
-   expires 60 s before it: this is the capture-phase admission cutoff, not a
-   per-step latest start.
+   The deadline is the phase's end, inside the token's expiry. Each step's
+   ceiling follows from it and the reviewed declaration (§4); `phase` prints
+   them. For a capture phase every ceiling is the deadline less 60 s.
 4. **RYAN** returns it word for word. Its arrival is the go time.
 5. **CLAUDE** writes Ryan's message, exactly, to a file outside the
    checkout, and records it within 10 minutes of its arrival, with at least
@@ -126,11 +135,12 @@ node scripts/manual/stage0-go.mjs init
    node scripts/manual/stage0-go.mjs phase --workflow capture --phase <P> --go-text <file> --arrived <UTC> --deadline <UTC> [--reviewed <file>]
    ```
 
-   It refuses unless the text names everything in point 3 and its approval
-   id was drafted for this phase. A phase that needs a reviewed decision (U)
-   names the review file. A token-shaped value in the text is a STOP. It
-   prints the phase id. Recording checks what the message says; it does not
-   show who sent it, which stays Ryan's chat.
+   It refuses unless the text names everything in point 3, its approval id
+   was drafted for this phase, and no step's ceiling has passed. A phase
+   that needs a reviewed decision (U) names the review file. A token-shaped
+   value in the text is a STOP. It prints the phase id and every step's
+   ceiling, which Claude reports to Ryan. Recording checks what the message
+   says; it does not show who sent it, which stays Ryan's chat.
    - **The same approval again** (the same line recorded twice, by mistake or
      from history) returns the SAME phase, with its progress: it never makes
      a second phase or restarts its steps. The same id with other words
@@ -189,17 +199,22 @@ issued for a cancel text.
    ```
 
    It refuses unless the gate names this step, exactly one live window of
-   the step's role is open for the phase, the project holds nothing, and no
-   other unused go is outstanding. It prints one command, for one window:
+   the step's role is open for the phase, the project holds nothing, no
+   other unused go is outstanding, and the step's ceiling has not passed. It
+   prints one command, for one window:
 
    ```powershell
    node scripts/manual/stage0-send.mjs <TEXT> --target <t> --confirm-ref <ref> --go <32-character id>
    ```
 
-   The go's deadline is the capture-phase admission cutoff: the phase
-   deadline less 60 s. It is not a per-step latest start. Claude also states
-   the time rule (the remaining path fits before the reserve's end), which
-   the tools do not compute.
+   The go's deadline is the step's ceiling. The sender recomputes that
+   ceiling from the declaration and the phase's deadline, and refuses a go
+   that records another or ends later. Past the ceiling the step is not
+   sent, even while the phase and its windows are still open, and the gate
+   does not skip ahead to a later step: nothing more is issued in that
+   phase (CE-5). Claude also
+   states that the remaining path fits; the tools enforce only the reviewed
+   reserves.
 2. **RYAN** runs that command once, in the window it names, and pastes the
    sender's lines. They carry no secret.
 3. **The exit code:**
@@ -259,8 +274,9 @@ The journal holds the **project**, for every window, phase and checkout
   journal file is malformed; or it is a writing send that rule 3′ classifies
   R1 or R4.
 
-A NOT_SENT attempt (the deadline passed in the last check before fetch)
-holds nothing, and its step stays next. Its go is used: a new go is issued.
+A NOT_SENT attempt (the go's deadline, its step's ceiling, passed in the
+last check before fetch) holds nothing, and its step stays next. Its go is
+used: a new go is issued only while that step's ceiling has not passed.
 
 **Only a reviewed disposition releases a hold:**
 
@@ -299,6 +315,34 @@ never edited, moved or deleted by hand.**
   runs where it can. A missing claim, outcome or disposition, a lost
   directory, a store that is not the anchored one, and a missing store are
   all damage, not a fresh start.
+- **What the checks cannot see: a coherent rollback** (Codex, review of
+  `22610f8`). The checks compare the ledger with the files, so they catch
+  a loss that leaves the two disagreeing:
+  - the newest claim lost together with its ledger line is damage. The go
+    sits in `gos/used/` while the shortened ledger expects it live (ST-9);
+  - the newest outcome lost together with its line leaves records that
+    agree, but the claim is PENDING again, so the project stays held
+    (ST-9).
+
+  A store put back **as a whole** to a valid earlier state passes every
+  check. That state might come from a restored profile, backup or snapshot,
+  a sync rollback or a filesystem restore: in each case the used go is back
+  in its live place too. Neither the anchor nor anything in the store
+  records its latest sequence, and receipts outside the store are not
+  searched. A PENDING attempt may have no receipt at all. So:
+  - any known or suspected restore, sync rollback or storage loss affecting
+    `%USERPROFILE%\.stage0-guard` is **STOP-and-review**;
+  - **no backup or snapshot of the store is ever restored in place**, even
+    when every check passes on it. Restoration is only the reviewed path
+    below;
+  - an unresolved send known from outside the store (a receipt, a
+    transcript, a report) stays unresolved, whatever `status` says. If the
+    latest history cannot be established, UO-1 applies. A clock check, a new
+    marker or a new phase is not a disposition.
+
+  This is a limit of a local mistake barrier, not an anti-rollback
+  guarantee and not a behaviour to keep: another head file inside the same
+  store would roll back with it and prove nothing.
 - **The lock.** One `lock` file serializes every change. A command waits up
   to 10 s for it, then refuses. A stale lock (a guard process killed while
   holding it) is reported by `status`. It is removed by hand only after

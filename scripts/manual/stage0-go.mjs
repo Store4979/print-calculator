@@ -27,14 +27,16 @@
 // phase    registers Ryan's go for one phase from the file holding his
 //          message's exact text, with the time it arrived (UTC) and its
 //          deadline (UTC). The same approval again returns the same phase,
-//          with its progress. It prints the phase id and the window commands.
+//          with its progress. It prints the phase id, each step's ceiling and
+//          the window commands.
 // issue    runs the phase's exact-step gate on the journal and, when it names
 //          this step, writes the step's one go and prints the one send
 //          command, which names the go by id. The go's deadline is the
-//          capture-phase admission cutoff (the phase deadline less 60 s);
-//          per-step latest starts, and so the production deadline contract,
-//          are not implemented yet. Whether the whole remaining path fits
-//          before the reserve's end stays the runbook's human check.
+//          step's ceiling: the phase deadline less what the phase's
+//          declaration reserves for the remaining path from that step, or
+//          less 60 s where it declares none (the capture-phase admission
+//          cutoff). The sender recomputes it. The production ceilings are
+//          item 4(c)'s, in review.
 // void     moves an unused go to gos/void/.
 // dispose  records a reviewed disposition of one held or pending attempt;
 //          the review file must name the attempt id.
@@ -144,6 +146,7 @@ export function main(argv, env, deps = {}) {
     const p = r.phase;
     if (r.existing) out(`approval ${p.approvalId} is already registered as phase ${p.phaseId} (recorded ${p.recordedAt}): it is returned, and its progress is unchanged\n`);
     out(`phase ${p.phaseId}: ${p.workflow} ${p.phase} (${p.steps.join(", ")}) on ${p.target} ${p.ref} at ${head.slice(0, 7)}, until ${p.deadline}\n`);
+    out(`ceilings (latest starts): ${p.steps.map((s) => `${s} before ${p.ceilings[s]}`).join("; ")}\n`);
     out(`In each window, after the token and STAGE0_SESSION: node scripts/manual/stage0-window.mjs open --role <R|W> --phase ${p.phaseId}\n`);
     return { phase: p, existing: r.existing };
   }
@@ -154,7 +157,7 @@ export function main(argv, env, deps = {}) {
       paths, anchor, manifest, phaseId: o.phase, step: o.step, head, checkout: root, now: t, identity, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt,
       planFor: (text, target) => planSend(manifest, text, target, { cwd: root }),
     });
-    out(`go ${go.goId}: ${go.step} (${go.text}) from the ${go.role} window, marker ${go.markerId.slice(0, 8)}…, before ${go.deadline} (the phase's admission cutoff)\n`);
+    out(`go ${go.goId}: ${go.step} (${go.text}) from the ${go.role} window, marker ${go.markerId.slice(0, 8)}…, before ${go.deadline} (${go.step}'s ceiling ${go.ceiling})\n`);
     out(`Run once, in the ${go.role} window:\n`);
     out(`node scripts/manual/stage0-send.mjs ${go.text} --target ${go.target} --confirm-ref ${go.ref} --go ${go.goId}\n`);
     return { go };

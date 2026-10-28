@@ -4,9 +4,10 @@
 // send goes to a fetch stub that counts requests, and "refused" means a
 // Refusal with ZERO requests. Clocks, shell processes and HEAD are injected;
 // stage0-guard.shell.test.js runs the shell binding through real PowerShell
-// processes on Windows, and stage0-guard.store.test.js covers the store's
+// processes on Windows, stage0-guard.store.test.js covers the store's
 // integrity and one-registration-per-approval (Codex's review of 78db6dc,
-// I6-R1 and I6-R2).
+// I6-R1 and I6-R2), and stage0-guard.ceiling.test.js the per-step ceilings
+// (its item 1; P).
 //
 //   G-1  Q2: each text goes only from a window of its policy role
 //   G-2  Q2: a missing or unknown role refuses; read_only never decides it
@@ -85,6 +86,15 @@ function rechain(fx, edit) {
     return line;
   });
   writeFileSync(fx.paths.ledger, lines.join("\n") + "\n");
+}
+
+/** Rewrite a marker to end at `untilMs`, with its ledger line, as a deliberate consistent edit would; returns the new marker. */
+function endMarker(fx, marker, untilMs) {
+  const m = { ...marker, until: G.iso(untilMs) };
+  const text = JSON.stringify(m, null, 2) + "\n";
+  writeFileSync(join(fx.paths.markers, `${m.markerId}.json`), text);
+  rechain(fx, (events) => { for (const e of events) if (e.kind === "marker-open" && e.markerId === m.markerId) e.sha256 = G.sha256(Buffer.from(text, "utf8")); });
+  return m;
 }
 
 const holds = (fx, ref = PROD) => G.holdsOf(G.readJournal(fx.paths, ref), { ctxAt: fx.ctxAt });
@@ -707,10 +717,15 @@ test("G-18 SG-5: the go's deadline and the window's end are exclusive bounds: 1 
       assert.equal(fx.calls.length, calls, `go deadline ${delta}`);
     } finally { fx.cleanup(); }
   }
+  // A window always ends at the phase deadline, after every step's ceiling;
+  // to reach its own bound, this marker is rewritten to end 5 min before the
+  // ceiling (and its ledger line with it), so the issuer's go ends there too.
   for (const [delta, calls] of [[-1, 1], [0, 0], [1, 0]]) {
     const { fx, ph, W } = setupP();
     try {
-      const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { deadline: W.marker.until } });
+      W.marker = endMarker(fx, W.marker, G.utcMs(ph.ceilings.A1) - 5 * MIN);
+      const go = fx.issue(ph.phaseId, "A1");
+      assert.equal(go.deadline, W.marker.until, "the go ends with its window");
       fx.set(G.utcMs(W.marker.until) + delta);
       const p = fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId });
       if (calls) assert.equal((await p).record.httpStatus, 201, `window end ${delta}`);
@@ -1010,8 +1025,40 @@ async function pendingInY(fx) {
   return h[0].attemptId;
 }
 
+/** Phase P with declared ceilings (A1 50 min, A2 20 min, A3 10 min before a 90-minute deadline), recorded at T0: A1's ceiling is T0 + 40 min. */
+function setupCeil() {
+  const workflows = { t: synthWorkflow("production", { P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]] }, { ceilings: { P: { A1: 50 * MIN, A2: 20 * MIN, A3: 10 * MIN } } }) };
+  const fx = fixture({ workflows });
+  fx.clock();
+  const ph = fx.phase("t", "P", { minutes: 90 });
+  return { fx, ph, c1: G.utcMs(ph.ceilings.A1) };
+}
+
 /** Each scenario sets up with the real guard and sends with `X`; it returns the result or the error and the request count. */
 const SCENARIOS = {
+  "a go whose deadline passes its step's ceiling": async (X) => {
+    const { fx, ph, c1 } = setupCeil();
+    const W = fx.window("W", ph.phaseId, { pid: 1002 });
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { deadline: G.iso(G.utcMs(ph.deadline) - G.MARGIN_MS) } });
+    fx.set(c1 + MIN);
+    fx.clock();
+    return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
+  },
+  "a go recording a stale ceiling": async (X) => {
+    const { fx, ph, c1 } = setupCeil();
+    const W = fx.window("W", ph.phaseId, { pid: 1002 });
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production", over: { ceiling: G.iso(c1 - 5 * MIN), deadline: G.iso(c1 - 5 * MIN) } });
+    return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
+  },
+  "a phase record with an altered ceiling": async (X) => {
+    const { fx, ph } = setupCeil();
+    const text = JSON.stringify({ ...ph, ceilings: { ...ph.ceilings, A2: G.iso(G.utcMs(ph.ceilings.A2) + 5 * MIN) } }, null, 2) + "\n";
+    writeFileSync(join(fx.paths.phases, `${ph.phaseId}.json`), text);
+    rechain(fx, (events) => { for (const e of events) if (e.kind === "phase" && e.phaseId === ph.phaseId) e.sha256 = G.sha256(Buffer.from(text, "utf8")); });
+    const W = fx.window("W", ph.phaseId, { pid: 1002 });
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production" });
+    return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
+  },
   "an R window sends a W text": async (X) => {
     const { fx, ph, R } = setupP();
     const go = forgeGo(fx, { phase: ph, marker: R.marker, step: "A1", text: "P2-01", target: "production" });
@@ -1141,6 +1188,9 @@ const GUARD_MUTANTS = [
   ["the issue time", "a go issued in the future", [["created <= issued && issued <= t0))", "created <= issued))"]]],
   ["NODE_OPTIONS", "NODE_OPTIONS", [["  if (typeof env.NODE_OPTIONS === \"string\" && env.NODE_OPTIONS.trim()) out.push", "  if (false) out.push"]]],
   ["the pre-fetch check", "the deadline passing before fetch", [["  const admit = () => {\n", "  const admit = () => {\n    return;\n"]]],
+  ["the step's ceiling in the sender", "a go whose deadline passes its step's ceiling", [["  if (!(dl <= ceiling)) throw", "  if (false) throw"]]],
+  ["the go's recorded ceiling", "a go recording a stale ceiling", [["  if (go.ceiling !== iso(ceiling)) throw", "  if (false) throw"]]],
+  ["the phase's recorded ceilings (ceilingOf)", "a phase record with an altered ceiling", [["  for (const [s, ms] of Object.entries(want)) if (phase.ceilings[s] !== iso(ms)) throw", "  for (const [s, ms] of Object.entries(want)) if (false) throw"]]],
 ];
 
 test("G-26 the mutation companion: each named check, removed, admits exactly one request in the scenario where the original allows none", async () => {

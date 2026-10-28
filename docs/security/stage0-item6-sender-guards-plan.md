@@ -495,7 +495,7 @@ database operation, item 3 or a production window.
   at that phase's deadline. There is no separate `--until`.
 - **No per-step latest-start ceilings yet.** A go's deadline is the phase
   deadline less 60 s. A production runbook that needs per-step ceilings
-  declares them with its phases, in review.
+  declares them with its phases, in review. (Added in P: §C.)
 - **Only the capture workflow is declared.** No production phase, and no
   item 3 phase, can be recorded until it is declared in code with its gate.
 - **The sender re-runs the gate** under the lock, as well as the issuer.
@@ -593,6 +593,7 @@ every step. Per-step latest-start ceilings, bound to the recorded phase and
 go and re-checked by the sender, come in a separate item 6 follow-up commit
 after O. Item 4(c) supplies and reviews the production numbers and the
 whole-remaining-path budget. No production phase is declared before both.
+(The generic support is P: §C.)
 
 ### B.5 What O does not do
 
@@ -600,3 +601,126 @@ whole-remaining-path budget. No production phase is declared before both.
   committed. Every live command refuses until both are in place, and that
   commit is reviewed with item 3's runbook.
 - No push, token, send or database change.
+
+---
+
+## C. Codex's review of O, and commit P: per-step ceilings
+
+**The ruling** (`reviews/2026-10-28-22610f8-review.md`, evidence
+`reviews/release-22610f8-*`): ACCEPT O within the bounded mistake-barrier
+contract.
+- **Closed:** I6-R1 and I6-R2, for their reviewed cases.
+- **Accepted:** the ordering fix, and the committed anchor as an identity
+  anchor, not a log-head witness.
+- **Pushed:** the staging-only push of `0687296`, `78db6dc` and O was
+  cleared. It is recorded in the production plan §E13.
+- **Still to come:** per-step ceilings stay the item 6 follow-up, which is
+  this commit, P. Item 4(c) supplies the production numbers.
+
+Ryan's instructions for P:
+1. generic per-step ceilings, bound to the recorded phase and go and
+   re-checked independently by the sender, so that a go can never extend a
+   step's ceiling;
+2. Codex's tail-loss ruling in the procedure and here, with the paired
+   claim-and-log loss as a regression test.
+
+### C.1 The ceilings
+
+- **The declaration.** A workflow phase may carry `ceilings: { <step>: ms }`:
+  what each step reserves before the phase deadline for the whole remaining
+  path from it. `ceilingReserve()` refuses unless the declaration:
+  - names exactly the phase's steps;
+  - gives each a whole number of minutes, at least `MARGIN_MS` (60 s);
+  - reserves no more for a later step than for the one before it.
+
+  A phase that declares none reserves 60 s for every step: the capture-phase
+  admission cutoff, as before. Every capture phase is such a phase. **A
+  production phase must declare them**: one without them refuses at `draft`,
+  `phase`, `issue` and the sender. No production phase is declared.
+- **The phase** (`stage0-phase/3`) records `ceilings`: each step's ceiling
+  as a UTC time, the deadline less its reserve. Registration refuses once
+  any step's ceiling has passed. `loadPhase()` refuses a record whose
+  ceilings are not one per step, in order, after its recording and at least
+  60 s before its deadline.
+- **The issuer** recomputes the step's ceiling with `ceilingOf()`. That
+  function also refuses unless the phase recorded exactly the declared
+  ceilings, every step's. The issuer refuses at or after the ceiling. The
+  go (`stage0-go/2`) records the `ceiling`, and its `deadline` is the
+  ceiling, or the marker's end if that is earlier. It is always the
+  ceiling: a marker ends at the phase deadline.
+- **The sender recomputes the ceiling itself**, with the same function, from
+  its pinned declaration and the phase's deadline. It then refuses:
+  - a go whose `ceiling` is not exactly that value (stale or altered);
+  - a go whose `deadline` is later than it.
+
+  Its existing exclusive checks of the go's deadline then hold at the
+  ceiling at all three points: admission, under the store lock, and
+  immediately before fetch.
+- **Unchanged:** the claim and the receipt's guard block carry the go's
+  deadline, as before. The classifier's guard-block shape is not touched.
+- **The command lines.** `phase` prints every step's ceiling. `issue`
+  prints the go's ceiling and deadline.
+
+**What it does not do:**
+- It does not compute whether the remaining path fits as a session's pace
+  changes. The reserves are fixed, reviewed numbers; Claude still states
+  the fit at each step.
+- It does not supply the production numbers. That is item 4(c).
+- Ryan's go line is unchanged: it names the deadline, and the ceilings
+  follow from it and the declaration at the pinned head. Whether the line
+  should also name each step's latest start is a question for Codex (the
+  review request, §7).
+
+### C.2 The tests
+
+`scripts/tests/stage0-guard.ceiling.test.js`, in `yarn test`. Every negative
+asserts a Refusal and zero requests.
+
+| test | what it shows |
+|---|---|
+| CE-1 | Every capture phase gives 60 s per step. A production phase without ceilings, and each malformed declaration, refuse; nothing is drafted |
+| CE-2 | Registration records every ceiling. Before, at and after the first step's ceiling: registered, refused, refused |
+| CE-3 | The issuer, before, at and after each of A1, A2 and A3's ceilings: the go records the ceiling and ends at it, or nothing is issued |
+| CE-4 | The sender, before, at and after each step's ceiling at admission (one request, or none), under the store lock (no claim) and immediately before fetch (NOT_SENT, nothing held) |
+| CE-5 | **A late early step:** one minute after A1's ceiling, with the phase, its windows and A2's and A3's ceilings open. A1 is not issued; its earlier go is not sent; A2 is not issued (the gate names A1); a forged go running to the phase's cutoff, or restating A1's ceiling as the cutoff, is refused. The control, with 60 s reserves, admits A1 at the same time |
+| CE-6 | **Stale or enlarged ceilings.** A go whose ceiling is later or earlier than declared. A go whose deadline is past its ceiling. A phase record with one ceiling moved (its ledger line re-chained, so the store checks). A declaration made tighter or looser after registration, at the issuer and for a go issued before. Each is refused |
+| CE-7 | `phase` and `issue` print the ceilings |
+
+- **G-18:** the window-end bound is now tested with a marker rewritten to end
+  before the step's ceiling. An honest window always ends after it.
+- **G-26** gains three mutants, 18 in all:
+  - the sender's ceiling bound;
+  - the go's recorded ceiling;
+  - the phase's recorded ceilings in `ceilingOf()`.
+
+  Each, removed, admits exactly one request in a scenario that only it
+  refuses.
+- **The fixture's `synthWorkflow`** declares 60 s per step for a production
+  phase the test does not give ceilings. The other tests keep their timing,
+  and the ceiling code runs in all of them.
+
+### C.3 The tail-loss ruling
+
+Codex's ruling, in the procedure's §7 and its §0 table:
+- **Detected:** the newest claim lost together with its ledger line. The go
+  sits in `gos/used/` while the shortened ledger expects it live.
+- **Held, not damaged:** the newest outcome lost together with its line.
+  The records agree, but the claim is PENDING, so the project stays held.
+- **Not detected:** a store put back as a whole to a valid earlier state.
+  The anchor is an identity anchor, the store records no head that
+  survives a rollback, and receipts outside the store are not searched.
+  Any known or suspected restore, sync rollback or storage loss is
+  STOP-and-review. No backup or snapshot is restored in place. An
+  unresolved send known from outside the store stays unresolved (UO-1).
+
+**ST-9** (`stage0-guard.store.test.js`) is the regression test for the
+first two cases, with no go and no request from the issuer and the sender.
+The coherent rollback is deliberately not asserted. It is a limit, not a
+behaviour any later change must keep.
+
+### C.4 What P does not do
+
+- No production phase, numbers or whole-path budget (item 4(c)).
+- No `init`, no anchor, no token, send, push or database change. The first
+  `init` and its anchor commit come with the item 3 plan, in their own
+  review.
