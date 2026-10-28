@@ -243,9 +243,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "242f3715529275508b376fb54714216df178b482",
-    "md5": "b605a19af297f7f9d5820c3e9c9d29c6",
-    "bytes": 57175,
+    "blob": "69f64387bd21a557ca17beb00a24f24de33515d5",
+    "md5": "abe7606858be537e04cd0c0610922d40",
+    "bytes": 64993,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -265,9 +265,9 @@
     "files": [
       {
         "path": "scripts/manual/assemble-stage0.mjs",
-        "blob": "242f3715529275508b376fb54714216df178b482",
-        "md5": "b605a19af297f7f9d5820c3e9c9d29c6",
-        "bytes": 57175,
+        "blob": "69f64387bd21a557ca17beb00a24f24de33515d5",
+        "md5": "abe7606858be537e04cd0c0610922d40",
+        "bytes": 64993,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -279,9 +279,9 @@
       },
       {
         "path": "scripts/manual/stage0-classify.mjs",
-        "blob": "720754c90e8ba27f3d4d9edd80ffee01261788ad",
-        "md5": "8bcd5f9197b19b10c918ae7a265c1a5a",
-        "bytes": 44241,
+        "blob": "911ca3a9745df24bdb4dcd103f49b8b21687ddfb",
+        "md5": "5c536ce43290be50c13056b2fb1ce32d",
+        "bytes": 48517,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -293,9 +293,16 @@
       },
       {
         "path": "scripts/manual/stage0-guard.mjs",
-        "blob": "7526b10a2e88b6cc0cc275cfa7194953eeed2253",
-        "md5": "9529c2f87978a262890576671b24dd75",
-        "bytes": 109398,
+        "blob": "f15a9d8e6f943210c3653223a85007740d40a1bf",
+        "md5": "9b9e89a798f38b15ca0bb332bb0b1eaa",
+        "bytes": 109953,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-item3.mjs",
+        "blob": "d728b7607d59d51800124245a7eeef29f7103960",
+        "md5": "8f2696e905fe4de9735a11e6373f16ba",
+        "bytes": 14947,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -640,6 +647,74 @@
       "md5": "ece595beef61fa0817442376b2266089",
       "bytes": 112
     },
+    "I3-SETUP": {
+      "md5": "21d42ab08bd8d6f75bd2d883073d5cea",
+      "bytes": 1965
+    },
+    "I3-FIXTURE": {
+      "md5": "6b4cd891538c9bb4d32b7fbd6a2dbce7",
+      "bytes": 1853
+    },
+    "I3-WHO-R-RO": {
+      "md5": "c2d8cbaca3f1cd015107df6edb811b32",
+      "bytes": 1170
+    },
+    "I3-WHO-R-DEF": {
+      "md5": "3c4c309ddef25d97928ada5772e855e4",
+      "bytes": 1171
+    },
+    "I3-WHO-W-RO": {
+      "md5": "ed358473f9837fa2d1b504cea23e3780",
+      "bytes": 1170
+    },
+    "I3-WHO-W-DEF": {
+      "md5": "e7445cb445bf24416642a298a3c10f61",
+      "bytes": 1171
+    },
+    "I3-INS-OWNED-W-RO": {
+      "md5": "4ceb5fcf1f42331c57ab837d675e2196",
+      "bytes": 189
+    },
+    "I3-INS-OWNED-R-RO": {
+      "md5": "1d6a7246e13e77475752a586a6e50ef2",
+      "bytes": 189
+    },
+    "I3-INS-OPEN-R-RO": {
+      "md5": "bbf4ef10d63b88bc3d03349370c4f826",
+      "bytes": 185
+    },
+    "I3-INS-OWNED-W-DEF": {
+      "md5": "d8e4f3a5f199e508f438a694bb1a4122",
+      "bytes": 191
+    },
+    "I3-INS-OPEN-R-DEF": {
+      "md5": "e1038d8b00df8ca001d307fbfca68f7d",
+      "bytes": 187
+    },
+    "I3-INS-OWNED-R-DEF": {
+      "md5": "b2c09f4ef817d96c0e89d4426aa5be72",
+      "bytes": 191
+    },
+    "I3-DDL-W-DEF": {
+      "md5": "d1f293a5814699620c58099f0224708d",
+      "bytes": 213
+    },
+    "I3-DDL-R-DEF": {
+      "md5": "527dcfe127e51ca3ea1ff1b0546fd4ad",
+      "bytes": 213
+    },
+    "I3-READBACK": {
+      "md5": "2177f8784b37411e55955921b4d62671",
+      "bytes": 898
+    },
+    "I3-CLEANUP": {
+      "md5": "b1964b2f46699dfd6c0591e5d7a27c21",
+      "bytes": 824
+    },
+    "I3-ABSENT": {
+      "md5": "bdd753af88606bd5b410cddd9d6544c7",
+      "bytes": 149
+    },
     "RB-5": {
       "md5": "92c1c8bceb5c6a943c682cf3ca4c20db",
       "bytes": 16551
@@ -949,6 +1024,142 @@
         ],
         "readOnly": true,
         "window": "R"
+      },
+      "I3-SETUP": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "write"
+      },
+      "I3-FIXTURE": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "I3-READBACK": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "read"
+      },
+      "I3-WHO-R-RO": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "I3-WHO-R-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "R",
+        "effect": "read"
+      },
+      "I3-WHO-W-RO": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "W",
+        "effect": "read"
+      },
+      "I3-WHO-W-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "read"
+      },
+      "I3-INS-OWNED-W-RO": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "W",
+        "effect": "write"
+      },
+      "I3-INS-OWNED-R-RO": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "write"
+      },
+      "I3-INS-OPEN-R-RO": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "write"
+      },
+      "I3-INS-OWNED-W-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "write"
+      },
+      "I3-INS-OPEN-R-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "R",
+        "effect": "write"
+      },
+      "I3-INS-OWNED-R-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "R",
+        "effect": "write"
+      },
+      "I3-DDL-W-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "write"
+      },
+      "I3-DDL-R-DEF": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "R",
+        "effect": "write"
+      },
+      "I3-CLEANUP": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "write"
+      },
+      "I3-ABSENT": {
+        "targets": [
+          "staging"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
       }
     },
     "windowNote": "Codex item 6 (Q2): each text is sent only from a window of its role, R, W or C. The role is listed per text, never derived from readOnly: LOCKPROBE-READBACK and CANCEL-INSPECT go without read_only and write nothing. M-12 fixes the mapping."

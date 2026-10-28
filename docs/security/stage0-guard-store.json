@@ -1,0 +1,10 @@
+{
+  "schema": "stage0-guard-anchor/1",
+  "storeId": "3389bb8f8df9280e7608c455249678f5",
+  "createdAt": "2026-10-28T17:23:47.656Z",
+  "refs": {
+    "production": "gmxyisjjaxtpycsmmzef",
+    "staging": "lboajqihpsfrokqvjgnl"
+  },
+  "predecessor": null
+}

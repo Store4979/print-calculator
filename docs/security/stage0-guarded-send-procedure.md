@@ -81,9 +81,10 @@ node scripts/manual/stage0-go.mjs init
 - `init` is not part of a session. On this machine it ran once, on
   2026-10-28, under Codex's narrow first-init clearance, from a clean
   checkout of O. It made store `3389bb8f8df9280e7608c455249678f5`. The
-  verbatim record is kept with the item 3 implementation commit, which
-  carries the anchor for review. A rebuilt implementation reuses this store;
-  nothing justifies another first init.
+  verbatim record is the item 3 plan's §9, and the anchor is
+  `docs/security/stage0-guard-store.json`, both in the item 3
+  implementation commit, for review. A rebuilt implementation reuses this
+  store; nothing justifies another first init.
 
 ## 1. Before the session (CLAUDE)
 
@@ -187,9 +188,11 @@ node scripts/manual/stage0-go.mjs init
      line, and Ryan's new go. Neither the wording nor the arrival time is the
      approval's identity.
 
-   Only the item 2 capture phases are declared today. A production phase,
-   or item 3's, is declared in code with its gate and its ceilings, in
-   review, before any go for it can be recorded.
+   Two staging workflows are declared: the item 2 capture phases, and item
+   3's phases E and X (`--workflow item3`; runbook
+   `docs/security/stage0-item3-runbook.md`). A production phase is declared
+   in code with its gate and its ceilings, in review, before any go for it
+   can be recorded.
 
 ## 3. Each window (RYAN)
 

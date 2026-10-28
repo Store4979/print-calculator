@@ -142,7 +142,7 @@ test("G-1 Q2: each text goes only from a window of its policy role; R refuses W 
           n++;
         }
       }
-      assert.equal(n, target === "production" ? 24 : 16, "12 production texts with two other roles each; 16 staging texts with one");
+      assert.equal(n, target === "production" ? 24 : 33, "12 production texts with two other roles each; 33 staging texts (item 2's 16, item 3's 17) with one");
       assert.equal(fx.calls.length, 0, "no request");
       if (target === "staging") await refused(() => fx.window("C", ph.phaseId, { pid: 3999 }), /sends nothing from a C window/, "no C window on staging");
     } finally { fx.cleanup(); }
@@ -1003,7 +1003,7 @@ test("G-25 the 2026-10-09 incident, replayed at its real times and windows: ever
 const GUARD_SRC = readFileSync(join(ROOT, "scripts", "manual", "stage0-guard.mjs"), "utf8").replace(/\r\n/g, "\n");
 async function mutant(edits, dir, n) {
   let s = GUARD_SRC;
-  for (const m of ["assemble-stage0.mjs", "stage0-classify.mjs", "stage0-capture.mjs"]) s = s.split(`from "./${m}"`).join(`from ${JSON.stringify(pathToFileURL(join(ROOT, "scripts", "manual", m)).href)}`);
+  for (const m of ["assemble-stage0.mjs", "stage0-classify.mjs", "stage0-capture.mjs", "stage0-item3.mjs"]) s = s.split(`from "./${m}"`).join(`from ${JSON.stringify(pathToFileURL(join(ROOT, "scripts", "manual", m)).href)}`);
   for (const [from, to] of edits) {
     assert.equal(s.split(from).length, 2, `the mutant's target occurs exactly once: ${from.slice(0, 90)}`);
     s = s.split(from).join(to);

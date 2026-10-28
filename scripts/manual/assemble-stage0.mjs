@@ -834,6 +834,103 @@ function envelopeProbeTexts() {
   };
 }
 
+// ── item 3: the read-token experiment (docs/security/stage0-item3-read-token-plan.md) ──
+// STAGING ONLY. Every write targets the throwaway schema stage0_item3. Each
+// probe (I3-INS-*, I3-DDL-*) is one plain statement with nothing ahead of it,
+// so the request reaches the permission decision itself (Codex, incident
+// review §3; item 3 plan review I3-3), followed for a CREATE by a read of
+// the catalog. SETUP and CLEANUP refuse unless the staging seed store is
+// present and production's ledger marker is absent. The suffix names the
+// window (R or W) and the request mode: RO sends read_only, DEF does not.
+export const I3_SCHEMA = "stage0_item3";
+/** Each INSERT probe's row id, its table, and the window and mode it is sent with. */
+export const I3_INSERTS = [
+  ["I3-INS-OWNED-W-RO", 1, "owned"], ["I3-INS-OWNED-R-RO", 2, "owned"], ["I3-INS-OPEN-R-RO", 3, "open"],
+  ["I3-INS-OWNED-W-DEF", 4, "owned"], ["I3-INS-OPEN-R-DEF", 5, "open"], ["I3-INS-OWNED-R-DEF", 6, "owned"],
+];
+/** Each CREATE TABLE probe and the table it makes. */
+export const I3_DDLS = [["I3-DDL-W-DEF", "ddl_w"], ["I3-DDL-R-DEF", "ddl_r"]];
+export const I3_WHO = ["I3-WHO-R-RO", "I3-WHO-R-DEF", "I3-WHO-W-RO", "I3-WHO-W-DEF"];
+const I3_GUARD = (tag) => `do $g$ begin
+  if not exists (select 1 from public.stores s where s.id = ${q(STAGING_SEED_STORE)}) then
+    raise exception '${tag}: the staging seed store is absent; this runs on staging only; refusing' using errcode = 'P0001'; end if;
+  if exists (select 1 from supabase_migrations.schema_migrations m
+              where m.version = '20260909232836' and m.name = 'phase_e_03_order_margin_snapshot'
+                and md5(m.statements[1]) = 'b7a8e54c99432c5e0ddb60be4c46505f') then
+    raise exception '${tag}: the production ledger marker is present; not staging; refusing' using errcode = 'P0001'; end if;
+end $g$;
+`;
+const I3_COLUMNS = `  id int primary key,
+  label text not null,
+  login_role text not null default current_user,
+  session_role text not null default session_user,
+  tx_read_only text not null default current_setting('transaction_read_only'),
+  written_at timestamptz not null default clock_timestamp()`;
+const I3_ROWS = (t) => `(select coalesce(json_agg(json_build_object('id', r.id, 'label', r.label, 'login_role', r.login_role, 'session_role', r.session_role, 'tx_read_only', r.tx_read_only, 'written_at', r.written_at) order by r.id), '[]'::json) from stage0_item3.${t} r)`;
+export function item3Texts() {
+  const head = (name, what) => `-- ${name} — STAGING ONLY (item 3 plan): ${what}.\n`;
+  const out = {};
+  out["I3-SETUP"] = head("I3-SETUP", "the disposable fixture, schema stage0_item3") + I3_GUARD("i3 setup").replace("end $g$;", `  if to_regnamespace('stage0_item3') is not null then
+    raise exception 'i3 setup: stage0_item3 already exists; clean up first' using errcode = 'P0001'; end if;
+end $g$;`) + `create schema stage0_item3;
+create table stage0_item3.owned (
+${I3_COLUMNS}
+);
+create table stage0_item3.open (
+${I3_COLUMNS}
+);
+revoke all on schema stage0_item3 from public, anon, authenticated, service_role;
+grant usage, create on schema stage0_item3 to public;
+revoke all on table stage0_item3.owned from public, anon, authenticated, service_role;
+revoke all on table stage0_item3.open from public, anon, authenticated, service_role;
+grant select, insert on table stage0_item3.open to public;
+select 'stage0_item3 ready' as setup;
+`;
+  out["I3-FIXTURE"] = head("I3-FIXTURE", "owners, ACLs, default-ACL provenance, RLS, policies, triggers, rules and every object in stage0_item3") + `select
+  (select pg_get_userbyid(n.nspowner) from pg_namespace n where n.nspname = 'stage0_item3') as schema_owner,
+  (select n.nspacl::text from pg_namespace n where n.nspname = 'stage0_item3') as schema_acl,
+  (select json_agg(json_build_object('name', c.relname, 'owner', pg_get_userbyid(c.relowner), 'acl', c.relacl::text, 'rls', c.relrowsecurity, 'force_rls', c.relforcerowsecurity) order by c.relname)
+     from pg_class c where c.relnamespace = 'stage0_item3'::regnamespace and c.relkind = 'r') as tables,
+  (select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid where c.relnamespace = 'stage0_item3'::regnamespace) as policies,
+  (select count(*)::int from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relnamespace = 'stage0_item3'::regnamespace and not t.tgisinternal) as triggers,
+  (select count(*)::int from pg_rewrite w join pg_class c on c.oid = w.ev_class where c.relnamespace = 'stage0_item3'::regnamespace) as rules,
+  (select json_agg(json_build_object('name', c.relname, 'kind', c.relkind) order by c.relname) from pg_class c where c.relnamespace = 'stage0_item3'::regnamespace) as objects,
+  (select coalesce(json_agg(json_build_object('role', pg_get_userbyid(d.defaclrole), 'schema', coalesce(s.nspname, '*'), 'type', d.defaclobjtype, 'acl', d.defaclacl::text) order by pg_get_userbyid(d.defaclrole), coalesce(s.nspname, '*'), d.defaclobjtype), '[]'::json)
+     from pg_default_acl d left join pg_namespace s on s.oid = d.defaclnamespace
+    where d.defaclrole = (select c.relowner from pg_class c where c.oid = 'stage0_item3.owned'::regclass)
+      and (d.defaclnamespace = 0 or d.defaclnamespace = 'stage0_item3'::regnamespace)) as default_acls;
+`;
+  const who = `select
+  current_user as login_role,
+  session_user as session_role,
+  current_setting('transaction_read_only') as tx_read_only,
+  current_setting('default_transaction_read_only') as default_tx_read_only,
+  (select r.rolsuper from pg_roles r where r.rolname = current_user) as superuser,
+  (select r.rolbypassrls from pg_roles r where r.rolname = current_user) as bypass_rls,
+  pg_has_role(current_user, 'pg_write_all_data', 'MEMBER') as write_all_data,
+  pg_has_role(current_user, 'pg_read_all_data', 'MEMBER') as read_all_data,
+  has_schema_privilege(current_user, 'stage0_item3', 'USAGE') as schema_usage,
+  has_schema_privilege(current_user, 'stage0_item3', 'CREATE') as schema_create,
+  has_table_privilege(current_user, 'stage0_item3.owned', 'INSERT') as owned_insert,
+  has_table_privilege(current_user, 'stage0_item3.owned', 'SELECT') as owned_select,
+  has_table_privilege(current_user, 'stage0_item3.open', 'INSERT') as open_insert,
+  has_table_privilege(current_user, 'stage0_item3.open', 'SELECT') as open_select;
+`;
+  for (const name of I3_WHO) out[name] = head(name, "this request's login role, transaction mode and effective privileges on the fixture; reads only") + who;
+  for (const [name, id, table] of I3_INSERTS) out[name] = head(name, `one row, id ${id}, into stage0_item3.${table}`) + `insert into stage0_item3.${table} (id, label) values (${id}, ${q(name)}) returning id, label;\n`;
+  for (const [name, table] of I3_DDLS) out[name] = head(name, `one table, stage0_item3.${table}, then the catalog's answer`) + `create table stage0_item3.${table} (id int);\nselect to_regclass(${q(`stage0_item3.${table}`)}) is not null as created;\n`;
+  out["I3-READBACK"] = head("I3-READBACK", "every row of both fixture tables, every column, and every object in stage0_item3, with its owner; reads only") + `select
+  ${I3_ROWS("owned")} as owned,
+  ${I3_ROWS("open")} as open,
+  (select json_agg(json_build_object('name', c.relname, 'kind', c.relkind, 'owner', pg_get_userbyid(c.relowner)) order by c.relname) from pg_class c where c.relnamespace = 'stage0_item3'::regnamespace) as objects;
+`;
+  out["I3-CLEANUP"] = head("I3-CLEANUP", "drop the fixture schema and everything in it") + I3_GUARD("i3 cleanup") + `drop schema stage0_item3 cascade;
+select to_regnamespace('stage0_item3') is null as gone;
+`;
+  out["I3-ABSENT"] = head("I3-ABSENT", "whether the fixture schema is gone; reads only") + "select to_regnamespace('stage0_item3') is null as gone;\n";
+  return out;
+}
+
 /**
  * The inputs each text EXECUTEs, by text name: everything a `SQL statement "…"`
  * frame in that text's error can quote. Item 2's classifier matches such a
@@ -901,6 +998,7 @@ export function assembleAll(manifest, opts = {}) {
   Object.assign(out, cancelTexts());
   Object.assign(out, lockProbeTexts());
   Object.assign(out, envelopeProbeTexts());
+  Object.assign(out, item3Texts());
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
   }

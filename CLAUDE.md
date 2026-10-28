@@ -285,7 +285,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     plan docs/security/stage0-item6-sender-guards-plan.md §A–§D). A live
     send needs `--go <id>`; nothing else sends:
     - Claude runs scripts/manual/stage0-go.mjs: `init` (ONCE, then the
-      printed anchor is committed in review as
+      printed anchor is committed in review (with the item 3
+      implementation, R) as
       docs/security/stage0-guard-store.json. It RAN on this machine on
       2026-10-28 under Codex's narrow clearance: store
       3389bb8f8df9280e7608c455249678f5. NEVER run init again; a rebuilt
@@ -351,10 +352,22 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       again by the sender; it can only tighten (CE-10). The numbers and the
       whole-path budget are item 4(c)'s, so the production deadline
       contract is complete only with them;
-    - only the capture workflow's phases are declared (stage0-guard.mjs
-      WORKFLOWS). A production or item 3 phase must be declared in code,
-      with its gate and its ceilings, in review, before a go can be
-      recorded for it. No go is ever issued for a cancel text;
+    - two staging workflows are declared (stage0-guard.mjs WORKFLOWS):
+      item 2's `capture` and item 3's `item3`, whose gate is
+      scripts/manual/stage0-item3.mjs (phases E, 17 steps, and X, cleanup,
+      which `requires` a reviewed disposition of E; runbook
+      docs/security/stage0-item3-runbook.md). A production phase must be
+      declared in code, with its gate and its ceilings, in review, before a
+      go can be recorded for it. No go is ever issued for a cancel text;
+    - EFFECT IS NOT read_only (Codex I3-1): every text's send policy
+      declares `effect` ("read"/"write") except the 29 texts before item 3
+      (M-12's LEGACY_EFFECT_TEXTS), and the classifier's `writing` comes
+      from it (effectWriting; an invalid value is unknown = writing). An
+      INSERT sent with read_only is still a write, so its unresolved
+      outcome holds the project. Never derive a new text's effect from its
+      request mode. Item 3's texts are confined by M-6e (item3Problems);
+    - the item 3 readbacks go from W without read_only: a role with no
+      SELECT cannot read `owned` (local PostgreSQL run, 2026-10-28);
     - tests: scripts/tests/stage0-guard.test.js (G-1…G-26, counting fetch
       stub, real child processes, a 20-mutant companion),
       stage0-guard.store.test.js (ST-*, AP-*, ORD: every Codex reproduction
@@ -367,14 +380,15 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       declares none), and fx.issue() gives a production go the latest
       not-after the issuer admits unless the test passes one.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
-    the 7 files stage0-send/-window/-go.mjs load (with the classifier and the
-    capture gate) are pinned in the manifest's `guard`. Each tool refuses
-    unless its closure, read by stage0-guard.mjs importAudit, is pinned
-    blob for blob. That audit fails closed on the RAW text: in those 7
-    files, never write the module keyword except as a one-line
-    `<keyword> … from "<spec>";` at column 0 or `<keyword>.meta.url`, and
-    never the CommonJS loader word, its create- form or the eval word, even
-    in a comment (say "loads", "imports" — plural is fine). After editing
+    the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
+    capture gate and the item 3 gate) are pinned in the manifest's `guard`.
+    Each tool refuses unless its closure, read by stage0-guard.mjs
+    importAudit, is pinned blob for blob. That audit fails closed on the
+    RAW text: in those 8 files, never write the module keyword except as a
+    one-line `<keyword> … from "<spec>";` at column 0 or
+    `<keyword>.meta.url`, and never the CommonJS loader word, its create-
+    form or the eval word, even in a comment or a string (say "loads",
+    "imports", "call for" — plural and longer words are fine). After editing
     any of them: stage the change, run
     scripts/manual/stage0-manifest-generate.mjs, and re-run M-13.
   - C3 on staging (plan §E9, 2026-10-06/07) — facts production will meet:

@@ -169,12 +169,45 @@ export function cancelStepProblems(text) {
 /** The item 2 envelope probes (classifier plan §6 B): staging only, read_only. */
 export const ENVELOPE_PROBES = ["ENVELOPE-PROBE-1", "ENVELOPE-PROBE-2", "ENVELOPE-PROBE-3", "ENVELOPE-PROBE-4", "ENVELOPE-PROBE-5"];
 /**
+ * Item 3's texts (docs/security/stage0-item3-read-token-plan.md): staging
+ * only, each with its window, its request mode and its EFFECT. The effect is
+ * what the SQL may do, declared apart from read_only, the mode under test
+ * (Codex, item 3 plan review I3-1).
+ */
+export const I3_POLICY = Object.freeze({
+  "I3-SETUP": { window: "W", readOnly: false, effect: "write" },
+  "I3-FIXTURE": { window: "R", readOnly: true, effect: "read" },
+  "I3-READBACK": { window: "W", readOnly: false, effect: "read" },
+  "I3-WHO-R-RO": { window: "R", readOnly: true, effect: "read" },
+  "I3-WHO-R-DEF": { window: "R", readOnly: false, effect: "read" },
+  "I3-WHO-W-RO": { window: "W", readOnly: true, effect: "read" },
+  "I3-WHO-W-DEF": { window: "W", readOnly: false, effect: "read" },
+  "I3-INS-OWNED-W-RO": { window: "W", readOnly: true, effect: "write" },
+  "I3-INS-OWNED-R-RO": { window: "R", readOnly: true, effect: "write" },
+  "I3-INS-OPEN-R-RO": { window: "R", readOnly: true, effect: "write" },
+  "I3-INS-OWNED-W-DEF": { window: "W", readOnly: false, effect: "write" },
+  "I3-INS-OPEN-R-DEF": { window: "R", readOnly: false, effect: "write" },
+  "I3-INS-OWNED-R-DEF": { window: "R", readOnly: false, effect: "write" },
+  "I3-DDL-W-DEF": { window: "W", readOnly: false, effect: "write" },
+  "I3-DDL-R-DEF": { window: "R", readOnly: false, effect: "write" },
+  "I3-CLEANUP": { window: "W", readOnly: false, effect: "write" },
+  "I3-ABSENT": { window: "R", readOnly: true, effect: "read" },
+});
+/**
+ * The texts that predate item 3 and may leave `effect` out: the classifier
+ * then takes their effect from read_only, as before (I3-1: no broad
+ * reclassification). Every other text declares its effect.
+ */
+export const LEGACY_EFFECT_TEXTS = Object.freeze(["P0", "P1", "SIZE-PROBE", "P2-01", "P2-02", "P2-0304", "P2-05", "STATE", "CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE",
+  "LOCKPROBE-SETUP", "LOCKPROBE-HOLD", "LOCKPROBE-B-LOCKTIMEOUT", "LOCKPROBE-B-STMTTIMEOUT", "LOCKPROBE-B-TXTIMEOUT", "LOCKPROBE-B-CANCEL", "LOCKPROBE-C-CANCEL",
+  "LOCKPROBE-B-POSITIVE", "LOCKPROBE-READBACK", "LOCKPROBE-CLEANUP", "RB-5", "RB-43", "RB-2", "RB-1", ...ENVELOPE_PROBES]);
+/**
  * The window each sendable text goes from (Codex item 6, Q2), listed, not
  * derived from readOnly: LOCKPROBE-READBACK and CANCEL-INSPECT are not
  * read_only and write nothing. R reads; W writes, or reads back inside a
  * writing phase; C is the second caller that cancels.
  */
-export const windowFor = (k) => (["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
+export const windowFor = (k) => (Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].window : ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
 export const PROBE_WRITE_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare)\b|\bpg_\w+\s*\(/gi;
 
 const BACKSLASH = String.fromCharCode(92);
@@ -229,6 +262,55 @@ export function probeWriteViolations(text, label) {
   if (/\bu&\s*['"]/i.test(decoded)) out.push(`${label} holds a U& literal or identifier, whose escapes M-6d does not decode`);
   const found = [...new Set([...decoded.matchAll(PROBE_WRITE_WORDS)].map((m) => m[0].toLowerCase()))];
   if (found.length) out.push(`${label} is not read-only: ${found.join(", ")}`);
+  return out;
+}
+
+const I3_READ_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare|execute|do)\b/gi;
+const I3_READ_FUNCTIONS = ["pg_get_userbyid", "pg_has_role"];
+const I3_WRITE_FORBIDDEN = /\b(set|reset|copy|call|security|perform|execute|update|delete|merge|truncate|lock|commit|rollback|savepoint|vacuum|comment|import|load|prepare)\b/gi;
+
+/**
+ * M-6e: an item 3 text, read with its strings KEPT and every E-string
+ * decoded (Codex, item 3 plan review I3-1 to I3-3):
+ *   - it is marked STAGING ONLY;
+ *   - a "read" text holds no dollar-quoted body and no E-string, and, read
+ *     with its strings blanked (its privilege names are strings), no write
+ *     word and no pg_ function but pg_get_userbyid and pg_has_role;
+ *   - a "write" text creates, drops, inserts, grants or revokes only inside
+ *     stage0_item3, and holds none of the other write words;
+ *   - a probe (I3-INS-*, I3-DDL-*) has no DO block and no RAISE: nothing
+ *     runs ahead of its statement;
+ *   - SETUP and CLEANUP carry the staging guard.
+ * A write assembled at run time is not seen: the md5 pin and review are the
+ * control for that.
+ */
+export function item3Problems(text, name, effect) {
+  const r = sqlView(text, name, "keep");
+  if (r.problem) return [r.problem];
+  if (!/\S/.test(r.view)) return [`${name} is empty`];
+  let decoded;
+  try { decoded = eStringsDecoded(r.view, name); } catch (e) { return [`${name} does not lex: ${e.message}`]; }
+  const out = [];
+  if (!/STAGING ONLY/.test(text)) out.push(`${name} is not marked STAGING ONLY`);
+  if (/\bu&\s*['"]/i.test(decoded)) out.push(`${name} holds a U& literal or identifier, whose escapes M-6e does not decode`);
+  const words = (re) => [...new Set([...decoded.matchAll(re)].map((m) => m[0].toLowerCase()))];
+  if (effect === "read") {
+    if (lexSql(text, { label: name }).some((s) => s.kind === "dollar" || s.kind === "e-string")) out.push(`${name} is declared read but holds a dollar-quoted body or an E-string`);
+    const b = sqlView(text, name, "blank");
+    if (b.problem) return [...out, b.problem];
+    const inView = (re) => [...new Set([...b.view.matchAll(re)].map((m) => m[0].toLowerCase()))];
+    const fns = inView(/\bpg_\w+(?=\s*\()/gi).filter((f) => !I3_READ_FUNCTIONS.includes(f));
+    const found = [...inView(I3_READ_WORDS), ...fns];
+    if (found.length) out.push(`${name} is declared read but holds ${found.join(", ")}`);
+  } else if (effect === "write") {
+    const targets = [...decoded.matchAll(/\b(create|alter|drop|insert\s+into|grant\b[^;]*?\bon|revoke\b[^;]*?\bon)\s+(?:table\s+|schema\s+)?([a-z_][a-z0-9_.]*)/gi)]
+      .map((x) => x[2].toLowerCase()).filter((t) => !t.startsWith("stage0_item3") && !["on", "if"].includes(t));
+    if (targets.length) out.push(`${name} writes outside stage0_item3: ${[...new Set(targets)].join(", ")}`);
+    const other = words(I3_WRITE_FORBIDDEN);
+    if (other.length) out.push(`${name} holds ${other.join(", ")}`);
+  } else out.push(`${name} has no declared effect`);
+  if (/^I3-(INS|DDL)-/.test(name) && /\bdo\s*\$|\braise\b/i.test(decoded)) out.push(`${name} runs something ahead of its probe statement`);
+  if (["I3-SETUP", "I3-CLEANUP"].includes(name) && !(text.includes("the staging seed store is absent") && text.includes("the production ledger marker is present"))) out.push(`${name} lacks the staging guard`);
   return out;
 }
 
@@ -367,15 +449,20 @@ export function checkManifest(repo, M) {
   const outs = Object.keys(M.outputs || {});
   for (const k of outs) if (!texts[k]) say("M-12", `${k} has no send-policy entry`);
   for (const k of Object.keys(texts)) if (!outs.includes(k)) say("M-12", `the send policy names ${k}, which is not an output`);
-  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES];
+  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES, ...Object.keys(I3_POLICY).filter((k) => I3_POLICY[k].readOnly)];
   for (const [k, e] of Object.entries(texts)) {
-    const want = k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
+    const want = k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) || Object.hasOwn(I3_POLICY, k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
+    // The effect (Codex, item 3 plan review I3-1): declared by every text but
+    // the ones before item 3; for an item 3 text, exactly its declared effect.
+    if (LEGACY_EFFECT_TEXTS.includes(k)) { if (Object.hasOwn(e, "effect")) say("M-12", `${k}: a text before item 3 keeps its read_only-derived effect; it declares none`); }
+    else if (e.effect !== "read" && e.effect !== "write") say("M-12", `${k}: effect must be "read" or "write"; the policy says ${JSON.stringify(e.effect)}`);
+    else if (Object.hasOwn(I3_POLICY, k) && e.effect !== I3_POLICY[k].effect) say("M-12", `${k}: effect must be ${I3_POLICY[k].effect}`);
     if (want && JSON.stringify(e.targets) !== JSON.stringify(want)) say("M-12", `${k} must go to ${want.join(", ")} only; the policy says ${JSON.stringify(e.targets)}`);
     if (k === "SIZE-PROBE" && (!Array.isArray(e.targets) || !e.targets.includes("staging") || e.targets.some((t) => !["staging", "production"].includes(t)))) say("M-12", "SIZE-PROBE must include staging and name no other target than production");
     if ((e.readOnly === true) !== READ_ONLY.includes(k)) say("M-12", `${k}: readOnly must be ${READ_ONLY.includes(k)}`);
     if ((e.instantiate === "cancel") !== (k === "CANCEL-STEP-TEMPLATE") || (e.instantiate !== undefined && e.instantiate !== "cancel")) say("M-12", `${k}: only CANCEL-STEP-TEMPLATE is instantiated, and only by --cancel`);
     if (e.window !== windowFor(k)) say("M-12", `${k}: window must be ${windowFor(k)} (Codex item 6, Q2); the policy says ${JSON.stringify(e.window)}`);
-    const extra = Object.keys(e).filter((x) => !["targets", "readOnly", "instantiate", "window"].includes(x));
+    const extra = Object.keys(e).filter((x) => !["targets", "readOnly", "instantiate", "window", "effect"].includes(x));
     if (extra.length) say("M-12", `${k}: unknown policy fields ${extra.join(", ")}`);
   }
 
@@ -480,6 +567,11 @@ export function checkManifest(repo, M) {
       if (!/STAGING ONLY/.test(out[k])) say("M-6", `${k} is not marked STAGING ONLY`);
       for (const p of probeWriteViolations(out[k], k)) say("M-6", p);
     }
+    // M-6e item 3 (Codex, item 3 plan review I3-1 to I3-3): exactly its texts,
+    // each confined to stage0_item3 as its declared effect allows.
+    const i3 = Object.keys(out).filter((k) => k.startsWith("I3-")).sort();
+    if (JSON.stringify(i3) !== JSON.stringify(Object.keys(I3_POLICY).sort())) say("M-6", `the item 3 texts are ${i3.join(", ") || "none"}, not ${Object.keys(I3_POLICY).sort().join(", ")}`);
+    for (const k of i3) for (const p of item3Problems(out[k], k, Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].effect : null)) say("M-6", p);
     // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.
     const probe = out["SIZE-PROBE"] || "";
     if (!(Buffer.byteLength(probe) > Buffer.byteLength(out.P1)) || Buffer.byteLength(probe) - Buffer.byteLength(out.P1) !== M.sizeProbe.exceedsP1By) say("M-6b", "SIZE-PROBE size");

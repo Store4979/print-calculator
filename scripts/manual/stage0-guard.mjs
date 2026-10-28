@@ -91,6 +91,7 @@ import { join, posix } from "node:path";
 import * as A from "./assemble-stage0.mjs";
 import * as C from "./stage0-classify.mjs";
 import * as K from "./stage0-capture.mjs";
+import * as I3 from "./stage0-item3.mjs";
 
 /** A refusal before any request was made. The command lines exit 2. */
 export class Refusal extends Error {}
@@ -869,8 +870,10 @@ function sessionOf(env) {
 /**
  * The workflows a go can be issued for, each with its reviewed phases and its
  * gate. Every phase declares `ceilings` (ceilingReserve), except the item 2
- * capture phases in LEGACY_CUTOFF_PHASES. Only the capture workflow is
- * declared. No production phase is: it needs item 4(c)'s reviewed ceilings.
+ * capture phases in LEGACY_CUTOFF_PHASES. Two staging workflows are
+ * declared: item 2's capture and item 3's read-token experiment
+ * (stage0-item3.mjs). No production phase is: it needs item 4(c)'s reviewed
+ * ceilings.
  */
 export const WORKFLOWS = Object.freeze({
   capture: Object.freeze({
@@ -879,6 +882,13 @@ export const WORKFLOWS = Object.freeze({
     stepText: (id) => K.STEPS[id].text,
     check: (id, text, ctx) => K.checkStep(id, text, ctx),
     next: (phase, results) => K.nextStep(phase, results),
+  }),
+  item3: Object.freeze({
+    target: "staging",
+    phases: Object.freeze(Object.fromEntries(Object.entries(I3.PHASES).map(([k, p]) => [k, Object.freeze({ steps: Object.freeze([...p.steps]), requires: p.requires || null, ceilings: Object.freeze({ ...p.ceilings }) })]))),
+    stepText: (id) => I3.STEPS[id].text,
+    check: (id, text, ctx) => I3.checkStep(id, text, ctx),
+    next: (phase, results) => I3.nextStep(phase, results),
   }),
 });
 
@@ -1537,7 +1547,7 @@ export async function guardedSend(o) {
   if (go.ceiling !== iso(ceiling)) throw new Refusal(`go ${goId} records ${go.step}'s ceiling as ${go.ceiling}; its declaration gives ${iso(ceiling)}: a stale or altered go; refusing`);
   if (go.notAfter !== null && go.deadline !== go.notAfter) throw new Refusal(`go ${goId}'s deadline ${go.deadline} is not its recorded not-after ${go.notAfter}; refusing`);
   if (phase.target === "production" && go.notAfter === null) throw new Refusal(`go ${goId} is a production go with no not-after; refusing`);
-  const request ={ md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) };
+  const request = { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: manifest.send.endpoint.replace("{ref}", plan.ref) };
   if (JSON.stringify(go.request) !== JSON.stringify(request) || plan.template !== null) throw new Refusal(`go ${goId}'s request is not this send's; refusing`);
   const issued = utcMs(go.issuedAt), dl = utcMs(go.deadline);
   if (!(utcMs(phase.recordedAt) <= created && created <= issued && issued <= t0)) throw new Refusal(`go ${goId} was issued later than now, or before its marker: the clock went back; refusing`);

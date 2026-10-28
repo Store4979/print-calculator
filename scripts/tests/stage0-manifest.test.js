@@ -202,6 +202,27 @@ test("CS-4 M-6d: an envelope probe's write hidden behind each wrapper, or inside
   assert.equal(decodeEString(`E'a${BS}nb${BS}x41${BS}u0042${BS}103${BS}${BS}${BS}q'`), "E'a bABC" + BS + "q'");
 });
 
+test("CS-4 M-6e: an item 3 write outside stage0_item3, a write in a read text, or a guard ahead of a probe, hidden behind each wrapper, is reported", async () => {
+  const { out } = await SQL_TEXTS();
+  const { item3Problems, I3_POLICY } = await import("./stage0-manifest-check.mjs");
+  assert.deepEqual(Object.keys(out).filter((k) => k.startsWith("I3-")).sort(), Object.keys(I3_POLICY).sort());
+  for (const [k, p] of Object.entries(I3_POLICY)) assert.deepEqual(item3Problems(out[k], k, p.effect), [], `the real ${k}`);
+  const cases = [
+    ["I3-SETUP", "write", ["drop table public.employees;", "grant all on table public.orders to anon;", "set role postgres;"]],
+    ["I3-INS-OWNED-R-DEF", "write", ["insert into public.orders (id) values (1);", "do $x$ begin raise notice 'x'; end $x$;"]],
+    ["I3-DDL-R-DEF", "write", ["create table public.t (id int);", "alter table stage0_item3.owned owner to anon; alter default privileges grant all on tables to anon;"]],
+    ["I3-FIXTURE", "read", ["insert into stage0_item3.owned (id, label) values (9, 'x');", "select pg_terminate_backend(1);", "create table stage0_item3.x (id int);"]],
+    ["I3-WHO-R-DEF", "read", ["delete from stage0_item3.open;", "select pg_sleep(1);"]],
+  ];
+  for (const [k, effect, hits] of cases) {
+    for (const hit of hits) for (const [w, wrap] of SQL_WRAPPERS) assert.ok(item3Problems(out[k] + wrap(hit), k, effect).length > 0, `${k}: ${hit} behind ${w}`);
+  }
+  assert.deepEqual(item3Problems(out["I3-SETUP"].replace(/STAGING ONLY/g, "staging"), "I3-SETUP", "write"), ["I3-SETUP is not marked STAGING ONLY"]);
+  assert.match(item3Problems(out["I3-CLEANUP"].replace("the staging seed store is absent", "x"), "I3-CLEANUP", "write").join("; "), /lacks the staging guard/);
+  assert.match(item3Problems(out["I3-ABSENT"], "I3-ABSENT", "maybe").join("; "), /has no declared effect/);
+  assert.deepEqual(item3Problems("-- only a comment\n", "I3-ABSENT", "read"), ["I3-ABSENT is empty"]);
+});
+
 test("CS-4 M-6b: SIZE-PROBE outside its literal stays one read-only statement; hidden writes, a moved junction and a planted dollar body are reported", async () => {
   const { A } = await SQL_TEXTS();
   const { sizeProbeOutsideProblems } = await import("./stage0-manifest-check.mjs");

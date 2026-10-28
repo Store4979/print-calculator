@@ -2738,6 +2738,38 @@ window.**
       main@7ec5af4.
 
     It agrees with the live-site checks above.
+- **Codex accepted O `22610f8`, 2026-10-28** (`reviews/2026-10-28-22610f8-review.md`).
+  I6-R1 and I6-R2 are closed. Codex cleared the exact O tip, carrying
+  `0687296` and `78db6dc`, for the existing staging branch and build only.
+- **The push, Wed 2026-10-28, 15:49:30–32Z, under that clearance only:**
+  - **Before (15:49:16Z):**
+    - the remote is `github.com/Store4979/print-calculator`;
+    - O's tree was `1812698a…`, and N was its ancestor;
+    - N..O held exactly `0687296`, `78db6dc` and `22610f8`;
+    - `ls-remote` showed the branch at `9404ee5e482def25dd0bb04de88499d46dc085df`,
+      `main` at `7ec5af4`, and no tags.
+  - **The command:**
+    `git push origin 22610f80d08b4ed6d905a821e7c0feca4ffdd013:refs/heads/security/release-2-slice-2`
+    gave `9404ee5..22610f8`, exit 0, with no force and no tags.
+  - **After:** the branch is at `22610f8`, `main` is still at `7ec5af4`,
+    and there are no tags (15:49:32Z, and again 15:53:27Z).
+  - **Staging,** before at 15:49:23Z: deploy `6ae0e0a1…` at `9404ee5`.
+    After, first seen 15:52:44Z: deploy **`6ae21991c27465e17b242aad`**,
+    commitRef `22610f8…`, built 2026-10-28T15:52:18.114Z. Its permalink
+    reported the same at 15:53:22Z, with `contextAllowed`, `flagPresent` and
+    `flagEnabled` all true.
+  - **Production is unchanged,** at 15:49:41Z and again 15:53:22Z. The
+    live `index.html` (`d67e9e91…`), `main-DZt0oGiJ.js` (`47ab9406…`) and
+    `index-ftBg9V1i.js` (`57fb08e6…`) are byte-identical to deploy
+    `6ab020c5`'s permalink. `/.netlify/functions/deploy-context` on
+    production returns the same bytes as `index.html`.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked, at 12:25 EDT
+    (16:25Z) on Wed 2026-10-28, about 36 minutes after the push:**
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 

@@ -375,6 +375,55 @@ export const SUCCESS = {
   ...Object.fromEntries(["HOLD", "B-LOCKTIMEOUT", "B-STMTTIMEOUT", "B-TXTIMEOUT", "B-CANCEL", "C-CANCEL"]
     .map((k) => [`LOCKPROBE-${k}`, unsupported("not expected to succeed in the capture session; no reviewed receipt of its success")])),
   ...Object.fromEntries([1, 2, 3, 4, 5].map((n) => [`ENVELOPE-PROBE-${n}`, unsupported("an error probe: a 201 is not its contract")])),
+  // Item 3 (docs/security/stage0-item3-read-token-plan.md). Each predicate is
+  // the text's own last row-returning statement, declared before the session
+  // from its SQL and a local PostgreSQL 17.5 run (review-only); the values of
+  // the shape predicates are the measurement, for the item 3 gate to check.
+  "I3-SETUP": { kind: "exact", source: "its last statement, select 'stage0_item3 ready' as setup", check: exact('[{"setup":"stage0_item3 ready"}]') },
+  ...Object.fromEntries(A.I3_INSERTS.map(([name, id]) => [name, { kind: "exact", source: "its INSERT … RETURNING id, label", check: exact(JSON.stringify([{ id, label: name }])) }])),
+  ...Object.fromEntries(A.I3_DDLS.map(([name]) => [name, { kind: "exact", source: "its last statement, to_regclass(…) is not null as created", check: exact('[{"created":true}]') }])),
+  "I3-CLEANUP": { kind: "exact", source: "its last statement, to_regnamespace('stage0_item3') is null as gone", check: exact('[{"gone":true}]') },
+  "I3-ABSENT": { kind: "exact", source: "its one statement, to_regnamespace('stage0_item3') is null as gone", check: exact('[{"gone":true}]') },
+  ...Object.fromEntries(A.I3_WHO.map((name) => [name, {
+    kind: "shape",
+    source: "the WHO SQL: fourteen columns, four text and ten boolean (null where the role is not found)",
+    check: (body) => {
+      const r = oneRow(body, Object.keys(I3_WHO_COLUMNS));
+      if (r.why) return { ok: false, why: r.why };
+      const bad = Object.entries(I3_WHO_COLUMNS).filter(([k, t]) => !(t === "text" ? typeof r.row[k] === "string" : typeof r.row[k] === "boolean" || (t === "boolOrNull" && r.row[k] === null))).map(([k]) => k);
+      return bad.length ? { ok: false, why: `columns of the wrong JSON type: ${bad.join(", ")}` } : { ok: true, values: r.row };
+    },
+  }])),
+  "I3-FIXTURE": {
+    kind: "shape",
+    source: "the FIXTURE SQL: the schema's owner and ACL, its tables, three counts, its objects and the owner's default ACLs",
+    check: (body) => {
+      const r = oneRow(body, ["schema_owner", "schema_acl", "tables", "policies", "triggers", "rules", "objects", "default_acls"]);
+      if (r.why) return { ok: false, why: r.why };
+      const x = r.row;
+      if (typeof x.schema_owner !== "string" || (x.schema_acl !== null && typeof x.schema_acl !== "string")) return { ok: false, why: "schema_owner or schema_acl is not text" };
+      if (!Array.isArray(x.tables) || !Array.isArray(x.objects) || !Array.isArray(x.default_acls)) return { ok: false, why: "tables, objects or default_acls is not an array" };
+      if (![x.policies, x.triggers, x.rules].every(typeOk.int)) return { ok: false, why: "a count is not a whole number" };
+      return { ok: true, values: x };
+    },
+  },
+  "I3-READBACK": {
+    kind: "shape",
+    source: "the READBACK SQL: both tables' rows and every object in stage0_item3, as json",
+    check: (body) => {
+      const r = oneRow(body, ["owned", "open", "objects"]);
+      if (r.why) return { ok: false, why: r.why };
+      if (!Array.isArray(r.row.owned) || !Array.isArray(r.row.open) || !Array.isArray(r.row.objects)) return { ok: false, why: "owned, open or objects is not an array" };
+      return { ok: true, values: r.row };
+    },
+  },
+};
+
+/** The I3 WHO row: its columns and their JSON types. */
+export const I3_WHO_COLUMNS = {
+  login_role: "text", session_role: "text", tx_read_only: "text", default_tx_read_only: "text",
+  superuser: "boolOrNull", bypass_rls: "boolOrNull", write_all_data: "bool", read_all_data: "bool",
+  schema_usage: "bool", schema_create: "bool", owned_insert: "bool", owned_select: "bool", open_insert: "bool", open_select: "bool",
 };
 
 /** P0's identity and timer columns, which must hold whatever the expected values. */
@@ -659,7 +708,21 @@ export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
 
 // ── The classifier ───────────────────────────────────────────────────────────
 
-const summary = (rec) => (isPlainObject(rec) ? { text: rec.text, target: rec.target, httpStatus: rec.httpStatus } : {});
+/**
+ * Whether a text may write, from its reviewed send policy, never from the
+ * request mode under test (Codex, item 3 plan review I3-1). An explicit
+ * `effect` decides: "write" true, "read" false, any other value null
+ * (unknown), which every consumer treats as writing. A text without one
+ * falls back to its read_only flag; the manifest check (M-12) allows that
+ * only for the texts that predate item 3.
+ */
+export function effectWriting(policy) {
+  if (!isPlainObject(policy)) return null;
+  if (own(policy, "effect")) return policy.effect === "write" ? true : policy.effect === "read" ? false : null;
+  return policy.readOnly !== true;
+}
+
+const summary = (rec) =>(isPlainObject(rec) ? { text: rec.text, target: rec.target, httpStatus: rec.httpStatus } : {});
 
 /**
  * Classify a results file's exact text against a context (contextAt /
@@ -679,7 +742,7 @@ function classifyChecked(fileText, ctx) {
     return { class: "R1", outcome: "UNRESOLVED", reasons: [`the file is not exactly one JSON document: ${e.message}`] };
   }
   const r1 = receiptProblems(rec, ctx);
-  const writing = isPlainObject(rec) && own(ctx.manifest.send.texts, rec.text) ? ctx.manifest.send.texts[rec.text].readOnly !== true : null;
+  const writing = isPlainObject(rec) && own(ctx.manifest.send.texts, rec.text) ? effectWriting(ctx.manifest.send.texts[rec.text]) : null;
   const base = { ...summary(rec), writing };
   if (r1.length) return { class: "R1", outcome: "UNRESOLVED", reasons: r1, ...base, tokenExposed: isPlainObject(rec) && rec.tokenRedactedFromResponse !== false };
   if (rec.httpStatus === 201) {
