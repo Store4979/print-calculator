@@ -709,16 +709,66 @@ export function parseEnvelope(m, { candidates = [], support = SUPPORT } = {}) {
 // ── The classifier ───────────────────────────────────────────────────────────
 
 /**
- * Whether a text may write, from its reviewed send policy, never from the
- * request mode under test (Codex, item 3 plan review I3-1). An explicit
- * `effect` decides: "write" true, "read" false, any other value null
- * (unknown), which every consumer treats as writing. A text without one
- * falls back to its read_only flag; the manifest check (M-12) allows that
- * only for the texts that predate item 3.
+ * The 29 texts that predate item 3, each with the pin (md5) and the send
+ * policy it was reviewed under (Codex, review of ba1a0bd, R-R1). Only these,
+ * exactly so, keep the old rule that a text without `effect` writes unless
+ * it is read_only. M-12 checks this table against the manifest.
  */
-export function effectWriting(policy) {
+export const LEGACY_EFFECT = Object.freeze({
+  "P0": ["2d6977169a592cac78a15c5ebe17509b", { targets: ["production"], readOnly: true, window: "R" }],
+  "P1": ["2546a4a45a79cb2ec8a986df84396a9c", { targets: ["production"], readOnly: false, window: "W" }],
+  "SIZE-PROBE": ["64836acd787dc72bb0ad3e6564a66db4", { targets: ["staging"], readOnly: true, window: "R" }],
+  "P2-01": ["b680442d19f25aca0ede5fdf32542207", { targets: ["production"], readOnly: false, window: "W" }],
+  "P2-02": ["aecf712f514ae0620e578472b071e7df", { targets: ["production"], readOnly: false, window: "W" }],
+  "P2-0304": ["5e9a1ccfe8dd26678a6ee78b99c25fec", { targets: ["production"], readOnly: false, window: "W" }],
+  "P2-05": ["266d2f32ab61633d1b5357c71ec5d7ab", { targets: ["production"], readOnly: false, window: "W" }],
+  "STATE": ["41dd91021512640818cf80cc7c8ee0f9", { targets: ["production"], readOnly: true, window: "R" }],
+  "CANCEL-INSPECT": ["286b4d4e8e4a89ab935b3245471ea47a", { targets: ["production"], readOnly: false, window: "C" }],
+  "CANCEL-STEP-TEMPLATE": ["f78372186350073851d28f7be31fb6c0", { targets: ["production"], readOnly: false, instantiate: "cancel", window: "C" }],
+  "LOCKPROBE-SETUP": ["d5a8c9de513479429cac9410090666d1", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-HOLD": ["8ebe3533508c6b1487889d780fd66502", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-B-LOCKTIMEOUT": ["726f086647bb2a1ef087f19e16de6527", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-B-STMTTIMEOUT": ["b4bb7ddaaedb12c6c97b41ff44529fce", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-B-TXTIMEOUT": ["040bd75a51d45641aa9dd7df35e939ad", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-B-CANCEL": ["93b15361895d300621bb28cc6b104264", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-C-CANCEL": ["29dd1daff7d0ecd0e4a3689cda8b5db2", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-B-POSITIVE": ["f18e4ee1a898c7168c7bc65978fc4684", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-READBACK": ["f0d1a6e51d5012fb732241f9e2ae9cc2", { targets: ["staging"], readOnly: false, window: "W" }],
+  "LOCKPROBE-CLEANUP": ["c31297aaa5f8cb481acf48f1cdaa810c", { targets: ["staging"], readOnly: false, window: "W" }],
+  "RB-5": ["92c1c8bceb5c6a943c682cf3ca4c20db", { targets: ["production"], readOnly: false, window: "W" }],
+  "RB-43": ["55c1d3bd57b62e913225add48ef0080a", { targets: ["production"], readOnly: false, window: "W" }],
+  "RB-2": ["11ee730aac45528de1e49b19faae78af", { targets: ["production"], readOnly: false, window: "W" }],
+  "RB-1": ["c250dd6e36cc72836caa8be2b14780b5", { targets: ["production"], readOnly: false, window: "W" }],
+  "ENVELOPE-PROBE-1": ["94a0ad24c017d29693346aefa07d0165", { targets: ["staging"], readOnly: true, window: "R" }],
+  "ENVELOPE-PROBE-2": ["5c6d0617384192f7d9381f57b2a91104", { targets: ["staging"], readOnly: true, window: "R" }],
+  "ENVELOPE-PROBE-3": ["f95beecbe5e7840b21177800ffe4feb3", { targets: ["staging"], readOnly: true, window: "R" }],
+  "ENVELOPE-PROBE-4": ["c6f2a0d0489f5d4aa894a61f1859cc85", { targets: ["staging"], readOnly: true, window: "R" }],
+  "ENVELOPE-PROBE-5": ["ece595beef61fa0817442376b2266089", { targets: ["staging"], readOnly: true, window: "R" }],
+});
+
+/** JSON with every object's keys sorted: a policy compares by content, not key order. */
+const canonical = (v) => JSON.stringify(v, (k, x) => (isPlainObject(x) ? Object.fromEntries(Object.keys(x).sort().map((y) => [y, x[y]])) : x));
+
+/**
+ * Whether the text `name` may write, from its reviewed send policy in
+ * `manifest`, never from the request mode under test (Codex, item 3 plan
+ * review I3-1). An explicit `effect` decides: "write" true, "read" false, any
+ * other value null (unknown), which every consumer treats as writing. A text
+ * without one is unknown (null) too, unless it is one of LEGACY_EFFECT's 29
+ * with exactly its listed pin and policy: then it writes unless it is
+ * read_only (R-R1). A new text, or a legacy text whose SQL or policy has
+ * changed, never inherits that rule.
+ */
+export function effectWriting(manifest, name) {
+  const texts = isPlainObject(manifest) && isPlainObject(manifest.send) && isPlainObject(manifest.send.texts) ? manifest.send.texts : null;
+  if (!texts || typeof name !== "string" || !own(texts, name)) return null;
+  const policy = texts[name];
   if (!isPlainObject(policy)) return null;
   if (own(policy, "effect")) return policy.effect === "write" ? true : policy.effect === "read" ? false : null;
+  if (!own(LEGACY_EFFECT, name)) return null;
+  const [md5, reviewed] = LEGACY_EFFECT[name];
+  const pin = isPlainObject(manifest.outputs) && own(manifest.outputs, name) ? manifest.outputs[name] : null;
+  if (!isPlainObject(pin) || pin.md5 !== md5 || canonical(policy) !== canonical(reviewed)) return null;
   return policy.readOnly !== true;
 }
 
@@ -742,7 +792,7 @@ function classifyChecked(fileText, ctx) {
     return { class: "R1", outcome: "UNRESOLVED", reasons: [`the file is not exactly one JSON document: ${e.message}`] };
   }
   const r1 = receiptProblems(rec, ctx);
-  const writing = isPlainObject(rec) && own(ctx.manifest.send.texts, rec.text) ? effectWriting(ctx.manifest.send.texts[rec.text]) : null;
+  const writing = isPlainObject(rec) ? effectWriting(ctx.manifest, rec.text) : null;
   const base = { ...summary(rec), writing };
   if (r1.length) return { class: "R1", outcome: "UNRESOLVED", reasons: r1, ...base, tokenExposed: isPlainObject(rec) && rec.tokenRedactedFromResponse !== false };
   if (rec.httpStatus === 201) {

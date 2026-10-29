@@ -11,6 +11,8 @@
 //   node scripts/manual/stage0-go.mjs void --go <go id>
 //   node scripts/manual/stage0-go.mjs dispose --target <t> --attempt <attempt id> --reviewed <file>
 //   node scripts/manual/stage0-go.mjs status --target <t>
+//   node scripts/manual/stage0-go.mjs gate --phase <phase id>
+//   node scripts/manual/stage0-go.mjs corroborate --phase <phase id> --rows <file>
 //
 // init     makes the guard store, once, where nothing exists, and prints the
 //          anchor to commit at docs/security/stage0-guard-store.json. Every
@@ -49,9 +51,17 @@
 //          the review file must name the attempt id.
 // status   prints the holds, attempts, gos, markers and lock; on a damaged
 //          store, the damage and no holds list. Read-only.
+// gate     prints one phase's gate: its next step, its STOP, or its terminal
+//          outcome; the holds; and whether the workflow's one
+//          separate-credential read is permitted now, with its exact query
+//          when it is (item 3 runbook §6). Read-only.
+// corroborate compares that read's rows (the JSON array execute_sql
+//          returned, saved exactly) with the readback it corroborates, and
+//          refuses unless `gate` permits the read now. Read-only.
 //
-// Exit status: 0 done (status: intact and nothing held); 2 refused; 3
-// status found damage, a hold or the lock. Only `clock` makes a network call
+// Exit status: 0 done (status: intact and nothing held; corroborate: the
+// rows agree); 2 refused; 3 status found damage, a hold or the lock, or
+// corroborate found a disagreement. Only `clock` makes a network call
 // (NTP, to the time server). None of this is a go: Ryan's go in chat is the
 // authority.
 import { readFileSync } from "node:fs";
@@ -122,6 +132,23 @@ export function main(argv, env, deps = {}) {
     return { clock: rec };
   }
 
+  if (cmd === "gate") {
+    const o = args(rest, ["phase"]);
+    need(o, ["phase"], "gate");
+    const g = G.phaseGate({ paths, anchor, manifest, phaseId: o.phase, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt, now: t });
+    out(`${JSON.stringify(g, null, 2)}\n`);
+    out(g.corroborate ? `The one separate-credential read is permitted now, exactly the query above (${g.terminal.outcome}).\n` : "The separate-credential read is NOT permitted.\n");
+    return { gate: g, exit: 0 };
+  }
+  if (cmd === "corroborate") {
+    const o = args(rest, ["phase", "rows"]);
+    need(o, ["phase", "rows"], "corroborate");
+    const rowsText = readFile(o.rows, "rows file").toString("utf8");
+    const r = G.corroborateRead({ paths, anchor, manifest, phaseId: o.phase, rowsText, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt, now: t });
+    out(r.agree ? `AGREE: the separate-credential read agrees with ${r.step} in every row, object and owner.\n` : `DISAGREE with ${r.step}: STOP, with no cleanup.\n${r.problems.map((p) => `  ${p}`).join("\n")}\n`);
+    return { corroboration: r, exit: r.agree ? 0 : 3 };
+  }
+
   const head = G.checkoutHead(deps.git || G.gitState, root);
 
   if (cmd === "init") {
@@ -183,7 +210,7 @@ export function main(argv, env, deps = {}) {
     out(`attempt ${d.attemptId}: disposition recorded from ${d.reviewed.path} (sha256 ${d.reviewed.sha256})\n`);
     return { disposition: d };
   }
-  throw new G.Refusal("usage: stage0-go.mjs init | clock | draft … | phase … | issue … | void … | dispose … | status …");
+  throw new G.Refusal("usage: stage0-go.mjs init | clock | draft … | phase … | issue … | void … | dispose … | status … | gate … | corroborate …");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -1,7 +1,8 @@
 # Stage 0 — item 3: the read-token experiment on staging — RUNBOOK
 
-**Status: DRAFT, for Codex's review with the item 3 implementation and the
-guard store's anchor.** It clears no session, token or send.
+**Status: DRAFT, for Codex's review with the item 3 implementation (R, as
+corrected by S for Codex's review of ba1a0bd: R-R1 to R-R3) and the guard
+store's anchor.** It clears no session, token or send.
 - **What it needs:** Codex's clearance of the exact head **H** this runbook
   names, and Ryan's go line for each phase.
 - **Its sources:**
@@ -91,6 +92,12 @@ their effect is declared read.
 - The R window sends INSERTs and a CREATE here only as these named,
   staging-only exceptions. The R/W window stays a local mistake barrier,
   not token authority.
+- **A missing effect is unknown, so writing** (Codex, review of ba1a0bd,
+  R-R1). The classifier keeps the old read_only-derived effect only for the
+  29 texts before item 3, each under exactly its listed pin and policy
+  (`stage0-classify.mjs LEGACY_EFFECT`). An item 3 text, or any new text,
+  without `effect` holds the project on an unresolved outcome, whatever its
+  `read_only` flag.
 
 ## 2. The fixture contract (I3-2)
 
@@ -152,20 +159,36 @@ what.
    - Ryan runs the one command once, in the window it names;
    - Claude classifies the receipt and reads `status`. The gate (the sender
      and the issuer) decides the next step.
-6. **After E17:**
-   - **the separate-credential read (§6);**
+6. **After E17, E's end is one of two terminal outcomes** (Codex, review of
+   ba1a0bd, R-R3). Claude reads it with
+   `node scripts/manual/stage0-go.mjs gate --phase <E's phase id>`:
+   - **COMPLETE-REFUSED:** every step matched, every readback agreed, and
+     E14–E16 were all REFUSED;
+   - **COMPLETE-WROTE:** the same, except that the Read PAT WROTE at one or
+     more of E14–E16. The experiment completed consistently, and its result
+     is STOP-and-review **before any cleanup**. X waits for Codex's reviewed
+     disposition.
+
+   Either outcome, with nothing held and no lock, and before E's deadline,
+   is the only state in which `gate` prints
+   `"corroborate": true`. Then, in this order:
+   - **the separate-credential read (§6),** once;
    - token deletion and window close (procedure §5). Every pause is an exit.
 
 **Stop rules:**
-- **Any STOP from the gate ends E at once.** No later step, cleanup
-  included, goes without a reviewed decision. The fixture stays as
-  evidence.
+- **Any STOP from the gate ends E at once.** No later step, no
+  separate-credential read and no cleanup goes without a reviewed decision.
+  The fixture stays as evidence.
 - **A 201 at E8–E10 is a STOP:** `read_only` did not stop a write.
   STOP-and-review.
-- **A WROTE at E14–E16:** the gate runs E17 and then STOPS. The Read PAT
-  wrote: STOP-and-review. No cleanup without Codex's reviewed disposition.
+- **A WROTE at E14–E16 is not a STOP by itself:** the gate runs E17, and
+  only a consistent E17 reaches COMPLETE-WROTE. That outcome is still
+  STOP-and-review for everything after the one read: no cleanup without
+  Codex's reviewed disposition.
 - **An exit code 5, or a hold:** STOP-and-review (procedure §6). A tighter
-  go, a clock check, a new window or a new phase releases nothing.
+  go, a clock check, a new window or a new phase releases nothing. A hold
+  also forbids the separate-credential read: `gate` reports
+  `"corroborate": false`.
 
 ## 5. The clock during the session (renewal)
 
@@ -182,15 +205,21 @@ what.
   ±2 s. Every window closes, the tokens are deleted, and the session ends
   (procedure §5).
 
-## 6. The separate-credential read (after E17)
+## 6. The separate-credential read (after a terminal outcome of E)
 
-- **Not a fallback.** This is a labelled, read-only corroboration only. It
-  never follows a STOP, and never routes around a hold.
+- **Not a fallback.** This is a labelled, read-only corroboration only, sent
+  once. It is permitted only when `stage0-go.mjs gate --phase <E>` prints
+  `"corroborate": true`: COMPLETE-REFUSED or COMPLETE-WROTE, nothing held,
+  no lock, before E's deadline. It never follows a STOP, a failed control,
+  an unsupported outcome or an inconsistent readback, and never routes
+  around a hold.
 - **Who and how:** Claude, through the Supabase MCP `execute_sql` of this
   session. That is the MCP server's own authorization, not either PAT, and
   not the sender.
 - **Target:** staging `lboajqihpsfrokqvjgnl`.
-- **Exactly this query, unpinned and labelled ad-hoc:**
+- **Exactly this query, unpinned and labelled ad-hoc.** It is
+  `CORROBORATION_SQL` in `stage0-item3.mjs`, and `gate` prints it; a test
+  (I3-7) requires this block to be byte-identical to it:
 
   ```sql
   -- item 3, separate-credential read (ad-hoc, read-only, not a pinned text)
@@ -198,13 +227,27 @@ what.
   union all
   select 'open', id, label, login_role, session_role, tx_read_only from stage0_item3.open
   union all
-  select 'object', null, c.relname || ':' || c.relkind, pg_get_userbyid(c.relowner), null, null
+  select 'object', null, c.relname || ':' || c.relkind::text, pg_get_userbyid(c.relowner), null, null
     from pg_class c where c.relnamespace = 'stage0_item3'::regnamespace
   order by 1, 2, 3;
   ```
 
-- **Its result is recorded verbatim.** If it disagrees with E17 in any
-  row, object or owner: STOP, with no cleanup.
+  `relkind` is PostgreSQL's internal `"char"` type. Without the `::text`
+  cast, the concatenation fails with `42725: operator is not unique: text
+  || "char"` (Codex's local PostgreSQL 17.5 run; R had that defect).
+- **The comparison:** Claude saves the returned JSON array exactly, as a
+  file outside the checkout, and runs
+  `node scripts/manual/stage0-go.mjs corroborate --phase <E> --rows <file>`.
+  It re-checks the permission, then compares every row of `owned` and
+  `open` (id, label and the writer columns) and every object (name, kind,
+  owner) with E17's readback.
+- **Its result is recorded verbatim, with the command's output.** AGREE
+  (exit 0) goes into E's disposition. DISAGREE (exit 3), or a refusal: STOP,
+  with no cleanup.
+- **The local rehearsal** (`scripts/manual/stage0-item3-local-pglite.mjs`,
+  PGlite 0.4.6 with synthetic roles) runs this exact query on both terminal
+  outcomes, compares it with E17 as `corroborate` does, and shows the uncast
+  form's 42725. It shows nothing about Supabase.
 
 ## 7. Phase X (cleanup), under its own go
 
@@ -216,9 +259,9 @@ what.
   - E3, E13 and E17;
   - the separate-credential read;
   - the conclusion.
-- **On the all-REFUSED path,** with every readback consistent, Ryan may
-  approve that disposition himself. After any WROTE, a failed control, a
-  STOP or a disagreement, it is Codex's reviewed disposition.
+- **On COMPLETE-REFUSED,** with the read in agreement, Ryan may approve
+  that disposition himself. After COMPLETE-WROTE, a failed control, a STOP
+  or a disagreement, it is Codex's reviewed disposition.
 - **What is enforced, and what is a person's job:** the tools enforce that
   X names a review file and records its hash. That the file is a genuine
   review of E's exact receipts is the human check: the gate does not read

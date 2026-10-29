@@ -14,11 +14,14 @@
 //          and records WROTE or REFUSED;
 //   STOP   anything else. A 201 for a read_only control (E8 to E10) is a
 //          STOP: read_only did not stop that write, STOP-and-review.
-// nextStep() names the next step or the stop. It also checks each readback
-// (E3, E13, E17) against the outcomes before it: a row or an object the
-// outcomes do not explain, or one they call for that is missing, stops
-// the phase. After E17, a WROTE stops the phase too: the Read PAT wrote,
-// STOP-and-review, and X waits for a reviewed disposition.
+// nextStep() names the next step, a STOP, or E's end. It also checks each
+// readback (E3, E13, E17) against the outcomes before it: a row or an object
+// the outcomes do not explain, or one they call for that is missing, stops
+// the phase. E ends in one of two terminal outcomes, never a STOP (Codex,
+// review of ba1a0bd, R-R3): COMPLETE-REFUSED, or COMPLETE-WROTE (the Read
+// PAT wrote: review before any cleanup). Only these two, with nothing held,
+// permit the one separate-credential read (runbook §6), whose rows
+// corroborationProblems() compares with E17's. A STOP never permits it.
 //
 // What is enforced and what is not: X can be registered only with a named
 // review file (`requires`), whose sha256 the phase records. That the file is
@@ -217,10 +220,18 @@ function wanted(kind, byStep) {
 }
 
 /**
- * The next step of a phase given the checkStep results so far, or the stop.
- * Only a MATCH continues, and not a MATCH after a writing send that rule 3′
- * classifies UNRESOLVED. A readback must show exactly what the outcomes
- * before it call for. After E17, a WROTE stops the phase for review.
+ * The next step of a phase given the checkStep results so far, the STOP, or
+ * the phase's end. Only a MATCH continues, and not a MATCH after a writing
+ * send that rule 3′ classifies UNRESOLVED. A readback must show exactly what
+ * the outcomes before it call for.
+ *
+ * E's end is a terminal outcome: `{ stop: false, next: null, terminal }`.
+ * COMPLETE-WROTE (a WROTE at E14 to E16) is distinct from COMPLETE-REFUSED:
+ * the experiment completed consistently, and the Read PAT wrote, so it is
+ * STOP-and-review before any cleanup, with X waiting for Codex's reviewed
+ * disposition. Both set `corroborate`: the one separate-credential read is
+ * permitted after them, when nothing is held (the guard's phaseGate checks
+ * that), and after nothing else.
  */
 export function nextStep(phase, results) {
   const p = PHASES[phase];
@@ -239,9 +250,70 @@ export function nextStep(phase, results) {
       if (why.length) return { stop: true, reason: `${r.step}'s readback does not match the outcomes before it: ${why.join("; ")}. ${later}` };
     }
   }
-  if (phase === "E" && results.length === p.steps.length) {
-    const wrote = ["E14", "E15", "E16"].filter((s) => byStep[s].outcome === "WROTE");
-    if (wrote.length) return { stop: true, reason: `the Read PAT WROTE at ${wrote.join(", ")} (${wrote.map((s) => STEPS[s].text).join(", ")}): STOP-and-review. The fixture stays as evidence; X needs a reviewed disposition` };
+  if (results.length < p.steps.length) return { stop: false, next: p.steps[results.length] };
+  if (phase !== "E") return { stop: false, next: null, terminal: { outcome: "COMPLETE", corroborate: false }, reason: `phase ${phase} is complete` };
+  const wrote = ["E14", "E15", "E16"].filter((s) => byStep[s].outcome === "WROTE");
+  if (wrote.length) {
+    return {
+      stop: false, next: null,
+      terminal: { outcome: "COMPLETE-WROTE", wrote, corroborate: true, disposition: "Codex" },
+      reason: `E is complete and consistent, and the Read PAT WROTE at ${wrote.join(", ")} (${wrote.map((s) => STEPS[s].text).join(", ")}): STOP-and-review before any cleanup. The one separate-credential read (runbook §6) is permitted while nothing is held; the fixture stays as evidence, and X waits for Codex's reviewed disposition`,
+    };
   }
-  return { stop: false, next: p.steps[results.length] ?? null };
+  return {
+    stop: false, next: null,
+    terminal: { outcome: "COMPLETE-REFUSED", wrote: [], corroborate: true, disposition: "Ryan or Codex" },
+    reason: "E is complete and consistent, and every measured write was REFUSED. The one separate-credential read (runbook §6) is permitted while nothing is held; X waits for a reviewed disposition",
+  };
+}
+
+/**
+ * The separate-credential read (runbook §6), run once through the Supabase
+ * MCP execute_sql on staging after a terminal outcome that permits it. It is
+ * not a pinned text. relkind is PostgreSQL's internal "char" type, so it is
+ * cast to text before the concatenation (Codex, review of ba1a0bd, R-R3: the
+ * uncast form fails 42725 in PostgreSQL 17.5).
+ */
+export const CORROBORATION_SQL = [
+  "-- item 3, separate-credential read (ad-hoc, read-only, not a pinned text)",
+  "select 'owned' as t, id, label, login_role, session_role, tx_read_only from stage0_item3.owned",
+  "union all",
+  "select 'open', id, label, login_role, session_role, tx_read_only from stage0_item3.open",
+  "union all",
+  "select 'object', null, c.relname || ':' || c.relkind::text, pg_get_userbyid(c.relowner), null, null",
+  "  from pg_class c where c.relnamespace = 'stage0_item3'::regnamespace",
+  "order by 1, 2, 3;",
+].join("\n");
+
+const CORROBORATION_COLUMNS = ["t", "id", "label", "login_role", "session_role", "tx_read_only"];
+
+/**
+ * The disagreements between the separate-credential read's rows (exactly as
+ * execute_sql returned them, a JSON array) and E17's readback values: every
+ * row of owned and open, with its writer columns, and every object with its
+ * kind and owner, as sets. An empty list is agreement; anything else stops
+ * with no cleanup (runbook §6).
+ */
+export function corroborationProblems(rows, e17) {
+  if (!Array.isArray(rows)) return ["the read's result is not an array of rows"];
+  if (!isPlainObject(e17)) return ["there is no E17 readback to compare with"];
+  const out = [];
+  const got = { owned: [], open: [], object: [] };
+  for (const [i, r] of rows.entries()) {
+    if (!sameKeys(r, CORROBORATION_COLUMNS)) { out.push(`row ${i + 1} does not have exactly the columns ${CORROBORATION_COLUMNS.join(", ")}`); continue; }
+    if (!Object.hasOwn(got, r.t)) { out.push(`row ${i + 1} is of kind ${JSON.stringify(r.t)}`); continue; }
+    got[r.t].push([r.id, r.label, r.login_role, r.session_role, r.tx_read_only]);
+  }
+  const rowsOf = (list) => (Array.isArray(list) ? list : [null]).map((x) => (isPlainObject(x) ? [x.id, x.label, x.login_role, x.session_role, x.tx_read_only] : ["unreadable"]));
+  const want = {
+    owned: rowsOf(e17.owned),
+    open: rowsOf(e17.open),
+    object: (Array.isArray(e17.objects) ? e17.objects : [null]).map((o) => (isPlainObject(o) ? [null, `${o.name}:${o.kind}`, o.owner, null, null] : ["unreadable"])),
+  };
+  const sorted = (list) => list.map((x) => JSON.stringify(x)).sort();
+  for (const k of ["owned", "open", "object"]) {
+    const g = sorted(got[k]), w = sorted(want[k]);
+    if (JSON.stringify(g) !== JSON.stringify(w)) out.push(`${k}: the read has ${JSON.stringify(g.map((x) => JSON.parse(x)))}; E17 has ${JSON.stringify(w.map((x) => JSON.parse(x)))}`);
+  }
+  return out;
 }

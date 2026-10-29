@@ -279,30 +279,30 @@
       },
       {
         "path": "scripts/manual/stage0-classify.mjs",
-        "blob": "911ca3a9745df24bdb4dcd103f49b8b21687ddfb",
-        "md5": "5c536ce43290be50c13056b2fb1ce32d",
-        "bytes": 48517,
+        "blob": "4beacdb595e6668fe3d1b26df37b368de4e3783b",
+        "md5": "b198c4511cd02dd3ac89b68c0be3c70d",
+        "bytes": 53077,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-go.mjs",
-        "blob": "8b41f10dcc32b3b1cf0b342e0880e41a34a3a52a",
-        "md5": "5fd464e67f89cf44ceb3b796e90d5f40",
-        "bytes": 12298,
+        "blob": "cb49b9d2cabbd35c05a36f8a6ab77ee44460caab",
+        "md5": "16d518711167bd72a48a37410b7ee89e",
+        "bytes": 14163,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-guard.mjs",
-        "blob": "f15a9d8e6f943210c3653223a85007740d40a1bf",
-        "md5": "9b9e89a798f38b15ca0bb332bb0b1eaa",
-        "bytes": 109953,
+        "blob": "80056dc844e621a7161f4521ac1c5ac43992f086",
+        "md5": "69bddc423295d9e5add8516b4828e19b",
+        "bytes": 113901,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-item3.mjs",
-        "blob": "d728b7607d59d51800124245a7eeef29f7103960",
-        "md5": "8f2696e905fe4de9735a11e6373f16ba",
-        "bytes": 14947,
+        "blob": "b9ac3f9d9e3b0ede40e425796ffeb67731498842",
+        "md5": "b75a8fb17ccd719f71a10dea7803311f",
+        "bytes": 19241,
         "pinnedAt": "manifest-commit"
       },
       {

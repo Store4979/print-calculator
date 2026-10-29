@@ -21,6 +21,7 @@ import { createRequire } from "node:module";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import * as G from "../manual/stage0-guard.mjs";
+import * as C from "../manual/stage0-classify.mjs";
 import { MIGRATIONS_DIR, ROLLBACKS_DIR, eligibleMigrations, duplicateVersions } from "./supabase-migration-discovery.mjs";
 import { sqlCode, lexSql } from "./sql-lexer.mjs";
 
@@ -211,6 +212,8 @@ export const windowFor = (k) => (Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].wind
 export const PROBE_WRITE_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare)\b|\bpg_\w+\s*\(/gi;
 
 const BACKSLASH = String.fromCharCode(92);
+/** JSON with every object's keys sorted, so two policies compare by content. */
+const canonicalJson = (v) => JSON.stringify(v, (k, x) => (x !== null && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((y) => [y, x[y]])) : x));
 
 /**
  * An E-string's characters with PostgreSQL's backslash escapes decoded
@@ -265,24 +268,110 @@ export function probeWriteViolations(text, label) {
   return out;
 }
 
-const I3_READ_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare|execute|do)\b/gi;
-const I3_READ_FUNCTIONS = ["pg_get_userbyid", "pg_has_role"];
+const I3_READ_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare|execute|do|into)\b/gi;
+/** Every name a read text may put before "(": its functions, and the two keywords the real texts parenthesize after. */
+const I3_READ_CALLS = ["and", "select", "coalesce", "count", "current_setting", "has_schema_privilege", "has_table_privilege", "json_agg", "json_build_object", "pg_get_userbyid", "pg_has_role", "to_regnamespace"];
 const I3_WRITE_FORBIDDEN = /\b(set|reset|copy|call|security|perform|execute|update|delete|merge|truncate|lock|commit|rollback|savepoint|vacuum|comment|import|load|prepare)\b/gi;
+
+// M-6e's grammar of the item 3 write texts (Codex, review of ba1a0bd, R-R2).
+// Each statement, with its comments removed and the whitespace of its code
+// collapsed (strings are kept exactly), must be one of these forms. The
+// schema is exactly stage0_item3, never a prefix; an unquoted identifier is
+// the only kind there is, so a quoted identifier, an E-string or a dollar
+// body (but the guard's own) is outside the grammar.
+const RAISE = "then raise exception '[^']*' using errcode = 'P0001'; end if;";
+const GUARD_STORE = `if not exists \\(select 1 from public\\.stores s where s\\.id = '5ee41000-0000-4000-8000-0000000000a1'\\) ${RAISE}`;
+const GUARD_LEDGER = `if exists \\(select 1 from supabase_migrations\\.schema_migrations m where m\\.version = '20260909232836' and m\\.name = 'phase_e_03_order_margin_snapshot' and md5\\(m\\.statements\\[1\\]\\) = 'b7a8e54c99432c5e0ddb60be4c46505f'\\) ${RAISE}`;
+const GUARD_ABSENT = `if to_regnamespace\\('stage0_item3'\\) is not null ${RAISE}`;
+const I3_GUARDS = {
+  "guard-setup": new RegExp(`^begin ${GUARD_STORE} ${GUARD_LEDGER} ${GUARD_ABSENT} end$`),
+  "guard-cleanup": new RegExp(`^begin ${GUARD_STORE} ${GUARD_LEDGER} end$`),
+};
+const I3_FORMS = {
+  "create-schema": /^create schema stage0_item3$/,
+  "create-fixture-table": /^create table stage0_item3\.(owned|open) \( id int primary key, label text not null, login_role text not null default current_user, session_role text not null default session_user, tx_read_only text not null default current_setting\('transaction_read_only'\), written_at timestamptz not null default clock_timestamp\(\) \)$/,
+  "revoke-schema": /^revoke all on schema stage0_item3 from public, anon, authenticated, service_role$/,
+  "grant-schema": /^grant usage, create on schema stage0_item3 to public$/,
+  "revoke-table": /^revoke all on table stage0_item3\.(owned|open) from public, anon, authenticated, service_role$/,
+  "grant-table": /^grant select, insert on table stage0_item3\.open to public$/,
+  "select-ready": /^select 'stage0_item3 ready' as setup$/,
+  "insert": /^insert into stage0_item3\.(owned|open) \(id, label\) values \([0-9]+, 'I3-[A-Z0-9-]+'\) returning id, label$/,
+  "create-probe-table": /^create table stage0_item3\.(ddl_w|ddl_r) \(id int\)$/,
+  "created": /^select to_regclass\('stage0_item3\.(ddl_w|ddl_r)'\) is not null as created$/,
+  "drop-schema": /^drop schema stage0_item3 cascade$/,
+  "gone": /^select to_regnamespace\('stage0_item3'\) is null as gone$/,
+};
+/** Each write text's exact sequence of forms, by its name. */
+const I3_SEQUENCES = [
+  [/^I3-SETUP$/, ["guard-setup", "create-schema", "create-fixture-table", "create-fixture-table", "revoke-schema", "grant-schema", "revoke-table", "revoke-table", "grant-table", "select-ready"]],
+  [/^I3-CLEANUP$/, ["guard-cleanup", "drop-schema", "gone"]],
+  [/^I3-INS-/, ["insert"]],
+  [/^I3-DDL-/, ["create-probe-table", "created"]],
+];
+
+/**
+ * The statements of `text` for the grammar: split at each semicolon in code,
+ * comments as one space, code whitespace collapsed, every other segment kept
+ * exactly. `body` is a lone dollar body's text (a DO block's), else null.
+ */
+function i3Statements(text, label) {
+  const stmts = [];
+  let cur = [];
+  const end = () => {
+    const norm = cur.map((p) => p.text).join("").replace(/ +/g, " ").trim();
+    const parts = cur.filter((p) => p.kind !== "space" && (p.kind !== "code" || p.text.trim()));
+    if (norm) stmts.push({ norm, body: parts.length === 2 && /^do$/i.test(parts[0].text.trim()) && parts[1].kind === "dollar" ? parts[1].body : null });
+    cur = [];
+  };
+  for (const s of lexSql(text, { label })) {
+    const raw = text.slice(s.start, s.end);
+    if (s.kind === "code") {
+      const pieces = raw.split(";");
+      pieces.forEach((piece, i) => { if (i) end(); cur.push({ kind: "code", text: piece.replace(/\s+/g, " ") }); });
+    } else if (s.kind === "line-comment" || s.kind === "block-comment") cur.push({ kind: "space", text: " " });
+    else cur.push({ kind: s.kind, text: raw, body: s.kind === "dollar" ? text.slice(s.bodyStart, s.bodyEnd) : null });
+  }
+  end();
+  return stmts;
+}
+
+/** The form a write statement is, or null: a guard only as a DO block whose whole body is that guard. */
+function i3FormOf(stmt, label) {
+  if (stmt.body !== null) {
+    let body;
+    try {
+      body = lexSql(stmt.body, { label }).map((s) => {
+        const raw = stmt.body.slice(s.start, s.end);
+        if (s.kind === "code") return raw.replace(/\s+/g, " ");
+        if (s.kind === "line-comment" || s.kind === "block-comment") return " ";
+        return s.kind === "string" ? raw : " [not in the guard's grammar] ";
+      }).join("").replace(/ +/g, " ").trim();
+    } catch { return null; }
+    return Object.keys(I3_GUARDS).find((k) => I3_GUARDS[k].test(body)) || null;
+  }
+  return Object.keys(I3_FORMS).find((k) => I3_FORMS[k].test(stmt.norm)) || null;
+}
 
 /**
  * M-6e: an item 3 text, read with its strings KEPT and every E-string
- * decoded (Codex, item 3 plan review I3-1 to I3-3):
- *   - it is marked STAGING ONLY;
+ * decoded (Codex, item 3 plan review I3-1 to I3-3, and review of ba1a0bd,
+ * R-R2):
+ *   - it is marked STAGING ONLY, and holds no quoted identifier;
  *   - a "read" text holds no dollar-quoted body and no E-string, and, read
  *     with its strings blanked (its privilege names are strings), no write
- *     word and no pg_ function but pg_get_userbyid and pg_has_role;
- *   - a "write" text creates, drops, inserts, grants or revokes only inside
- *     stage0_item3, and holds none of the other write words;
+ *     word (INTO included: SELECT INTO creates a table) and no call but
+ *     I3_READ_CALLS;
+ *   - a "write" text is, statement by statement, exactly its family's
+ *     sequence of I3_FORMS (I3_SEQUENCES): the schema is exactly
+ *     stage0_item3, every target and every call is spelled out, and any
+ *     other statement, the DO guard included, is a finding. It also holds
+ *     none of the other write words;
  *   - a probe (I3-INS-*, I3-DDL-*) has no DO block and no RAISE: nothing
  *     runs ahead of its statement;
  *   - SETUP and CLEANUP carry the staging guard.
  * A write assembled at run time is not seen: the md5 pin and review are the
- * control for that.
+ * control for that. The grammar is a regression check of these fixed texts,
+ * not a SQL sandbox.
  */
 export function item3Problems(text, name, effect) {
   const r = sqlView(text, name, "keep");
@@ -293,19 +382,25 @@ export function item3Problems(text, name, effect) {
   const out = [];
   if (!/STAGING ONLY/.test(text)) out.push(`${name} is not marked STAGING ONLY`);
   if (/\bu&\s*['"]/i.test(decoded)) out.push(`${name} holds a U& literal or identifier, whose escapes M-6e does not decode`);
+  const quoted = lexSql(text, { label: name }).filter((s) => s.kind === "quoted-ident").map((s) => text.slice(s.start, s.end));
+  if (quoted.length) out.push(`${name} holds the quoted identifier${quoted.length > 1 ? "s" : ""} ${[...new Set(quoted)].join(", ")}, outside M-6e's grammar`);
   const words = (re) => [...new Set([...decoded.matchAll(re)].map((m) => m[0].toLowerCase()))];
   if (effect === "read") {
     if (lexSql(text, { label: name }).some((s) => s.kind === "dollar" || s.kind === "e-string")) out.push(`${name} is declared read but holds a dollar-quoted body or an E-string`);
     const b = sqlView(text, name, "blank");
     if (b.problem) return [...out, b.problem];
     const inView = (re) => [...new Set([...b.view.matchAll(re)].map((m) => m[0].toLowerCase()))];
-    const fns = inView(/\bpg_\w+(?=\s*\()/gi).filter((f) => !I3_READ_FUNCTIONS.includes(f));
-    const found = [...inView(I3_READ_WORDS), ...fns];
+    const calls = [...new Set([...b.view.matchAll(/\b([a-z_][a-z0-9_$]*)\s*\(/gi)].map((m) => m[1].toLowerCase()))].filter((f) => !I3_READ_CALLS.includes(f));
+    const found = [...inView(I3_READ_WORDS), ...calls];
     if (found.length) out.push(`${name} is declared read but holds ${found.join(", ")}`);
   } else if (effect === "write") {
-    const targets = [...decoded.matchAll(/\b(create|alter|drop|insert\s+into|grant\b[^;]*?\bon|revoke\b[^;]*?\bon)\s+(?:table\s+|schema\s+)?([a-z_][a-z0-9_.]*)/gi)]
-      .map((x) => x[2].toLowerCase()).filter((t) => !t.startsWith("stage0_item3") && !["on", "if"].includes(t));
-    if (targets.length) out.push(`${name} writes outside stage0_item3: ${[...new Set(targets)].join(", ")}`);
+    const family = I3_SEQUENCES.find(([re]) => re.test(name));
+    let stmts;
+    try { stmts = i3Statements(text, name); } catch (e) { return [...out, `${name} does not lex: ${e.message}`]; }
+    const forms = stmts.map((s) => i3FormOf(s, name));
+    stmts.forEach((s, i) => { if (!forms[i]) out.push(`${name} statement ${i + 1} is not a form M-6e admits: ${s.norm.slice(0, 120)}`); });
+    if (!family) out.push(`${name} has no write grammar`);
+    else if (JSON.stringify(forms) !== JSON.stringify(family[1])) out.push(`${name}'s statements are [${forms.map((f) => f || "?").join(", ")}]; its grammar is [${family[1].join(", ")}]`);
     const other = words(I3_WRITE_FORBIDDEN);
     if (other.length) out.push(`${name} holds ${other.join(", ")}`);
   } else out.push(`${name} has no declared effect`);
@@ -456,6 +551,12 @@ export function checkManifest(repo, M) {
     // the ones before item 3; for an item 3 text, exactly its declared effect.
     if (LEGACY_EFFECT_TEXTS.includes(k)) { if (Object.hasOwn(e, "effect")) say("M-12", `${k}: a text before item 3 keeps its read_only-derived effect; it declares none`); }
     else if (e.effect !== "read" && e.effect !== "write") say("M-12", `${k}: effect must be "read" or "write"; the policy says ${JSON.stringify(e.effect)}`);
+    // The runtime side (Codex, review of ba1a0bd, R-R1): the classifier keeps
+    // the read_only-derived effect only for a text in its LEGACY_EFFECT table
+    // with exactly the pin and policy listed there.
+    if (Object.hasOwn(C.LEGACY_EFFECT, k) && !Object.hasOwn(e, "effect") && (M.outputs[k]?.md5 !== C.LEGACY_EFFECT[k][0] || canonicalJson(e) !== canonicalJson(C.LEGACY_EFFECT[k][1]))) {
+      say("M-12", `${k}: its pin or policy is not the one the classifier's LEGACY_EFFECT lists; declare its effect, or review the change`);
+    }
     else if (Object.hasOwn(I3_POLICY, k) && e.effect !== I3_POLICY[k].effect) say("M-12", `${k}: effect must be ${I3_POLICY[k].effect}`);
     if (want && JSON.stringify(e.targets) !== JSON.stringify(want)) say("M-12", `${k} must go to ${want.join(", ")} only; the policy says ${JSON.stringify(e.targets)}`);
     if (k === "SIZE-PROBE" && (!Array.isArray(e.targets) || !e.targets.includes("staging") || e.targets.some((t) => !["staging", "production"].includes(t)))) say("M-12", "SIZE-PROBE must include staging and name no other target than production");
@@ -465,6 +566,7 @@ export function checkManifest(repo, M) {
     const extra = Object.keys(e).filter((x) => !["targets", "readOnly", "instantiate", "window", "effect"].includes(x));
     if (extra.length) say("M-12", `${k}: unknown policy fields ${extra.join(", ")}`);
   }
+  if (JSON.stringify(Object.keys(C.LEGACY_EFFECT).sort()) !== JSON.stringify([...LEGACY_EFFECT_TEXTS].sort())) say("M-12", "the classifier's LEGACY_EFFECT does not name exactly the texts before item 3");
 
   // M-13 the guard chain (Codex item 6, SG-6): the manifest pins exactly the
   // repository files the three guarded entry points load, transitively, as

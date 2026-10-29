@@ -442,3 +442,23 @@ Commit this, exactly, as docs/security/stage0-guard-store.json, in a reviewed co
 - the anchor above is `docs/security/stage0-guard-store.json`, unchanged;
 - a rebuilt or corrected implementation reuses this store, and never runs
   init again.
+
+## 10. Codex's review of R, and S
+
+**The ruling** (`reviews/2026-10-29-ba1a0bd-review.md`): AMEND, with R's push
+held and no session head named. I3-2, the I3-3 SQL, E→X, Q-1 to Q-5 and the
+init record are accepted. Three corrections, and the gate's mutation
+companion, are S, on top of R, with the same anchor (no init).
+
+| review point | what S does |
+|---|---|
+| **R-R1** a missing effect at run time | `effectWriting(manifest, name)` keeps the read_only fallback only for `LEGACY_EFFECT`'s 29 names, each with its md5 and its whole send policy. Anything else without `effect` (an item 3 text, a new text, a legacy text under another pin or policy) is unknown, so writing, and holds. M-12 checks the table against the manifest. I3-6 runs the classifier and `holdsOf` on a transport failure for each of the 10 write texts without their effect, for a new read_only identity, and for the legacy controls. |
+| **R-R2** M-6e's confinement | A write text must be, statement by statement, exactly its family's sequence of `I3_FORMS`. The forms spell out each target (schema exactly `stage0_item3`), each call and each column. The DO guard is matched as the whole guard body. A quoted identifier is refused in every I3 text. A read text may call only `I3_READ_CALLS`, and never `INTO`. CS-4 now asks that each hit adds a finding of its own beyond the wrapper's, quoting the hit in a write text. It has Codex's three examples, prefix-collision CREATEs and DROPs, quoted and unsupported target forms, and new read-text calls. R's checker misses 17 of the 18 new cases (the data-modifying CTE was already caught by `delete`). |
+| **R-R3** the final corroboration | E ends in a terminal outcome, never a STOP: COMPLETE-REFUSED or COMPLETE-WROTE. Only those, with nothing held, no lock and before E's deadline, permit the one read (`stage0-go.mjs gate`). `corroborate` compares the read's rows with E17. The query casts `relkind` to text, and I3-7 pins the runbook's copy to `CORROBORATION_SQL`. `scripts/manual/stage0-item3-local-pglite.mjs` rehearses both outcomes in PostgreSQL 17.5: the exact query, its agreement with E17, the uncast form's 42725, and a cross-branch disagreement. |
+| the mutation companion | `stage0-item3.mutation.test.js`, 11 mutants: three of fixture validation, three of readback consistency, the final review pause, the read's hold and terminal conditions, and two of the effect metadata that decides a hold. Each original refuses its named negative; each mutant admits exactly it, and an exception fails the test. |
+
+**Read by Claude, for Codex:** "the completed, consistent WROTE case, which
+alone permits the one separate-credential read" is taken as: of the ends of
+E, only a completed and consistent one permits the read. COMPLETE-REFUSED
+permits it too, as runbook §4 and §7 already planned on that path. If the
+read is meant for COMPLETE-WROTE only, it is one line in `nextStep`.

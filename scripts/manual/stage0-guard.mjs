@@ -889,6 +889,10 @@ export const WORKFLOWS = Object.freeze({
     stepText: (id) => I3.STEPS[id].text,
     check: (id, text, ctx) => I3.checkStep(id, text, ctx),
     next: (phase, results) => I3.nextStep(phase, results),
+    // The one separate-credential read after a terminal outcome that permits
+    // it (runbook §6; Codex, review of ba1a0bd, R-R3): its exact query, and
+    // the step whose readback its rows must agree with.
+    corroboration: Object.freeze({ step: "E17", sql: I3.CORROBORATION_SQL, compare: (rows, values) => I3.corroborationProblems(rows, values) }),
   }),
 });
 
@@ -1345,8 +1349,63 @@ export function guardedProgress({ phase, entries, workflows = WORKFLOWS, ctxAt, 
   let ns;
   try { ns = wf.next(phase.phase, results); } catch (err) { return stop(err.message); }
   if (ns.stop) return stop(ns.reason);
-  if (ns.next === null) return { stop: false, next: null, complete: true, reason: `phase ${phase.phase} is complete`, results };
+  if (ns.next === null) return { stop: false, next: null, complete: true, terminal: isObj(ns.terminal) ? ns.terminal : null, reason: ns.reason || `phase ${phase.phase} is complete`, results };
   return { stop: false, next: ns.next, complete: false, reason: `${ns.next} may be sent next`, results };
+}
+
+/** A phase's gate, the project's holds, and whether the one separate-credential read is permitted now. */
+function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now }) {
+  requireStore({ paths, anchor, manifest });
+  const { phase } = loadPhase(paths, phaseId);
+  const entries = readJournal(paths, phase.ref);
+  const holds = holdsOf(entries, { readReceipt, ctxAt });
+  const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
+  const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
+  const lock = existsSync(paths.lock);
+  const corroborate = Boolean(wf && wf.corroboration && gate.complete && gate.terminal && gate.terminal.corroborate === true && !holds.length && !lock);
+  return { phase, wf, gate, holds, lock, corroborate };
+}
+
+/**
+ * The gate of one recorded phase, read-only (stage0-go.mjs gate): its next
+ * step, its STOP, or its terminal outcome; the project's holds; and whether
+ * the workflow's one separate-credential read is permitted. It is permitted
+ * only after a terminal outcome that says so (item 3's COMPLETE-REFUSED and
+ * COMPLETE-WROTE), with nothing held and no lock, before the phase deadline
+ * (the gate reads a passed deadline as a STOP). Never after a STOP. Refuses
+ * on a damaged store.
+ */
+export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now }) {
+  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now });
+  return {
+    phaseId, workflow: g.phase.workflow, phase: g.phase.phase, stop: g.gate.stop, next: g.gate.next, complete: g.gate.complete,
+    terminal: g.gate.terminal || null, reason: g.gate.reason,
+    results: g.gate.results.map((r) => ({ step: r.step, verdict: r.verdict, ...(r.outcome ? { outcome: r.outcome } : {}) })),
+    holds: g.holds, lock: g.lock, corroborate: g.corroborate,
+    ...(g.corroborate ? { query: g.wf.corroboration.sql } : {}),
+  };
+}
+
+/**
+ * Compare the separate-credential read's rows (rowsText: the JSON array
+ * execute_sql returned, exactly) with the readback of the workflow's
+ * corroboration step, read-only (stage0-go.mjs corroborate). Refuses unless
+ * phaseGate permits the read now. An empty `problems` is agreement; any
+ * disagreement is a STOP with no cleanup (item 3 runbook §6).
+ */
+export function corroborateRead({ paths, anchor, manifest, phaseId, rowsText, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now }) {
+  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now });
+  if (!g.corroborate) {
+    const why = g.holds.length ? heldMessage(g.holds) : g.lock ? "the store lock is held" : g.gate.stop ? `STOP: ${g.gate.reason}` : g.gate.complete ? `${g.gate.reason}; this outcome does not permit it` : `the next step is ${g.gate.next}`;
+    throw new Refusal(`the gate does not permit the separate-credential read: ${why}; refusing`);
+  }
+  const c = g.wf.corroboration;
+  const step = g.gate.results.find((r) => r.step === c.step);
+  if (!step || step.verdict !== "MATCH" || !isObj(step.values)) throw new Refusal(`${c.step}'s readback values are not available; refusing`);
+  let rows;
+  try { rows = C.strictJson(rowsText); } catch (e) { return { phaseId, step: c.step, agree: false, problems: [`the rows file is not exactly one JSON document: ${e.message}`] }; }
+  const problems = c.compare(rows, step.values);
+  return { phaseId, step: c.step, agree: problems.length === 0, problems };
 }
 
 // ── gos (SG-1) ──────────────────────────────────────────────────────────────

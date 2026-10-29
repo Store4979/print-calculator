@@ -362,10 +362,31 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
     - EFFECT IS NOT read_only (Codex I3-1): every text's send policy
       declares `effect` ("read"/"write") except the 29 texts before item 3
       (M-12's LEGACY_EFFECT_TEXTS), and the classifier's `writing` comes
-      from it (effectWriting; an invalid value is unknown = writing). An
-      INSERT sent with read_only is still a write, so its unresolved
-      outcome holds the project. Never derive a new text's effect from its
-      request mode. Item 3's texts are confined by M-6e (item3Problems);
+      from it (effectWriting(manifest, name); an invalid value is unknown
+      = writing). A MISSING effect is unknown too, at run time, except for
+      the 29 under exactly the pin and policy the classifier's
+      LEGACY_EFFECT lists (R-R1; M-12 checks that table against the
+      manifest). Changing a legacy text means declaring its effect, never
+      editing the table to match. An INSERT sent with read_only is still a
+      write, so its unresolved outcome holds the project. Never derive a
+      new text's effect from its request mode;
+    - M-6e (item3Problems) confines item 3's texts. A write text must be,
+      statement by statement, exactly its family's sequence of I3_FORMS:
+      the schema is exactly stage0_item3, never a prefix (R-R2). A quoted
+      identifier, an unrecognized statement or an unlisted call is a
+      finding. A read text may call only I3_READ_CALLS, and never INTO;
+    - item 3's phase E ends in a TERMINAL OUTCOME, never a STOP:
+      COMPLETE-REFUSED, or COMPLETE-WROTE (the Read PAT wrote:
+      STOP-and-review before any cleanup, X on Codex's disposition; R-R3).
+      `stage0-go.mjs gate --phase <id>` prints it, read-only. The one
+      separate-credential read (runbook §6) is permitted only when `gate`
+      says `"corroborate": true` (a terminal outcome, nothing held, no
+      lock, before E's deadline). `corroborate --phase <id> --rows <file>`
+      then compares its rows with E17. The query is CORROBORATION_SQL
+      (relkind cast to text: the uncast form fails 42725), and I3-7 pins
+      the runbook's copy to it. The local rehearsal is
+      scripts/manual/stage0-item3-local-pglite.mjs (PGLITE_DIR, both
+      terminal outcomes);
     - the item 3 readbacks go from W without read_only: a role with no
       SELECT cannot read `owned` (local PostgreSQL run, 2026-10-28);
     - tests: scripts/tests/stage0-guard.test.js (G-1…G-26, counting fetch
@@ -378,7 +399,11 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       PowerShell windows; Windows only). synthWorkflow(…) in the fixture
       declares 60 s per step for any phase a test does not name (`null`
       declares none), and fx.issue() gives a production go the latest
-      not-after the issuer admits unless the test passes one.
+      not-after the issuer admits unless the test passes one. Item 3's are
+      stage0-item3.test.js (I3-1…I3-7) and its mutation companion
+      stage0-item3.mutation.test.js (I3-M1: each mutant must turn its named
+      negative into exactly a permissive result, never an exception), with
+      shared data in stage0-item3-fixture.mjs.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
     capture gate and the item 3 gate) are pinned in the manifest's `guard`.

@@ -284,8 +284,9 @@ issued for a cancel text.
 
    None of these is a go.
 4. **CLAUDE** classifies the receipt (rule 3′), runs the step's check, and
-   reads `node scripts/manual/stage0-go.mjs status --target <t>`. The next
-   step needs its own go (point 1). A command that was not run is voided
+   reads `node scripts/manual/stage0-go.mjs status --target <t>`. `gate
+   --phase <phase id>` prints the phase's gate (its next step, STOP or
+   terminal outcome), read-only. The next step needs its own go (point 1). A command that was not run is voided
    (`stage0-go.mjs void --go <id>`) before any other go is issued.
 
 ## 5. Every pause is an exit (P5; the end of every session)

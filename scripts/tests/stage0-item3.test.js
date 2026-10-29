@@ -12,6 +12,14 @@
 //   I3-5  I3-1: an unresolved read_only write probe holds the project in
 //         every failure mode, across a fresh window, phase X and another
 //         checkout
+//   I3-6  R-R1: at run time, a missing effect on any item 3 write text, or
+//         on a new text with readOnly true, is unknown and holds; only the
+//         29 legacy texts, under their exact pin and policy, keep the
+//         read_only-derived effect
+//   I3-7  R-R3: the separate-credential read is permitted only after a
+//         terminal outcome with nothing held; its query is the runbook's,
+//         byte for byte; its rows are compared with E17
+// The mutation companion is stage0-item3.mutation.test.js.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
@@ -23,10 +31,11 @@ import * as I from "../manual/stage0-item3.mjs";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as GO from "../manual/stage0-go.mjs";
 import { fixture, M, ctx, ROOT, T0 } from "./stage0-guard-fixture.mjs";
-import { I3_POLICY } from "./stage0-manifest-check.mjs";
+import { I3_POLICY, LEGACY_EFFECT_TEXTS } from "./stage0-manifest-check.mjs";
+import { STAGING, receiptFor, BASE, row, readback, FIXTURE, WHO, R, REF, answers, check, eResults, finalValues, corroborationRows, failedEntry, ctxWith } from "./stage0-item3-fixture.mjs";
 
-const STAGING = "lboajqihpsfrokqvjgnl";
 const MIN = 60000;
+const clone = (x) => JSON.parse(JSON.stringify(x));
 
 async function refused(fn, re, label = "") {
   let err = null;
@@ -37,60 +46,6 @@ async function refused(fn, re, label = "") {
   return err;
 }
 
-/** A receipt of the sender's shape for an item 3 text, bound to its pin. */
-function receiptFor(text, httpStatus, body, extra = {}) {
-  const pin = M.outputs[text];
-  return JSON.stringify({
-    tool: M.sender.path, text, target: "staging", ref: STAGING, readOnly: M.send.texts[text].readOnly === true, requestMd5: pin.md5, requestBytes: pin.bytes,
-    endpoint: M.send.endpoint.replace("{ref}", STAGING), startedAt: "2026-10-28T14:00:00.000Z", finishedAt: "2026-10-28T14:00:01.000Z",
-    httpStatus, body, error: null, tokenRedactedFromResponse: false, ...extra,
-  }, null, 2) + "\n";
-}
-
-const BASE = [["open", "r"], ["open_pkey", "i"], ["owned", "r"], ["owned_pkey", "i"]];
-const row = (id, label, login = "postgres", ro = "off") => ({ id, label, login_role: login, session_role: login, tx_read_only: ro, written_at: "2026-10-28 14:00:00.123456+00" });
-const readback = ({ owned = [], open = [], ddl = [] } = {}) => JSON.stringify([{
-  owned, open, objects: [...BASE, ...ddl.map((n) => [n, "r"])].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([name, kind]) => ({ name, kind, owner: "postgres" })),
-}]);
-const FIXTURE = (over = {}) => JSON.stringify([{
-  schema_owner: "postgres", schema_acl: "{postgres=UC/postgres,=UC/postgres}",
-  tables: [
-    { name: "open", owner: "postgres", acl: "{postgres=arwdDxtm/postgres,=ar/postgres}", rls: false, force_rls: false },
-    { name: "owned", owner: "postgres", acl: "{postgres=arwdDxtm/postgres}", rls: false, force_rls: false },
-  ],
-  policies: 0, triggers: 0, rules: 0, objects: BASE.map(([name, kind]) => ({ name, kind })),
-  default_acls: [{ role: "postgres", schema: "*", type: "r", acl: "{anon=arwdDxtm/postgres}" }], ...over,
-}]);
-const WHO = (login, ro) => JSON.stringify([{ login_role: login, session_role: login, tx_read_only: ro ? "on" : "off", default_tx_read_only: "off", superuser: false, bypass_rls: false,
-  write_all_data: false, read_all_data: true, schema_usage: true, schema_create: true, owned_insert: false, owned_select: true, open_insert: true, open_select: true }]);
-const R = I.REFUSALS;
-const REF = (r) => [400, I.refusalBody(r)];
-
-/**
- * Each step's declared answer on one branch: `wrote` names the measured steps
- * (E14, E15, E16) that WROTE; the others are REFUSED.
- */
-function answers(wrote = []) {
-  const w = (s) => wrote.includes(s);
-  return {
-    E1: [201, '[{"setup":"stage0_item3 ready"}]'], E2: [201, FIXTURE()], E3: [201, readback()],
-    E4: [201, WHO("supabase_read_only_user", true)], E5: [201, WHO("supabase_read_only_user", false)],
-    E6: [201, WHO("supabase_read_only_user", true)], E7: [201, WHO("postgres", false)],
-    E8: REF(R.insertReadOnly), E9: REF(R.insertReadOnly), E10: REF(R.insertReadOnly),
-    E11: [201, '[{"id":4,"label":"I3-INS-OWNED-W-DEF"}]'], E12: [201, '[{"created":true}]'],
-    E13: [201, readback({ owned: [row(4, "I3-INS-OWNED-W-DEF")], ddl: ["ddl_w"] })],
-    E14: w("E14") ? [201, '[{"id":5,"label":"I3-INS-OPEN-R-DEF"}]'] : REF(R.insertReadOnly),
-    E15: w("E15") ? [201, '[{"id":6,"label":"I3-INS-OWNED-R-DEF"}]'] : REF(R.ownedDenied),
-    E16: w("E16") ? [201, '[{"created":true}]'] : REF(R.createReadOnly),
-    E17: [201, readback({
-      owned: [row(4, "I3-INS-OWNED-W-DEF"), ...(w("E15") ? [row(6, "I3-INS-OWNED-R-DEF", "supabase_read_only_user")] : [])],
-      open: w("E14") ? [row(5, "I3-INS-OPEN-R-DEF", "supabase_read_only_user")] : [],
-      ddl: ["ddl_w", ...(w("E16") ? ["ddl_r"] : [])],
-    })],
-    X1: [201, '[{"gone":true}]'], X2: [201, '[{"gone":true}]'],
-  };
-}
-const check = (id, [status, body]) => I.checkStep(id, receiptFor(I.STEPS[id].text, status, body), ctx());
 
 // ── I3-1 ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +53,7 @@ test("I3-1 the declarations: every step's text has its staging policy and effect
   assert.deepEqual(Object.keys(A.item3Texts()).sort(), Object.keys(I3_POLICY).sort());
   for (const [name, p] of Object.entries(I3_POLICY)) {
     assert.deepEqual(M.send.texts[name], { targets: ["staging"], readOnly: p.readOnly, window: p.window, effect: p.effect }, name);
-    assert.equal(C.effectWriting(M.send.texts[name]), p.effect === "write", `${name}: writing follows the effect`);
+    assert.equal(C.effectWriting(M, name), p.effect === "write", `${name}: writing follows the effect`);
   }
   for (const [id, s] of Object.entries(I.STEPS)) assert.ok(Object.hasOwn(I3_POLICY, s.text), `${id} sends ${s.text}`);
   const wf = G.WORKFLOWS.item3;
@@ -108,12 +63,14 @@ test("I3-1 the declarations: every step's text has its staging policy and effect
   assert.equal(I.PHASES.E.ceilings.E1, 61 * MIN);
   assert.equal(I.PHASES.E.ceilings.E17, 13 * MIN);
   assert.match(wf.phases.X.requires, /reviewed disposition of phase E/);
-  // The classifier's effect rule (I3-1).
-  assert.equal(C.effectWriting({ readOnly: true, effect: "write" }), true, "a read_only probe declared write is writing");
-  assert.equal(C.effectWriting({ readOnly: false, effect: "read" }), false);
-  assert.equal(C.effectWriting({ readOnly: true, effect: "maybe" }), null, "an invalid effect is unknown, so treated as writing");
-  assert.equal(C.effectWriting({ readOnly: true }), false, "a text before item 3 keeps its read_only-derived effect");
-  assert.equal(C.effectWriting({ readOnly: false }), true);
+  // The classifier's effect rule (I3-1; R-R1 is I3-6).
+  const policyAs = (name, policy) => ({ ...M, send: { ...M.send, texts: { ...M.send.texts, [name]: policy } } });
+  assert.equal(C.effectWriting(policyAs("I3-ABSENT", { ...M.send.texts["I3-ABSENT"], effect: "write" }), "I3-ABSENT"), true, "a read_only text declared write is writing");
+  assert.equal(C.effectWriting(policyAs("I3-READBACK", { ...M.send.texts["I3-READBACK"], effect: "read" }), "I3-READBACK"), false);
+  assert.equal(C.effectWriting(policyAs("I3-ABSENT", { ...M.send.texts["I3-ABSENT"], effect: "maybe" }), "I3-ABSENT"), null, "an invalid effect is unknown, so treated as writing");
+  assert.equal(C.effectWriting(M, "P0"), false, "a text before item 3, under its pin and policy, keeps its read_only-derived effect");
+  assert.equal(C.effectWriting(M, "P1"), true);
+  assert.equal(C.effectWriting(M, "NO-SUCH-TEXT"), null);
   // Codex's reproduction (plannedReadOnlyWriteProbe): a read_only INSERT whose request failed in transport.
   const c = C.classifyText(receiptFor("I3-INS-OWNED-R-RO", null, null, { error: "TypeError: fetch failed" }), ctx());
   assert.equal(c.class, "R1");
@@ -160,7 +117,7 @@ test("I3-2 checkStep: each declared outcome MATCHes (with WROTE or REFUSED for t
 
 // ── I3-3 ─────────────────────────────────────────────────────────────────────
 
-test("I3-3 the fixture contract (I3-2) and the readback rules: a grant, a policy, a trigger, row security or an object the contract does not allow stops; each readback must show exactly what the outcomes before it call for; a WROTE stops E after E17", () => {
+test("I3-3 the fixture contract (I3-2) and the readback rules: a grant, a policy, a trigger, row security or an object the contract does not allow stops; each readback must show exactly what the outcomes before it call for; E ends in COMPLETE-REFUSED or, after a WROTE, the distinct COMPLETE-WROTE", () => {
   const fx = (over) => I.fixtureProblems(JSON.parse(FIXTURE(over))[0]);
   assert.deepEqual(fx(), []);
   const tables = JSON.parse(FIXTURE())[0].tables;
@@ -179,11 +136,14 @@ test("I3-3 the fixture contract (I3-2) and the readback rules: a grant, a policy
   ]) assert.match(fx(over).join("; "), re, label);
 
   const run = (results) => I.nextStep("E", results);
-  const all = (branch, over = {}) => Object.keys(I.STEPS).filter((s) => s.startsWith("E")).map((id) => check(id, over[id] || answers(branch)[id]));
-  assert.deepEqual(run(all([])), { stop: false, next: null }, "all refused: E is complete");
+  const all = (branch, over = {}) => eResults(branch, over);
+  const refusedEnd = run(all([]));
+  assert.deepEqual([refusedEnd.stop, refusedEnd.next, refusedEnd.terminal], [false, null, { outcome: "COMPLETE-REFUSED", wrote: [], corroborate: true, disposition: "Ryan or Codex" }], "all refused: E's terminal outcome");
   const wrote = run(all(["E15"]));
-  assert.equal(wrote.stop, true);
-  assert.match(wrote.reason, /the Read PAT WROTE at E15 \(I3-INS-OWNED-R-DEF\): STOP-and-review/);
+  assert.deepEqual([wrote.stop, wrote.next, wrote.terminal], [false, null, { outcome: "COMPLETE-WROTE", wrote: ["E15"], corroborate: true, disposition: "Codex" }], "a WROTE: the distinct terminal outcome, not a STOP");
+  assert.match(wrote.reason, /the Read PAT WROTE at E15 \(I3-INS-OWNED-R-DEF\): STOP-and-review before any cleanup/);
+  const x = I.nextStep("X", [check("X1", answers().X1), check("X2", answers().X2)]);
+  assert.deepEqual([x.stop, x.next, x.terminal], [false, null, { outcome: "COMPLETE", corroborate: false }], "X's end permits no read");
   for (const [label, branch, over, re] of [
     ["E3 with a row", [], { E3: [201, readback({ owned: [row(4, "I3-INS-OWNED-W-DEF")] })] }, /E3's readback does not match/],
     ["E13 without the control row", [], { E13: [201, readback({ ddl: ["ddl_w"] })] }, /E13's readback does not match.*owned holds rows \[\]/],
@@ -223,7 +183,7 @@ async function step(s, id, a, over = {}) {
   return s.fx.send(G, { text, target: "staging", win: s.win[winOf(text)], goId: go.goId, over: { fetchImpl: s.fx.fetchImpl(() => new Response(a[1], { status: a[0] })), ...over } });
 }
 
-test("I3-4 E and X end to end through the guarded tools: the all-refused branch completes E; a WROTE stops E after E17; X needs a named review file and then cleans up", async () => {
+test("I3-4 E and X end to end through the guarded tools: E ends COMPLETE-REFUSED, or COMPLETE-WROTE after a WROTE; either permits the one read, whose rows `corroborate` compares with E17; X needs a named review file and then cleans up", async () => {
   for (const branch of [[], ["E14", "E16"]]) {
     const s = setupE();
     try {
@@ -232,11 +192,23 @@ test("I3-4 E and X end to end through the guarded tools: the all-refused branch 
       assert.equal(s.fx.calls.length, 17, "one request per step");
       assert.deepEqual(s.fx.status(STAGING).holds, [], "nothing held: every outcome is resolved");
       const gate = G.guardedProgress({ phase: s.ph, entries: G.readJournal(s.fx.paths, STAGING), ctxAt: s.fx.ctxAt, now: s.fx.now() });
-      if (branch.length) {
-        assert.equal(gate.stop, true);
-        assert.match(gate.reason, /the Read PAT WROTE at E14, E16/);
-      } else assert.equal(gate.complete, true, gate.reason);
+      assert.deepEqual([gate.stop, gate.complete, gate.terminal.outcome], [false, true, branch.length ? "COMPLETE-WROTE" : "COMPLETE-REFUSED"], gate.reason);
+      if (branch.length) assert.match(gate.reason, /the Read PAT WROTE at E14, E16/);
       await refused(() => s.fx.issue(s.ph.phaseId, "E17"), /the gate does not name E17/, "nothing more in E");
+      // The one separate-credential read: `gate` permits it and prints the
+      // exact query; `corroborate` compares its rows with E17.
+      const out = [];
+      const deps = { manifest: M, anchor: s.fx.anchor, stateDir: s.fx.stateDir, now: s.fx.now, execArgv: [], stdout: (x) => out.push(x), ctxAt: s.fx.ctxAt };
+      const g = GO.main(["gate", "--phase", s.ph.phaseId], {}, deps).gate;
+      assert.deepEqual([g.corroborate, g.query, g.holds], [true, I.CORROBORATION_SQL, []]);
+      const rowsFile = join(s.fx.dir, "corroboration-rows.json");
+      writeFileSync(rowsFile, JSON.stringify(corroborationRows(finalValues(branch))));
+      const agree = GO.main(["corroborate", "--phase", s.ph.phaseId, "--rows", rowsFile], {}, deps);
+      assert.deepEqual([agree.exit, agree.corroboration.problems], [0, []]);
+      writeFileSync(rowsFile, JSON.stringify(corroborationRows(finalValues(branch)).slice(1)));
+      const disagree = GO.main(["corroborate", "--phase", s.ph.phaseId, "--rows", rowsFile], {}, deps);
+      assert.equal(disagree.exit, 3, "a missing object is a disagreement");
+      assert.match(out.join(""), /AGREE[\s\S]*DISAGREE with E17: STOP, with no cleanup/);
       // X: a review file is required to register.
       await refused(() => s.fx.register("item3", "X", { minutes: 60 }), /phase X needs a reviewed disposition of phase E/);
       const review = join(s.fx.dir, "e-disposition.md");
@@ -302,6 +274,112 @@ test("I3-5 I3-1: every read_only write probe (E8, E9, E10), and each measured wr
         assert.equal(r.status.holds.length, 1, `${label}: another checkout sees the hold`);
       } finally { rmSync(other, { recursive: true, force: true }); }
       assert.equal(s.fx.calls.length, before + 1, `${label}: no further request`);
+    } finally { s.fx.cleanup(); }
+  }
+});
+
+// ── I3-6 R-R1 ────────────────────────────────────────────────────────────────
+
+test("I3-6 R-R1: at run time a missing effect on each item 3 write text, or on a new text with readOnly true, is unknown and holds; only the 29 texts before item 3, under their exact pin and policy, keep the read_only-derived effect", () => {
+  // [class, writing, holds] for a transport-failed send of `text` under `manifest`.
+  const verdict = (text, manifest, target = "staging", aliases = {}) => {
+    const { bytes, entry, readReceipt } = failedEntry(text, manifest, target);
+    const c = ctxWith(manifest, aliases);
+    const cl = C.classifyText(bytes.toString("utf8"), c);
+    return [cl.class, cl.writing, G.holdsOf([entry], { ctxAt: () => c, readReceipt }).length];
+  };
+  const writes = Object.keys(I3_POLICY).filter((k) => I3_POLICY[k].effect === "write");
+  assert.equal(writes.length, 10);
+  for (const k of writes) {
+    assert.deepEqual(verdict(k, M), ["R1", true, 1], `${k}, as declared`);
+    const missing = clone(M);
+    delete missing.send.texts[k].effect;
+    assert.deepEqual(verdict(k, missing), ["R1", null, 1], `${k} without its effect: unknown, so held`);
+    const invalid = clone(M);
+    invalid.send.texts[k].effect = "maybe";
+    assert.deepEqual(verdict(k, invalid), ["R1", null, 1], `${k} with an invalid effect`);
+  }
+  // A new identity, read_only, with no effect: unknown, so held.
+  const NEW = "I3-NEW-PROBE";
+  const m = clone(M);
+  m.outputs[NEW] = clone(M.outputs["I3-INS-OWNED-R-RO"]);
+  m.send.texts[NEW] = { targets: ["staging"], readOnly: true, window: "R" };
+  assert.deepEqual(verdict(NEW, m, "staging", { [NEW]: "I3-INS-OWNED-R-RO" }), ["R1", null, 1], "a new text with readOnly true and no effect");
+  // The legacy controls: each of the 29, under its pin and policy, keeps its old effect.
+  for (const k of LEGACY_EFFECT_TEXTS) assert.equal(C.effectWriting(M, k), M.send.texts[k].readOnly !== true, k);
+  assert.deepEqual(verdict("P0", M, "production"), ["R1", false, 0], "P0 (read_only) under its pin and policy: not writing, as before");
+  assert.deepEqual(verdict("ENVELOPE-PROBE-1", M), ["R1", false, 0]);
+  assert.deepEqual(verdict("RB-1", M, "production"), ["R1", true, 1]);
+  // A legacy text whose policy or pin is not the listed one keeps nothing.
+  const moved = clone(M);
+  moved.send.texts.P0.window = "W";
+  assert.deepEqual(verdict("P0", moved, "production"), ["R1", null, 1], "P0 under another policy");
+  const repinned = clone(M);
+  repinned.outputs.P0 = { ...repinned.outputs.P0, md5: "0".repeat(32) };
+  assert.deepEqual(verdict("P0", repinned, "production"), ["R1", null, 1], "P0 under another pin");
+});
+
+// ── I3-7 R-R3 ────────────────────────────────────────────────────────────────
+
+test("I3-7 R-R3: the separate-credential read's query is the runbook's, byte for byte, with relkind cast; its rows are compared with E17; it is permitted only after a terminal outcome with nothing held, never after a STOP, a failed control, an unsupported outcome, an inconsistent readback, a hold, a partial phase or the deadline", async () => {
+  const runbook = readFileSync(join(ROOT, "docs", "security", "stage0-item3-runbook.md"), "utf8").replace(/\r\n/g, "\n");
+  const block = /## 6\.[\s\S]*?\n( *)```sql\n([\s\S]*?)\n *```/.exec(runbook);
+  assert.ok(block, "runbook §6 holds one sql block");
+  assert.equal(block[2].split("\n").map((l) => l.slice(block[1].length)).join("\n"), I.CORROBORATION_SQL);
+  assert.equal(G.WORKFLOWS.item3.corroboration.sql, I.CORROBORATION_SQL);
+  assert.equal(G.WORKFLOWS.item3.corroboration.step, "E17");
+  assert.match(I.CORROBORATION_SQL, /c\.relname \|\| ':' \|\| c\.relkind::text,/);
+
+  // The comparison.
+  for (const branch of [[], ["E14", "E15", "E16"]]) {
+    const v = finalValues(branch);
+    assert.deepEqual(I.corroborationProblems(corroborationRows(v), v), [], JSON.stringify(branch));
+  }
+  const v = finalValues(["E14", "E16"]);
+  const rows = corroborationRows(v);
+  for (const [label, r, re] of [
+    ["a missing row", rows.filter((x) => x.t !== "open"), /^open: the read has \[\]/],
+    ["an extra row", [...rows, { t: "owned", id: 7, label: "x", login_role: "a", session_role: "a", tx_read_only: "off" }], /^owned: /],
+    ["another writer", rows.map((x) => (x.t === "open" ? { ...x, login_role: "postgres" } : x)), /^open: /],
+    ["another owner", rows.map((x) => (x.label === "ddl_r:r" ? { ...x, login_role: "someone" } : x)), /^object: /],
+    ["another kind", rows.map((x) => (x.label === "ddl_r:r" ? { ...x, label: "ddl_r:v" } : x)), /^object: /],
+    ["an unknown kind of row", [...rows, { t: "view", id: null, label: null, login_role: null, session_role: null, tx_read_only: null }], /is of kind "view"/],
+    ["another column", rows.map((x, i) => (i ? x : { ...x, written_at: "x" })), /does not have exactly the columns/],
+    ["not an array", { rows }, /not an array/],
+  ]) assert.match(I.corroborationProblems(r, v).join("; "), re, label);
+  assert.match(I.corroborationProblems(rows, null).join("; "), /no E17 readback/);
+
+  // The permission, through the guarded tools.
+  const gateOf = (s) => G.phaseGate({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId: s.ph.phaseId, ctxAt: s.fx.ctxAt, now: s.fx.now() });
+  const readOf = (s, r) => G.corroborateRead({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId: s.ph.phaseId, rowsText: JSON.stringify(r), ctxAt: s.fx.ctxAt, now: s.fx.now() });
+  const runE = async (s, a, upTo = 17) => { for (const id of I.PHASES.E.steps.slice(0, upTo)) await step(s, id, a[id]).catch(() => {}); };
+  const throwing = (s) => async (...x) => { s.fx.calls.push(x); throw new TypeError("fetch failed"); };
+  const cases = [
+    ["a failed control (a 201 at E9)", (s) => runE(s, { ...answers(), E9: [201, '[{"id":2,"label":"I3-INS-OWNED-R-RO"}]'] }, 9), /E9 was STOP|the project is held/],
+    ["an inconsistent E17", (s) => runE(s, { ...answers(), E17: [201, readback({ owned: [row(4, "I3-INS-OWNED-W-DEF")], open: [row(5, "I3-INS-OPEN-R-DEF")], ddl: ["ddl_w"] })] }), /STOP: E17's readback does not match/],
+    ["an unsupported outcome (a 403 at E14)", (s) => runE(s, { ...answers(), E14: [403, '{"message":"Forbidden resource"}'] }, 14), /the project is held/],
+    ["a partial phase (before E17)", (s) => runE(s, answers(), 16), /the next step is E17/],
+    ["E's deadline passed", async (s) => { await runE(s, answers(["E14"])); s.fx.add(130 * MIN); }, /STOP: phase E's deadline/],
+    ["a hold elsewhere after COMPLETE-WROTE (X1 unresolved)", async (s) => {
+      await runE(s, answers(["E14", "E16"]));
+      assert.equal(gateOf(s).corroborate, true, "permitted before the hold");
+      const review = join(s.fx.dir, "e.md");
+      writeFileSync(review, "a disposition of E");
+      const x = s.fx.phase("item3", "X", { minutes: 60, reviewed: { path: review, sha256: G.sha256(readFileSync(review)) } });
+      const w = s.fx.window("W", x.phaseId, { pid: 4002 });
+      s.fx.add(1000);
+      const go = s.fx.issue(x.phaseId, "X1");
+      await s.fx.send(G, { text: "I3-CLEANUP", target: "staging", win: w, goId: go.goId, over: { fetchImpl: throwing(s) } }).catch(() => {});
+    }, /the project is held/],
+  ];
+  for (const [label, setup, re] of cases) {
+    const s = setupE();
+    try {
+      await setup(s);
+      const g = gateOf(s);
+      assert.equal(g.corroborate, false, label);
+      assert.equal(g.query, undefined, `${label}: no query is printed`);
+      await refused(() => readOf(s, corroborationRows(finalValues())), new RegExp(`the gate does not permit the separate-credential read: .*(?:${re.source})`), label);
     } finally { s.fx.cleanup(); }
   }
 });
