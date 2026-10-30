@@ -1,0 +1,27 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "I3-INS-OWNED-R-DEF",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "b2c09f4ef817d96c0e89d4426aa5be72",
+  "requestBytes": 191,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-30T15:34:44.097Z",
+  "finishedAt": "2026-10-30T15:34:44.354Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  25006: cannot execute INSERT in a read-only transaction\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false,
+  "guard": {
+    "attemptId": "428999b64e2242361b8bac73949a9548",
+    "goId": "4d5a7f235893abac0452cfa20dd31bc4",
+    "phaseId": "c862e1bc2ce6258cbbd907b312b144ae",
+    "step": "E15",
+    "markerId": "c7673a55feaccdfb2edefb6e3d5f3f1d",
+    "role": "R",
+    "head": "04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e",
+    "issuedAt": "2026-10-30T15:34:20.478Z",
+    "deadline": "2026-10-30T16:30:00.000Z"
+  }
+}

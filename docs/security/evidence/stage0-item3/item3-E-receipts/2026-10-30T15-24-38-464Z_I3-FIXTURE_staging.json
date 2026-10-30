@@ -1,0 +1,27 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "I3-FIXTURE",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": true,
+  "requestMd5": "6b4cd891538c9bb4d32b7fbd6a2dbce7",
+  "requestBytes": 1853,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-30T15:24:38.464Z",
+  "finishedAt": "2026-10-30T15:24:38.792Z",
+  "httpStatus": 201,
+  "body": "[{\"schema_owner\":\"postgres\",\"schema_acl\":\"{postgres=UC/postgres,=UC/postgres}\",\"tables\":[{\"name\":\"open\",\"owner\":\"postgres\",\"acl\":\"{postgres=arwdDxtm/postgres,=ar/postgres}\",\"rls\":false,\"force_rls\":false},{\"name\":\"owned\",\"owner\":\"postgres\",\"acl\":\"{postgres=arwdDxtm/postgres}\",\"rls\":false,\"force_rls\":false}],\"policies\":0,\"triggers\":0,\"rules\":0,\"objects\":[{\"name\":\"open\",\"kind\":\"r\"},{\"name\":\"open_pkey\",\"kind\":\"i\"},{\"name\":\"owned\",\"kind\":\"r\"},{\"name\":\"owned_pkey\",\"kind\":\"i\"}],\"default_acls\":[]}]",
+  "error": null,
+  "tokenRedactedFromResponse": false,
+  "guard": {
+    "attemptId": "99ec286eccf19dc5c4641c88fb8c2d1a",
+    "goId": "5cdd89897b9d937a48d7bd8fc503b44b",
+    "phaseId": "c862e1bc2ce6258cbbd907b312b144ae",
+    "step": "E2",
+    "markerId": "c7673a55feaccdfb2edefb6e3d5f3f1d",
+    "role": "R",
+    "head": "04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e",
+    "issuedAt": "2026-10-30T15:24:10.542Z",
+    "deadline": "2026-10-30T15:51:00.000Z"
+  }
+}

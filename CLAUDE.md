@@ -712,6 +712,24 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    approval before writing code.
 2. **Don't commit or push** unless explicitly asked. Leave the working tree dirty;
    Ryan reviews, then commits/pushes (push to main = Netlify auto-deploy).
+   **The push form (rule, 2026-10-30):** every push is
+   `git push origin <full 40-hex hash>:refs/heads/<branch>`, under its own
+   Codex clearance:
+   - no bare push;
+   - no `-u`;
+   - no force, with or without lease;
+   - no branch-name or `HEAD:` refspec;
+   - no `--all`, `--tags` or `--mirror`.
+
+   Check `git ls-remote` before and after. Local main tracks origin/main, so a
+   bare push from a checkout of main would deploy production.
+   - **The working checkout's local config** (`.review/current-source`)
+     sets `push.default nothing`. That refuses a push naming no refspec. It
+     does not stop the explicit forms above, and a fresh clone does not have
+     it, so this rule is the control.
+   - **The history:** pushes before 2026-10-21 used branch names, `-u`,
+     `HEAD:` and two `--force-with-lease` updates (2026-09-18 and
+     2026-09-20). Since cdacd8c, every push has named its full hash.
 3. After changes, verify with `yarn build` AND `yarn test` (and `yarn dev` for
    anything visual). The test suite is the margin-leak contract.
 4. Never touch pricing math or the Supabase schema unless the task explicitly
@@ -830,3 +848,42 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    historical specs, not standing instructions.
 6. Keep this CLAUDE.md current: when you learn a new gotcha or an anchor moves,
    update it as part of the task.
+
+## Session log (standing rule, 2026-10-29; rewritten 2026-10-30)
+At the end of every session, before the final report, update docs/STATUS.md
+in the working tree. Claude Duet manages the project from that file.
+
+**Committing it** follows rule 2: only when Ryan asks for a commit. It goes
+into the session's docs commit when there is one, otherwise into a commit
+named "docs: session log <YYYY-MM-DD>". That commit is always on the branch
+that carries the session's work, **never on main**.
+
+**Pushing it:** it is pushed only inside a push Codex has cleared, by that
+push's exact `<full hash>:refs/heads/<branch>` (rule 2), and **never to
+main**, since a push to main deploys production. A log commit that no
+cleared push covers stays local.
+- The first version of this rule (15e0c91, on a local main) said to push
+  the log "with the session's other commits".
+- That commit and its first log (19dfb0a) were moved off main, unpushed,
+  on 2026-10-29. They are kept on the local-only branch `session-log-draft`.
+
+docs/STATUS.md format:
+- Under 80 lines. Newest session first, and at most the last 5 sessions.
+- A 6-line header above the sessions:
+  - last updated
+  - HEAD of the default branch (main), as on origin
+  - CI state on that branch
+  - Security state on that branch
+  - deploy URL (https://printcalculator2.netlify.app/)
+  - project board (Print Calculator)
+- Each session is "## <date> — <one-line title>", then these bullets:
+  - Shipped: the commit range, then one line per commit
+  - CI/Security state on the default branch
+  - Open issues touched
+  - Needs from Ryan
+  - Needs a ruling from Claude (chat)
+  - Next planned step
+- Write "none" for anything that doesn't apply, such as no CI, no security
+  workflow or no issues.
+- The file cannot contain its own commit's hash. The commit that carries a
+  log is named "this commit" in it, and by its hash in the next log.

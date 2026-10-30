@@ -1,0 +1,93 @@
+{
+  "phaseId": "c862e1bc2ce6258cbbd907b312b144ae",
+  "workflow": "item3",
+  "phase": "E",
+  "stop": false,
+  "next": null,
+  "complete": true,
+  "terminal": {
+    "outcome": "COMPLETE-REFUSED",
+    "wrote": [],
+    "corroborate": true,
+    "disposition": "Ryan or Codex"
+  },
+  "reason": "E is complete and consistent, and every measured write was REFUSED. The one separate-credential read (runbook §6) is permitted while nothing is held; X waits for a reviewed disposition",
+  "results": [
+    {
+      "step": "E1",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E2",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E3",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E4",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E5",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E6",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E7",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E8",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E9",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E10",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E11",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E12",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E13",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "E14",
+      "verdict": "MATCH",
+      "outcome": "REFUSED"
+    },
+    {
+      "step": "E15",
+      "verdict": "MATCH",
+      "outcome": "REFUSED"
+    },
+    {
+      "step": "E16",
+      "verdict": "MATCH",
+      "outcome": "REFUSED"
+    },
+    {
+      "step": "E17",
+      "verdict": "MATCH"
+    }
+  ],
+  "holds": [],
+  "lock": false,
+  "corroborate": true,
+  "query": "-- item 3, separate-credential read (ad-hoc, read-only, not a pinned text)\nselect 'owned' as t, id, label, login_role, session_role, tx_read_only from stage0_item3.owned\nunion all\nselect 'open', id, label, login_role, session_role, tx_read_only from stage0_item3.open\nunion all\nselect 'object', null, c.relname || ':' || c.relkind::text, pg_get_userbyid(c.relowner), null, null\n  from pg_class c where c.relnamespace = 'stage0_item3'::regnamespace\norder by 1, 2, 3;"
+}
+The one separate-credential read is permitted now, exactly the query above (COMPLETE-REFUSED).

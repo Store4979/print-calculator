@@ -1,0 +1,27 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "I3-READBACK",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "2177f8784b37411e55955921b4d62671",
+  "requestBytes": 898,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-30T15:25:43.753Z",
+  "finishedAt": "2026-10-30T15:25:44.064Z",
+  "httpStatus": 201,
+  "body": "[{\"owned\":[],\"open\":[],\"objects\":[{\"name\":\"open\",\"kind\":\"r\",\"owner\":\"postgres\"},{\"name\":\"open_pkey\",\"kind\":\"i\",\"owner\":\"postgres\"},{\"name\":\"owned\",\"kind\":\"r\",\"owner\":\"postgres\"},{\"name\":\"owned_pkey\",\"kind\":\"i\",\"owner\":\"postgres\"}]}]",
+  "error": null,
+  "tokenRedactedFromResponse": false,
+  "guard": {
+    "attemptId": "c9469ee70f6b8df447f11c976a05e66c",
+    "goId": "9a0f760c23ef00fe182e19e1021fa86a",
+    "phaseId": "c862e1bc2ce6258cbbd907b312b144ae",
+    "step": "E3",
+    "markerId": "728ddf89c1e463ab196486f6cb50b1a5",
+    "role": "W",
+    "head": "04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e",
+    "issuedAt": "2026-10-30T15:25:03.839Z",
+    "deadline": "2026-10-30T15:54:00.000Z"
+  }
+}

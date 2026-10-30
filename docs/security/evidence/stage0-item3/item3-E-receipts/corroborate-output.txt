@@ -1,0 +1,1 @@
+AGREE: the separate-credential read agrees with E17 in every row, object and owner.

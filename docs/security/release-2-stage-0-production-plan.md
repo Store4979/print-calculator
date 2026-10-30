@@ -2770,6 +2770,86 @@ window.**
       main@7ec5af4.
 
     It agrees with the live-site checks above.
+- **Codex accepted Q `4e2a375`, 2026-10-29** (`reviews/2026-10-29-4e2a375-review.md`).
+  P-R1, Q-P1, the per-send not-after and Q-P2 are accepted. Codex cleared
+  the exact Q tip, carrying P `30c0eba` and Q, for the existing staging
+  branch and build only; R stays local (`reviews/2026-10-29-ba1a0bd-review.md`:
+  AMEND).
+- **The push, Thu 2026-10-29, 17:35:55–58Z, under that clearance only:**
+  - **Before (17:35:22Z):**
+    - the remote is `github.com/Store4979/print-calculator`;
+    - Q's tree was `a49841fb…`, and O was its ancestor;
+    - O..Q held exactly `30c0eba` and `4e2a375`;
+    - `ls-remote` showed the branch at `22610f80d08b4ed6d905a821e7c0feca4ffdd013`,
+      `main` at `7ec5af4`, and no tags.
+  - **The command:**
+    `git push origin 4e2a375a873338b1bc4faed758a526b2a8956133:refs/heads/security/release-2-slice-2`
+    gave `22610f8..4e2a375`, exit 0, with no force and no tags.
+  - **After:** the branch is at `4e2a375`, `main` is still at `7ec5af4`,
+    and there are no tags (17:35:58Z, and again 17:36:43Z and 17:40:49Z).
+  - **Staging,** before at 17:35:43Z: deploy `6ae21991…` at `22610f8`.
+    After, first seen 17:39:13Z: deploy **`6ae383ff10c0f3a73e12f4dc`**,
+    commitRef `4e2a375…`, built 2026-10-29T17:38:42.204Z. Its permalink
+    reported the same at 17:40:44Z, with `contextAllowed`, `flagPresent` and
+    `flagEnabled` all true.
+  - **Production is unchanged,** at 17:36:43Z and again 17:40:49Z, as it
+    was before the push (17:35:49Z). The
+    live `index.html` (`d67e9e91…`), `main-DZt0oGiJ.js` (`47ab9406…`) and
+    `index-ftBg9V1i.js` (`57fb08e6…`) are byte-identical to deploy
+    `6ab020c5`'s permalink. `/.netlify/functions/deploy-context` on
+    production returns the same bytes as `index.html`.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked,** done just
+    before his message of 16:42 EDT (20:42Z) on Thu 2026-10-29, about 3 h
+    after the push (the read's own time is not stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above.
+- **Codex accepted S `04b6520`, 2026-10-29** (`reviews/2026-10-29-04b6520-review.md`).
+  R-R1, R-R2, R-R3 and the gate's mutation companion are accepted, with no
+  blocking findings. Codex cleared R `ba1a0bd` and S, ending exactly at S,
+  for the existing staging branch and build only. The same review clears
+  the phase E session at H = S; X is not cleared.
+- **The push, Thu 2026-10-29, 23:49:40–42Z, under that clearance only:**
+  - **Before (23:48:52Z):**
+    - the remote is `github.com/Store4979/print-calculator`;
+    - S's tree was `00f16c61…`, and Q was its ancestor;
+    - Q..S held exactly `ba1a0bd` and `04b6520`;
+    - `ls-remote` showed the branch at `4e2a375a873338b1bc4faed758a526b2a8956133`,
+      `main` at `7ec5af4`, and no tags.
+  - **The command:**
+    `git push origin 04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e:refs/heads/security/release-2-slice-2`
+    gave `4e2a375..04b6520`, exit 0, with no force and no tags. The local
+    repository's `push.default` was `nothing` (set the same evening), which
+    refuses a push that names no refspec.
+  - **After:** the branch is at `04b6520` and `main` is still at `7ec5af4`
+    (23:49:42Z, and again 23:50:48Z and 23:53:55Z). There are no tags
+    (23:49:42Z and 23:53:55Z).
+  - **Staging,** before at 23:49:13Z: deploy `6ae383ff…` at `4e2a375`.
+    At 23:50:48Z it was still Q's. After, first seen 23:53:55Z: deploy
+    **`6ae3db978b39d0d3183a04b0`**, commitRef `04b6520…`, built
+    2026-10-29T23:52:39.393Z. Its permalink reported the same at 23:54:09Z,
+    with `contextAllowed`, `flagPresent` and `flagEnabled` all true.
+  - **Production is unchanged,** at 23:50:48Z, 23:53:55Z and 23:54:09Z, as
+    it was before the push (23:49:13Z). The live `index.html`, `main-DZt0oGiJ.js`
+    and `index-ftBg9V1i.js` (md5 `d67e9e91…`, `47ab9406…`, `57fb08e6…`, the
+    same files as in the Q record above) are byte-identical to deploy
+    `6ab020c5`'s permalink. `/.netlify/functions/deploy-context` on
+    production returns the same bytes as `index.html`.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked,** done just
+    before his message, which arrived at about 10:57 EDT (14:57Z) on Fri
+    2026-10-30, about 15 h after the push (the read's own time is not
+    stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above.
+  - **Ryan's second §12 read, in the same words,** done just before his
+    message of about 11:53 EDT (15:53Z) on Fri 2026-10-30. That is after
+    the item 3 phase E session, which ended about 15:41Z. It finds no new
+    production deploy, and Published still `6ab020c5…` at main@7ec5af4.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 
@@ -3009,6 +3089,161 @@ Accepted:
 **Commit N,** on top, restricts R3 to the five witnessed envelope profiles.
 Both commits are local, and the push is held until N is reviewed. The
 classifier plan's §10 has the details.
+
+**E15. Item 3, the read-token experiment on staging — RECORD, 2026-10-30.**
+
+**The basis:**
+- the runbook `docs/security/stage0-item3-runbook.md`, at H = S
+  `04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e`;
+- Codex's review of S (`reviews/2026-10-29-04b6520-review.md`) cleared
+  phase E at H. It put X behind a reviewed disposition of E and a fresh go;
+- the guarded sender (`docs/security/stage0-guarded-send-procedure.md`),
+  with the guard store `3389bb8f8df9280e7608c455249678f5` that the anchor at
+  H names.
+
+**Where:**
+- **Target:** staging `lboajqihpsfrokqvjgnl` only. Nothing was sent to
+  production.
+- **Checkout:** every command ran in the clean clone
+  `C:\Dev\print-calculator-main\.review\item3-04b6520`:
+  - cloned from GitHub after the S push;
+  - detached at H, with its remote removed;
+  - `git status` empty before and after both phases.
+- **Preflight, 2026-10-29 23:49–23:56Z:** the store was intact, with
+  nothing held and no lock. V-DRY: all 19 steps matched their pins, the
+  send policy and the runbook's §1 table.
+- **Evidence:** the receipts stay unchanged in that clone's `.stage0-send/`.
+  Byte-identical copies are in `docs/security/evidence/stage0-item3/`,
+  together with:
+  - both session records;
+  - E's approved disposition;
+  - the go texts, the gate outputs and the separate read.
+
+  `.gitattributes` keeps that directory `-text`, so a checkout keeps their
+  bytes. The records name their files as they were then, under
+  `reviews/requests/` (outside the repository). The same names now sit in
+  this directory.
+
+| phase | go (its arrival) | deadline | phase id | tokens: name; level; expiry as shown | tokens deleted | end |
+|---|---|---|---|---|---|---|
+| E | 2026-10-30T15:16:50Z (approval `8231f9740c9a980e`, drafted and returned verbatim) | 2026-10-30T16:49:00Z | `c862e1bc2ce6258cbbd907b312b144ae` | `stage0-item3-E-read-20261030`, READ; `stage0-item3-E-write-20261030`, READ-WRITE; staging only; "in a day" | confirmed by about 15:41Z; exact time not stated | COMPLETE-REFUSED (gate, 15:36:15Z) |
+| X | 2026-10-30T16:50:15Z (approval `bb21e873878730fb`, drafted and returned verbatim) | 2026-10-30T17:27:00Z | `9dee28cfef698015cd346341cb021ee4` | `stage0-item3-X-read-20261030`, READ; `stage0-item3-X-write-20261030`, READ-WRITE; staging only; "in a day" | confirmed by about 16:56Z; exact time not stated | COMPLETE (gate, 16:53:47Z) |
+
+**The procedure at every send:**
+- Claude stated the whole-path check and issued the one go. The checks
+  left 19 to 60 min before each ceiling, so no go carried a not-after and
+  no clock renewal was needed.
+- Ryan ran the one command once, in the window it named.
+- Claude classified the receipt with rule 3′ and read the gate before the
+  next go.
+- Each window ended with `close` (no unused gos), `Remove-Item` and
+  `exit`, and the tokens were then deleted.
+
+**Phase E: 17 sends, 17 MATCH** (15:23:22Z to 15:35:57Z):
+- **E1** made the fixture.
+- **E2** matched the fixture contract (§2 of the runbook):
+  - schema ACL `{postgres=UC/postgres,=UC/postgres}`;
+  - `open` `{postgres=arwdDxtm/postgres,=ar/postgres}`, `owned`
+    `{postgres=arwdDxtm/postgres}`;
+  - row security off; no policies, triggers or rules;
+  - exactly the four base objects;
+  - `default_acls` `[]`.
+- **E3** read back empty.
+- **The WHO rows.** Each describes only its own request:
+  - **E4** (Read PAT, `read_only`), **E5** (Read PAT, without) and **E6**
+    (Read and Write PAT, `read_only`): `supabase_read_only_user`, with
+    `tx_read_only` on and `default_tx_read_only` on;
+  - **E7** (Read and Write PAT, without): `postgres`, with both off.
+- **The controls:**
+  - E8–E10, INSERTs sent with `read_only`, were each refused with `25006`;
+  - E11 (INSERT into `owned`) and E12 (CREATE TABLE `ddl_w`), from the Read
+    and Write PAT without `read_only`, succeeded;
+  - E13 read back row 4 and `ddl_w`.
+- **The measured steps, the Read PAT without `read_only`:**
+  - E14, INSERT into `open`: **REFUSED** `25006`;
+  - E15, INSERT into `owned`: **REFUSED** `25006`;
+  - E16, CREATE TABLE in `stage0_item3`: **REFUSED** `25006`.
+- **E17** was identical to E13.
+- **The one separate-credential read:**
+  - sent once, through the Supabase MCP's own credential, neither PAT,
+    between the gate's permission (15:36:15Z) and the comparison;
+  - it AGREED with E17 in every row, object and owner (`corroborate`, exit
+    0, 15:36:46Z).
+
+Every receipt, its sha256 and attempt id, and the three readbacks verbatim
+are in the disposition.
+
+**E's disposition, approved by Ryan under runbook §7:**
+- **The file:** `docs/security/evidence/stage0-item3/item3-E-disposition.md`.
+- **The draft:**
+  - generated from the evidence files and checked against them;
+  - unsigned, 18,970 bytes, sha256
+    `28189dfa646893df4e6d601290d8cde795ee7e50495f22c7f9adcecbbceedc37`.
+- **Ryan's approval,** alone in his message, arriving
+  2026-10-30T16:34:36Z:
+
+  ```text
+  APPROVE item 3 phase E disposition c862e1bc2ce6258cbbd907b312b144ae, sha256 28189dfa646893df4e6d601290d8cde795ee7e50495f22c7f9adcecbbceedc37
+  ```
+- **The final file:** the draft plus an appended "Approved" block (his line
+  verbatim, its arrival time, the draft hash): 19,437 bytes, sha256
+  `00d5e2dce339b37050d49578f66165d00562768f1bd2575ee83fa95896f51c8c`.
+- **Checking it** against the committed blob:
+
+  ```bash
+  git cat-file blob HEAD:docs/security/evidence/stage0-item3/item3-E-disposition.md | head -c 18970 | sha256sum
+  git cat-file blob HEAD:docs/security/evidence/stage0-item3/item3-E-disposition.md | sha256sum
+  ```
+
+  These print `28189dfa…` (the approved draft is the file's first 18,970
+  bytes) and `00d5e2dc…` (the whole file). X's registration recorded that
+  final sha256 (`--reviewed`).
+
+**Phase X: 2 sends, 2 MATCH:**
+- X1 `I3-CLEANUP` (W, 16:52:17Z) re-checked staging, dropped `stage0_item3`
+  and returned `[{"gone":true}]`.
+- X2 `I3-ABSENT` (R, `read_only`, 16:53:32Z) returned `[{"gone":true}]`.
+- Nothing from item 3 remains on staging.
+
+**The guard store afterwards (16:56:37Z):** intact, 72 events, 19
+attempts, each with its outcome recorded, and no holds, live gos, markers
+or lock.
+
+**What E establishes, and its limits** (the conclusion of the disposition,
+§8):
+- **Established:** on staging, through the sender's route
+  (`/v1/projects/{ref}/database/query`), on 2026-10-30, a Database: Read
+  PAT's requests sent without `read_only` did not perform these three
+  statements. Each was refused with `25006`, and none left a row or an
+  object.
+- **Not established:**
+  - anything about production;
+  - any other statement, function, schema or route;
+  - that the Read/Write PAT split is server-enforced in general.
+
+**Finding for item 4(c):**
+- **What the role held.** E4 and E5 show that `supabase_read_only_user`
+  held INSERT on `open` (`open_insert` true) and CREATE on the schema
+  (`schema_create` true). The fixture granted those only to PUBLIC: E2's
+  ACLs name only the owner and PUBLIC, and `owned_insert` false shows the
+  role has no owner privilege. So the role held them through the PUBLIC
+  grants.
+- **What refused the writes.** E14 and E16 were refused by the read-only
+  transaction, not by a missing privilege. E15's INSERT lacked the
+  privilege too, and it was refused by the same read-only check first
+  (`25006`, not `42501`). E5, the same token and mode, shows
+  `default_transaction_read_only` on. The refused requests' own role was not
+  observed: only their `25006`.
+- **What that means:**
+  - On staging, as observed, that default stops our own pinned texts
+    writing by accident through a Read PAT.
+  - It was not tested against a statement that first switches the
+    transaction mode. So 4(c) may count it only as that accident barrier,
+    beside the R/W windows (runbook §1: "a local mistake barrier, not token
+    authority"). It must not count it as a write boundary.
+
+**This record and its evidence are committed in T** (on S, local, for
+Codex's review), with the Q and R+S push records (§E13).
 
 ---
 

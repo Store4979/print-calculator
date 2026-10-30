@@ -1,0 +1,27 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "I3-INS-OWNED-W-DEF",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "d8e4f3a5f199e508f438a694bb1a4122",
+  "requestBytes": 191,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-30T15:32:02.240Z",
+  "finishedAt": "2026-10-30T15:32:02.515Z",
+  "httpStatus": 201,
+  "body": "[{\"id\":4,\"label\":\"I3-INS-OWNED-W-DEF\"}]",
+  "error": null,
+  "tokenRedactedFromResponse": false,
+  "guard": {
+    "attemptId": "39317faf4bcf6111cdf938fa204402d1",
+    "goId": "28ce6fc3a41d10d23dd597b95e144ec2",
+    "phaseId": "c862e1bc2ce6258cbbd907b312b144ae",
+    "step": "E11",
+    "markerId": "728ddf89c1e463ab196486f6cb50b1a5",
+    "role": "W",
+    "head": "04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e",
+    "issuedAt": "2026-10-30T15:31:43.564Z",
+    "deadline": "2026-10-30T16:18:00.000Z"
+  }
+}

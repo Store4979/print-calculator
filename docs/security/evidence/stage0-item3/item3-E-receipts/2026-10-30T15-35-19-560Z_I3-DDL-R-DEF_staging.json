@@ -1,0 +1,27 @@
+{
+  "tool": "scripts/manual/stage0-send.mjs",
+  "text": "I3-DDL-R-DEF",
+  "target": "staging",
+  "ref": "lboajqihpsfrokqvjgnl",
+  "readOnly": false,
+  "requestMd5": "527dcfe127e51ca3ea1ff1b0546fd4ad",
+  "requestBytes": 213,
+  "endpoint": "https://api.supabase.com/v1/projects/lboajqihpsfrokqvjgnl/database/query",
+  "startedAt": "2026-10-30T15:35:19.560Z",
+  "finishedAt": "2026-10-30T15:35:19.810Z",
+  "httpStatus": 400,
+  "body": "{\"message\":\"Failed to run sql query: ERROR:  25006: cannot execute CREATE TABLE in a read-only transaction\\n\"}",
+  "error": null,
+  "tokenRedactedFromResponse": false,
+  "guard": {
+    "attemptId": "eb07b663a37c19cf5d4787b1f614e060",
+    "goId": "f72c5099fcd1800294182807b2054ede",
+    "phaseId": "c862e1bc2ce6258cbbd907b312b144ae",
+    "step": "E16",
+    "markerId": "c7673a55feaccdfb2edefb6e3d5f3f1d",
+    "role": "R",
+    "head": "04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e",
+    "issuedAt": "2026-10-30T15:35:02.304Z",
+    "deadline": "2026-10-30T16:33:00.000Z"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "phaseId": "9dee28cfef698015cd346341cb021ee4",
+  "workflow": "item3",
+  "phase": "X",
+  "stop": false,
+  "next": null,
+  "complete": true,
+  "terminal": {
+    "outcome": "COMPLETE",
+    "corroborate": false
+  },
+  "reason": "phase X is complete",
+  "results": [
+    {
+      "step": "X1",
+      "verdict": "MATCH"
+    },
+    {
+      "step": "X2",
+      "verdict": "MATCH"
+    }
+  ],
+  "holds": [],
+  "lock": false,
+  "corroborate": false
+}
+The separate-credential read is NOT permitted.
