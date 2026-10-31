@@ -1,13 +1,23 @@
-- Last updated: 2026-10-30
+- Last updated: 2026-10-31
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
+## 2026-10-31 — T verified; the item 4(c) plan (docs commit U)
+- Shipped: security/release-2-slice-2 c62644a..this commit (local, for Codex's review)
+  - this commit (U): docs/security/stage0-item4c-plan.md, the rehearsal from 01, the recovery mapping and the window
+  - Not commits: T's review request finished (3 replays: 40 of 42 suites green, G-6 failed twice, assertion not captured)
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: forward T's and U's review requests; decide on the throwaway project and the window option (plan §12)
+- Needs a ruling from Claude (chat): none
+- Next planned step: Codex's reviews of T (with G-6) and U; then the 4(c) implementation commit
+
 ## 2026-10-30 — Item 3 on staging: phase E COMPLETE-REFUSED, disposition approved, phase X cleanup; docs commit T
-- Shipped: security/release-2-slice-2 04b6520..this commit (local, for Codex's review)
-  - this commit (T):
+- Shipped: security/release-2-slice-2 04b6520..c62644a (local, for Codex's review)
+  - c62644a T:
     - the Q and R+S push records (§E13);
     - the item 3 record (§E15) and its evidence in docs/security/evidence/stage0-item3/;
     - the session-log and push-form rules
@@ -49,15 +59,6 @@
   - 0687296 CL-28: each profile mutant must make its named negative exactly R3
   - 78db6dc Item 6: the guarded sender (Codex's review of the item 6 plan, SG-1 to SG-6)
   - 22610f8 O: item 6, Codex's review of 78db6dc (I6-R1, I6-R2, the ordering note)
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: not recorded in history
-- Needs a ruling from Claude (chat): not recorded in history
-- Next planned step: not recorded in history
-
-## 2026-10-21 — Item 2: Codex's review of df401b3 (K-R1, K-R2)
-- Shipped: security/release-2-slice-2 df401b3..1042d2c (not main)
-  - 1042d2c Item 2: total timestamp validation; the six capture procedures; a real progression gate
 - CI/Security on main: none
 - Open issues touched: none
 - Needs from Ryan: not recorded in history
