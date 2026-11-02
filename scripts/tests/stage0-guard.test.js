@@ -15,6 +15,10 @@
 //   G-4  SG-1: a go of another phase, or for a step the gate does not name, refuses
 //   G-5  SG-1: a replayed issuance is refused; one usable go per project
 //   G-6  SG-1/SG-2: concurrent issuance and concurrent sends, in separate processes
+//        released together on acknowledgement; each loser gives only a refusal
+//        the race allows (Codex's review of the G-6 addendum, F1)
+//   G-6b F1: the lock-wait branch forced in a labelled copy; the check refuses
+//        every altered refusal
 //   G-7  SG-2: a claimed request still in flight holds everything
 //   G-8  SG-2: a crash after the claim holds across close, reopen, a new marker and a new phase
 //   G-9  SG-2: a fetch failure and a response-body failure hold a writing send
@@ -41,14 +45,13 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as G from "../manual/stage0-guard.mjs";
 import * as C from "../manual/stage0-classify.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import * as WIN from "../manual/stage0-window.mjs";
 import * as GO from "../manual/stage0-go.mjs";
-import { fixture, synthWorkflow, M, ctx, ROOT, HEAD, T0, TOKEN, OTHER_TOKEN, nonce, SHELL_CREATED } from "./stage0-guard-fixture.mjs";
+import { fixture, synthWorkflow, M, ctx, ROOT, HEAD, T0, TOKEN, OTHER_TOKEN, nonce, SHELL_CREATED, releaseTogether, guardCopy } from "./stage0-guard-fixture.mjs";
 
 const PROD = "gmxyisjjaxtpycsmmzef";
 const STAGING = "lboajqihpsfrokqvjgnl";
@@ -259,72 +262,176 @@ const F = await import(cfg.fixtureUrl);
 const G = await import(cfg.guardUrl);
 const fx = F.fixture({ workflows: { t: F.synthWorkflow(cfg.target, cfg.phases) }, attach: { stateDir: cfg.stateDir, results: cfg.results }, t0: cfg.now });
 for (const pid of cfg.shells) fx.shell(pid);
-while (!existsSync(cfg.startFile)) await new Promise((r) => setTimeout(r, 2));
+writeFileSync(cfg.ready, String(process.pid));
+const until = Date.now() + cfg.startWithinMs;
+while (!existsSync(cfg.start)) {
+  if (Date.now() > until) { writeFileSync(cfg.out, JSON.stringify({ ok: false, name: "NoStart", message: "the start file never came" })); process.exit(3); }
+  await new Promise((r) => setTimeout(r, 2));
+}
 let out;
 try {
-  if (cfg.mode === "issue") { const g = fx.issue(cfg.phaseId, cfg.step); out = { ok: true, goId: g.goId }; }
+  if (cfg.mode === "issue") { const g = fx.issue(cfg.phaseId, cfg.step, { guard: G }); out = { ok: true, goId: g.goId }; }
   else {
     let n = 0;
     const fetchImpl = cfg.mode === "hang"
-      ? async () => { n++; writeFileSync(cfg.outFile + ".fetched", "1"); setInterval(() => {}, 1000); return new Promise(() => {}); }
+      ? async () => { n++; writeFileSync(cfg.out + ".fetched", "1"); setInterval(() => {}, 1000); return new Promise(() => {}); }
       : async () => { n++; return new Response('[{"set_config":"45s"}]', { status: 201 }); };
     try { await fx.send(G, { text: cfg.text, target: cfg.target, win: { env: cfg.env, pid: cfg.pid }, goId: cfg.goId, over: { fetchImpl } }); out = { ok: true, calls: n }; }
     catch (e) { out = { ok: false, name: e.constructor.name, message: e.message, calls: n }; }
   }
 } catch (e) { out = { ok: false, name: e.constructor.name, message: e.message }; }
-writeFileSync(cfg.outFile, JSON.stringify(out));
+writeFileSync(cfg.out, JSON.stringify(out));
 process.exit(0);
 `;
 
-/** Start one worker per config, release them together, and return their outputs. */
+/**
+ * Start one worker per config and release them together once each has
+ * acknowledged that it loaded its modules and attached its fixture
+ * (releaseTogether: bounded, with every worker's diagnostics on failure).
+ * Returns, per worker, its pid, exit code, signal, stderr and output.
+ */
 async function workers(fx, cfgs, { kill = null } = {}) {
   const wdir = join(fx.dir, `w-${hex32().slice(0, 6)}`);
   mkdirSync(wdir, { recursive: true });
   const script = join(wdir, "worker.mjs");
   writeFileSync(script, WORKER);
-  const startFile = join(wdir, "start");
-  const procs = cfgs.map((c, i) => {
-    const outFile = join(wdir, `out-${i}.json`);
-    const cfgFile = join(wdir, `cfg-${i}.json`);
-    writeFileSync(cfgFile, JSON.stringify({
-      fixtureUrl: pathToFileURL(join(ROOT, "scripts", "tests", "stage0-guard-fixture.mjs")).href,
-      guardUrl: pathToFileURL(join(ROOT, "scripts", "manual", "stage0-guard.mjs")).href,
-      stateDir: fx.stateDir, results: fx.results, now: fx.now(), startFile, outFile, ...c,
-    }));
-    const p = spawn(process.execPath, [script, cfgFile], { stdio: "ignore", windowsHide: true });
-    return { p, outFile, done: new Promise((res) => p.on("exit", res)) };
-  });
-  await new Promise((r) => setTimeout(r, 1500)); // every worker has loaded its modules
-  writeFileSync(startFile, "go");
-  if (kill) {
-    const fetched = procs[kill.index].outFile + ".fetched";
+  const afterStart = kill && (async (ws) => {
+    const fetched = ws[kill.index].cfg.out + ".fetched";
     const until = Date.now() + 60000;
     while (!existsSync(fetched) && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
     assert.ok(existsSync(fetched), "the hanging worker reached fetch");
-    procs[kill.index].p.kill();
-  }
-  await Promise.all(procs.map((x) => x.done));
-  return procs.map((x) => (existsSync(x.outFile) ? JSON.parse(readFileSync(x.outFile, "utf8")) : null));
+    ws[kill.index].p.kill();
+  });
+  return releaseTogether({
+    dir: wdir, script, afterStart,
+    cfgs: cfgs.map((c) => ({
+      fixtureUrl: pathToFileURL(join(ROOT, "scripts", "tests", "stage0-guard-fixture.mjs")).href,
+      guardUrl: pathToFileURL(join(ROOT, "scripts", "manual", "stage0-guard.mjs")).href,
+      stateDir: fx.stateDir, results: fx.results, now: fx.now(), ...c,
+    })),
+  });
 }
+
+/** Every worker of a round, for an assertion message. */
+const diag = (ws) => JSON.stringify(ws.map((w) => ({ index: w.index, pid: w.pid, exitCode: w.exitCode, signal: w.signal, out: w.out, outRaw: w.out ? undefined : w.outRaw, stderr: w.stderr || undefined })));
+
+/** Each worker ran to its end: exit 0, no signal, and one structured result. Its result, not its exit code, says what the guard did. */
+function ranToEnd(ws, label) {
+  for (const w of ws) {
+    assert.equal(w.exitCode, 0, `${label}: worker ${w.index} exited ${w.exitCode}; ${diag(ws)}`);
+    assert.equal(w.signal, null, `${label}: worker ${w.index} was signalled; ${diag(ws)}`);
+    assert.ok(w.out && typeof w.out.ok === "boolean", `${label}: worker ${w.index} wrote no structured result; ${diag(ws)}`);
+  }
+}
+
+/** The guard's own lock-wait refusal after a wait of `secs`; its groups are the holder's pid, its time and the lock's path. */
+const lockWait = (secs) => new RegExp(`^another guard process has held the store lock for over ${secs} s \\(pid ([0-9]+) since ([^)]*)\\)\\. If none is running, the lock is stale: check with stage0-go\\.mjs status, then remove (.+) by hand and record it; refusing$`);
+/** A lock-wait LockUnavailable whose holder is another worker of this round, at the fixture's time, on this store's lock. */
+function siblingWait(o, w, ws, fx, secs = 10) {
+  if (!o || o.name !== "LockUnavailable" || typeof o.message !== "string") return false;
+  const inner = /^the guard store is busy, so .* is not established \((.*)\); refusing$/.exec(o.message);
+  const m = lockWait(secs).exec(inner ? `${inner[1]}; refusing` : o.message);
+  const holder = m ? Number(m[1]) : null;
+  return Boolean(m && m[2] === G.iso(fx.now()) && m[3] === fx.paths.lock && holder !== w.pid && ws.some((x) => x.pid === holder));
+}
+/** A losing issuer's refusal is one of exactly two: OUTSTANDING naming the winner's go, step and deadline, or the lock wait behind another worker. */
+const issuerLoserOk = (w, ws, go, fx, secs = 10) => (w.out.name === "Refusal" && w.out.message === `go ${go.goId} (${go.step}) is outstanding until ${go.deadline}; it is used or voided first; refusing`) || siblingWait(w.out, w, ws, fx, secs);
 
 test("G-6 SG-1/SG-2: two processes issuing the same step leave one usable go; two processes sending one go make at most one request", async () => {
   const { fx, ph, W } = setupP();
   try {
     const phases = { X: [["S1", "STATE"], ["S2", "P0"], ["S3", "STATE"]], Y: [["Y1", "STATE"]], P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]] };
+    // Round 1, SG-1: three issuers, cold (each assembles under the lock).
     const issued = await workers(fx, [0, 1, 2].map(() => ({ mode: "issue", phaseId: ph.phaseId, step: "A1", target: "production", phases, shells: [1001, 1002] })));
-    assert.equal(issued.filter((o) => o && o.ok).length, 1, `exactly one issuer wins: ${JSON.stringify(issued)}`);
-    for (const o of issued.filter((x) => x && !x.ok)) assert.match(o.message, /holds the gmxyisjjaxtpycsmmzef lock|is outstanding/);
-    assert.equal(liveGos(fx).length, 1, "one usable go");
-    const goId = issued.find((o) => o.ok).goId;
+    ranToEnd(issued, "issuance");
+    const winners = issued.filter((w) => w.out.ok);
+    assert.equal(winners.length, 1, `exactly one issuer wins: ${diag(issued)}`);
+    const goId = winners[0].out.goId;
+    assert.deepEqual(liveGos(fx), [`${goId}.json`], `one usable go, the winner's: ${diag(issued)}`);
+    const go = G.readState(join(fx.paths.gos, `${goId}.json`));
+    assert.equal(go.step, "A1");
+    // A loser either took the lock after the winner and found ITS go outstanding,
+    // or never took it: the guard's lock-wait refusal, the holder another worker
+    // of this round (Codex's review of the G-6 addendum, F1). Nothing else.
+    for (const w of issued.filter((x) => !x.out.ok)) {
+      assert.ok(issuerLoserOk(w, issued, go, fx), `issuer ${w.index}: only OUTSTANDING for go ${goId} (A1, until ${go.deadline}) or the lock wait behind another worker; ${diag(issued)}`);
+    }
+    assert.deepEqual(G.readLedger(fx.paths).events.filter((e) => e.kind === "go-issue").map((e) => e.goId), [goId], "one go-issue event, the winner's");
+    assert.equal(fx.check().ok, true, `the store is intact after issuance: ${JSON.stringify(fx.check().problems)}`);
+    assert.equal(existsSync(fx.paths.lock), false, "no lock is left");
+    // Round 2, SG-2: three senders of that go.
     const sent = await workers(fx, [0, 1, 2].map(() => ({ mode: "send", goId, text: "P2-01", target: "production", env: W.env, pid: W.pid, phases, shells: [1001, 1002] })));
-    assert.equal(sent.filter((o) => o && o.ok).length, 1, `exactly one sender is admitted: ${JSON.stringify(sent)}`);
-    assert.equal(sent.reduce((n, o) => n + (o ? o.calls || 0 : 0), 0), 1, "one request in all");
+    ranToEnd(sent, "sending");
+    assert.equal(sent.filter((w) => w.out.ok).length, 1, `exactly one sender is admitted: ${diag(sent)}`);
+    assert.equal(sent.reduce((n, w) => n + (w.out.calls || 0), 0), 1, `one request in all: ${diag(sent)}`);
     const entries = G.readJournal(fx.paths, PROD);
-    assert.equal(entries.length, 1, "one claim");
+    assert.equal(entries.length, 1, `one claim: ${diag(sent)}`);
+    const claim = entries[0];
+    assert.equal(claim.claim.goId, goId);
+    assert.equal(claim.outcome && claim.outcome.state, "DISPATCHED", "its outcome is recorded");
+    // A losing sender made no request and gave one of the refusals the race
+    // allows. DAMAGED or AfterDispatch on this intact store is exposed (F3).
+    const allowed = [
+      `go ${goId} was already used: a repeated or remembered command is refused; refusing`,
+      `go ${goId} was used by another command; refusing`,
+      `the project is held: PENDING ${claim.attemptId.slice(0, 8)}: A1 (P2-01) was claimed at ${claim.claim.claimedAt} and has no recorded outcome; refusing`,
+      "the gate does not name A1: the next step is A2; refusing",
+    ];
+    for (const w of sent.filter((x) => !x.out.ok)) {
+      assert.equal(w.out.calls, 0, `sender ${w.index} made no request: ${diag(sent)}`);
+      const ok = (w.out.name === "Refusal" && allowed.includes(w.out.message)) || siblingWait(w.out, w, sent, fx);
+      assert.ok(ok, `sender ${w.index}: only a refusal the race allows; ${diag(sent)}`);
+    }
+    assert.deepEqual(liveGos(fx), [], "no usable go is left");
+    assert.ok(existsSync(join(fx.paths.used, `${goId}.json`)), "the go is used");
+    assert.deepEqual(holds(fx), [], "nothing holds");
+    assert.equal(fx.check().ok, true, `the store is intact after sending: ${JSON.stringify(fx.check().problems)}`);
+    assert.equal(existsSync(fx.paths.lock), false, "no lock is left");
   } finally { fx.cleanup(); }
 });
 
 // ── SG-2 ─────────────────────────────────────────────────────────────────────
+
+test("G-6b F1, the lock-wait branch forced: issuers that hold the store lock 1.5 s and wait 1 s for it; the losers give the guard's lock-wait refusal naming another worker, one go is issued, and the check refuses an outside holder, the wrong lock or time, DAMAGED and AfterDispatch", async () => {
+  const { fx, ph } = setupP();
+  const dir = mkdtempSync(join(tmpdir(), "s0-g6b-"));
+  try {
+    // A labelled control beside G-6, not in its place: G-6 keeps the cold race.
+    const slow = await guardCopy(dir, "slow-issuer", [
+      ["export const LOCK_WAIT_MS = 10 * 1000;", "export const LOCK_WAIT_MS = 1000;"],
+      ["    const plan = planFor(text, phase.target);", "    const plan = planFor(text, phase.target);\n    sleep(1500);"],
+    ]);
+    const phases = { X: [["S1", "STATE"], ["S2", "P0"], ["S3", "STATE"]], Y: [["Y1", "STATE"]], P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]] };
+    const issued = await workers(fx, [0, 1, 2].map(() => ({ mode: "issue", phaseId: ph.phaseId, step: "A1", target: "production", phases, shells: [1001, 1002], guardUrl: slow.url })));
+    ranToEnd(issued, "issuance");
+    const winners = issued.filter((w) => w.out.ok);
+    assert.equal(winners.length, 1, `exactly one issuer wins: ${diag(issued)}`);
+    const go = G.readState(join(fx.paths.gos, `${winners[0].out.goId}.json`));
+    const losers = issued.filter((w) => !w.out.ok);
+    for (const w of losers) assert.ok(siblingWait(w.out, w, issued, fx, 1), `issuer ${w.index}: the lock wait behind another worker; ${diag(issued)}`);
+    assert.ok(losers.every((w) => issuerLoserOk(w, issued, go, fx, 1)));
+    assert.deepEqual(liveGos(fx), [`${go.goId}.json`], "one usable go");
+    assert.equal(fx.check().ok, true);
+    assert.equal(existsSync(fx.paths.lock), false, "no lock is left");
+    // The check itself: each altered refusal is refused.
+    const w = losers[0];
+    const swap = (from, to) => ({ ...w, out: { ...w.out, message: w.out.message.replace(from, to) } });
+    const holder = /\(pid ([0-9]+) since/.exec(w.out.message)[1];
+    for (const [label, bad] of [
+      ["an outside holder", swap(`(pid ${holder} since`, "(pid 999999 since")],
+      ["the loser itself as holder", swap(`(pid ${holder} since`, `(pid ${w.pid} since`)],
+      ["another time", swap(`since ${G.iso(fx.now())}`, "since 2026-01-01T00:00:00.000Z")],
+      ["another lock", swap(fx.paths.lock, `${fx.paths.lock}.other`)],
+      ["another wait", swap("over 1 s", "over 10 s")],
+      ["the right text, not a LockUnavailable", { ...w, out: { ...w.out, name: "Refusal" } }],
+      ["DAMAGED", { ...w, out: { ok: false, name: "Refusal", message: "the guard store is DAMAGED or not the established one: x; refusing" } }],
+      ["AfterDispatch", { ...w, out: { ok: false, name: "AfterDispatch", message: w.out.message } }],
+      ["OUTSTANDING for another go", { ...w, out: { ok: false, name: "Refusal", message: `go ${"0".repeat(32)} (A1) is outstanding until ${go.deadline}; it is used or voided first; refusing` } }],
+      ["OUTSTANDING with another deadline", { ...w, out: { ok: false, name: "Refusal", message: `go ${go.goId} (A1) is outstanding until 2026-01-01T00:00:00.000Z; it is used or voided first; refusing` } }],
+      ["a malformed result", { ...w, out: { ok: false } }],
+    ]) assert.equal(issuerLoserOk(bad, issued, go, fx, 1), false, `the check refuses ${label}`);
+  } finally { fx.cleanup(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("G-7 SG-2: while a claimed request is in flight, no go is issued and no send is admitted", async () => {
   const { fx, ph, R, W } = setupP();
@@ -394,7 +501,7 @@ test("G-8 SG-2: a process killed after its claim leaves PENDING, which holds acr
     const g1 = fx.issue(ph.phaseId, "A1");
     const phases = { X: [["S1", "STATE"], ["S2", "P0"], ["S3", "STATE"]], Y: [["Y1", "STATE"]], P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]] };
     const out = await workers(fx, [{ mode: "hang", goId: g1.goId, text: "P2-01", target: "production", env: W.env, pid: W.pid, phases, shells: [1001, 1002] }], { kill: { index: 0 } });
-    assert.equal(out[0], null, "the worker died before reporting");
+    assert.equal(out[0].out, null, `the worker died before reporting: ${diag(out)}`);
     const h = holds(fx);
     assert.equal(h.length, 1);
     assert.equal(h[0].kind, "PENDING");
@@ -1183,7 +1290,7 @@ const GUARD_MUTANTS = [
   ]],
   ["the project hold in the sender", "a pending attempt in another phase", [["    if (holds.length) throw new Refusal(`${heldMessage(holds)}; refusing`);\n", ""]]],
   ["the store check in the sender (I6-R1)", "a pending attempt whose claim is lost", [
-    ["  const chk0 = requireStore({ paths, anchor, manifest });", "  const chk0 = storeCheck({ paths, anchor, manifest });"],
+    ["    const chk = requireStore({ paths, anchor, manifest });\n    checkClock(paths, t0, chk);", "    const chk = storeCheck({ paths, anchor, manifest });\n    checkClock(paths, t0, chk);"],
     ["    const chk = requireStore({ paths, anchor, manifest });\n    const entries = readJournal(paths, plan.ref);", "    const chk = storeCheck({ paths, anchor, manifest });\n    const entries = readJournal(paths, plan.ref);"],
     ["  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = requireStore({ paths, anchor, manifest });", "  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = storeCheck({ paths, anchor, manifest });"],
   ]],
@@ -1195,7 +1302,7 @@ const GUARD_MUTANTS = [
     // the second claim of one go is itself damage, so the outcome is recorded without the check
     ["  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = requireStore({ paths, anchor, manifest });", "  const recordOutcome = (value, t, waitMs) => withLock(paths, () => {\n    const chk = storeCheck({ paths, anchor, manifest });"],
   ]],
-  ["the HEAD binding", "another HEAD", [["  const head = checkoutHead(git, root);\n  const chk0 = requireStore(", "  checkoutHead(git, root);\n  const head = readMarkers(paths).find((e) => e.marker).marker.head;\n  const chk0 = requireStore("]]],
+  ["the HEAD binding", "another HEAD", [["  const head = checkoutHead(git, root);\n  // The first check reads", "  checkoutHead(git, root);\n  const head = readMarkers(paths).find((e) => e.marker).marker.head;\n  // The first check reads"]]],
   ["clean tracked files", "tracked changes", [["  if (s.dirty.length) throw", "  if (false) throw"]]],
   ["the clock check's freshness", "a stale clock check", [["  if (now - at >= CLOCK.freshMs) throw", "  if (false) throw"]]],
   ["the backward-clock check", "a clock that went back", [["  if (now < h.ms - CLOCK.backstepMs) throw", "  if (false) throw"]]],

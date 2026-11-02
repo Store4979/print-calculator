@@ -49,18 +49,21 @@
 // void     moves an unused go to gos/void/.
 // dispose  records a reviewed disposition of one held or pending attempt;
 //          the review file must name the attempt id.
-// status   prints the holds, attempts, gos, markers and lock; on a damaged
-//          store, the damage and no holds list. Read-only.
+// status   prints the holds, attempts, gos and markers, read under the store
+//          lock; on a damaged store, the damage and no holds list; when the
+//          lock cannot be taken within its wait, BUSY: the state is not
+//          established, and no holds list. Read-only.
 // gate     prints one phase's gate: its next step, its STOP, or its terminal
 //          outcome; the holds; and whether the workflow's one
 //          separate-credential read is permitted now, with its exact query
-//          when it is (item 3 runbook §6). Read-only.
+//          when it is (item 3 runbook §6). Read under the store lock; it
+//          refuses as busy when the lock cannot be taken. Read-only.
 // corroborate compares that read's rows (the JSON array execute_sql
 //          returned, saved exactly) with the readback it corroborates, and
 //          refuses unless `gate` permits the read now. Read-only.
 //
 // Exit status: 0 done (status: intact and nothing held; corroborate: the
-// rows agree); 2 refused; 3 status found damage, a hold or the lock, or
+// rows agree); 2 refused; 3 status found damage or a hold, or was busy, or
 // corroborate found a disagreement. Only `clock` makes a network call
 // (NTP, to the time server). None of this is a go: Ryan's go in chat is the
 // authority.
@@ -112,8 +115,9 @@ export function main(argv, env, deps = {}) {
     const o = args(rest, ["target"]);
     const st = G.status({ paths, anchor, manifest, ref: refOf(o.target), ctxAt, now: now() });
     out(`${JSON.stringify(st, null, 2)}\n`);
-    if (!st.intact) out("DAMAGED: the store does not match its ledger or its anchor. Holds are unknown; nothing is registered, issued or sent until a reviewed restoration.\n");
-    return { status: st, exit: st.intact && !st.holds.length && !st.lock ? 0 : 3 };
+    if (st.busy) out("BUSY: the store lock could not be taken, so the state is not established. Holds are unknown. This is not damage: run status again once no guard command is running.\n");
+    else if (!st.intact) out("DAMAGED: the store does not match its ledger or its anchor. Holds are unknown; nothing is registered, issued or sent until a reviewed restoration.\n");
+    return { status: st, exit: st.intact === true && !st.holds.length ? 0 : 3 };
   }
   if (cmd === "void") {
     const o = args(rest, ["go"]);

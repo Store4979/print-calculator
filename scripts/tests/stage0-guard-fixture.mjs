@@ -4,11 +4,14 @@
 // repository would record for it, a settable clock, Windows shell processes
 // by pid, a clean HEAD, and a fetch stub that counts every request. Nothing
 // here reaches the network, the real ~/.stage0-guard or a real window.
-import { mkdtempSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync } from "node:fs";
+// Two helpers for separate processes and injected faults (Codex's review of
+// the G-6 addendum): releaseTogether, and guardCopy.
+import { mkdtempSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import * as A from "../manual/assemble-stage0.mjs";
 import * as G from "../manual/stage0-guard.mjs";
 import * as C from "../manual/stage0-classify.mjs";
@@ -123,12 +126,12 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
       if (G.isLegacyPhase(wf, phase)) return `GO phase ${phase} at X ${HEAD.slice(0, 7)}, approval ${approvalId}: steps ${wf.phases[phase].steps.join(", ")} to ${wf.target} ${ref} only. Deadline ${G.iso(deadline).slice(0, 16).replace("T", " ")} UTC.`;
       return G.goLine({ workflow, phase, approvalId, head: HEAD, target: wf.target, ref, steps: wf.phases[phase].steps, ceilings: G.stepCeilings(wf, phase, deadline), deadline });
     },
-    /** Draft an approval and register its phase; returns { phase, existing, goText, approvalId }. */
-    register(workflow, phase, { minutes = 45, reviewed = null, goText = null, approvalId = null, arrivedAt = null, deadline = null } = {}) {
+    /** Draft an approval and register its phase; returns { phase, existing, goText, approvalId }. `guard` registers through another copy of the guard module (guardCopy). */
+    register(workflow, phase, { minutes = 45, reviewed = null, goText = null, approvalId = null, arrivedAt = null, deadline = null, guard = G } = {}) {
       const dl = deadline ?? Math.floor((t + minutes * 60000) / 60000) * 60000;
       const id = approvalId ?? (goText === null ? fx.draft(workflow, phase, dl) : null);
       const text = goText ?? fx.goText(workflow, phase, dl, id);
-      const r = G.recordPhase({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, goText: text, arrivedAt: arrivedAt ?? G.iso(t), deadline: G.iso(dl), reviewed, head: HEAD, checkout: ROOT, now: t });
+      const r = guard.recordPhase({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, goText: text, arrivedAt: arrivedAt ?? G.iso(t), deadline: G.iso(dl), reviewed, head: HEAD, checkout: ROOT, now: t });
       return { ...r, goText: text, approvalId: id };
     },
     phase(workflow, phase, opts = {}) { return fx.register(workflow, phase, opts).phase; },
@@ -143,9 +146,10 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
      * Issue a go. A production go needs a not-after: unless the test gives
      * one (null for none), the fixture passes the latest the issuer admits,
      * the step's ceiling or its window's end if earlier; if it cannot read
-     * them, none, and the issuer refuses for its own reason.
+     * them, none, and the issuer refuses for its own reason. `guard` issues
+     * through another copy of the guard module (guardCopy).
      */
-    issue(phaseId, step, { notAfter } = {}) {
+    issue(phaseId, step, { notAfter, guard = G } = {}) {
       let na = notAfter === undefined ? null : notAfter;
       if (notAfter === undefined) {
         try {
@@ -157,7 +161,7 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
           }
         } catch { na = null; }
       }
-      return G.issueGo({ paths, anchor: fx.anchor, manifest: M, phaseId, step, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, workflows: all(), ctxAt: fx.ctxAt, planFor: (text, target) => S.planSend(M, text, target, { cwd: ROOT }), notAfter: Number.isFinite(na) ? na : null });
+      return guard.issueGo({ paths, anchor: fx.anchor, manifest: M, phaseId, step, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, workflows: all(), ctxAt: fx.ctxAt, planFor: (text, target) => S.planSend(M, text, target, { cwd: ROOT }), notAfter: Number.isFinite(na) ? na : null });
     },
     void: (goId) => G.voidGo({ paths, anchor: fx.anchor, manifest: M, goId, now: t }),
     dispose: (attemptId, reviewedPath, ref = M.send.targets.production) => G.dispose({ paths, anchor: fx.anchor, manifest: M, ref, attemptId, reviewedPath, reviewedBytes: readFileSync(reviewedPath), now: t }),
@@ -224,4 +228,128 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
   if (attach) fx.anchor = G.anchorFor(G.readState(paths.store));
   else if (init) fx.init();
   return fx;
+}
+
+const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+const trim = (s) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
+
+/**
+ * Start one node process per config, running `script` with its config file
+ * as its one argument, and release them together once every one is ready
+ * (Codex's review of the G-6 addendum, F1: an acknowledgement, not a pause).
+ * Each config gains `ready`, `start`, `out` and `startWithinMs`. A worker
+ * writes `ready` once it has loaded its modules and initialized its fixture,
+ * waits at most startWithinMs for `start`, does its work and writes `out`.
+ *   - Every worker must be ready within readyMs, and every worker must have
+ *     exited within doneMs of the start.
+ *   - A worker that exits before it is ready, or a bound that passes, kills
+ *     the workers this call started, waits for them, and throws with every
+ *     worker's diagnostics.
+ *   - `afterStart(workers)` runs once the start file is written (G-8 kills a
+ *     worker there). If it throws, the workers are killed and waited for,
+ *     and its error is thrown.
+ * Returns, per worker: index, pid, exitCode, signal, readyAt, exitedAt,
+ * stdout and stderr (the last 4000 characters of each), outRaw, and out (its
+ * parsed JSON, or null when it wrote nothing parseable).
+ */
+export async function releaseTogether({ dir, script, cfgs, readyMs = 60000, doneMs = 120000, afterStart = null }) {
+  const start = join(dir, "start");
+  const ws = cfgs.map((c, i) => {
+    const cfg = { ...c, ready: join(dir, `ready-${i}`), start, out: join(dir, `out-${i}.json`), startWithinMs: readyMs + 30000 };
+    const file = join(dir, `cfg-${i}.json`);
+    writeFileSync(file, JSON.stringify(cfg));
+    const p = spawn(process.execPath, [script, file], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const w = { index: i, pid: p.pid, cfg, p, stdout: "", stderr: "", exitCode: null, signal: null, exited: false, readyAt: null, exitedAt: null };
+    p.stdout.on("data", (d) => { w.stdout = trim(w.stdout + d); });
+    p.stderr.on("data", (d) => { w.stderr = trim(w.stderr + d); });
+    w.done = new Promise((res) => { p.on("exit", (code, signal) => { w.exited = true; w.exitCode = code; w.signal = signal; w.exitedAt = new Date().toISOString(); res(); }); p.on("error", (e) => { w.stderr = trim(`${w.stderr}\nspawn error: ${e.message}`); }); });
+    return w;
+  });
+  const result = (w) => {
+    let outRaw = null, out = null;
+    try { outRaw = readFileSync(w.cfg.out, "utf8"); out = JSON.parse(outRaw); } catch { /* none, or not JSON: null */ }
+    return { index: w.index, pid: w.pid, exitCode: w.exitCode, signal: w.signal, readyAt: w.readyAt, exitedAt: w.exitedAt, stdout: w.stdout, stderr: w.stderr, outRaw, out };
+  };
+  const fail = async (why) => {
+    for (const w of ws) if (!w.exited) { try { w.p.kill(); } catch { /* reported by its exit */ } }
+    await Promise.race([Promise.all(ws.map((w) => w.done)), tick(30000)]);
+    throw new Error(`${why}; the workers: ${JSON.stringify(ws.map(result))}`);
+  };
+  const readyBy = Date.now() + readyMs;
+  for (;;) {
+    for (const w of ws) if (!w.readyAt && existsSync(w.cfg.ready)) w.readyAt = new Date().toISOString();
+    if (ws.every((w) => w.readyAt)) break;
+    const early = ws.find((w) => w.exited && !w.readyAt);
+    if (early) await fail(`worker ${early.index} exited before it was ready`);
+    if (Date.now() > readyBy) await fail(`not every worker was ready within ${readyMs} ms`);
+    await tick(10);
+  }
+  writeFileSync(start, "go");
+  if (afterStart) {
+    try { await afterStart(ws); } catch (e) {
+      for (const w of ws) if (!w.exited) { try { w.p.kill(); } catch { /* reported by its exit */ } }
+      await Promise.race([Promise.all(ws.map((w) => w.done)), tick(30000)]);
+      throw e;
+    }
+  }
+  let all = false;
+  await Promise.race([Promise.all(ws.map((w) => w.done)).then(() => { all = true; }), tick(doneMs)]);
+  if (!all) await fail(`not every worker exited within ${doneMs} ms of the start`);
+  return ws.map(result);
+}
+
+const MANUAL = join(ROOT, "scripts", "manual");
+
+/** The original acquisition rule, as a mutant of the copy: only EEXIST is waited through (F2's required-failing case). */
+export const EEXIST_ONLY = { from: 'export const LOCK_BUSY_CODES = Object.freeze(["EEXIST", "EPERM", "EACCES", "EBUSY"]);', to: 'export const LOCK_BUSY_CODES = Object.freeze(["EEXIST"]);' };
+/** No protected snapshot, as a mutant of the copy: the readers read without the lock (F3's required-failing case). */
+export const NO_SNAPSHOT = { from: "  try { return withLock(paths, fn, now, waitMs); } catch (e) {", to: "  try { return fn(); } catch (e) {" };
+
+/**
+ * A copy of scripts/manual/stage0-guard.mjs for injected faults (Codex's
+ * review of the G-6 addendum, F2 and F3), written to `dir` as
+ * guard-<name>.mjs, its sibling modules loaded from the real files. It
+ * differs from the real module only by:
+ *   - the lock's exclusive create goes through `__faults`: `plan(n)`, given
+ *     the 1-based count of create attempts in this copy, returns an error
+ *     code to raise in place of that attempt, or null to make the real
+ *     create (`attempts` counts them);
+ *   - `__pause`: when `file` is set, logged() writes that file (the event's
+ *     kind) after an event's file steps and before its ledger line, for the
+ *     `kind` named (any kind when null), then waits up to `ms` for the
+ *     `resume` file;
+ *   - `edits`, each [from, to], applied after these (each target exactly
+ *     once): the mutants.
+ * Returns { url, mod }. Nothing here is reachable from the command lines.
+ */
+export async function guardCopy(dir, name, edits = []) {
+  let s = readFileSync(join(MANUAL, "stage0-guard.mjs"), "utf8").replace(/\r\n/g, "\n");
+  s = s.replace(/from "\.\/([^"]+)"/g, (m, f) => `from ${JSON.stringify(pathToFileURL(join(MANUAL, f)).href)}`);
+  const once = (from, to) => {
+    if (s.split(from).length !== 2) throw new Error(`guardCopy: the target does not occur exactly once: ${from.slice(0, 90)}`);
+    s = s.split(from).join(to);
+  };
+  once('openSync(paths.lock, "wx")', '__lockOpen(paths.lock, "wx")');
+  once("    return appendEvent(paths, chk, kind, fields, now);", "    __pauseBetween(kind);\n    return appendEvent(paths, chk, kind, fields, now);");
+  for (const [from, to] of edits) once(from, to);
+  s += `
+export const __faults = { plan: null, attempts: 0 };
+function __lockOpen(file, flags) {
+  const n = ++__faults.attempts;
+  const code = __faults.plan ? __faults.plan(n) : null;
+  if (code) { const e = new Error(\`\${code}: injected on create attempt \${n}\`); e.code = code; throw e; }
+  return openSync(file, flags);
+}
+export const __pause = { file: null, kind: null, resume: null, ms: 0 };
+function __pauseBetween(kind) {
+  if (!__pause.file || (__pause.kind && __pause.kind !== kind)) return;
+  writeFileSync(__pause.file, kind);
+  const until = Date.now() + __pause.ms;
+  while (Date.now() < until && !(__pause.resume && existsSync(__pause.resume))) sleep(10);
+}
+`;
+  const p = join(dir, `guard-${name}.mjs`);
+  writeFileSync(p, s);
+  const url = pathToFileURL(p).href;
+  return { url, mod: await import(url) };
 }

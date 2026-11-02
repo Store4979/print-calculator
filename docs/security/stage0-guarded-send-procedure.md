@@ -317,10 +317,16 @@ Then delete the token in the dashboard, report the time, and clear Win+V.
 
 ## 6. Holds and dispositions
 
-`status` first checks the store (§7). On a damaged store it prints DAMAGED,
-the problems found, and **no holds list**: an empty list would claim a
-history that is not known to be intact. It exits 3 on damage, a hold or a
-held lock.
+`status` first checks the store (§7). It reads the store check, the holds,
+the attempts, the gos and the markers in one snapshot while it holds the
+store lock, so it never reads a change half made. That snapshot is the store
+at that moment; a writer may act right after. On a damaged store it prints
+DAMAGED, the problems found, and **no holds list**: an empty list would claim
+a history that is not known to be intact. When it cannot take the lock
+within its wait it prints **BUSY**: the state is not established, there is
+no holds list, and it is not damage. It exits 3 on damage, a hold or BUSY.
+`gate`, `corroborate` and the sender's first check read the same way, and
+refuse as busy when the lock cannot be taken.
 
 The journal holds the **project**, for every window, phase and checkout
 (§7), when an attempt:
@@ -400,9 +406,15 @@ never edited, moved or deleted by hand.**
   This is a limit of a local mistake barrier, not an anti-rollback
   guarantee and not a behaviour to keep: another head file inside the same
   store would roll back with it and prove nothing.
-- **The lock.** One `lock` file serializes every change. A command waits up
-  to 10 s for it, then refuses. A stale lock (a guard process killed while
-  holding it) is reported by `status`. It is removed by hand only after
+- **The lock.** One `lock` file, created exclusively, serializes every
+  change and the reads behind `status`, `gate`, `corroborate` and the
+  sender's first check. A command waits up to 10 s for it, retrying while
+  the create fails because the file exists or Windows reports it busy
+  (EPERM, EACCES, EBUSY). Then it refuses, naming the last error; only an
+  existing file is reported as another process's lock. The wait covers
+  taking the lock only: nothing done under it is repeated. A stale lock (a
+  guard process killed while holding it) makes `status` print BUSY, with
+  the pid and time the lock names. It is removed by hand only after
   confirming no guard process runs, and that removal is recorded.
 - **Restoration, the only way past damage.** It is a reviewed decision, not
   a command:

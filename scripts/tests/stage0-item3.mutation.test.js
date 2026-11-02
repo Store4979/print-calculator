@@ -141,7 +141,7 @@ const MUTANTS = [
   },
   {
     name: "read permission: a hold", file: "stage0-guard.mjs",
-    edits: [["gate.terminal.corroborate === true && !holds.length && !lock);", "gate.terminal.corroborate === true && !lock);"]],
+    edits: [["gate.terminal.corroborate === true && !holds.length);", "gate.terminal.corroborate === true);"]],
     run: async ({ G: GM }) => {
       const s = phaseE();
       try {

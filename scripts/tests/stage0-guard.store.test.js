@@ -27,7 +27,10 @@
 //         words, no id, two ids, an undrafted or foreign id refuse
 //   AP-2  Codex's reproduction: the same go recorded again after A1, close
 //         and a new window: the same phase, A1 refused, A2 next
-//   AP-3  concurrent registration of one approval makes one phase
+//   AP-3  concurrent registration of one approval makes one phase (released
+//         together on acknowledgement)
+//   AP-3b a transient lock error on registration is waited through; the
+//         EEXIST-only rule refuses it (F2, deterministic, injected)
 //   AP-4  a genuine restart: a newly drafted id, a new phase
 //   ORD   node options and planted programs refuse before any program, through
 //         the real command lines
@@ -43,7 +46,7 @@ import * as G from "../manual/stage0-guard.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import * as GO from "../manual/stage0-go.mjs";
 import * as WIN from "../manual/stage0-window.mjs";
-import { fixture, synthWorkflow, M, ROOT, HEAD, TOKEN, OTHER_TOKEN, nonce } from "./stage0-guard-fixture.mjs";
+import { fixture, synthWorkflow, M, ROOT, HEAD, TOKEN, OTHER_TOKEN, nonce, releaseTogether, guardCopy, EEXIST_ONLY } from "./stage0-guard-fixture.mjs";
 
 const PROD = "gmxyisjjaxtpycsmmzef";
 const hex = (n) => randomBytes(n / 2).toString("hex");
@@ -568,34 +571,78 @@ test("AP-3 I6-R2: concurrent registration of one approval, in separate processes
     const id = fx.draft("t", "P");
     const dl = Math.floor((fx.now() + 45 * 60000) / 60000) * 60000;
     const text = fx.goText("t", "P", dl, id);
-    const w = join(fx.dir, "w.mjs");
+    const wdir = join(fx.dir, "w");
+    mkdirSync(wdir);
+    const w = join(wdir, "w.mjs");
     writeFileSync(w, `
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 const c = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const F = await import(c.fixture);
 const fx = F.fixture({ workflows: { t: F.synthWorkflow("production", c.phases) }, attach: { stateDir: c.stateDir, results: c.results }, t0: c.now });
-while (!existsSync(c.start)) await new Promise((r) => setTimeout(r, 2));
+writeFileSync(c.ready, String(process.pid));
+const until = Date.now() + c.startWithinMs;
+while (!existsSync(c.start)) {
+  if (Date.now() > until) { writeFileSync(c.out, JSON.stringify({ ok: false, name: "NoStart", message: "the start file never came" })); process.exit(3); }
+  await new Promise((r) => setTimeout(r, 2));
+}
 try { const r = fx.register("t", "P", { goText: c.text, deadline: c.dl }); writeFileSync(c.out, JSON.stringify({ ok: true, phaseId: r.phase.phaseId, existing: r.existing })); }
-catch (e) { writeFileSync(c.out, JSON.stringify({ ok: false, message: e.message })); }
+catch (e) { writeFileSync(c.out, JSON.stringify({ ok: false, name: e.constructor.name, message: e.message })); }
 `);
-    const start = join(fx.dir, "start");
-    const runs = [0, 1, 2].map((i) => {
-      const cfg = join(fx.dir, `c${i}.json`);
-      const out = join(fx.dir, `o${i}.json`);
-      writeFileSync(cfg, JSON.stringify({ fixture: pathToFileURL(join(ROOT, "scripts", "tests", "stage0-guard-fixture.mjs")).href, phases: { P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]], Q: [["B1", "P2-01"]] }, stateDir: fx.stateDir, results: fx.results, now: fx.now(), start, out, text, dl }));
-      const p = spawn(process.execPath, [w, cfg], { stdio: "ignore" });
-      return { out, done: new Promise((r) => p.on("exit", r)) };
+    // Released together once all three acknowledge (Codex's review of the G-6
+    // addendum, F1): no fixed pause.
+    const res = await releaseTogether({
+      dir: wdir, script: w,
+      cfgs: [0, 1, 2].map(() => ({ fixture: pathToFileURL(join(ROOT, "scripts", "tests", "stage0-guard-fixture.mjs")).href, phases: { P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]], Q: [["B1", "P2-01"]] }, stateDir: fx.stateDir, results: fx.results, now: fx.now(), text, dl })),
     });
-    await new Promise((r) => setTimeout(r, 1500));
-    writeFileSync(start, "go");
-    await Promise.all(runs.map((r) => r.done));
-    const res = runs.map((r) => JSON.parse(readFileSync(r.out, "utf8")));
-    assert.ok(res.every((r) => r.ok), JSON.stringify(res));
-    assert.equal(new Set(res.map((r) => r.phaseId)).size, 1, "one phase id");
-    assert.equal(res.filter((r) => !r.existing).length, 1, "registered once, returned twice");
+    const d = JSON.stringify(res.map((r) => ({ index: r.index, pid: r.pid, exitCode: r.exitCode, signal: r.signal, out: r.out, stderr: r.stderr || undefined })));
+    for (const r of res) assert.ok(r.exitCode === 0 && r.signal === null && r.out, `worker ${r.index} ran to its end: ${d}`);
+    assert.ok(res.every((r) => r.out.ok), `every registration succeeded: ${d}`);
+    assert.equal(new Set(res.map((r) => r.out.phaseId)).size, 1, `one phase id: ${d}`);
+    assert.equal(res.filter((r) => !r.out.existing).length, 1, `registered once, returned twice: ${d}`);
     assert.equal(readdirSync(fx.paths.phases).filter((f) => f.endsWith(".json")).length, 1);
     assert.equal(fx.check().ok, true);
+    assert.equal(existsSync(fx.paths.lock), false, "no lock is left");
   } finally { fx.cleanup(); }
+});
+
+test("AP-3b I6-R2/F2: a transient EPERM, EACCES or EBUSY on the store lock during registration is waited through: one registration, the same phase returned after; under the EEXIST-only rule it refuses, and nothing is registered", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "s0-ap3b-"));
+  try {
+    const X = (await guardCopy(dir, "ap3b")).mod;
+    const OLD = (await guardCopy(dir, "ap3b-eexist-only", [[EEXIST_ONLY.from, EEXIST_ONLY.to]])).mod;
+    for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+      for (const [label, mod] of [["the retry", X], ["the EEXIST-only rule", OLD]]) {
+        const fx = fixture({ workflows: WF() });
+        try {
+          fx.clock();
+          const id = fx.draft("t", "P");
+          const dl = Math.floor((fx.now() + 45 * 60000) / 60000) * 60000;
+          const text = fx.goText("t", "P", dl, id);
+          mod.__faults.attempts = 0;
+          mod.__faults.plan = (n) => (n <= 3 ? code : null);
+          if (mod === X) {
+            const r = fx.register("t", "P", { goText: text, deadline: dl, guard: mod });
+            assert.equal(r.existing, false, `${code}, ${label}: registered`);
+            assert.equal(mod.__faults.attempts, 4, `${code}, ${label}: three failed creates, then the lock`);
+            fx.add(1000);
+            const again = fx.register("t", "P", { goText: text, deadline: dl });
+            assert.equal(again.existing, true, `${code}: the same approval returns it`);
+            assert.equal(again.phase.phaseId, r.phase.phaseId);
+            assert.equal(readdirSync(fx.paths.phases).filter((f) => f.endsWith(".json")).length, 1, `${code}: one phase`);
+          } else {
+            let err = null;
+            try { fx.register("t", "P", { goText: text, deadline: dl, guard: mod }); } catch (e) { err = e; }
+            assert.ok(err instanceof mod.LockUnavailable, `${code}, ${label}: a LockUnavailable of that module; got ${err && err.constructor.name}: ${err && err.message}`);
+            assert.match(err.message, new RegExp(`^the store lock cannot be taken \\(${code}\\); refusing$`), `${code}, ${label}`);
+            assert.equal(mod.__faults.attempts, 1, `${code}, ${label}: refused at the first create`);
+            assert.equal(readdirSync(fx.paths.phases).filter((f) => f.endsWith(".json")).length, 0, `${code}, ${label}: nothing registered`);
+          }
+          assert.equal(fx.check().ok, true, `${code}, ${label}: the store is intact`);
+          assert.equal(existsSync(fx.paths.lock), false, `${code}, ${label}: no lock is left`);
+        } finally { mod.__faults.plan = null; fx.cleanup(); }
+      }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("AP-4 I6-R2: a genuine restart needs a newly drafted id and a new approved line; it is a new phase", async () => {

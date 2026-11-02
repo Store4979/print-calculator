@@ -46,6 +46,14 @@
 // a claim and a phase it recorded. Any difference is DAMAGE: nothing is
 // issued, admitted or registered until a reviewed restoration.
 //
+// THE LOCK (store/lock, an exclusively created file) serializes the store.
+// Every change runs while one process holds it. So do the reads that status,
+// gate, corroborate and the sender's first check report (readSnapshot): none
+// of them reads a change half made, between its files and its ledger line.
+// A command waits up to LOCK_WAIT_MS for it. A lock it cannot take is
+// LockUnavailable; those readers report it as busy, the state not
+// established, which is not damage.
+//
 // What the code checks, and what it does not:
 //   - Each check below throws a Refusal before any request. The one place a
 //     request can follow is guardedSend(), after the claim is journalled; from
@@ -97,6 +105,8 @@ import * as I3 from "./stage0-item3.mjs";
 export class Refusal extends Error {}
 /** A failure after a request was, or may have been, dispatched. The sender exits 5: HOLD. */
 export class AfterDispatch extends Error {}
+/** The store lock could not be taken: nothing ran under it. A Refusal, so the command lines exit 2. */
+export class LockUnavailable extends Refusal {}
 class NotSent extends Error {}
 
 export const ROLES = Object.freeze(["R", "W", "C"]);
@@ -114,6 +124,14 @@ export const MARGIN_MS = 60 * 1000;
 export const PHASE_LIMITS = Object.freeze({ recordWithinMs: 10 * 60 * 1000, minRemainingMs: 30 * 60 * 1000 });
 /** How long a command waits for the store lock before it refuses. */
 export const LOCK_WAIT_MS = 10 * 1000;
+/**
+ * The exclusive-create errors withLock waits through, within that bound: the
+ * lock file exists (EEXIST), or Windows refused the create while the file was
+ * in use or being deleted (EPERM, EACCES, EBUSY; Codex's review of the G-6
+ * addendum, F2). Each delays entry; none grants it, and a lasting one refuses
+ * at the bound.
+ */
+export const LOCK_BUSY_CODES = Object.freeze(["EEXIST", "EPERM", "EACCES", "EBUSY"]);
 /** The command lines that create authority or admit a send; the manifest pins everything they load (SG-6). */
 export const CHAIN_ENTRIES = Object.freeze(["scripts/manual/stage0-send.mjs", "scripts/manual/stage0-window.mjs", "scripts/manual/stage0-go.mjs"]);
 export const BUILTINS = Object.freeze(["node:child_process", "node:crypto", "node:fs", "node:os", "node:path", "node:url"]);
@@ -283,10 +301,17 @@ const newId = () => randomBytes(16).toString("hex");
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
- * Hold the store lock for fn: exclusive create, retried for up to waitMs,
- * then a refusal. The lock serializes every change to the store: approval
- * drafts, phase registration, markers, gos, claims, outcomes, dispositions
- * and clock checks.
+ * Hold the store lock for fn: an exclusive create of the lock file, retried
+ * every 25 ms while it fails with one of LOCK_BUSY_CODES, for up to waitMs.
+ * fn runs only after the create succeeds, and runs once: nothing here
+ * repeats fn, or anything fn does, after it starts. Any other create error
+ * refuses at once; a busy code still failing at the bound refuses then,
+ * naming it. Both refusals are LockUnavailable. The lock file is removed when
+ * fn returns or throws (a failed removal leaves it, and later commands wait
+ * for it and refuse). The lock serializes every change to the store
+ * (approval drafts, phase registration, markers, gos, claims, outcomes,
+ * dispositions and clock checks) and the reads behind status, gate,
+ * corroborate and the sender's first check (readSnapshot).
  */
 export function withLock(paths, fn, now, waitMs = LOCK_WAIT_MS) {
   if (!isDir(paths.dir)) throw new Refusal(`no guard store at ${paths.dir}; refusing`);
@@ -294,17 +319,41 @@ export function withLock(paths, fn, now, waitMs = LOCK_WAIT_MS) {
   let fd = null;
   for (;;) {
     try { fd = openSync(paths.lock, "wx"); break; } catch (e) {
-      if (!e || e.code !== "EEXIST") throw new Refusal(`the store lock cannot be taken (${e && e.code}); refusing`);
+      const code = e && e.code;
+      if (!LOCK_BUSY_CODES.includes(code)) throw new LockUnavailable(`the store lock cannot be taken (${code}); refusing`);
       if (Date.now() >= until) {
+        if (code !== "EEXIST") throw new LockUnavailable(`the store lock could not be taken within ${waitMs / 1000} s: its exclusive create still failed with ${code}. That error does not show which process, if any, holds it; refusing`);
         let since = "an unknown time";
         try { since = readFileSync(paths.lock, "utf8").trim().slice(0, 80); } catch { /* reported as unknown */ }
-        throw new Refusal(`another guard process has held the store lock for over ${waitMs / 1000} s (${since}). If none is running, the lock is stale: check with stage0-go.mjs status, then remove ${paths.lock} by hand and record it; refusing`);
+        throw new LockUnavailable(`another guard process has held the store lock for over ${waitMs / 1000} s (${since}). If none is running, the lock is stale: check with stage0-go.mjs status, then remove ${paths.lock} by hand and record it; refusing`);
       }
       sleep(25);
     }
   }
-  try { writeSync(fd, `pid ${process.pid} since ${iso(now)}`); } finally { closeSync(fd); }
-  try { return fn(); } finally { try { unlinkSync(paths.lock); } catch { /* already gone */ } }
+  try {
+    try { writeSync(fd, `pid ${process.pid} since ${iso(now)}`); } finally { closeSync(fd); }
+    return fn();
+  } finally { try { unlinkSync(paths.lock); } catch { /* already gone */ } }
+}
+
+const settle = (fn) => { try { return { value: fn() }; } catch (error) { return { error }; } };
+const taken = (s) => { if (s.error) throw s.error; return s.value; };
+
+/**
+ * One complete read of the store under its lock (F3, Codex's review of the
+ * G-6 addendum): fn runs while this process holds the lock, so no guard
+ * process is between a file change and its ledger line while fn reads. What
+ * fn returns describes the store at that moment; any writer may act as soon
+ * as the lock is released. When the lock cannot be taken, this throws
+ * LockUnavailable saying that `what` is not established: contention is not
+ * damage. A refusal fn itself throws (damage, a missing record) passes
+ * through unchanged.
+ */
+function readSnapshot(paths, fn, now, waitMs, what) {
+  try { return withLock(paths, fn, now, waitMs); } catch (e) {
+    if (e instanceof LockUnavailable) throw new LockUnavailable(`the guard store is busy, so ${what} is not established (${e.message.replace(/; refusing$/, "")}); refusing`);
+    throw e;
+  }
 }
 
 /** Rule 3′'s context at a head: the manifest committed there, assembled and checked against its pins. */
@@ -1353,17 +1402,34 @@ export function guardedProgress({ phase, entries, workflows = WORKFLOWS, ctxAt, 
   return { stop: false, next: ns.next, complete: false, reason: `${ns.next} may be sent next`, results };
 }
 
-/** A phase's gate, the project's holds, and whether the one separate-credential read is permitted now. */
-function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now }) {
-  requireStore({ paths, anchor, manifest });
-  const { phase } = loadPhase(paths, phaseId);
-  const entries = readJournal(paths, phase.ref);
-  const holds = holdsOf(entries, { readReceipt, ctxAt });
-  const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
-  const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
-  const lock = existsSync(paths.lock);
-  const corroborate = Boolean(wf && wf.corroboration && gate.complete && gate.terminal && gate.terminal.corroborate === true && !holds.length && !lock);
-  return { phase, wf, gate, holds, lock, corroborate };
+/**
+ * Assemble, before a reader takes the store lock, the rule 3′ contexts its
+ * journal's claims will need (ctxAt is memoized by its callers), so the lock
+ * is held to read, not to assemble. A cache warm-up only: nothing read here
+ * reaches a result, and whatever fails here is read, or fails, again under
+ * the lock.
+ */
+function warmContexts(paths, ref, ctxAt) {
+  try { for (const e of readJournal(paths, ref)) if (e.claim) ctxAt(e.claim.head); } catch { /* read again under the lock */ }
+}
+
+/**
+ * A phase's gate, the project's holds, and whether the one separate-credential
+ * read is permitted now: one snapshot under the store lock (readSnapshot), so
+ * no other guard process is part-way through a change while it is read.
+ */
+function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now, lockWaitMs = LOCK_WAIT_MS }) {
+  try { warmContexts(paths, loadPhase(paths, phaseId).phase.ref, ctxAt); } catch { /* read again under the lock */ }
+  return readSnapshot(paths, () => {
+    requireStore({ paths, anchor, manifest });
+    const { phase } = loadPhase(paths, phaseId);
+    const entries = readJournal(paths, phase.ref);
+    const holds = holdsOf(entries, { readReceipt, ctxAt });
+    const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
+    const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
+    const corroborate = Boolean(wf && wf.corroboration && gate.complete && gate.terminal && gate.terminal.corroborate === true && !holds.length);
+    return { phase, wf, gate, holds, corroborate };
+  }, now, lockWaitMs, `phase ${isId(phaseId) ? phaseId : "?"}'s gate`);
 }
 
 /**
@@ -1371,17 +1437,20 @@ function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readRecei
  * step, its STOP, or its terminal outcome; the project's holds; and whether
  * the workflow's one separate-credential read is permitted. It is permitted
  * only after a terminal outcome that says so (item 3's COMPLETE-REFUSED and
- * COMPLETE-WROTE), with nothing held and no lock, before the phase deadline
- * (the gate reads a passed deadline as a STOP). Never after a STOP. Refuses
- * on a damaged store.
+ * COMPLETE-WROTE), with nothing held, before the phase deadline (the gate
+ * reads a passed deadline as a STOP). Never after a STOP. It is read under
+ * the store lock, so no other guard process held the lock at that moment;
+ * the lock it took itself is not counted. Refuses on a damaged store, and
+ * refuses as busy (LockUnavailable) when the lock cannot be taken: the gate
+ * is then not established.
  */
-export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now }) {
-  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now });
+export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now, lockWaitMs = LOCK_WAIT_MS }) {
+  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now, lockWaitMs });
   return {
     phaseId, workflow: g.phase.workflow, phase: g.phase.phase, stop: g.gate.stop, next: g.gate.next, complete: g.gate.complete,
     terminal: g.gate.terminal || null, reason: g.gate.reason,
     results: g.gate.results.map((r) => ({ step: r.step, verdict: r.verdict, ...(r.outcome ? { outcome: r.outcome } : {}) })),
-    holds: g.holds, lock: g.lock, corroborate: g.corroborate,
+    holds: g.holds, corroborate: g.corroborate,
     ...(g.corroborate ? { query: g.wf.corroboration.sql } : {}),
   };
 }
@@ -1393,10 +1462,10 @@ export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFL
  * phaseGate permits the read now. An empty `problems` is agreement; any
  * disagreement is a STOP with no cleanup (item 3 runbook §6).
  */
-export function corroborateRead({ paths, anchor, manifest, phaseId, rowsText, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now }) {
-  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now });
+export function corroborateRead({ paths, anchor, manifest, phaseId, rowsText, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now, lockWaitMs = LOCK_WAIT_MS }) {
+  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now, lockWaitMs });
   if (!g.corroborate) {
-    const why = g.holds.length ? heldMessage(g.holds) : g.lock ? "the store lock is held" : g.gate.stop ? `STOP: ${g.gate.reason}` : g.gate.complete ? `${g.gate.reason}; this outcome does not permit it` : `the next step is ${g.gate.next}`;
+    const why = g.holds.length ? heldMessage(g.holds) : g.gate.stop ? `STOP: ${g.gate.reason}` : g.gate.complete ? `${g.gate.reason}; this outcome does not permit it` : `the next step is ${g.gate.next}`;
     throw new Refusal(`the gate does not permit the separate-credential read: ${why}; refusing`);
   }
   const c = g.wf.corroboration;
@@ -1548,7 +1617,10 @@ export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath,
 /**
  * Admit one live send and make it. Before any request, in order: the process
  * and the programs it starts; the checkout (clean, at a full commit); the
- * store (storeCheck) and the clock; the window (session value, exactly one
+ * store (storeCheck) and the clock, read with the markers, the go and its
+ * phase in one snapshot under the store lock (readSnapshot; `o.lockWaitMs`,
+ * which the command line never sets, bounds that wait; a lock not taken is a
+ * busy refusal, before any claim); the window (session value, exactly one
  * marker, the same shell process, the same token, the marker's head, ref and
  * end); the text's role; the go named by id (unused, this marker's, this
  * phase's, step, text, head, ref and request, issued before now, before its
@@ -1574,11 +1646,19 @@ export async function guardedSend(o) {
   const t0 = now();
   preflight({ execArgv, env, dirs: [root, process.cwd()] });
   const head = checkoutHead(git, root);
-  const chk0 = requireStore({ paths, anchor, manifest });
-  checkClock(paths, t0, chk0);
+  // The first check reads the store once, under its lock (readSnapshot): the
+  // store check, the clock check, the markers, the go and its phase. The
+  // checks below then run on that snapshot, in their usual order, with the
+  // lock released; the claim takes it again and re-checks what admits.
+  const snap = readSnapshot(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    checkClock(paths, t0, chk);
+    return { chk, markers: settle(() => readMarkers(paths)), go: settle(() => { const g = readGo(paths, goId); return { g, phase: settle(() => loadPhase(paths, g.phaseId)) }; }) };
+  }, t0, o.lockWaitMs ?? LOCK_WAIT_MS, "the send's first check");
+  const chk0 = snap.chk;
   const nonce = sessionOf(env);
   const sid = sessionIdOf(nonce);
-  const mine = readMarkers(paths).filter((e) => !e.marker || e.marker.sessionId === sid);
+  const mine = taken(snap.markers).filter((e) => !e.marker || e.marker.sessionId === sid);
   if (mine.some((e) => !e.marker)) throw new Refusal("a malformed marker is present; refusing");
   if (mine.length !== 1) throw new Refusal(`${mine.length ? "more than one marker" : "no marker"} for this window's session: open one with stage0-window.mjs; refusing`);
   const marker = mine[0].marker;
@@ -1591,8 +1671,8 @@ export async function guardedSend(o) {
   if (!(t0 < until)) throw new Refusal(`marker ${marker.markerId} ended at ${marker.until}; refusing`);
   const role = roleOf(manifest, plan.name);
   if (role !== marker.role) throw new Refusal(`${plan.name} is sent from ${an(role)} window; this is ${an(marker.role)} window; refusing`);
-  const go = readGo(paths, goId);
-  const { phase, sha } = loadPhase(paths, go.phaseId);
+  const { g: go, phase: phaseRead } = taken(snap.go);
+  const { phase, sha } = taken(phaseRead);
   const want = {
     markerId: marker.markerId, phaseId: marker.phaseId, phaseSha: sha, workflow: phase.workflow, phase: phase.phase,
     text: plan.name, target: plan.target, ref: plan.ref, head, checkout: root, role,
@@ -1673,27 +1753,43 @@ export async function guardedSend(o) {
 }
 
 /**
- * The guard state for one ref, for the status command. Read-only. On a store
- * that fails storeCheck it reports DAMAGED with the problems and no holds
- * list: an empty list would claim a history that is not known to be intact.
+ * The guard state for one ref, for the status command. Read-only, apart from
+ * taking and releasing the store lock: the store check, the holds, the
+ * attempts, the gos and the markers come from one snapshot under that lock
+ * (readSnapshot), as they were at that moment. Three answers:
+ *   - intact: the snapshot, with its holds;
+ *   - DAMAGED (intact false): the store fails storeCheck under the lock, or
+ *     there is no store. The problems are listed, and no holds list: an
+ *     empty list would claim a history that is not known to be intact;
+ *   - BUSY (busy true): the lock could not be taken within the wait, so the
+ *     state is not established. That is not damage, and there is no holds
+ *     list. A stale lock left by a killed process reads as BUSY too.
  */
-export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECEIPT_READER, now }) {
-  const chk = storeCheck({ paths, anchor, manifest });
-  if (!chk.ok) return { intact: false, damaged: chk.problems, lock: existsSync(paths.lock) };
-  const entries = readJournal(paths, ref);
-  const gos = [...chk.index.gos].filter(([, g]) => g.ev.ref === ref && g.state === "live").map(([goId]) => {
-    const g = readState(join(paths.gos, `${goId}.json`));
-    return { goId, step: g.step, ceiling: g.ceiling, notAfter: g.notAfter, deadline: g.deadline, live: now < utcMs(g.deadline) };
-  });
-  return {
-    intact: true,
-    storeId: chk.store.storeId,
-    events: chk.seq,
-    holds: holdsOf(entries, { readReceipt, ctxAt }),
-    attempts: entries.map((e) => ({ attemptId: e.attemptId, seq: e.claim && e.claim.seq, step: e.claim && e.claim.step, state: e.outcome ? e.outcome.state : e.claim ? "PENDING" : "MALFORMED", disposed: Boolean(e.disposition) })),
-    gos,
-    markers: readMarkers(paths).map((e) => (e.marker ? { markerId: e.marker.markerId, role: e.marker.role, phaseId: e.marker.phaseId, until: e.marker.until, ref: e.marker.ref } : { malformed: e.problems[0] })),
-    lock: existsSync(paths.lock),
-  };
+export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECEIPT_READER, now, lockWaitMs = LOCK_WAIT_MS }) {
+  if (!isDir(paths.dir)) return { intact: false, damaged: storeCheck({ paths, anchor, manifest }).problems };
+  warmContexts(paths, ref, ctxAt);
+  try {
+    return readSnapshot(paths, () => {
+      const chk = storeCheck({ paths, anchor, manifest });
+      if (!chk.ok) return { intact: false, damaged: chk.problems };
+      const entries = readJournal(paths, ref);
+      const gos = [...chk.index.gos].filter(([, g]) => g.ev.ref === ref && g.state === "live").map(([goId]) => {
+        const g = readState(join(paths.gos, `${goId}.json`));
+        return { goId, step: g.step, ceiling: g.ceiling, notAfter: g.notAfter, deadline: g.deadline, live: now < utcMs(g.deadline) };
+      });
+      return {
+        intact: true,
+        storeId: chk.store.storeId,
+        events: chk.seq,
+        holds: holdsOf(entries, { readReceipt, ctxAt }),
+        attempts: entries.map((e) => ({ attemptId: e.attemptId, seq: e.claim && e.claim.seq, step: e.claim && e.claim.step, state: e.outcome ? e.outcome.state : e.claim ? "PENDING" : "MALFORMED", disposed: Boolean(e.disposition) })),
+        gos,
+        markers: readMarkers(paths).map((e) => (e.marker ? { markerId: e.marker.markerId, role: e.marker.role, phaseId: e.marker.phaseId, until: e.marker.until, ref: e.marker.ref } : { malformed: e.problems[0] })),
+      };
+    }, now, lockWaitMs, "the status");
+  } catch (e) {
+    if (e instanceof LockUnavailable) return { busy: true, reason: e.message };
+    throw e;
+  }
 }
 

@@ -395,8 +395,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       of the store and approval blockers), stage0-guard.ceiling.test.js
       (CE-*: before/at/after every ceiling, a late early step, a later step
       with an earlier ceiling, stale and enlarged ceilings, the exact go
-      line, the not-after) and stage0-guard.shell.test.js (G-27, real
-      PowerShell windows; Windows only). synthWorkflow(…) in the fixture
+      line, the not-after), stage0-guard.shell.test.js (G-27, real
+      PowerShell windows; Windows only) and stage0-guard.lock.test.js
+      (LK-*, SN-*: below). synthWorkflow(…) in the fixture
       declares 60 s per step for any phase a test does not name (`null`
       declares none), and fx.issue() gives a production go the latest
       not-after the issuer admits unless the test passes one. Item 3's are
@@ -404,6 +405,24 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       stage0-item3.mutation.test.js (I3-M1: each mutant must turn its named
       negative into exactly a permissive result, never an exception), with
       shared data in stage0-item3-fixture.mjs.
+    - THE STORE LOCK AND THE READERS (F2, F3; Codex's review of the G-6
+      addendum, 2026-11-02):
+      - withLock retries the exclusive create on EEXIST, EPERM, EACCES and
+        EBUSY only (LOCK_BUSY_CODES), within its bound, and refuses as
+        LockUnavailable naming the last error. Only EEXIST is reported as
+        another process's lock. Nothing under the lock is ever repeated;
+      - `status`, `gate`, `corroborate` and the sender's first check read
+        one snapshot under the lock (readSnapshot). A lock not taken is
+        BUSY, the state not established: never DAMAGED. The reader's own
+        lock is not counted. No lock is held across the request;
+      - tests inject lock faults, or a pause between an event's files and
+        its ledger line, only through guardCopy(…) in the fixture, a copy
+        of the real module. EEXIST_ONLY and NO_SNAPSHOT are its two
+        required-failing mutants. Race workers are released by
+        releaseTogether(…), on acknowledgement, never after a fixed pause;
+      - a test process started with node options (an `--import` hook, say)
+        makes SEND-4 fail: the sender's preflight refuses them, by design.
+        Never weaken that preflight for an instrumented run.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
     capture gate and the item 3 gate) are pinned in the manifest's `guard`.
