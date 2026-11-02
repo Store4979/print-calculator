@@ -1,9 +1,19 @@
-- Last updated: 2026-10-31
+- Last updated: 2026-11-02
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
+
+## 2026-11-02 — T accepted and pushed; G-6 captured; the 4(c) plan revised (docs commit V)
+- Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); 3624efd..this commit local, for Codex's review
+  - this commit (V): docs/security/stage0-item4c-plan.md answers Codex's review of U (U-1 to U-5, C1–C8) and records Ryan's decisions
+  - Not commits: the G-6 capture (200 heavy-load runs, 18 failures at :316, every worker kept; at most one go, request and claim in all 200) and its addendum; a local PGlite lock inventory of P1′; T's push record (§E13), uncommitted until Ryan's Netlify read
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: the Netlify dashboard read after T's push; forward V's request and the G-6 addendum to Codex; the window's Sunday and its closing time
+- Needs a ruling from Claude (chat): none
+- Next planned step: Codex's reviews of V and the G-6 addendum; then the 4(c) implementation commit, with F1–F3 as ruled
 
 ## 2026-10-31 — T verified; the item 4(c) plan (docs commit U)
 - Shipped: security/release-2-slice-2 c62644a..this commit (local, for Codex's review)
@@ -51,16 +61,3 @@
 - Needs from Ryan: relay the Q and R review requests to Codex
 - Needs a ruling from Claude (chat): none
 - Next planned step: Codex's reviews of Q and R, then item 3's staging session at the head Codex names
-
-## 2026-10-27 — Item 2 complete (capture commit, C-COMB); item 6 guarded sender and its correction O
-- Shipped: security/release-2-slice-2 1042d2c..22610f8 (not main)
-  - 95ecd65 Item 2 capture commit: the 15 staging receipts; SUPPORT from them
-  - 9404ee5 Item 2, Codex's review of 95ecd65 (C-COMB): R3 only for the five witnessed profiles
-  - 0687296 CL-28: each profile mutant must make its named negative exactly R3
-  - 78db6dc Item 6: the guarded sender (Codex's review of the item 6 plan, SG-1 to SG-6)
-  - 22610f8 O: item 6, Codex's review of 78db6dc (I6-R1, I6-R2, the ordering note)
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: not recorded in history
-- Needs a ruling from Claude (chat): not recorded in history
-- Next planned step: not recorded in history
