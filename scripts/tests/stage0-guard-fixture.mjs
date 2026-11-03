@@ -7,9 +7,12 @@
 // Two helpers for separate processes and injected faults (Codex's review of
 // the G-6 addendum): releaseTogether, and guardCopy. `within` bounds a wait
 // and clears its timer on every path (W-N1, Codex's review of W).
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+// syntheticHomeEnv gives a child process a temporary home, so the guard's
+// default store path resolves there, never to the real store (guarded-send
+// procedure §7.2); stage0-guard-launch-check.mjs reads where tests use it.
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
+import { join, dirname, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -235,6 +238,33 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms));
 const trim = (s) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
 
 /**
+ * The environment for a child process a test starts that could run guard
+ * code: this process's, then `extra` (a variable given as undefined is
+ * dropped), then USERPROFILE and HOME set to `home`. Node's os.homedir() reads
+ * USERPROFILE on Windows and HOME elsewhere, and the guard's default store
+ * path is ~/.stage0-guard, so in that child it is <home>/.stage0-guard
+ * (guarded-send procedure §7.2; ORD shows it in a real child). `home` is made
+ * if absent. It throws, before making anything, unless `home` lies inside the
+ * system temporary directory; and after, unless its real path is neither this
+ * process's home nor one of its ancestors.
+ */
+export function syntheticHomeEnv(home, extra = {}) {
+  const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+  const inside = (child, parent) => fold(child).startsWith(fold(parent.endsWith(sep) ? parent : parent + sep));
+  if (typeof home !== "string" || !inside(resolve(home), resolve(tmpdir()))) throw new Error(`a synthetic home lies inside ${tmpdir()}: ${home}`);
+  mkdirSync(home, { recursive: true });
+  const h = realpathSync.native(home);
+  const real = realpathSync.native(homedir());
+  if (fold(h) === fold(real) || inside(real, h)) throw new Error(`a synthetic home is neither this process's home nor one of its ancestors: ${h}`);
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) if (!/^(USERPROFILE|HOME)$/i.test(k)) env[k] = v;
+  for (const [k, v] of Object.entries(extra)) { if (v === undefined) delete env[k]; else env[k] = v; }
+  env.USERPROFILE = h;
+  env.HOME = h;
+  return env;
+}
+
+/**
  * Wait for `done` or for `ms`, whichever comes first, and clear the timer on
  * every path (W-N1, Codex's review of W): a timer that lost the race would
  * otherwise keep this process alive until it fired. True when `done` won.
@@ -272,7 +302,7 @@ export async function releaseTogether({ dir, script, cfgs, readyMs = 60000, done
     const cfg = { ...c, ready: join(dir, `ready-${i}`), start, out: join(dir, `out-${i}.json`), startWithinMs: readyMs + 30000 };
     const file = join(dir, `cfg-${i}.json`);
     writeFileSync(file, JSON.stringify(cfg));
-    const p = spawn(process.execPath, [script, file], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const p = spawn(process.execPath, [script, file], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: syntheticHomeEnv(join(dir, "home")) });
     const w = { index: i, pid: p.pid, cfg, p, stdout: "", stderr: "", exitCode: null, signal: null, exited: false, readyAt: null, exitedAt: null };
     p.stdout.on("data", (d) => { w.stdout = trim(w.stdout + d); });
     p.stderr.on("data", (d) => { w.stderr = trim(w.stderr + d); });
@@ -336,7 +366,7 @@ export async function holder(fx, holdMs = 120000) {
   const cfg = join(dir, "cfg.json");
   const ready = join(dir, "ready");
   writeFileSync(cfg, JSON.stringify({ guardUrl: pathToFileURL(join(MANUAL, "stage0-guard.mjs")).href, stateDir: fx.stateDir, ready, holdMs, now: fx.now() }));
-  const p = spawn(process.execPath, [script, cfg], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const p = spawn(process.execPath, [script, cfg], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: syntheticHomeEnv(join(dir, "home")) });
   let stderr = "";
   p.stderr.on("data", (d) => { stderr = trim(stderr + d); });
   const exited = new Promise((r) => p.on("exit", (code, signal) => r({ code, signal })));

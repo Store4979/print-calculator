@@ -3354,6 +3354,49 @@ or lock.
 **This record and its evidence are committed in T** (on S, local, for
 Codex's review), with the Q and R+S push records (§E13).
 
+**E16. Unreviewed code against the real guard store — DEPARTURE RECORD,
+2026-11-03.** Recorded under Codex's review of `4037d12` (X0 ACCEPT, X1
+AMEND), which rejected it as a verification method and set the standing
+rule now in the guarded-send procedure §7.2: unreviewed code never executes
+against the real guard store, read-only helper calls included. It is
+recorded from the session transcript, and **not rerun** to fill any gap.
+- **What ran:** a direct `storeCheck` call on the real store,
+  `%USERPROFILE%\.stage0-guard` (store `3389bb8f8df9280e7608c455249678f5`),
+  from Claude's session, by X1's code before its review. It took no lock,
+  and storeCheck's code only reads files.
+- **When:** the transcript records the tool call at 2026-11-03
+  15:03:34.573Z and its result at 15:03:37.648Z. The node process's own
+  start and end times are unrecorded.
+- **Code identity:** the working checkout `.review/current-source` at HEAD
+  `4037d12f37e04b6c50a6543c9e91bfd8f81b58d1` (X1, committed 14:59:51Z), whose
+  `scripts/manual/stage0-guard.mjs` is blob
+  `4c1cc17734103bf11675d6a74bbd8d5c5ccf9f6e` (136 405 bytes, md5
+  `d4852b2d22a7c67b244bc7d8b5db4178`). The working-tree state of that file
+  at that moment is unrecorded; the transcript shows no edit to it between
+  X1's commit and the call. The manifest came from `manifestAt("HEAD")`
+  (`scripts/manual/assemble-stage0.mjs`), and the anchor from `anchorAt`
+  (`docs/security/stage0-guard-store.json` at HEAD).
+- **Command:** a Git Bash `node -e` one-off in that checkout. It loaded
+  `stage0-guard.mjs` and `assemble-stage0.mjs`, called
+  `storeCheck({ paths: statePaths(DEFAULT_STATE), anchor: anchorAt(root),
+  manifest: manifestAt("HEAD", root) })`, and printed the store id, `ok`,
+  the problems, the event count and the number of added targets. The same
+  command then listed the store's top level (`ls "$HOME/.stage0-guard"`).
+  It is described here, not reproduced as a runnable command, so that
+  nobody runs it again.
+- **Its limited result:** store `3389bb8f…`, `ok` true, no problems, 72
+  events, no added targets; the listing `approvals clock gos hwm.json
+  journal ledger.jsonl markers phases store.json`. Unlocked, it does not
+  establish a logical snapshot: a writer may sit between its files and its
+  ledger line while such a scan runs. **It is not verification evidence**
+  for X1 and is withdrawn from X1's review request. Codex found the
+  storeCheck code consistent with the reported read-only behaviour, without
+  inspecting the live store or replaying the call. The read establishes no
+  damage, and no reset, restoration or hold disposition follows from it.
+- **Also on the record:** at 2026-11-03 00:05:17Z, during W2's work, a
+  PowerShell `Get-ChildItem` listed the store's five newest entries and
+  their write times. It ran no guard code.
+
 ---
 
 ## F. Acceptance and rollback

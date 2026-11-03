@@ -75,9 +75,11 @@ node scripts/manual/stage0-go.mjs init
 - That anchor is committed, exactly, as
   `docs/security/stage0-guard-store.json`, in a reviewed commit. Until it is
   at HEAD, every live command refuses.
-- **No other command makes the store, or any directory in it.** While the
-  repository records an established store, `init` refuses: a lost store is
-  never replaced by running `init` again (§7).
+- **No other command makes the store.** The only commands that make a
+  directory in it are `target add` and `target retire`, each recorded in
+  the ledger (§7). While the repository records an established store,
+  `init` refuses: a lost store is never replaced by running `init` again
+  (§7).
 - `init` is not part of a session. On this machine it ran once, on
   2026-10-28, under Codex's narrow first-init clearance, from a clean
   checkout of O. It made store `3389bb8f8df9280e7608c455249678f5`. The
@@ -357,7 +359,10 @@ time, a quiet STATE, a new phase or a new go release nothing. That the file
 is a genuine review is a human check. Under UO-1 a held writing outcome
 still keeps the counter closed until a separate reviewed incident decision.
 A disposition releases a hold on an intact store only: it never excuses
-damage (§7), not even to the attempt it names.
+damage (§7), not even to the attempt it names. It is recorded only while
+the attempt's ref (the one its claim recorded) is active: production and
+staging always, an added target until its retirement. After retirement
+`dispose` refuses before writing anything (§7; X1-R1).
 
 ## 7. The store (I6-R1)
 
@@ -427,11 +432,32 @@ never edited, moved or deleted by hand,** with one exception: a stale
   added only once. `target retire` (the same arguments) ends it: it refuses
   while anything of the ref is live, pending or held (a phase before its
   deadline, an open marker, a live go, a PENDING or HOLD attempt), and moves
-  only the target record, to `targets/retired/`. From then on every command
-  refuses that ref, by any name, and storeCheck reads any later event for
-  it as damage. Its journal, phases, markers and gos stay, as evidence.
-  Neither command changes the store's identity or the anchor, and neither
-  is a disposition.
+  only the target record, to `targets/retired/`. Its journal, phases,
+  markers and gos stay, as evidence. Neither command changes the store's
+  identity or the anchor, and neither is a disposition.
+
+  **After retirement** (X1-N1, Codex's review of `4037d12`), the ref gains
+  no new authority and nothing is dispatched to it, under any name:
+  - draft, phase registration, a window's marker, `issue` and the sender
+    refuse it;
+  - `dispose` refuses its attempts before writing anything (X1-R1). A
+    held or pending attempt is disposed of before retirement, which refuses
+    until it is;
+  - `target add` never adds it again;
+  - storeCheck reads as damage any later event that names it (a draft,
+    phase, marker, go or claim), and any later outcome or disposition of
+    its claims.
+
+  Two kinds of command stay available on its retained records:
+  - reading its history: `status --target <name>` and `gate --phase <id>`;
+  - closing what is already there: `void --go <id>` of an unused go, and a
+    window's `close`, which voids that window's gos and closes its marker.
+    A go-void or marker-close names a go or a marker, and is checked
+    against that record's own lifecycle.
+
+  Neither touches the journal, so neither releases a PENDING or HOLD
+  attempt, and neither makes the ref active again
+  (`scripts/tests/stage0-guard.target.test.js` TG-8, TG-9).
 - **The lock.** One `lock` file, created exclusively, serializes every
   change and the reads behind `status`, `gate`, `corroborate` and the
   sender's first check. A command waits up to 10 s for it, retrying while
@@ -522,3 +548,63 @@ real process the test starts:
   the lock file is untouched;
 - after the test's own removal, `status` reads the real state: intact, a
   PENDING hold that survives the removal, or damage.
+
+## 7.2 Code that runs against the real store (standing rule; Codex's review of `4037d12`)
+
+**Unreviewed code never executes against the real guard store,
+`%USERPROFILE%\.stage0-guard`, including read-only helper calls.** "It only
+reads" is not a substitute for review, and "it takes no lock" is not a
+safety or consistency proof.
+- **Develop and first verify** every change against synthetic fixture
+  stores, with explicit paths and no fallback to the real per-user store.
+  `stage0-go.mjs`, `stage0-window.mjs` and `guardedSend` fall back to the
+  real store when no state directory is given, and a child process
+  resolves it from its own home directory. So in the tests:
+  - **in-process helpers and commands** receive an explicit fixture state
+    directory or paths;
+  - **a real command-line child,** which takes no state directory from its
+    arguments, gets a temporary home from the fixture's
+    `syntheticHomeEnv`, whatever order the command makes its checks in.
+    That is synthetic-home isolation (Ryan's ruling on ORD, and Codex's
+    review of `7168fc0`).
+
+  ORD runs the three command lines that way. It checks that a child under
+  the same environment reports the guard's actual default store path
+  under the fixture root, and that nothing makes a store there. ORD-S puts
+  a store read at each command line's entry, before its preflight, in a
+  copied chain. All six of ORD's runs still pass ORD's assertions, and all
+  six reads reach only a sentinel store under the synthetic home.
+- **Real-store execution** uses reviewed code at an approved exact commit,
+  with commands covered by the existing clearance. Calling a helper
+  directly (storeCheck, readLedger, readJournal, …) is not a read-only
+  escape hatch.
+- **Operational reads** use the reviewed locked interfaces: `status`,
+  `gate` and `corroborate`. Never a bare storeCheck to avoid the lock:
+  unlocked, it can run while a writer sits between its files and its
+  ledger line, so its result is not a logical snapshot.
+- **A command already authorized within its clearance** needs no extra
+  confirmation merely because it reads. This rule prevents unreviewed live
+  use; it does not add permission requests to approved sessions.
+
+**For the tests' own code,** `scripts/tests/stage0-guard.launch.test.js`
+(LN-1 to LN-3) reads every file under `scripts/tests`, parsed, through
+`stage0-guard-launch-check.mjs`:
+- every child-process launch must be `git`, set
+  `env: syntheticHomeEnv(…)`, or be a listed exception with its reason;
+- an exception may not sit in a test, or outside a test in a file, that
+  names a guard command line;
+- a shared helper module's launcher of what its callers pass must use the
+  synthetic home;
+- every in-process call of a command line's `main()` and of `guardedSend`
+  must name a state directory (the sender's `--dry-run`, which reads no
+  store, excepted);
+- code in the test process may never name the default store path. A
+  string may name it only in a listed reader test, ORD or ORD-S, whose
+  every launch uses the synthetic home.
+
+It is a regression gate over the tests' code, not a sandbox: a name built
+at run time is not seen. For anything run by hand in a session, this is a
+review rule. The departure that prompted it, an unreviewed and unlocked
+storeCheck run on the real store on 2026-11-03, is recorded in the
+production plan's §E16. It is not verification evidence, and it is not
+rerun.

@@ -5,14 +5,17 @@
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
-## 2026-11-03 — The records (X0); X1, the rehearsal target
+## 2026-11-03 — The records (X0); X1, the rehearsal target; X1b, Codex's AMEND of X1
 - Shipped: security/release-2-slice-2 d8ec242..this commit (local, for Codex's review)
-  - this commit (X0): the records only, no code: T's and W2's push records (production plan §E13); in the 4(c) plan, V2's acceptance and rulings (C13, Realtime, attribution), the two image observations, W's AMEND and W2, the load accounting, and Ryan's four decisions on the outline (§0.2); this log
+  - 50f8f0e X0: the records only, no code: T's and W2's push records (production plan §E13); in the 4(c) plan, V2's acceptance and rulings (C13, Realtime, attribution), the two image observations, W's AMEND and W2, the load accounting, and Ryan's four decisions on the outline (§0.2) (Codex: ACCEPT)
+  - 4037d12 X1: the rehearsal target in the guard store (target add/retire, activeRef in every live command, storeCheck's target rules; synthetic refs only, the store's identity and anchor unchanged) and M-12's C8 effect rule; TG-1..7, TG-M (10 mutants), M-12b; the guard chain re-pinned (Codex: AMEND, X1-R1 blocking, X1-N1, the standing rule)
+  - this commit (X1b): dispose refuses a retired ref's attempt before writing (X1-R1); the retirement rule as it is, with post-retirement close and void (X1-N1); TG-8, TG-9, TG-4's HOLD disposition, an 11th mutant; the standing rule on the real store (CLAUDE.md, procedure §7.2) and the departure record (production plan §E16); no test falls back to the real store (Ryan's ruling on ORD; Codex's review of 7168fc0): ORD's children and the fixture's launchers run with a synthetic home (syntheticHomeEnv), ORD checks a child's actual default store path, ORD-S puts a store read before each command line's preflight and finds it reaches only a sentinel store, SEND-4's live-path calls name a state directory, and the launch check LN-1..3 keeps it so; the guard chain re-pinned; this log
+  - Not commits: X1's clean verification (555/555, build, replay 14 × 555, exit 0), superseded by X1b's (see its review request); X1b's first form (7168fc0; Codex: X1-R1, X1-N1, the rule and §E16 ACCEPTED, ORD AMEND) and second (f1d6112, never sent) amended with the ORD changes, their verifications stopped; the departure: an unreviewed, unlocked storeCheck on the real store at X1 (15:03Z), recorded in §E16, not evidence, not rerun
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: none
+- Needs from Ryan: forward the X1b review request to Codex (reviews/requests/codex-review-request-X1b.md)
 - Needs a ruling from Claude (chat): none
-- Next planned step: X1 on top of X0 (the rehearsal target and M-12, synthetic refs only), then one Codex review request for X0 and X1
+- Next planned step: Codex's review of X1b; on acceptance, the staging-only push of X1b's exact hash (carrying X0 and X1); then X2 under the outline
 
 ## 2026-11-02 — T and W2 pushed; G-6 fixed (W, W2); the 4(c) plan accepted (V2)
 - Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); c62644a..d8ec242 pushed 2026-11-03 02:20Z (U, V, W, V2, W2, under Codex's review of d8ec242 after its replay condition; staging deploy 6ae9450b; production unchanged)

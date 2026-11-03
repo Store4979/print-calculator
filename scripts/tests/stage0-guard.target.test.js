@@ -11,7 +11,8 @@
 //         anchor, production and staging records are unchanged
 //   TG-3  what target add refuses, each with nothing recorded
 //   TG-4  what target retire refuses (live phase, go, marker; PENDING;
-//         HOLD), then a retirement once nothing is live
+//         HOLD), then a retirement once nothing is live, and once a PENDING
+//         or HOLD attempt has its reviewed disposition
 //   TG-5  after retirement every way back is refused: draft, registration,
 //         an old phase's marker and go, re-adding by its name or another,
 //         the staging slot; status still reads its history; a new ref may
@@ -21,10 +22,17 @@
 //         is BUSY, then DAMAGED once its lock is removed, never a silent
 //         half state
 //   TG-7  the command line: stage0-go.mjs target add and retire
+//   TG-8  X1-R1: a disposition of a retired ref's completed attempt is
+//         refused before anything is written, through the function and the
+//         command line; one made before retirement is still recorded; a
+//         forged one after retirement is still damage
+//   TG-9  X1-N1: after retirement, void and a window's close still close
+//         the retained gos and markers, with the store intact and the ref
+//         gaining nothing; close releases no PENDING or HOLD attempt
 //   TG-M  the mutation companion: each named check, removed, turns its
 //         scenario into exactly the permissive result the original refuses
 // (Codex's rulings: C2 and §2.3's bounds in the reviews of U and V; the
-// outline's split, review of d8ec242.)
+// outline's split, review of d8ec242; X1-R1 and X1-N1, review of 4037d12.)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync, readdirSync } from "node:fs";
@@ -87,6 +95,32 @@ function phaseWithWindows(fx, opts = {}) {
   const R = fx.window("R", ph.phaseId, { pid: 1001 });
   const W = fx.window("W", ph.phaseId, { pid: 1002 });
   return { ph, R, W };
+}
+/** Every file in the store, by its path inside the store, with its sha256: the store's bytes, to compare before and after a refusal. */
+function storeFiles(fx) {
+  const out = {};
+  const walk = (dir) => {
+    for (const d of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, d.name);
+      if (d.isDirectory()) { out[`${p.slice(fx.stateDir.length + 1)}/`] = "dir"; walk(p); } else out[p.slice(fx.stateDir.length + 1)] = G.sha256(readFileSync(p));
+    }
+  };
+  walk(fx.stateDir);
+  return out;
+}
+/** stage0-go.mjs, as the command line runs it, on this fixture's store. */
+const goCli = (fx, argv, out = []) => GO.main(argv, {}, { root: ROOT, manifest: X1, anchor: fx.anchor, stateDir: fx.stateDir, now: fx.now, identity: fx.identity, git: fx.git, stdout: (s) => out.push(s), execArgv: [], ctxAt: fx.ctxAt });
+/** One completed STATE (S1) and one completed P2-02 (S2) on the rehearsal ref: two DISPATCHED attempts, nothing held. */
+async function twoCompleted(fx) {
+  const { ph, R, W } = phaseWithWindows(fx);
+  fx.add(1000);
+  await fx.send(G, { text: "STATE", target: "rehearsal", win: R, goId: fx.issue(ph.phaseId, "S1").goId });
+  fx.add(1000);
+  await fx.send(G, { text: "P2-02", target: "rehearsal", win: W, goId: fx.issue(ph.phaseId, "S2").goId });
+  const entries = G.readJournal(fx.paths, REH);
+  assert.deepEqual(entries.map((e) => e.outcome && e.outcome.state), ["DISPATCHED", "DISPATCHED"], "both completed");
+  assert.deepEqual(fx.status(REH).holds, [], "nothing held");
+  return { ph, R, W, attempts: entries.map((e) => e.attemptId) };
 }
 /** Retire by hand, as a store edit that bypasses retireTarget would: consistent files and ledger, nothing else checked. */
 function forgeRetire(fx, target = "rehearsal", ref = REH) {
@@ -225,7 +259,7 @@ test("TG-4 target retire refuses while anything of the ref is live, pending or h
       assert.equal(fx.check().ok, true);
     } finally { fx.cleanup(); }
   }
-  // An R4 writing send HOLDs it.
+  // An R4 writing send HOLDs it, until it is disposed of.
   {
     const fx = setup();
     try {
@@ -237,6 +271,10 @@ test("TG-4 target retire refuses while anything of the ref is live, pending or h
       await fx.send(G, { text: "P2-02", target: "rehearsal", win: W, goId: fx.issue(ph.phaseId, "S2").goId, over: { fetchImpl: fx.fetchImpl(() => new Response("upstream timeout", { status: 504 })) } });
       fx.set(G.utcMs(ph.deadline) + 1000);
       await refused(() => retire(fx), /the project is held: HOLD/, "HOLD");
+      const attemptId = G.readJournal(fx.paths, REH)[1].attemptId;
+      fx.dispose(attemptId, review(fx, `Disposition of ${attemptId}`).reviewedPath, REH);
+      retire(fx);
+      assert.equal(fx.check().ok, true, fx.check().problems.join("; "));
     } finally { fx.cleanup(); }
   }
 });
@@ -427,6 +465,147 @@ test("TG-7 the command line: stage0-go.mjs target add and target retire, with th
   } finally { fx.cleanup(); }
 });
 
+test("TG-8 X1-R1: a completed, undisposed attempt, then a normal retirement, then its disposition is refused, through the function and the command line, before anything is written (no event, no disposition file, every store file byte-identical, the store intact, production and staging status still read); a disposition made before retirement is still recorded; a forged one after retirement is still damage", async () => {
+  const RETIRED = /attempt [0-9a-f]{32} is target rehearsal's \(abcdefghijklmnopqrst\), retired at ledger line [0-9]+: a retired ref's journal gains no disposition; refusing/;
+  for (const via of ["the function", "the command line"]) {
+    const fx = setup();
+    try {
+      add(fx);
+      const { ph, attempts } = await twoCompleted(fx);
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      retire(fx);
+      assert.equal(fx.check().ok, true, "retired normally, intact");
+      const before = { seq: seq(fx), files: storeFiles(fx), calls: fx.calls.length };
+      for (const attemptId of attempts) {
+        const r = review(fx, `Reviewed: the disposition of attempt ${attemptId}.`);
+        const e = await refused(() => (via === "the function"
+          ? G.dispose({ paths: fx.paths, anchor: fx.anchor, manifest: X1, ref: REH, attemptId, ...r, now: fx.now() })
+          : goCli(fx, ["dispose", "--target", "rehearsal", "--attempt", attemptId, "--reviewed", r.reviewedPath])), RETIRED, `${via}, attempt ${attemptId}`);
+        assert.ok(e instanceof G.Refusal, `${via}: a Refusal`);
+        assert.ok(!existsSync(join(fx.paths.journal(REH), `${attemptId}.disposition.json`)), `${via}: no disposition written`);
+      }
+      assert.equal(seq(fx), before.seq, `${via}: no event appended`);
+      assert.deepEqual(storeFiles(fx), before.files, `${via}: every store file byte-identical, no lock left`);
+      assert.equal(fx.check().ok, true, fx.check().problems.join("; "));
+      assert.equal(fx.calls.length, before.calls, "no request");
+      for (const [target, ref] of [["production", PROD], ["staging", STAGING]]) {
+        const st = fx.status(ref);
+        assert.equal(st.intact, true, `${target} status reads intact`);
+        assert.deepEqual(st.holds, [], `${target}: nothing held`);
+        assert.equal(goCli(fx, ["status", "--target", target]).exit, 0, `${target} status through the command line exits 0`);
+      }
+      assert.deepEqual(fx.status(REH).targets, [{ target: "rehearsal", ref: REH, state: "retired" }], "its history still reads");
+    } finally { fx.cleanup(); }
+  }
+  // Before retirement, a disposition of a completed attempt is recorded as before, and retirement follows.
+  {
+    const fx = setup();
+    try {
+      add(fx);
+      const { ph, attempts } = await twoCompleted(fx);
+      const d = fx.dispose(attempts[1], review(fx, `Disposition of ${attempts[1]}`).reviewedPath, REH);
+      assert.equal(d.attemptId, attempts[1]);
+      assert.equal(lastKind(fx), "disposition");
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      retire(fx);
+      assert.equal(fx.check().ok, true, fx.check().problems.join("; "));
+    } finally { fx.cleanup(); }
+  }
+  // A disposition written after retirement by a store edit (consistent file and ledger line) is still damage.
+  {
+    const fx = setup();
+    try {
+      add(fx);
+      const { ph, attempts } = await twoCompleted(fx);
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      retire(fx);
+      const text = JSON.stringify({ schema: "stage0-disposition/1", attemptId: attempts[0], reviewed: { path: join(fx.dir, "forged.md"), sha256: "c".repeat(64) }, recordedAt: G.iso(fx.now()) }, null, 2) + "\n";
+      writeFileSync(join(fx.paths.journal(REH), `${attempts[0]}.disposition.json`), text);
+      fx.ledger("disposition", { attemptId: attempts[0], sha256: G.sha256(Buffer.from(text, "utf8")) });
+      const c = fx.check();
+      assert.equal(c.ok, false, "DAMAGED");
+      assert.match(c.problems.join("; "), new RegExp(`disposition for attempt ${attempts[0]}: ref ${REH} was retired at ledger line [0-9]+`));
+    } finally { fx.cleanup(); }
+  }
+});
+
+test("TG-9 X1-N1: after retirement the named closing operations still run on retained records: void of an expired unused go, and a window's close (closeSession), which voids its gos and closes its marker; the store stays intact, nothing is requested, the journal is untouched, and the ref gains nothing (draft still refuses, as does a send naming the voided go; status reads it retired; TG-8 covers dispose). Before retirement, close releases no PENDING or HOLD attempt", async () => {
+  const gainsNothing = async (fx, label) => {
+    await refused(() => fx.draft("r", "P"), /target rehearsal \(abcdefghijklmnopqrst\) was retired at ledger line/, `${label}: draft`);
+    assert.deepEqual(fx.status(REH).targets, [{ target: "rehearsal", ref: REH, state: "retired" }], `${label}: still retired`);
+    assert.equal(fx.check().ok, true, `${label}: intact (${fx.check().problems.join("; ")})`);
+    assert.equal(fx.calls.length, 0, `${label}: no request`);
+  };
+  // void: an unused go, expired with its phase.
+  {
+    const fx = setup();
+    try {
+      add(fx);
+      const { ph, R } = phaseWithWindows(fx);
+      fx.add(1000);
+      const go = fx.issue(ph.phaseId, "S1");
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      retire(fx);
+      fx.clock();
+      const base = seq(fx);
+      const journal = readdirSync(fx.paths.journal(REH));
+      G.voidGo({ paths: fx.paths, anchor: fx.anchor, manifest: X1, goId: go.goId, now: fx.now() });
+      assert.equal(seq(fx), base + 1, "one event");
+      assert.equal(lastKind(fx), "go-void");
+      assert.ok(existsSync(join(fx.paths.voided, `${go.goId}.json`)) && !existsSync(join(fx.paths.gos, `${go.goId}.json`)), "the go moved to gos/void/");
+      assert.deepEqual(readdirSync(fx.paths.journal(REH)), journal, "the journal untouched");
+      await refused(() => fx.send(G, { text: "STATE", target: "rehearsal", win: R, goId: go.goId }), /target rehearsal \(abcdefghijklmnopqrst\) was retired at ledger line [0-9]+/, "a send naming the voided go");
+      await gainsNothing(fx, "after void");
+    } finally { fx.cleanup(); }
+  }
+  // close: the window's marker and its unused go.
+  {
+    const fx = setup();
+    try {
+      add(fx);
+      const { ph, R, W } = phaseWithWindows(fx);
+      fx.add(1000);
+      const go = fx.issue(ph.phaseId, "S1");
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      retire(fx);
+      fx.clock();
+      const base = seq(fx);
+      const r = G.closeSession({ paths: fx.paths, env: R.env, now: fx.now() });
+      assert.deepEqual(r.problems, []);
+      assert.deepEqual(r.gos, [go.goId], "its go voided");
+      assert.equal(r.markers.length, 1, "its marker closed");
+      const w = G.closeSession({ paths: fx.paths, env: W.env, now: fx.now() });
+      assert.deepEqual([w.problems, w.gos, w.markers.length], [[], [], 1], "the other window closed");
+      assert.equal(seq(fx), base + 3, "three events: a go-void and two marker-closes");
+      assert.deepEqual(readdirSync(fx.paths.markers).filter((n) => n.endsWith(".json")), [], "no open marker");
+      await gainsNothing(fx, "after close");
+    } finally { fx.cleanup(); }
+  }
+  // Before retirement, closing the windows releases no PENDING attempt, and no HOLD.
+  for (const kind of ["PENDING", "HOLD"]) {
+    const fx = setup();
+    try {
+      add(fx);
+      const { ph, R, W } = phaseWithWindows(fx);
+      fx.add(1000);
+      if (kind === "PENDING") {
+        const e = await caught(() => fx.send(G, { text: "STATE", target: "rehearsal", win: R, goId: fx.issue(ph.phaseId, "S1").goId, over: { writeReceipt: () => { throw new Error("the disk is full"); } } }));
+        assert.ok(e instanceof G.AfterDispatch, String(e));
+      } else {
+        await fx.send(G, { text: "STATE", target: "rehearsal", win: R, goId: fx.issue(ph.phaseId, "S1").goId });
+        fx.add(1000);
+        await fx.send(G, { text: "P2-02", target: "rehearsal", win: W, goId: fx.issue(ph.phaseId, "S2").goId, over: { fetchImpl: fx.fetchImpl(() => new Response("upstream timeout", { status: 504 })) } });
+      }
+      const journal = readdirSync(fx.paths.journal(REH)).sort();
+      for (const win of [R, W]) assert.deepEqual(G.closeSession({ paths: fx.paths, env: win.env, now: fx.now() }).problems, []);
+      assert.deepEqual(readdirSync(fx.paths.journal(REH)).sort(), journal, `${kind}: the journal untouched`);
+      assert.deepEqual(fx.status(REH).holds.map((h) => h.kind), [kind], `${kind}: still held`);
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      await refused(() => retire(fx), new RegExp(`the project is held: ${kind}`), `${kind}: retirement still refused`);
+    } finally { fx.cleanup(); }
+  }
+});
+
 // ── the mutation companion ─────────────────────────────────────────────────
 
 /**
@@ -536,6 +715,20 @@ const MUTANTS = [
     permits: (r, fx) => Boolean(r && r.ref === REH2) && lastKind(fx) === "target-add",
   },
   {
+    name: "dispose's retired-ref check (X1-R1)",
+    edits: [["    if (t && t.retired !== null) throw new Refusal(`attempt ${attemptId} is target", "    if (false) throw new Refusal(`attempt ${attemptId} is target"]],
+    setup: async (fx) => {
+      add(fx);
+      const { ph, attempts } = await twoCompleted(fx);
+      fx.set(G.utcMs(ph.deadline) + 1000);
+      retire(fx);
+      return { attemptId: attempts[1] };
+    },
+    run: (mod, fx, s) => mod.dispose({ paths: fx.paths, anchor: fx.anchor, manifest: X1, ref: REH, attemptId: s.attemptId, ...review(fx, `Reviewed: the disposition of attempt ${s.attemptId}.`), now: fx.now() }),
+    // The permissive result is a recorded disposition, which the next storeCheck reads as damage: the defect Codex reproduced.
+    permits: (r, fx, before) => Boolean(r && r.attemptId) && lastKind(fx) === "disposition" && seq(fx) === before.seq + 1 && fx.check().ok === false,
+  },
+  {
     name: "storeCheck's retired-ref rule",
     edits: [["    if (ref !== undefined && !activeAt(ref)) { rel(i, notActive(ref)); continue; }", "    if (ref !== undefined && !refs.includes(ref)) { rel(i, notActive(ref)); continue; }"]],
     setup: async (fx) => {
@@ -549,7 +742,7 @@ const MUTANTS = [
   },
 ];
 
-test("TG-M the mutation companion: each named check, removed, turns its scenario into exactly the permissive result (a request, a go, a marker, a draft, a phase, a retirement, an addition, a passing check) where the original refuses or reports damage", { timeout: 240000 }, async () => {
+test("TG-M the mutation companion: each named check, removed, turns its scenario into exactly the permissive result (a request, a go, a marker, a draft, a phase, a retirement, a disposition, an addition, a passing check) where the original refuses or reports damage", { timeout: 240000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "s0-target-mutants-"));
   try {
     for (const [n, mt] of MUTANTS.entries()) {

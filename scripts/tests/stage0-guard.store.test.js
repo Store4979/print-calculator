@@ -33,12 +33,15 @@
 //         EEXIST-only rule refuses it (F2, deterministic, injected)
 //   AP-4  a genuine restart: a newly drafted id, a new phase
 //   ORD   node options and planted programs refuse before any program, through
-//         the real command lines
+//         the real command lines, each run with a synthetic home; a child's
+//         default store path lies under the fixture root
+//   ORD-S a store read put before each command line's preflight reaches only
+//         the synthetic sentinel store (Codex's review of 7168fc0)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, mkdtempSync, rmSync, renameSync, appendFileSync, chmodSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, mkdtempSync, rmSync, renameSync, appendFileSync, chmodSync, realpathSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -46,7 +49,7 @@ import * as G from "../manual/stage0-guard.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import * as GO from "../manual/stage0-go.mjs";
 import * as WIN from "../manual/stage0-window.mjs";
-import { fixture, synthWorkflow, M, ROOT, HEAD, TOKEN, OTHER_TOKEN, nonce, releaseTogether, guardCopy, EEXIST_ONLY } from "./stage0-guard-fixture.mjs";
+import { fixture, synthWorkflow, M, ROOT, HEAD, TOKEN, OTHER_TOKEN, nonce, releaseTogether, guardCopy, EEXIST_ONLY, syntheticHomeEnv } from "./stage0-guard-fixture.mjs";
 
 const PROD = "gmxyisjjaxtpycsmmzef";
 const hex = (n) => randomBytes(n / 2).toString("hex");
@@ -661,26 +664,89 @@ test("AP-4 I6-R2: a genuine restart needs a newly drafted id and a new approved 
 
 // ── ORD: the cheap checks come first, through the real command lines ────────
 
-test("ORD Codex's ordering note: node options and a planted program refuse before any program starts, in all three command lines", { timeout: 120000 }, () => {
+// The three command lines take no state directory from their arguments, so
+// these children would resolve the real store from their home directory.
+// Each runs with a synthetic home instead (guarded-send procedure §7.2; Ryan's
+// ruling on ORD, and Codex's review of 7168fc0), whatever order a command
+// makes its checks in. ORD shows where a child's default store path lands;
+// ORD-S shows that a store read placed before the preflight lands there too.
+const ORD_CLEAN = { NODE_OPTIONS: undefined, [G.TOKEN_ENV]: undefined, [G.SESSION_ENV]: undefined };
+const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+const inside = (child, parent) => fold(child).startsWith(fold(parent.endsWith(sep) ? parent : parent + sep));
+
+/** ORD's six runs of the real command lines in `dir`, each with the synthetic home `home`, and ORD's three assertions on each: exit 2, the refusal, and no program first. */
+function ordSix(dir, home) {
+  const run = (script, args, extra, label, re) => {
+    const r = spawnSync(process.execPath, [join(dir, "scripts", "manual", script), ...args], { cwd: dir, env: syntheticHomeEnv(home, { ...ORD_CLEAN, ...extra }), encoding: "utf8" });
+    assert.equal(r.status, 2, `${label}: exit 2 (${r.stderr})`);
+    assert.match(r.stderr, re, label);
+    assert.ok(!/not a git repository|ENOENT|spawn/.test(r.stderr), `${label}: no program ran first (${r.stderr})`);
+  };
+  const opt = { NODE_OPTIONS: "--no-deprecation" };
+  run("stage0-send.mjs", ["P0", "--target", "production", "--confirm-ref", PROD, "--go", hex(32)], opt, "the sender", /NODE_OPTIONS is set/);
+  run("stage0-window.mjs", ["open", "--role", "R", "--phase", hex(32)], opt, "the window", /NODE_OPTIONS is set/);
+  run("stage0-go.mjs", ["status", "--target", "production"], opt, "the issuer", /NODE_OPTIONS is set/);
+  writeFileSync(join(dir, "git.exe"), "");
+  run("stage0-send.mjs", ["P0", "--target", "production", "--confirm-ref", PROD, "--go", hex(32)], {}, "the sender, planted git", /git\.exe exists, and would run in place of the system program/);
+  run("stage0-window.mjs", ["open", "--role", "R", "--phase", hex(32)], {}, "the window, planted git", /git\.exe exists/);
+  run("stage0-go.mjs", ["issue", "--phase", hex(32), "--step", "A1"], {}, "the issuer, planted git", /git\.exe exists/);
+}
+
+test("ORD Codex's ordering note: node options and a planted program refuse before any program starts, in all three command lines, each run with a synthetic home; a child under it resolves the guard's default store path under the fixture root, and nothing makes a store there", { timeout: 120000 }, () => {
   const dir = otherCheckout(); // not a git repository: any program call would fail differently
   try {
-    const run = (script, args, env, label, re) => {
-      const r = spawnSync(process.execPath, [join(dir, "scripts", "manual", script), ...args], { cwd: dir, env, encoding: "utf8" });
-      assert.equal(r.status, 2, `${label}: exit 2 (${r.stderr})`);
-      assert.match(r.stderr, re, label);
-      assert.ok(!/not a git repository|ENOENT|spawn/.test(r.stderr), `${label}: no program ran first (${r.stderr})`);
-    };
-    const base = { ...process.env };
-    delete base.NODE_OPTIONS;
-    delete base[G.TOKEN_ENV];
-    delete base[G.SESSION_ENV];
-    const opt = { ...base, NODE_OPTIONS: "--no-deprecation" };
-    run("stage0-send.mjs", ["P0", "--target", "production", "--confirm-ref", PROD, "--go", hex(32)], opt, "the sender", /NODE_OPTIONS is set/);
-    run("stage0-window.mjs", ["open", "--role", "R", "--phase", hex(32)], opt, "the window", /NODE_OPTIONS is set/);
-    run("stage0-go.mjs", ["status", "--target", "production"], opt, "the issuer", /NODE_OPTIONS is set/);
-    writeFileSync(join(dir, "git.exe"), "");
-    run("stage0-send.mjs", ["P0", "--target", "production", "--confirm-ref", PROD, "--go", hex(32)], base, "the sender, planted git", /git\.exe exists, and would run in place of the system program/);
-    run("stage0-window.mjs", ["open", "--role", "R", "--phase", hex(32)], base, "the window, planted git", /git\.exe exists/);
-    run("stage0-go.mjs", ["issue", "--phase", hex(32), "--step", "A1"], base, "the issuer, planted git", /git\.exe exists/);
+    const home = join(dir, "home");
+    // A child under the same environment reports its home, and the default
+    // store path as the copied guard module computes it. It reads nothing.
+    const url = pathToFileURL(join(dir, "scripts", "manual", "stage0-guard.mjs")).href;
+    const seen = spawnSync(process.execPath, ["--input-type=module", "-e", `import { homedir } from "node:os"; const G = await import(${JSON.stringify(url)}); process.stdout.write(JSON.stringify({ home: homedir(), store: G.DEFAULT_STATE }));`], { cwd: dir, env: syntheticHomeEnv(home, ORD_CLEAN), encoding: "utf8" });
+    assert.equal(seen.status, 0, seen.stderr);
+    const got = JSON.parse(seen.stdout);
+    const h = realpathSync.native(home);
+    assert.equal(got.home, h, "the children's home is the synthetic one");
+    assert.equal(got.store, join(h, ".stage0-guard"), "the children's default store path is the synthetic home's");
+    assert.ok(inside(got.store, realpathSync.native(dir)), "under the fixture root");
+    assert.notEqual(got.store.toLowerCase(), join(realpathSync.native(homedir()), ".stage0-guard").toLowerCase(), "never this process's default store path");
+    ordSix(dir, home);
+    assert.equal(existsSync(got.store), false, "nothing made a store at the children's default path");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("ORD-S a default-store read put at each command line's entry, before its preflight, reaches only the synthetic store: ORD's six runs still pass ORD's assertions, and each of the six reads records the synthetic path and the sentinel ledger it found there", { timeout: 120000 }, () => {
+  const dir = otherCheckout();
+  try {
+    // The sentinel store: one ledger line, under the synthetic home.
+    const home = join(dir, "home");
+    const sentinel = join(home, ".stage0-guard");
+    mkdirSync(sentinel, { recursive: true });
+    const ledger = JSON.stringify({ seq: 1, prev: "0".repeat(64), at: "2026-11-03T00:00:00.000Z", kind: "init", storeId: "5".repeat(32) }) + "\n";
+    writeFileSync(join(sentinel, "ledger.jsonl"), ledger);
+    const want = join(realpathSync.native(home), ".stage0-guard");
+    assert.ok(inside(want, realpathSync.native(dir)), "the sentinel lies under the fixture root");
+    const log = join(dir, "early-reads.jsonl");
+    // In the copied chain only: each command line reads its default store's
+    // ledger first, and records what it read. It refuses before any read
+    // unless the default path is the sentinel's.
+    const entry = /export (?:async )?function main\(argv, env, deps = \{\}\) \{\n/;
+    for (const name of ["stage0-go.mjs", "stage0-window.mjs", "stage0-send.mjs"]) {
+      const file = join(dir, "scripts", "manual", name);
+      const src = readFileSync(file, "utf8");
+      assert.equal((src.match(new RegExp(entry.source, "g")) || []).length, 1, `${name}: one main()`);
+      const read = [
+        `  if (G.DEFAULT_STATE !== ${JSON.stringify(want)}) throw new Error("ORD-S: the default store path is not the sentinel's, so nothing is read");`,
+        "  const ordRead = G.readLedger(G.statePaths(G.DEFAULT_STATE));",
+        `  ordAppend(${JSON.stringify(log)}, JSON.stringify({ script: ${JSON.stringify(name)}, store: G.DEFAULT_STATE, seq: ordRead.seq }) + "\\n");`,
+      ].join("\n") + "\n";
+      writeFileSync(file, src.replace(/^(#![^\n]*\n)/, "$1import { appendFileSync as ordAppend } from \"node:fs\";\n").replace(entry, (m) => m + read));
+    }
+    ordSix(dir, home);
+    const reads = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(reads.map((r) => r.script), ["stage0-send.mjs", "stage0-window.mjs", "stage0-go.mjs", "stage0-send.mjs", "stage0-window.mjs", "stage0-go.mjs"], "one early read per run, in ORD's order");
+    for (const r of reads) {
+      assert.equal(r.store, want, `${r.script}: the sentinel's path`);
+      assert.equal(r.seq, 1, `${r.script}: it read the sentinel ledger`);
+    }
+    assert.deepEqual(readdirSync(sentinel), ["ledger.jsonl"], "the sentinel store holds only its ledger");
+    assert.equal(readFileSync(join(sentinel, "ledger.jsonl"), "utf8"), ledger, "and it is unchanged");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

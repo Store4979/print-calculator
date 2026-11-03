@@ -49,8 +49,15 @@
 // anchor records them; they never change). A third ref is used only once
 // `stage0-go.mjs target add` has added it, under a name the manifest binds to
 // it, after its own reviewed commit and clearance; at most one is active at
-// a time. `target retire` ends it: from then on every command refuses that
-// ref, by any name (activeRef), and a retired ref is never added again.
+// a time. `target retire` ends it. From then on the ref gains no new
+// authority and nothing is dispatched to it, by any name: draft,
+// registration, a marker, a go and a send refuse it (activeRef), `dispose`
+// refuses its attempts, and it is never added again. Two kinds of command
+// stay available on its retained records: reading its history (status,
+// gate), and closing what is already there: `void` of an unused go, and a
+// window's close (closeSession), which voids its gos and closes its marker.
+// Neither touches the journal, so neither releases a PENDING or HOLD
+// attempt, and neither makes the ref active again.
 // Retiring refuses while anything of the ref is live, pending or held, and
 // moves nothing but its target record.
 // storeCheck() replays the ledger and requires every file it names to exist
@@ -529,9 +536,13 @@ const dirStep = (dir) => [() => mkdirSync(dir), () => rmdirSync(dir)];
  *
  * The store's refs are production and staging (store.json, as the anchor
  * records them), plus any ref a target-add event added. An added ref is
- * active from its target-add to its target-retire; any other event for it
- * outside that span, a second add of a ref, a second active target at once,
- * and an add of production's or staging's ref are problems. Its journal
+ * active from its target-add to its target-retire. Problems: an event that
+ * names it (a draft, phase, marker, go or claim) outside that span; an
+ * outcome or disposition of one of its claims after its retirement; a second
+ * add of a ref; a second active target at once; an add of production's or
+ * staging's ref. A go-void or marker-close names a go or a marker, not a
+ * ref, and is checked against that record's own lifecycle, so closing a
+ * retired ref's go or marker is not a problem. Its journal
  * directory, targets/ and targets/retired/ exist exactly when the ledger
  * says so. A store with no target events is checked exactly as before.
  */
@@ -1705,7 +1716,12 @@ export function voidGo({ paths, anchor, manifest, goId, now }) {
  * Record a reviewed disposition of one held or pending attempt, on an intact
  * store only: a disposition is not a restoration. The review file must name
  * the attempt id; its sha256 is recorded. That the file is a genuine review
- * is a human check.
+ * is a human check. The ref is the one the attempt's claim recorded, and it
+ * must be active in the checked store: production and staging always, an
+ * added ref until its retirement. storeCheck reads a disposition after the
+ * retirement as damage, so dispose refuses one before writing anything
+ * (X1-R1, Codex's review of 4037d12); retirement itself refuses while an
+ * attempt is PENDING or HOLD.
  */
 export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath, reviewedBytes, now }) {
   if (!isId(attemptId)) throw new Refusal("not an attempt id; refusing");
@@ -1714,6 +1730,8 @@ export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath,
     const chk = requireStore({ paths, anchor, manifest });
     const c = chk.index.claims.get(attemptId);
     if (!c || c.ev.ref !== ref) throw new Refusal(`attempt ${attemptId} is not in the ${ref} journal; refusing`);
+    const t = chk.index.targets.get(c.ev.ref);
+    if (t && t.retired !== null) throw new Refusal(`attempt ${attemptId} is target ${t.target}'s (${c.ev.ref}), retired at ledger line ${t.retired + 1}: a retired ref's journal gains no disposition; refusing`);
     if (chk.index.dispositions.has(attemptId)) throw new Refusal(`attempt ${attemptId} already has a disposition; refusing`);
     const d = { schema: "stage0-disposition/1", attemptId, reviewed: { path: reviewedPath, sha256: sha256(reviewedBytes) }, recordedAt: iso(now) };
     const text = JSON.stringify(d, null, 2) + "\n";
@@ -1784,9 +1802,15 @@ export function addTarget({ paths, anchor, manifest, target, ref, reviewedPath, 
  *   - no phase is before its deadline.
  * Under the store lock it moves targets/<ref>.json to targets/retired/
  * (made if absent) and records target-retire. Nothing else moves: the ref's
- * journal, phases, markers and gos stay, as evidence. From then on every
- * command refuses the ref (activeRef), storeCheck reads any later event for
- * it as damage, and addTarget never adds it again.
+ * journal, phases, markers and gos stay, as evidence. From then on the ref
+ * gains no new authority and nothing is dispatched to it: activeRef refuses
+ * it to draft, registration, markers, issue and the sender; dispose refuses
+ * its attempts; addTarget never adds it again; and storeCheck reads a later
+ * event naming it, or a later outcome or disposition of its claims, as
+ * damage. Reading its history (status, gate) and closing its retained
+ * records (voidGo, closeSession) stay available. Neither touches the
+ * journal, so neither releases a PENDING or HOLD attempt, and neither makes
+ * the ref active again.
  */
 export function retireTarget({ paths, anchor, manifest, target, ref, reviewedPath, reviewedBytes, now, readReceipt = RECEIPT_READER, ctxAt }) {
   if (!isTargetName(target) || !isRef(ref)) throw new Refusal("retire names an added target and its 20-letter ref; refusing");

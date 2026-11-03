@@ -27,7 +27,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main, planSend, send, TOKEN_ENV } from "../manual/stage0-send.mjs";
@@ -91,21 +92,28 @@ test("SEND-3 a target the policy does not allow, an unknown target or an unknown
   // targets' refs: stage0-manifest.test.js fails on this manifest.
 });
 
+// The live path's refusals below come before any store read, but each call
+// still names a state directory, one that does not exist, so none can fall
+// back to the real store (guarded-send procedure §7.2): a guard read there
+// refuses (no guard store), and nothing here creates one.
+const NO_STORE = join(tmpdir(), `s0-send-no-store-${process.pid}-${Date.now()}`);
+
 test("SEND-4 no request without the token, a personal access token and --confirm-ref; argv never carries the token", async () => {
   const base = ["SIZE-PROBE", "--target", "staging", "--confirm-ref", "lboajqihpsfrokqvjgnl"];
-  await assert.rejects(main(base, {}, { fetchImpl: noFetch, stdout: () => {} }), /SUPABASE_ACCESS_TOKEN is not set; refusing/);
-  await assert.rejects(main(base, { [TOKEN_ENV]: "" }, { fetchImpl: noFetch, stdout: () => {} }), /is not set/);
-  await assert.rejects(main(base, { [TOKEN_ENV]: "sb_secret_notapat" }, { fetchImpl: noFetch, stdout: () => {} }), /not a Supabase personal access token/);
-  await assert.rejects(main(["SIZE-PROBE", "--target", "staging"], { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {} }), /--confirm-ref must repeat the target's project ref lboajqihpsfrokqvjgnl/);
-  await assert.rejects(main(["P1", "--target", "production", "--confirm-ref", "lboajqihpsfrokqvjgnl"], { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {} }), /--confirm-ref must repeat/);
-  await assert.rejects(main(base, { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {} }), /a live send needs --go <id>/);
+  await assert.rejects(main(base, {}, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }), /SUPABASE_ACCESS_TOKEN is not set; refusing/);
+  await assert.rejects(main(base, { [TOKEN_ENV]: "" }, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }), /is not set/);
+  await assert.rejects(main(base, { [TOKEN_ENV]: "sb_secret_notapat" }, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }), /not a Supabase personal access token/);
+  await assert.rejects(main(["SIZE-PROBE", "--target", "staging"], { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }), /--confirm-ref must repeat the target's project ref lboajqihpsfrokqvjgnl/);
+  await assert.rejects(main(["P1", "--target", "production", "--confirm-ref", "lboajqihpsfrokqvjgnl"], { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }), /--confirm-ref must repeat/);
+  await assert.rejects(main(base, { [TOKEN_ENV]: TOKEN }, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }), /a live send needs --go <id>/);
   for (const flag of ["--token", "--access-token", "--header"]) {
-    const err = await main([...base, flag, TOKEN], {}, { fetchImpl: noFetch, stdout: () => {} }).catch((e) => e);
+    const err = await main([...base, flag, TOKEN], {}, { fetchImpl: noFetch, stdout: () => {}, stateDir: NO_STORE }).catch((e) => e);
     assert.match(err.message, /unknown option|unexpected argument/, flag);
     assert.ok(!err.message.includes(TOKEN), "a token passed on argv is never echoed");
   }
   const err = await main([TOKEN, "--target", "staging", "--dry-run"], {}, { fetchImpl: noFetch, stdout: () => {} }).catch((e) => e);
   assert.ok(!err.message.includes(TOKEN), "an unknown text name is not echoed when it has a token's shape");
+  assert.equal(existsSync(NO_STORE), false, "nothing made a store at the named state directory");
 });
 
 function mockServer(respond) {

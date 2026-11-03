@@ -50,15 +50,20 @@
 //          4(c)'s, in review.
 // void     moves an unused go to gos/void/.
 // dispose  records a reviewed disposition of one held or pending attempt;
-//          the review file must name the attempt id.
+//          the review file must name the attempt id. It refuses an attempt
+//          whose ref (the claim's) is a retired added target.
 // target   add: adds a third ref to the store, under the name the manifest
 //          binds to it (item 4(c) §2.3: the rehearsal project), after the
 //          reviewed commit that binds it and under its own clearance; the
 //          review file names the target and the ref. At most one added
 //          target is active, and a ref is added once. retire: ends it, once
-//          nothing of it is live, pending or held; a retired ref is never
-//          added again, and every command refuses it. Neither changes the
-//          store's identity or anchor.
+//          nothing of it is live, pending or held. A retired ref is never
+//          added again and gains no new authority: draft, phase, a window,
+//          issue, a send and dispose refuse it. status and gate still read
+//          its history, and void and a window's close still close its
+//          retained gos and markers; neither releases a hold or makes it
+//          active again. Neither add nor retire changes the store's identity
+//          or anchor.
 // status   prints the holds, attempts, gos and markers, read under the store
 //          lock; on a damaged store, the damage and no holds list; when the
 //          lock cannot be taken within its wait, BUSY: the state is not

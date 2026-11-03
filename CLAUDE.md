@@ -332,6 +332,38 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       stays unresolved whatever `status` says (UO-1). Losing the newest
       claim WITH its ledger line IS detected (ST-9). Don't write a test that
       asserts the rollback passes;
+    - UNREVIEWED CODE NEVER EXECUTES AGAINST THE REAL GUARD STORE,
+      including read-only helper calls (standing rule, Codex's review of
+      4037d12; guarded-send procedure §7.2). "It only reads" is not review,
+      and "it takes no lock" is not a safety or consistency proof:
+      - develop and first verify against synthetic fixture stores, with
+        explicit paths and no fallback to the real per-user store
+        (stage0-go/-window and guardedSend default to it when no state
+        directory is passed, and a child resolves it from its home). In
+        the tests: an in-process main()/guardedSend call names a stateDir,
+        and a child that could run a guard command line gets
+        `env: syntheticHomeEnv(…)` from the fixture (a temporary home),
+        whatever order the command checks in. ORD shows that a child's
+        actual default store path lies under the fixture root; ORD-S shows
+        that a read put before each command line's preflight reaches only a
+        sentinel store there. stage0-guard.launch.test.js (LN-1…LN-3,
+        through stage0-guard-launch-check.mjs) parses every file under
+        scripts/tests and fails on any other launch that is not `git` or a
+        listed exception, and on any name of the default store path outside
+        the READERS (ORD, ORD-S). A new launch needs the helper or a
+        reviewed EXCEPTIONS entry;
+      - real-store execution uses reviewed code at an approved exact
+        commit, with commands within the existing clearance. A direct
+        helper call (storeCheck, readLedger, …) is not a read-only escape
+        hatch;
+      - operational reads use the reviewed locked interfaces (status, gate,
+        corroborate), never a bare storeCheck to avoid the lock;
+      - a command already authorized within its clearance needs no extra
+        confirmation merely because it reads.
+      The departure that prompted it, an unreviewed, unlocked storeCheck on
+      the real store at X1 (2026-11-03 15:03Z), is recorded in the
+      production plan's §E16. It is not verification evidence; never rerun
+      it;
     - each step's go ends at the step's CEILING (its latest start): the
       phase deadline less what the phase declaration's `ceilings` reserves
       for the remaining path from that step. A LATER step may reserve MORE,
@@ -461,12 +493,20 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       ref never added, retired, or added under another name. At most one
       added target is active; a ref is added once, so a retired one never
       comes back. `target retire` refuses while anything of the ref is
-      live, pending or held, and moves only the target record. A store
-      with no target events, the real one included, checks exactly as
-      before. Tests: stage0-guard.target.test.js (TG-1…TG-7, and TG-M,
-      its mutation companion), every ref synthetic; the fixture's
-      `manifest` and `ctxAt` options carry a manifest naming the target.
-      In X1 no manifest names a rehearsal target yet, and M-12 still
+      live, pending or held, and moves only the target record. AFTER
+      RETIREMENT (X1-R1, X1-N1, Codex's review of 4037d12) the ref gains no
+      new authority and nothing is dispatched to it: activeRef's commands
+      refuse it, and dispose refuses its attempts BEFORE writing (a
+      disposition after retirement is damage to storeCheck, so writing one
+      would damage the shared store for production and staging too).
+      status and gate still read its history, and void and a window's
+      close still close its retained gos and markers; neither touches the
+      journal, releases a hold or revives the ref. Never write "every
+      command refuses it". A store with no target events checks exactly as
+      before (TG-1). Tests: stage0-guard.target.test.js (TG-1…TG-9, and
+      TG-M, its mutation companion, 11 mutants), every ref synthetic; the
+      fixture's `manifest` and `ctxAt` options carry a manifest naming the
+      target. No manifest names a rehearsal target yet, and M-12 still
       refuses one: the ref-binding commit adds it.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the

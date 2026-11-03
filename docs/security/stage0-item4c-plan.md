@@ -744,6 +744,25 @@ extension** (C2, accepted in principle). Codex's bounds:
 The extension is code, so it belongs to the implementation commit, and the
 project is created only after Codex accepts it (§0.2).
 
+**X1 built it** (`4037d12`). Codex's review of X0 and X1 (2026-11-03)
+accepted X0 as records and X1's design, and returned X1 **AMEND**:
+- **X1-R1, blocking:** `dispose` recorded a disposition for an attempt of a
+  retired ref, which the next storeCheck reads as damage, so an ordinary
+  command could damage the shared store. X1b makes `dispose` refuse it
+  before writing anything;
+- **X1-N1:** "every command refuses a retired ref" overstated the rule.
+  The actual rule: a retired ref gains no new authority and nothing is
+  dispatched to it, while history reads (status, gate) and the closing of
+  retained records (void, a window's close) stay available, releasing no
+  hold and reviving nothing. X1b states it and tests it;
+- **the standing rule:** unreviewed code never executes against the real
+  guard store, read-only helper calls included (guarded-send procedure
+  §7.2). X1's request had counted an unreviewed, unlocked storeCheck run
+  on the real store as evidence; it is withdrawn, and recorded as a
+  departure in the production plan's §E16.
+
+The combined X0/X1 push is held until X1b is reviewed.
+
 ### 2.4 A hazard the throwaway creates, and its marker
 
 **By construction, the throwaway passes production's identity guards:**
