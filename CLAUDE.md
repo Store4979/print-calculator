@@ -346,12 +346,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         whatever order the command checks in. ORD shows that a child's
         actual default store path lies under the fixture root; ORD-S shows
         that a read put before each command line's preflight reaches only a
-        sentinel store there. stage0-guard.launch.test.js (LN-1…LN-3,
-        through stage0-guard-launch-check.mjs) parses every file under
-        scripts/tests and fails on any other launch that is not `git` or a
-        listed exception, and on any name of the default store path outside
-        the READERS (ORD, ORD-S). A new launch needs the helper or a
-        reviewed EXCEPTIONS entry;
+        sentinel store there; LN-3 tests the helper. NO STATIC CHECK
+        ENFORCES THIS: review does. A whole-tree launch analyzer (X1b's
+        LN-1/LN-2) was deferred to separate work after Codex's LN-R1/LN-R2
+        (review of d160c6e: it trusted the first `env`/`stateDir` property
+        and file-wide names); it comes back only with fail-closed rules and
+        their negatives (4(c) plan, open items). Never claim a green test
+        proves every launch safe;
       - real-store execution uses reviewed code at an approved exact
         commit, with commands within the existing clearance. A direct
         helper call (storeCheck, readLedger, …) is not a read-only escape
@@ -952,6 +953,20 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    historical specs, not standing instructions.
 6. Keep this CLAUDE.md current: when you learn a new gotcha or an anchor moves,
    update it as part of the task.
+7. **Verification clones and evidence under `.review` stay put while Codex
+   may use them** (rule, 2026-11-03; Codex accepted it, review of
+   d160c6e). Codex reads them and runs its own
+   tests from them. On 2026-11-03 its focused run of 7168fc0 lost LC-3,
+   LC-4 and LC-5 because Claude deleted `.review/verify-7168fc0` while that
+   run was cloning from it. So:
+   - never delete, move, rename or modify a verification clone, or its
+     logs, TAP or summaries, while a Codex review may be using them;
+   - every new run goes in a new directory, with new log names, never an
+     earlier run's;
+   - clean up an old clone or its evidence only after Codex's verdict on
+     the commit it verified;
+   - stopping a superseded run's own processes is allowed; deleting or
+     changing its files is not.
 
 ## Session log (standing rule, 2026-10-29; rewritten 2026-10-30)
 At the end of every session, before the final report, update docs/STATUS.md

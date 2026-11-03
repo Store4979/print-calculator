@@ -586,25 +586,20 @@ safety or consistency proof.
   confirmation merely because it reads. This rule prevents unreviewed live
   use; it does not add permission requests to approved sessions.
 
-**For the tests' own code,** `scripts/tests/stage0-guard.launch.test.js`
-(LN-1 to LN-3) reads every file under `scripts/tests`, parsed, through
-`stage0-guard-launch-check.mjs`:
-- every child-process launch must be `git`, set
-  `env: syntheticHomeEnv(…)`, or be a listed exception with its reason;
-- an exception may not sit in a test, or outside a test in a file, that
-  names a guard command line;
-- a shared helper module's launcher of what its callers pass must use the
-  synthetic home;
-- every in-process call of a command line's `main()` and of `guardedSend`
-  must name a state directory (the sender's `--dry-run`, which reads no
-  store, excepted);
-- code in the test process may never name the default store path. A
-  string may name it only in a listed reader test, ORD or ORD-S, whose
-  every launch uses the synthetic home.
+**This is a review rule.** No static check enforces it, for the tests or
+for anything run by hand. The tests' containment lives in their own code:
+- explicit fixture paths for in-process calls;
+- `syntheticHomeEnv` for command-line children.
 
-It is a regression gate over the tests' code, not a sandbox: a name built
-at run time is not seen. For anything run by hand in a session, this is a
-review rule. The departure that prompted it, an unreviewed and unlocked
+`stage0-guard.launch.test.js` LN-3 tests the helper, and ORD and ORD-S
+show its effect. A new test that starts a guard command line, or calls one
+in-process, is reviewed for the same containment.
+
+**A whole-tree static launch check was tried in X1b and deferred** to
+separate work (Codex's LN-R1 and LN-R2, review of `d160c6e`; the item 4(c)
+plan's open items).
+
+**The departure that prompted the rule,** an unreviewed and unlocked
 storeCheck run on the real store on 2026-11-03, is recorded in the
 production plan's §E16. It is not verification evidence, and it is not
 rerun.

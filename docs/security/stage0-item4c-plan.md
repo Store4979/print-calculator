@@ -763,6 +763,15 @@ accepted X0 as records and X1's design, and returned X1 **AMEND**:
 
 The combined X0/X1 push is held until X1b is reviewed.
 
+**X1b's reviews** (Codex, 2026-11-03):
+- **of `7168fc0`:** X1-R1, X1-N1, the standing rule and §E16 accepted
+  and closed; ORD AMEND;
+- **of `f1d6112` and `d160c6e`:** all four ORD requirements closed at
+  `d160c6e`, and the clone-preservation rule accepted. The push was held
+  only for the new launch analyzer's LN-R1 and LN-R2;
+- **Ryan deferred the analyzer** (§13). X1c removes it and keeps
+  everything else.
+
 ### 2.4 A hazard the throwaway creates, and its marker
 
 **By construction, the throwaway passes production's identity guards:**
@@ -1919,3 +1928,47 @@ implementation (§10, step 2) comes back for its own review.
 **For Ryan:**
 - **The date:** a Sunday, chosen with the window's clearance, and that
   Sunday's closing time.
+
+## 13. Open items (separate work)
+
+**The whole-tree launch analyzer, deferred** (Ryan, 2026-11-03, choosing
+option 2 of Codex's review of `d160c6e`).
+- **What it was:** X1b (`f1d6112`, `d160c6e`) added
+  `scripts/tests/stage0-guard-launch-check.mjs` and its tests LN-1 and
+  LN-2. They parsed every file under `scripts/tests` and classified each
+  child-process launch, and each in-process command-line or `guardedSend`
+  call, by how it reached a guard store.
+- **Why it was removed (X1c):** Codex found two defects, each blocking if
+  the analyzer stayed:
+  - **LN-R1, effective options:** it credited the first `env` property
+    and ignored a later one, which JavaScript uses. It treated any
+    `stateDir` property as containment, an explicit falsy value or a
+    later override included, though the entry points use
+    `stateDir || DEFAULT_STATE`;
+  - **LN-R2, lexical bindings:** it read the helper, the imports and the
+    consts by file-wide name. A parameter that shadowed `syntheticHomeEnv`,
+    or an argv, was credited as the outer binding.
+
+  Codex's six reproducing sources are in
+  `reviews/release-d160c6e-launch-check.mjs`/`.json`.
+- **What stays without it:** the containment Codex required, in the tests'
+  own code:
+  - ORD and ORD-S;
+  - the default-path probe;
+  - `syntheticHomeEnv` and the fixture's launchers;
+  - SEND-4's explicit path;
+  - LN-3, which tests the helper.
+
+  Review, not a static check, keeps new tests to the rule (guarded-send
+  procedure §7.2).
+- **It comes back only as its own reviewed work,** with:
+  - bounded, fail-closed rules that reason about the effective option, or
+    refuse the ambiguous form: a duplicate or overridden `env`, an
+    explicit falsy `stateDir`, an override that can erase an accepted
+    one;
+  - lexical binding resolution, or a refusal on shadowing or ambiguity;
+  - required-failing negatives for Codex's exact sources, and meaningful
+    positives.
+
+  Its result is never to be called proof that every future path is safe:
+  it runs with the tests, not before them.

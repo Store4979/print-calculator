@@ -8,8 +8,8 @@
 // the G-6 addendum): releaseTogether, and guardCopy. `within` bounds a wait
 // and clears its timer on every path (W-N1, Codex's review of W).
 // syntheticHomeEnv gives a child process a temporary home, so the guard's
-// default store path resolves there, never to the real store (guarded-send
-// procedure §7.2); stage0-guard-launch-check.mjs reads where tests use it.
+// default store path in that child resolves inside it (guarded-send
+// procedure §7.2; ORD and ORD-S show it in real children).
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, dirname, resolve, sep } from "node:path";
