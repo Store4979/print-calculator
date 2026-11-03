@@ -241,11 +241,44 @@
     "bytes": 38228,
     "pinnedAt": "manifest-commit"
   },
+  "item4c": {
+    "note": "Item 4(c) plan §6.1 (the implementation outline's X2): the sources of the read texts P0-4C, POST-4C, WHO-4C-*, BUILD-00 and BUILD-00W, read by blob. STATE-4C is STATE's generator with §3.2's mapping.",
+    "sources": {
+      "checkedState": {
+        "path": "supabase/rehearsals/release2_stage0_4c_checked_state.sql",
+        "blob": "d0ba818fb862d0883364e13ddd690e86006a99ab",
+        "md5": "b867eb38dfe2a6a4c12f559e555da36a",
+        "bytes": 20512,
+        "pinnedAt": "manifest-commit"
+      },
+      "who": {
+        "path": "supabase/rehearsals/release2_stage0_4c_who.sql",
+        "blob": "40249adfb4c600e794ff8765f792303c2a623309",
+        "md5": "82d95a3cfe05746b5739eaf6032d8ff9",
+        "bytes": 3232,
+        "pinnedAt": "manifest-commit"
+      },
+      "build00": {
+        "path": "supabase/rehearsals/release2_stage0_4c_build00.sql",
+        "blob": "65a702bc7db22d147a2c2b6dd9a02d757a1afb69",
+        "md5": "593fb74274b911f41b17148f40ce28bf",
+        "bytes": 10907,
+        "pinnedAt": "manifest-commit"
+      },
+      "build00w": {
+        "path": "supabase/rehearsals/release2_stage0_4c_build00w.sql",
+        "blob": "bc948dcc594976756cd30b26651f1d9988fca4d0",
+        "md5": "6d49ef4d2ce8d57cb2608ac07eaf9804",
+        "bytes": 5112,
+        "pinnedAt": "manifest-commit"
+      }
+    }
+  },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "69f64387bd21a557ca17beb00a24f24de33515d5",
-    "md5": "abe7606858be537e04cd0c0610922d40",
-    "bytes": 64993,
+    "blob": "e0b156e9bab7d6e99d7b2ecc76b0ddfdd825abba",
+    "md5": "fdb435a4d6b95273ec9138a32e6d11c9",
+    "bytes": 68487,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -262,12 +295,22 @@
       "scripts/manual/stage0-window.mjs",
       "scripts/manual/stage0-go.mjs"
     ],
+    "listed": [
+      "scripts/manual/stage0-4c-compare.mjs"
+    ],
     "files": [
       {
         "path": "scripts/manual/assemble-stage0.mjs",
-        "blob": "69f64387bd21a557ca17beb00a24f24de33515d5",
-        "md5": "abe7606858be537e04cd0c0610922d40",
-        "bytes": 64993,
+        "blob": "e0b156e9bab7d6e99d7b2ecc76b0ddfdd825abba",
+        "md5": "fdb435a4d6b95273ec9138a32e6d11c9",
+        "bytes": 68487,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-4c-compare.mjs",
+        "blob": "349c15cdc32f6c1d35191d064b7983a167c76d2c",
+        "md5": "7195be9ff0c8adfe89124725946936b7",
+        "bytes": 32865,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -279,9 +322,9 @@
       },
       {
         "path": "scripts/manual/stage0-classify.mjs",
-        "blob": "4beacdb595e6668fe3d1b26df37b368de4e3783b",
-        "md5": "b198c4511cd02dd3ac89b68c0be3c70d",
-        "bytes": 53077,
+        "blob": "6be9633583c4405cb92ccad033f7ac1285980bab",
+        "md5": "b1864a969007a19a82da0b880eb55c7e",
+        "bytes": 56697,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -293,9 +336,9 @@
       },
       {
         "path": "scripts/manual/stage0-guard.mjs",
-        "blob": "35f92f5439f199c388f4074d906d9895d72caf11",
-        "md5": "30da4afddef3ddb411e0885546c5ff90",
-        "bytes": 138232,
+        "blob": "35a7878d034ad5c15f177d1b7be263a48568bc38",
+        "md5": "0eafafeb69ba61cb0160b2db71b87d6a",
+        "bytes": 138771,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -730,6 +773,42 @@
     "RB-1": {
       "md5": "c250dd6e36cc72836caa8be2b14780b5",
       "bytes": 17688
+    },
+    "P0-4C": {
+      "md5": "4c61bc406df0ec72675d2a961358993d",
+      "bytes": 20625
+    },
+    "POST-4C": {
+      "md5": "3dbdc00808d43c58527fa4fb66e8d614",
+      "bytes": 20652
+    },
+    "WHO-4C-R-RO": {
+      "md5": "1b69b5582f6b58a65789f95dc6c20429",
+      "bytes": 3320
+    },
+    "WHO-4C-R-DEF": {
+      "md5": "cce800a32340db50a8168f0771757a00",
+      "bytes": 3329
+    },
+    "WHO-4C-W-RO": {
+      "md5": "8121324f96ece4e09e7ff7e32f824f38",
+      "bytes": 3320
+    },
+    "WHO-4C-W-DEF": {
+      "md5": "1fd964e37c42ac539a5d08f8ec1352b9",
+      "bytes": 3329
+    },
+    "STATE-4C": {
+      "md5": "ba0db6846bef3afe057b58967fa8c33b",
+      "bytes": 10759
+    },
+    "BUILD-00": {
+      "md5": "0a9e0ac03e2dfc5452f63becabd444ed",
+      "bytes": 11014
+    },
+    "BUILD-00W": {
+      "md5": "7cb8e53d526bb2d2f6f9a4d24bd94a66",
+      "bytes": 5245
     }
   },
   "sizeProbe": {
@@ -1159,6 +1238,74 @@
         ],
         "readOnly": true,
         "window": "R",
+        "effect": "read"
+      },
+      "P0-4C": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "POST-4C": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "STATE-4C": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "WHO-4C-R-RO": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "WHO-4C-R-DEF": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false,
+        "window": "R",
+        "effect": "read"
+      },
+      "WHO-4C-W-RO": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": true,
+        "window": "W",
+        "effect": "read"
+      },
+      "WHO-4C-W-DEF": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "read"
+      },
+      "BUILD-00": {
+        "targets": [],
+        "readOnly": true,
+        "window": "R",
+        "effect": "read"
+      },
+      "BUILD-00W": {
+        "targets": [],
+        "readOnly": false,
+        "window": "W",
         "effect": "read"
       }
     },

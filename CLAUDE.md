@@ -509,12 +509,39 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       fixture's `manifest` and `ctxAt` options carry a manifest naming the
       target. No manifest names a rehearsal target yet, and M-12 still
       refuses one: the ref-binding commit adds it.
+    - ITEM 4(c)'s READ TEXTS AND THE COMPARATOR (X2; the outline's X2,
+      plan §2.1, §2.2, §6.1–§6.4). Texts, each one read-only SELECT:
+      P0-4C and POST-4C (one source, release2_stage0_4c_checked_state.sql:
+      §2.2's ten parts as (part, key, value) rows with an md5 per part and
+      of the whole), WHO-4C-{R,W}-{RO,DEF}, STATE-4C (STATE's generator
+      with RECOVERY_4C, §3.2), BUILD-00 and BUILD-00W. Sources are pinned
+      in the manifest's item4c.sources; the assembler emits them only when
+      it is there. Policies are exactly I4C_POLICY (stage0-manifest-check):
+      production only, BUILD-00/00W NO target until the ref-binding commit,
+      effect "read"; no workflow names them before X4, so nothing new is
+      sendable. M-6f (item4cProblems) confines them: one statement, no
+      E-string/dollar body, quoted identifiers only "char" and "C", no
+      write word or set_config, calls only I4C_READ_CALLS. The comparator
+      (scripts/manual/stage0-4c-compare.mjs) is PURE and decides acceptance
+      (the classifier's SUCCESS entries are shape only): V2_EXEC (3/9/15/18
+      rows), FUNCTION_FACTS, STEP_STATES, DATA_SCOPE, p0Findings,
+      postFindings, crossProject (tiers), dataScope, bindReceipt. Its
+      fixtures come from scripts/manual/stage0-item4c-local-pglite.mjs
+      (PGLITE_DIR; runs A, C, D, F) in scripts/tests/fixtures/stage0-4c/
+      with an index of sha256s; each separate local build has its own data
+      digests (now(), random ids), so a reading is compared with ITS OWN
+      build's 01 reading. Tests: stage0-4c.test.js (4C-1…4C-10) and
+      stage0-4c.mutation.test.js (4C-M1, 12 mutants).
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
-    capture gate and the item 3 gate) are pinned in the manifest's `guard`.
+    capture gate and the item 3 gate), plus the modules CHAIN_LISTED names
+    (X2: stage0-4c-compare.mjs, pinned and audited although no entry loads
+    it yet; guard.listed), are pinned in the manifest's `guard`.
     Each tool refuses unless its closure, read by stage0-guard.mjs
-    importAudit, is pinned blob for blob. That audit fails closed on the
-    RAW text: in those 8 files, never write the module keyword except as a
+    importAudit, is pinned blob for blob; a listed module is held to that
+    at a tool's start only once an entry loads it (X4's gate), and by M-13
+    until then. That audit fails closed on the
+    RAW text: in those 9 files, never write the module keyword except as a
     one-line `<keyword> … from "<spec>";` at column 0 or
     `<keyword>.meta.url`, and never the CommonJS loader word, its create-
     form or the eval word, even in a comment or a string (say "loads",

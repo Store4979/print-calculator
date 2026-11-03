@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as A from "./assemble-stage0.mjs";
-import { CHAIN_ENTRIES, chainClosure } from "./stage0-guard.mjs";
+import { CHAIN_ENTRIES, CHAIN_LISTED, chainClosure } from "./stage0-guard.mjs";
 import { forwardPath, companionPath, MANIFEST_PATH } from "../tests/stage0-manifest-check.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -64,6 +64,12 @@ const rollbacks = A.MIGRATIONS.map((x) => {
   return { ...r, ...entry(companionPath(m, r), prev) };
 });
 const proofs = { path: A.PROOFS, ...entry(A.PROOFS, old.proofs) };
+// Item 4(c)'s read-text sources (the outline's X2), pinned like the proofs file.
+const oldSources = (old.item4c && old.item4c.sources) || {};
+const item4c = {
+  note: "Item 4(c) plan §6.1 (the implementation outline's X2): the sources of the read texts P0-4C, POST-4C, WHO-4C-*, BUILD-00 and BUILD-00W, read by blob. STATE-4C is STATE's generator with §3.2's mapping.",
+  sources: Object.fromEntries(Object.entries(A.SOURCES_4C).map(([k, p]) => [k, { path: p, ...entry(p, oldSources[k]) }])),
+};
 const assembler = { path: "scripts/manual/assemble-stage0.mjs", ...entry("scripts/manual/assemble-stage0.mjs", old.assembler) };
 const sender = { path: "scripts/manual/stage0-send.mjs", ...entry("scripts/manual/stage0-send.mjs", old.sender) };
 // The guard chain (Codex item 6, SG-6): every repository file the three
@@ -71,7 +77,7 @@ const sender = { path: "scripts/manual/stage0-send.mjs", ...entry("scripts/manua
 // It uses the tools' own parser-free audit, so this tool needs no
 // node_modules; M-13 checks the result against acorn.
 const readIndex = (p) => { try { return git("show", `:${p}`).toString("utf8"); } catch { return null; } };
-const chain = [...new Set(CHAIN_ENTRIES.flatMap((e) => {
+const chain = [...new Set([...CHAIN_ENTRIES, ...CHAIN_LISTED].flatMap((e) => {
   const c = chainClosure(e, readIndex);
   if (c.problems.length) throw new Error(`the guard chain cannot be bound: ${c.problems.join("; ")}`);
   return c.files;
@@ -80,6 +86,7 @@ const oldGuard = old.guard || {};
 const guard = {
   note: oldGuard.note || "Codex item 6, SG-6: the files stage0-send.mjs, stage0-window.mjs and stage0-go.mjs load, transitively. Each tool refuses before any go or request unless what it loads is exactly these blobs (stage0-guard.mjs selfCheck); M-13 checks this list against acorn's closure.",
   entries: [...CHAIN_ENTRIES],
+  listed: [...CHAIN_LISTED],
   files: chain.map((p) => ({ path: p, ...entry(p, (oldGuard.files || []).find((f) => f.path === p)) })),
 };
 
@@ -95,6 +102,7 @@ const M = {
   rollbacks,
   rollbackRecords: old.rollbackRecords || [],
   proofs,
+  item4c,
   assembler,
   sender,
   guard,

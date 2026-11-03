@@ -280,6 +280,39 @@ const oneRow = (body, keys) => {
   return { row: p.v[0] };
 };
 const exact = (want) => (body) => (body === want ? { ok: true } : { ok: false, why: `the body is not exactly ${want}` });
+
+/** STATE's row, and STATE-4C's (the same reads, another mapping). */
+function stateShape(body) {
+  const r = oneRow(body, ["effective_prefix", "ledger_md5_ok", "catalog_state", "ledger_rows", "recovery"]);
+  if (r.why) return { ok: false, why: r.why };
+  const s = r.row;
+  if (typeof s.effective_prefix !== "string" || !/^(0[1-5](,0[1-5])*)?$/.test(s.effective_prefix)) return { ok: false, why: "effective_prefix is not a comma list of 01-05" };
+  if (typeof s.ledger_md5_ok !== "boolean") return { ok: false, why: "ledger_md5_ok is not a boolean" };
+  if (!["00", "01", "02", "03", "04", "05", "unrecognized"].includes(s.catalog_state)) return { ok: false, why: "catalog_state is not one of 00-05 or unrecognized" };
+  const rowsOk = Array.isArray(s.ledger_rows) && s.ledger_rows.length === 5 && s.ledger_rows.every((x, i) => sameKeys(x, ["n", "forward", "rollback"])
+    && x.n === `0${i + 1}` && (x.forward === null || typeOk.version(x.forward)) && (x.rollback === null || typeOk.version(x.rollback)));
+  if (!rowsOk) return { ok: false, why: "ledger_rows is not five {n, forward, rollback} rows for 01-05" };
+  if (typeof s.recovery !== "string") return { ok: false, why: "recovery is not a string" };
+  return { ok: true, values: s };
+}
+
+/**
+ * Item 4(c)'s fact rows (the checked state, BUILD-00, BUILD-00W): a
+ * non-empty array of exactly { part, key, value }, part a whole number 0 to
+ * 10 (`numbered`) or a lower-case word, key and value text. Shape only:
+ * whether a reading is accepted is stage0-4c-compare.mjs's, never this.
+ */
+const factRows = (numbered) => (body) => {
+  const p = parsed(body);
+  if (p.why) return { ok: false, why: p.why };
+  if (!Array.isArray(p.v) || !p.v.length) return { ok: false, why: "the body is not a non-empty array of rows" };
+  for (const [i, x] of p.v.entries()) {
+    if (!sameKeys(x, ["part", "key", "value"])) return { ok: false, why: `row ${i + 1} is not exactly { part, key, value }` };
+    const partOk = numbered ? Number.isSafeInteger(x.part) && x.part >= 0 && x.part <= 10 : typeof x.part === "string" && /^[a-z]+$/.test(x.part);
+    if (!partOk || typeof x.key !== "string" || typeof x.value !== "string") return { ok: false, why: `row ${i + 1} has a part, key or value of the wrong type` };
+  }
+  return { ok: true, values: { rows: p.v } };
+};
 const unsupported = (why) => ({ kind: "unsupported", why });
 const P2_SOURCE = "the wrapper's last row-returning statement, set_config('transaction_timeout', '45s', true); P2-01 send 1 (production, 2026-10-09T15:17:05.343Z)";
 
@@ -325,19 +358,7 @@ export const SUCCESS = {
   STATE: {
     kind: "state",
     source: "the STATE SQL (assemble-stage0.mjs stateReadback()); STATE receipts 2026-10-09T01:32:05.922Z and 2026-10-13T16:02:46.359Z",
-    check: (body) => {
-      const r = oneRow(body, ["effective_prefix", "ledger_md5_ok", "catalog_state", "ledger_rows", "recovery"]);
-      if (r.why) return { ok: false, why: r.why };
-      const s = r.row;
-      if (typeof s.effective_prefix !== "string" || !/^(0[1-5](,0[1-5])*)?$/.test(s.effective_prefix)) return { ok: false, why: "effective_prefix is not a comma list of 01-05" };
-      if (typeof s.ledger_md5_ok !== "boolean") return { ok: false, why: "ledger_md5_ok is not a boolean" };
-      if (!["00", "01", "02", "03", "04", "05", "unrecognized"].includes(s.catalog_state)) return { ok: false, why: "catalog_state is not one of 00-05 or unrecognized" };
-      const rowsOk = Array.isArray(s.ledger_rows) && s.ledger_rows.length === 5 && s.ledger_rows.every((x, i) => sameKeys(x, ["n", "forward", "rollback"])
-        && x.n === `0${i + 1}` && (x.forward === null || typeOk.version(x.forward)) && (x.rollback === null || typeOk.version(x.rollback)));
-      if (!rowsOk) return { ok: false, why: "ledger_rows is not five {n, forward, rollback} rows for 01-05" };
-      if (typeof s.recovery !== "string") return { ok: false, why: "recovery is not a string" };
-      return { ok: true, values: s };
-    },
+    check: (body) => stateShape(body),
   },
   ...Object.fromEntries(["P2-01", "P2-02", "P2-0304", "P2-05", "RB-5", "RB-43", "RB-2", "RB-1"].map((k) => [k, { kind: "exact", source: P2_SOURCE, check: exact(SET_CONFIG_45S) }])),
   "CANCEL-INSPECT": unsupported("no reviewed receipt of its success yet"),
@@ -417,6 +438,36 @@ export const SUCCESS = {
       return { ok: true, values: r.row };
     },
   },
+  // Item 4(c)'s read texts (the implementation outline's X2): shape only, from
+  // their SQL; no receipt of theirs exists yet. Acceptance is the comparator's.
+  ...Object.fromEntries(["P0-4C", "POST-4C"].map((name) => [name, {
+    kind: "shape",
+    source: "the checked-state SQL (supabase/rehearsals/release2_stage0_4c_checked_state.sql): rows { part 0-10, key, value }",
+    check: factRows(true),
+  }])),
+  ...Object.fromEntries(A.WHO_4C.map((name) => [name, {
+    kind: "shape",
+    source: "the 4(c) WHO SQL (supabase/rehearsals/release2_stage0_4c_who.sql): one row of WHO_4C_COLUMNS",
+    check: (body) => {
+      const r = oneRow(body, Object.keys(WHO_4C_COLUMNS));
+      if (r.why) return { ok: false, why: r.why };
+      const bad = Object.entries(WHO_4C_COLUMNS).filter(([k, t]) => !(t === "text" ? typeof r.row[k] === "string" : typeof r.row[k] === "boolean" || (t === "boolOrNull" && r.row[k] === null))).map(([k]) => k);
+      return bad.length ? { ok: false, why: `columns of the wrong JSON type: ${bad.join(", ")}` } : { ok: true, values: r.row };
+    },
+  }])),
+  "STATE-4C": { kind: "state", source: "STATE's SQL with the item 4(c) plan §3.2 mapping (assemble-stage0.mjs stateReadback, RECOVERY_4C)", check: (body) => stateShape(body) },
+  "BUILD-00": { kind: "shape", source: "the BUILD-00 SQL (supabase/rehearsals/release2_stage0_4c_build00.sql): rows { part, key, value }", check: factRows(false) },
+  "BUILD-00W": { kind: "shape", source: "the BUILD-00W SQL (supabase/rehearsals/release2_stage0_4c_build00w.sql): rows { part, key, value }", check: factRows(false) },
+};
+
+/** The 4(c) WHO row: its columns and their JSON types (null where a role or object is not found). */
+export const WHO_4C_COLUMNS = {
+  login_role: "text", session_role: "text", tx_read_only: "text", default_tx_read_only: "text", statement_timeout: "text", lock_timeout: "text",
+  superuser: "boolOrNull", bypass_rls: "boolOrNull", create_role: "boolOrNull", write_all_data: "boolOrNull", read_all_data: "boolOrNull",
+  member_service_role: "boolOrNull", member_postgres: "boolOrNull", member_supabase_admin: "boolOrNull", database_create: "bool",
+  public_usage: "boolOrNull", public_create: "boolOrNull", ledger_schema_usage: "boolOrNull", ledger_select: "boolOrNull", ledger_insert: "boolOrNull",
+  employees_owner_privileges: "boolOrNull", auth_attempts_owner_privileges: "boolOrNull", public_owner_privileges: "boolOrNull",
+  auth_users_select: "boolOrNull", auth_users_insert: "boolOrNull",
 };
 
 /** The I3 WHO row: its columns and their JSON types. */

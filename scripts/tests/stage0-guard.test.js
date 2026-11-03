@@ -145,7 +145,7 @@ test("G-1 Q2: each text goes only from a window of its policy role; R refuses W 
           n++;
         }
       }
-      assert.equal(n, target === "production" ? 24 : 33, "12 production texts with two other roles each; 33 staging texts (item 2's 16, item 3's 17) with one");
+      assert.equal(n, target === "production" ? 38 : 33, "19 production texts (12, and item 4(c)'s seven read texts with a target) with two other roles each; 33 staging texts (item 2's 16, item 3's 17) with one");
       assert.equal(fx.calls.length, 0, "no request");
       if (target === "staging") await refused(() => fx.window("C", ph.phaseId, { pid: 3999 }), /sends nothing from a C window/, "no C window on staging");
     } finally { fx.cleanup(); }

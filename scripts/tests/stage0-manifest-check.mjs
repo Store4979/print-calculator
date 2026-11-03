@@ -195,6 +195,25 @@ export const I3_POLICY = Object.freeze({
   "I3-ABSENT": { window: "R", readOnly: true, effect: "read" },
 });
 /**
+ * Item 4(c)'s read texts (plan §6.1; the implementation outline's X2), each
+ * policy exactly. Every one reads only. Production is the one target until
+ * the reviewed ref-binding commit adds the rehearsal's; BUILD-00 and
+ * BUILD-00W, which are the rehearsal's only, have no target at all until
+ * then, so the sender plans them nowhere (Ryan, 2026-11-03). None can be
+ * sent live before X4 declares a workflow that names it (stage0-4c.test.js).
+ */
+export const I4C_POLICY = Object.freeze({
+  "P0-4C": Object.freeze({ targets: ["production"], readOnly: true, window: "R", effect: "read" }),
+  "POST-4C": Object.freeze({ targets: ["production"], readOnly: true, window: "R", effect: "read" }),
+  "STATE-4C": Object.freeze({ targets: ["production"], readOnly: true, window: "R", effect: "read" }),
+  "WHO-4C-R-RO": Object.freeze({ targets: ["production"], readOnly: true, window: "R", effect: "read" }),
+  "WHO-4C-R-DEF": Object.freeze({ targets: ["production"], readOnly: false, window: "R", effect: "read" }),
+  "WHO-4C-W-RO": Object.freeze({ targets: ["production"], readOnly: true, window: "W", effect: "read" }),
+  "WHO-4C-W-DEF": Object.freeze({ targets: ["production"], readOnly: false, window: "W", effect: "read" }),
+  "BUILD-00": Object.freeze({ targets: [], readOnly: true, window: "R", effect: "read" }),
+  "BUILD-00W": Object.freeze({ targets: [], readOnly: false, window: "W", effect: "read" }),
+});
+/**
  * The texts that predate item 3 and may leave `effect` out: the classifier
  * then takes their effect from read_only, as before (I3-1: no broad
  * reclassification). Every other text declares its effect.
@@ -208,7 +227,7 @@ export const LEGACY_EFFECT_TEXTS = Object.freeze(["P0", "P1", "SIZE-PROBE", "P2-
  * read_only and write nothing. R reads; W writes, or reads back inside a
  * writing phase; C is the second caller that cancels.
  */
-export const windowFor = (k) => (Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].window : ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
+export const windowFor = (k) => (Object.hasOwn(I4C_POLICY, k) ? I4C_POLICY[k].window : Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].window : ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
 export const PROBE_WRITE_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare)\b|\bpg_\w+\s*\(/gi;
 
 const BACKSLASH = String.fromCharCode(92);
@@ -352,6 +371,55 @@ function i3FormOf(stmt, label) {
   return Object.keys(I3_FORMS).find((k) => I3_FORMS[k].test(stmt.norm)) || null;
 }
 
+/** Every name item 4(c)'s read texts put before "(": their functions, and the keywords the texts parenthesize after. */
+export const I4C_READ_CALLS = Object.freeze(["acldefault", "aclexplode", "and", "array", "array_agg", "array_to_string", "cardinality", "case", "chr", "coalesce",
+  "count", "current_database", "current_setting", "exists", "format_type", "generate_series", "has_column_privilege", "has_database_privilege",
+  "has_function_privilege", "has_schema_privilege", "has_table_privilege", "in", "json_agg", "json_build_object", "jsonb_typeof", "lateral", "lpad", "max",
+  "md5", "not", "obj_description", "octet_length", "oidvectortypes", "or", "over", "pg_get_constraintdef", "pg_get_expr", "pg_get_function_result",
+  "pg_get_indexdef", "pg_get_triggerdef", "pg_get_userbyid", "pg_has_role", "right", "select", "split_part", "string_agg", "strpos", "substr",
+  "to_jsonb", "to_regclass", "to_regnamespace", "to_regprocedure", "unnest", "values", "version", "when", "where", "with",
+  "all", "as", "bool_and", "filter", "from", "join",
+  // the texts' CTE names and column-alias lists
+  "allow", "creators", "named", "roles_here", "cat", "obs", "md5s", "me", "led", "eff", "cat_state", "recovery", "h",
+  "c", "f", "g", "t", "u", "x", "v00", "v01", "v02", "v03", "v04", "v05", "w00", "w01", "w02", "w03", "w04", "w05"]);
+/** The quoted identifiers item 4(c)'s read texts use: a type and a collation, nothing else. */
+const I4C_QUOTED = ["\"char\"", "\"C\""];
+
+/**
+ * M-6f: an item 4(c) read text (the implementation outline's X2), a sibling
+ * of M-6e's read rule, read with its comments removed:
+ *   - exactly one statement, a SELECT (or WITH … SELECT), ending in its one
+ *     semicolon: the query route returns only the last row-returning
+ *     statement's rows;
+ *   - no dollar-quoted body, no E-string, no U& literal;
+ *   - no quoted identifier but "char" and "C";
+ *   - read with its strings blanked: no write word (INTO included), no
+ *     set_config, and no call but I4C_READ_CALLS (the CTE names and the
+ *     keywords these texts parenthesize after included).
+ * A write assembled at run time is not seen: the md5 pin and review are that
+ * control. It is a regression check of these fixed texts, not a SQL sandbox.
+ */
+export function item4cProblems(text, name) {
+  const out = [];
+  let segs;
+  try { segs = lexSql(text, { label: name }); } catch (e) { return [`${name} does not lex: ${e.message}`]; }
+  if (segs.some((s) => s.kind === "dollar" || s.kind === "e-string")) out.push(`${name} holds a dollar-quoted body or an E-string`);
+  const quoted = segs.filter((s) => s.kind === "quoted-ident").map((s) => text.slice(s.start, s.end)).filter((q) => !I4C_QUOTED.includes(q));
+  if (quoted.length) out.push(`${name} holds the quoted identifier${quoted.length > 1 ? "s" : ""} ${[...new Set(quoted)].join(", ")}, outside M-6f's two`);
+  const b = sqlView(text, name, "blank");
+  if (b.problem) return [...out, b.problem];
+  if (/\bu&\s*['"]/i.test(sqlView(text, name, "keep").view)) out.push(`${name} holds a U& literal or identifier`);
+  const code = b.view.trim();
+  if (!/^(select|with)\b/i.test(code)) out.push(`${name} does not begin with SELECT or WITH`);
+  const semis = [...code.matchAll(/;/g)].length;
+  if (semis !== 1 || !code.endsWith(";")) out.push(`${name} is not exactly one statement ending in its one semicolon (${semis} found)`);
+  const words = [...new Set([...b.view.matchAll(I3_READ_WORDS)].map((m) => m[0].toLowerCase()))];
+  if (/\bset_config\b/i.test(b.view)) words.push("set_config");
+  const calls = [...new Set([...b.view.matchAll(/\b([a-z_][a-z0-9_$]*)\s*\(/gi)].map((m) => m[1].toLowerCase()))].filter((f) => !I4C_READ_CALLS.includes(f));
+  if (words.length || calls.length) out.push(`${name} holds ${[...words, ...calls].join(", ")}`);
+  return out;
+}
+
 /**
  * M-6e: an item 3 text, read with its strings KEPT and every E-string
  * decoded (Codex, item 3 plan review I3-1 to I3-3, and review of ba1a0bd,
@@ -454,6 +522,7 @@ export function pinnedFiles(M) {
     files.push({ label: `applied rollback ${m.name} @${rec.version}`, entry: { ...r, pinnedAt: null }, path: recordPath(m, rec), frozenPath: null });
   }
   files.push({ label: "proofs", entry: M.proofs, path: M.proofs.path, frozenPath: M.proofs.path });
+  for (const [k, e] of Object.entries((M.item4c && M.item4c.sources) || {})) files.push({ label: `4(c) source ${k}`, entry: e, path: e.path, frozenPath: e.path });
   files.push({ label: "assembler", entry: M.assembler, path: M.assembler.path, frozenPath: M.assembler.path });
   if (M.sender) files.push({ label: "sender", entry: M.sender, path: M.sender.path, frozenPath: M.sender.path });
   const named = new Set(files.map((f) => f.path));
@@ -544,9 +613,11 @@ export function checkManifest(repo, M) {
   const outs = Object.keys(M.outputs || {});
   for (const k of outs) if (!texts[k]) say("M-12", `${k} has no send-policy entry`);
   for (const k of Object.keys(texts)) if (!outs.includes(k)) say("M-12", `the send policy names ${k}, which is not an output`);
-  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES, ...Object.keys(I3_POLICY).filter((k) => I3_POLICY[k].readOnly)];
+  const READ_ONLY = ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES, ...Object.keys(I3_POLICY).filter((k) => I3_POLICY[k].readOnly),
+    ...Object.keys(I4C_POLICY).filter((k) => I4C_POLICY[k].readOnly)];
+  for (const k of Object.keys(I4C_POLICY)) if (outs.includes(k) && texts[k] && canonicalJson(texts[k]) !== canonicalJson(I4C_POLICY[k])) say("M-12", `${k}: its policy is not exactly item 4(c)'s, ${JSON.stringify(I4C_POLICY[k])}`);
   for (const [k, e] of Object.entries(texts)) {
-    const want = k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) || Object.hasOwn(I3_POLICY, k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
+    const want = Object.hasOwn(I4C_POLICY, k) ? I4C_POLICY[k].targets : k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) || Object.hasOwn(I3_POLICY, k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
     // The effect (Codex, item 3 plan review I3-1): declared by every text but
     // the ones before item 3; for an item 3 text, exactly its declared effect.
     // A text before item 3 declares one exactly when its pin or policy is no
@@ -590,11 +661,13 @@ export function checkManifest(repo, M) {
   // the chain's.
   const GC = M.guard;
   if (!GC || JSON.stringify(GC.entries) !== JSON.stringify(G.CHAIN_ENTRIES)) say("M-13", "guard.entries is not stage0-guard.mjs's CHAIN_ENTRIES");
+  else if (JSON.stringify(GC.listed) !== JSON.stringify(G.CHAIN_LISTED)) say("M-13", "guard.listed is not stage0-guard.mjs's CHAIN_LISTED");
   else {
     const pinned = Array.isArray(GC.files) ? GC.files.map((f) => f && f.path) : [];
     if (!pinned.length || JSON.stringify(pinned) !== JSON.stringify([...pinned].sort()) || new Set(pinned).size !== pinned.length) say("M-13", "guard.files is not a sorted list of distinct paths");
     const closure = new Set();
-    for (const e of GC.entries) {
+    // The entries' closures, and each listed module's own (item 4(c), decision 7).
+    for (const e of [...GC.entries, ...GC.listed]) {
       const c = localImportClosure(g, e);
       for (const u of c.unbound) say("M-13", u);
       for (const x of c.external) if (!G.BUILTINS.includes(x)) say("M-13", `${e} loads ${x}, which is not an allowed node: module`);
@@ -687,6 +760,11 @@ export function checkManifest(repo, M) {
     const i3 = Object.keys(out).filter((k) => k.startsWith("I3-")).sort();
     if (JSON.stringify(i3) !== JSON.stringify(Object.keys(I3_POLICY).sort())) say("M-6", `the item 3 texts are ${i3.join(", ") || "none"}, not ${Object.keys(I3_POLICY).sort().join(", ")}`);
     for (const k of i3) for (const p of item3Problems(out[k], k, Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].effect : null)) say("M-6", p);
+    // M-6f item 4(c) (the outline's X2): exactly its read texts, each one
+    // SELECT confined as item4cProblems says.
+    const i4c = Object.keys(out).filter((k) => Object.hasOwn(I4C_POLICY, k) || k.endsWith("-4C") || k.startsWith("BUILD-")).sort();
+    if (M.item4c && JSON.stringify(i4c) !== JSON.stringify(Object.keys(I4C_POLICY).sort())) say("M-6", `the item 4(c) texts are ${i4c.join(", ") || "none"}, not ${Object.keys(I4C_POLICY).sort().join(", ")}`);
+    for (const k of i4c) for (const p of item4cProblems(out[k], k)) say("M-6", p);
     // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.
     const probe = out["SIZE-PROBE"] || "";
     if (!(Buffer.byteLength(probe) > Buffer.byteLength(out.P1)) || Buffer.byteLength(probe) - Buffer.byteLength(out.P1) !== M.sizeProbe.exceedsP1By) say("M-6b", "SIZE-PROBE size");

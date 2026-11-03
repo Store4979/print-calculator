@@ -165,6 +165,15 @@ export const LOCK_BUSY_CODES = Object.freeze(["EEXIST", "EPERM", "EACCES", "EBUS
 export const STALE_LOCK_STEPS = (lock) => `This refusal cannot tell a live holder from a stale lock. Follow the stale-lock procedure (stage0-guarded-send-procedure.md §7.1): 1. stop issuing and sending, and exit every guard session normally; 2. confirm with a read-only Windows process check (Get-Process or Get-CimInstance, identity fields only, no command lines or environments) that the recorded holder has exited and that no guard process can use this store; 3. only then remove ${lock}, that one file, and record who, when and why; 4. run status again: it can still show PENDING, HOLD or damage`;
 /** The command lines that create authority or admit a send; the manifest pins everything they load (SG-6). */
 export const CHAIN_ENTRIES = Object.freeze(["scripts/manual/stage0-send.mjs", "scripts/manual/stage0-window.mjs", "scripts/manual/stage0-go.mjs"]);
+/**
+ * Modules pinned and audited with the guard chain although no entry loads
+ * them yet (item 4(c) outline, decision 7; Ryan, 2026-11-03: listed, not
+ * loaded through an unused path). The manifest pins each one's own local
+ * closure with the chain's, and M-13 audits it the same way. selfCheck, which
+ * runs at each tool's start, checks only what that tool loads: a listed
+ * module is checked there once an entry loads it (the 4(c) gate, X4).
+ */
+export const CHAIN_LISTED = Object.freeze(["scripts/manual/stage0-4c-compare.mjs"]);
 export const BUILTINS = Object.freeze(["node:child_process", "node:crypto", "node:fs", "node:os", "node:path", "node:url"]);
 
 const SYSTEM32 = join(process.env.SystemRoot || "C:\\Windows", "System32");

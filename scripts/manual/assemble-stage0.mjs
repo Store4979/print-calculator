@@ -49,6 +49,13 @@ export const md5 = (s) => createHash("md5").update(typeof s === "string" ? Buffe
 
 const PEND = "supabase/migrations/pending/";
 export const PROOFS = "supabase/rehearsals/release2_stage0_production_proofs.sql";
+/** Item 4(c)'s read texts' sources (plan §6.1; the outline's X2), pinned by blob in the manifest's item4c.sources. */
+export const SOURCES_4C = Object.freeze({
+  checkedState: "supabase/rehearsals/release2_stage0_4c_checked_state.sql",
+  who: "supabase/rehearsals/release2_stage0_4c_who.sql",
+  build00: "supabase/rehearsals/release2_stage0_4c_build00.sql",
+  build00w: "supabase/rehearsals/release2_stage0_4c_build00w.sql",
+});
 
 // A1 — the forward migrations, in apply order.
 export const MIGRATIONS = [
@@ -122,6 +129,11 @@ export function sourceFromManifest(manifest, { cwd, readBlob = (id) => gitBlob(i
     migration: (m) => get(byN(manifest.migrations, m.n), m.name),
     rollback: (m) => get(byN(manifest.rollbacks, m.n), `${m.name}.rollback.sql`),
     proofs: () => get(manifest.proofs, PROOFS),
+    item4c: (k) => {
+      const e = manifest.item4c && manifest.item4c.sources && manifest.item4c.sources[k];
+      if (!e || e.path !== SOURCES_4C[k]) throw new Error(`the manifest pins no 4(c) source ${k} at ${SOURCES_4C[k]}`);
+      return get(e, SOURCES_4C[k]);
+    },
     ledger: () => ledger,
   };
 }
@@ -362,7 +374,29 @@ export const RECOVERY = [
   { prefix: ["01", "02", "03", "04", "05"], state: "05", ops: ["RB-5", "RB-43", "RB-2", "RB-1"] },
 ];
 
-function stateReadback(rows) {
+/**
+ * STATE-4C's mapping (item 4(c) plan §3.2, policy B): from 01, the committed
+ * prefix names the back-out that is available later, in its own reviewed
+ * session; RB-1 is outside it (C5). Any other prefix and catalog is STOP.
+ */
+export const RECOVERY_4C = [
+  { prefix: ["01"], state: "01", ops: [] },
+  { prefix: ["01", "02"], state: "02", ops: ["RB-2"] },
+  { prefix: ["01", "02", "03", "04"], state: "04", ops: ["RB-43", "RB-2"] },
+  { prefix: ["01", "02", "03", "04", "05"], state: "05", ops: ["RB-5", "RB-43", "RB-2"] },
+];
+const STATE_HEAD = `-- STATE — READ-ONLY (plan §A6/F4, review of dc5a88b N7). Run it BEFORE choosing any recovery, and
+-- whenever a step's outcome is unknown (a lost response, a dropped connection, a timeout reported by the
+-- client). It derives the effective committed prefix from the ledger, checks the catalog matches it, and
+-- names the one reviewed recovery sequence for that prefix — or STOP.
+`;
+const STATE_4C_HEAD = `-- STATE-4C — READ-ONLY (item 4(c) plan §3.2–§3.4, STATE′). STATE's reads, with the mapping from 01:
+-- the effective committed prefix from the ledger, the catalog state, and the back-out available later
+-- for that prefix in its own reviewed session (RB-1 is outside it), or STOP. It selects a recovery only
+-- for a SETTLED state: after an UNRESOLVED writing send, STOP-and-review (UO-1).
+`;
+
+function stateReadback(rows, { recovery = RECOVERY, head = STATE_HEAD } = {}) {
   const keys = ["00", "01", "02", "03", "04", "05"];
   const have = `(select p.proname || '(' || oidvectortypes(p.proargtypes) || ')' as ident, md5(p.prosrc) as body_md5,
                (select string_agg(coalesce(r.rolname, 'PUBLIC') || '=' || a.privilege_type, ','
@@ -381,12 +415,9 @@ function stateReadback(rows) {
   const matchCols = keys.map((k) => `(select count(*) = 0 from ((select * from h except select * from ${want(k)} as w${k}(ident, body_md5, acl))
           union all (select * from ${want(k)} as v${k}(ident, body_md5, acl) except select * from h)) d) as s${k}`).join(",\n       ");
   const fwd = MIGRATIONS.map((m) => `(${q(m.n)}, ${q(m.name)}, ${q(m.md5)})`).join(", ");
-  const rec = RECOVERY.map((r) => `(${q(r.prefix.join(","))}, ${q(r.state)}, ${q(r.ops.join(", ") || "none — nothing is applied")})`).join(", ");
-  return `-- STATE — READ-ONLY (plan §A6/F4, review of dc5a88b N7). Run it BEFORE choosing any recovery, and
--- whenever a step's outcome is unknown (a lost response, a dropped connection, a timeout reported by the
--- client). It derives the effective committed prefix from the ledger, checks the catalog matches it, and
--- names the one reviewed recovery sequence for that prefix — or STOP.
-with led as (
+  const none = recovery === RECOVERY ? "none — nothing is applied" : "none needed — 01 is the floor";
+  const rec = recovery.map((r) => `(${q(r.prefix.join(","))}, ${q(r.state)}, ${q(r.ops.join(", ") || none)})`).join(", ");
+  return `${head}with led as (
   select f.n, f.name, f.body_md5,
          (select m.version from supabase_migrations.schema_migrations m where m.name = f.name order by m.version desc limit 1) as fwd_version,
          (select count(*) from supabase_migrations.schema_migrations m where m.name = f.name) as fwd_rows,
@@ -1002,6 +1033,26 @@ export function assembleAll(manifest, opts = {}) {
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
   }
+  if (manifest.item4c) Object.assign(out, item4cTexts(src, rows));
+  return out;
+}
+
+// ── item 4(c): the read texts (plan §6.1; the implementation outline's X2) ──
+// Each is a pinned source's bytes under one header line naming the text, or
+// STATE's generator with §3.2's mapping. All of them only read. Which state a
+// reading is accepted for is decided in stage0-4c-compare.mjs, never here.
+export const WHO_4C = ["WHO-4C-R-RO", "WHO-4C-R-DEF", "WHO-4C-W-RO", "WHO-4C-W-DEF"];
+export const TEXTS_4C = ["P0-4C", "POST-4C", ...WHO_4C, "STATE-4C", "BUILD-00", "BUILD-00W"];
+export function item4cTexts(src, rows) {
+  const head = (name, what) => `-- ${name} — item 4(c), READ-ONLY (plan §6.1): ${what}.\n`;
+  const out = {};
+  out["P0-4C"] = head("P0-4C", "P0′, the baseline at 01; the comparator accepts state 01 only") + src.item4c("checkedState");
+  out["POST-4C"] = head("POST-4C", "POST′, the readback after a step; the comparator accepts the step's one intended state") + src.item4c("checkedState");
+  const mode = { "R-RO": "the R window, read_only", "R-DEF": "the R window, without read_only", "W-RO": "the W window, read_only", "W-DEF": "the W window, without read_only" };
+  for (const name of WHO_4C) out[name] = head(name, `WHO from ${mode[name.slice(7)]}`) + src.item4c("who");
+  out["STATE-4C"] = stateReadback(rows, { recovery: RECOVERY_4C, head: STATE_4C_HEAD });
+  out["BUILD-00"] = head("BUILD-00", "the rehearsal project's initial shape, before BUILD-01") + src.item4c("build00");
+  out["BUILD-00W"] = head("BUILD-00W", "the role BUILD-01 will run as, and its authority, sent from W without read_only") + src.item4c("build00w");
   return out;
 }
 
