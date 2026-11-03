@@ -1,12 +1,14 @@
 # Stage 0 — item 4(c): the rehearsal from 01, the recovery mapping and the production window — PLAN
 
-**Status: PLAN, revised as V for Codex's review of U (2026-11-02).** U
-(`3624efd`) was sent back for amendment (U-1 to U-5). This revision
-answers each amendment and records Codex's rulings C1–C8 and Ryan's
-decisions of 2026-11-02 (§0.1, §0.2). It clears nothing: no project is
-created, no token, no send, no window. After Codex accepts this plan, the
-implementation commit (§10) and its runbooks come back for review before
-any session.
+**Status: PLAN, revised as V2 for Codex's review of V (2026-11-02).** U
+(`3624efd`) was sent back for amendment (U-1 to U-5), and V (`ed393be`)
+answered it. Codex then sent V back with two blocking corrections, V-1 and
+V-2, accepted C7′, U-3, C9 and C12, and ruled C10: the smoke order is kept.
+This revision answers V-1 and V-2, applies those rulings and the review's
+further bounds, and corrects the image provenance (§0.1). It clears
+nothing: no project is created, no token, no send, no window. After Codex
+accepts this plan, the implementation commit (§10) and its runbooks come
+back for review before any session.
 
 **Sources:**
 - Codex's incident review, 2026-10-12, §4(b) and §4(c)
@@ -14,6 +16,14 @@ any session.
 - **Codex's review of T and U, 2026-11-02**
   (`reviews/2026-11-02-c62644a-3624efd-review.md`): C1–C8, U-1 to U-5, and
   its further design bounds;
+- **Codex's review of V, 2026-11-02**
+  (`reviews/2026-11-02-ed393be-review.md`): V-1, V-2, the rulings on C7′,
+  U-3, C9, C10 and C12, and its implementation bounds. With it, Codex's
+  local role-privilege probe (`reviews/release-ed393be-role-delta-probe.mjs`
+  and `.json`) and its rerun of the lock inventory
+  (`reviews/release-ed393be-locks-rerun.json`);
+- **Codex's review of the G-6 addendum, 2026-11-02**
+  (`reviews/2026-11-02-G6-addendum-review.md`);
 - the production plan: §A1a and §A2 (the states), §A6 (rollback files,
   STATE, UO-1), §E2–§E5 (P0–P3), §E10–§E13 (what ran), §E15 (item 3),
   §I (4(c)'s classifier scope, confirmed in Codex's review of `95ecd65`);
@@ -31,8 +41,14 @@ any session.
   project", "Manage Compute usage", "Billing FAQ", "Deleting Your
   Project"; and, through the Supabase MCP (metadata reads only, no SQL):
   the organization's plan, its project list and the new-project cost;
-- Ryan, 2026-11-02: the platform images (§2.2) and the decisions in §0.2;
-- a local lock inventory, 2026-11-02 (§1.2).
+- the platform images (§2.2): observed through Supabase's project list by
+  Claude in chat on 2026-10-31, at about 16:55Z, and relayed by Ryan. That
+  report reached Codex's review on 2026-11-02;
+- Ryan, 2026-11-02: the decisions in §0.2;
+- a local lock inventory, 2026-11-02 (§1.2), rerun by Codex;
+- main@7ec5af4, read from git for §4.2: `netlify/functions/complete-job.js`,
+  the order columns (`src/lib/orderQueue.js`) and the order history
+  (`src/components/OrdersDashboard.jsx`).
 
 ## 0. Where things stand
 
@@ -56,13 +72,43 @@ any session.
   sender) and item 3 (the read-token experiment). Codex accepted item 3's
   record, T, on 2026-11-02, and T was pushed to the staging branch the same
   day (production plan §E13).
-- **Open: G-6 (SG-1/SG-2).** Codex, 2026-11-02: an unresolved guard/test
-  investigation, not a proven harmless timing failure. It holds every new
-  guard-dependent session, this plan's rehearsal included, and any
-  production phase. The capture Codex asked for, with every worker's output,
-  is in a separate addendum for Codex (§10, step 0).
+- **G-6 (SG-1/SG-2), under Codex's ruling on the G-6 addendum**
+  (2026-11-02):
+  - **the capture is accepted,** and the assertion mechanism it shows is
+    established. The test's stale regex rejected the guard's real 10 s
+    lock-wait refusal, while every issuer assembled its plan inside the
+    store lock;
+  - **T's two original failing assertions remain lost.** They are recorded
+    as unidentified, not explained by the capture;
+  - **F1–F3 are required before any new guard-dependent session,** this
+    plan's rehearsal included, and before any production phase. W
+    (`4b7450d`) implements them, and Codex's review of W comes first
+    (§10, step 0).
+  - **W's guard changes are separate from this plan's store extension**
+    (§2.3). W corrects the guard: the lock's retry on acquisition, and
+    status, gate and the sender's first check reading one locked
+    snapshot. The rehearsal target extension is a later change, in the
+    implementation commit. Neither relaxes the exact-head clearance that
+    every session needs.
 
-### 0.1 Codex's review of U, and where V answers it
+### 0.1 Codex's reviews of U and V, and where they are answered
+
+**Codex's review of V** (2026-11-02), answered in V2:
+
+| item | Codex's ruling | V2's answer | where |
+|---|---|---|---|
+| **V-1** the non-public BUILD preflight | AMEND, blocking | BUILD-00 and a new W-side read, BUILD-00W, cover every non-public object the migrations and BUILD-01 write or depend on: `storage.buckets`' write shape and any pre-existing target row, `storage.objects`' owner and policy names, the `supabase_realtime` publication, and the W role's authority over each. Their reviewed acceptance is re-asserted inside BUILD-01 before the first file runs. Metadata only; unreadable or unsupported is a STOP. Event triggers bind non-secret body digests, or their difference is a recorded residual. The scope is stated | §2.1, §2.2 |
+| **V-2** POST′ and the role facts | AMEND, blocking | POST′ permits only a reviewed per-state, per-role, per-signature table of Release 2 EXECUTE facts, rollback histories and removed signatures included; every other role fact stays exact. The tests are planned | §6.4 |
+| C7′ the planned refusals | ACCEPT | unchanged | §2.5 |
+| U-3 the lock footprint, C6 withdrawn | ACCEPT | unchanged; Codex's rerun recorded | §1.2 |
+| U-5 the narrowed rehearsal and the production smoke | ACCEPT in scope | the smoke order is kept (C10); no claim of owner or queue runtime proof at intermediate states | §4.2 |
+| C9 P1′'s own lock rows | ACCEPT as bounded evidence | recorded only outside the savepoint, in an exact result schema with a bounded size; Codex's wording on row locks | §1.2, §6.1 |
+| **C10** the smoke order | **keep the labelled order** | a minimal order, kept as a durable test record with its id, store, time, amount and purpose. No removal step, no dashboard deletion. The upload's file removal gets its own labelled read | §4.2, §7.1 |
+| C12 recovery coverage | ACCEPT in principle | unchanged; its tests and analysis come with the implementation | §3.6 |
+| the image provenance | ACCEPT | corrected: observed by Claude in chat on 2026-10-31, relayed by Ryan | Sources, §2.2 |
+| further bounds | the first baseline receipt, P0′'s data scope around P1′, P1′'s lock rows, G-6's status | the first receipt is evidence, reviewed, then bound by hash; an explicit data-comparison scope; G-6 under the addendum ruling | §0, §6.4, §6.1 |
+
+**Codex's review of U** (2026-11-02), answered in V:
 
 | item | Codex's ruling | V's answer | where |
 |---|---|---|---|
@@ -78,7 +124,7 @@ any session.
 | U-2 | a checked application and dependency state, with explicit platform differences | P0′'s diagnostic rows, the default ACLs at every scope, the roles, the dependency closure, the settings allowlist, the image record | §2.2 |
 | U-3 | the "no lock" premise is false for P1′ | corrected; a local lock inventory of P1′ and of each step text; P1′ records its own locks on Supabase | §1.2, §4.3, §6.1 |
 | U-4 | the baseline read cannot accept post-step states | P0′ accepts only 01; POST′ accepts one intended state, bound to the step | §6.4 |
-| U-5 | the app check must exercise what it claims | the rehearsal's claim is narrowed; the production smoke test is representative and its data is removed | §4.2, §7.1 |
+| U-5 | the app check must exercise what it claims | the rehearsal's claim is narrowed; the production smoke test is representative (V2: its order is kept, C10) | §4.2, §7.1 |
 | further notes | BUILD-01, the store, policy B, recovery coverage, the time map, 30 October, backup and cost, C8's detail | folded in | §2.1, §2.3, §3.5, §3.6, §5, §6.3, §7, §8 |
 
 ### 0.2 Ryan's decisions (2026-11-02)
@@ -93,8 +139,10 @@ any session.
   - the day's orders exported or printed.
 - **The rehearsal's app claims are narrowed** to what it exercises, and the
   **production smoke test is made representative:** PIN sign-in, owner
-  sign-in, a saved test order and an upload through the queue, with the
-  test data removed afterwards (§4.2).
+  sign-in, a saved test order and an upload through the queue (§4.2).
+- **The smoke order is kept** (C10, decided with Codex's review of V): one
+  minimal labelled order stays as a durable test record. Nothing deletes
+  it.
 - **No concurrency protocol is built** for the rehearsal (U-1, §2.5).
 
 ## 1. What the remaining path touches
@@ -145,6 +193,11 @@ reading the SQL and on a local lock inventory, run on 2026-11-02:
 - **The limits:** it is not evidence about Supabase. There are no platform
   event triggers, no other session and no contention. The script and its
   output are outside the repository; V's review request names them.
+- **Codex reran it** against U's clone (review of V): all 44 checks pass and
+  all six committed operations run. Codex accepted it as a PGlite
+  approximation from existing SQL. It is not the future pinned P1′,
+  production's exact ledger identity, a contention test or a complete
+  peak-lock trace.
 
 **The six step texts** (P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2). Each
 holds these until its commit:
@@ -184,17 +237,20 @@ its ROLLBACK, except inside the savepoint:
   for its whole transaction. P1 took 4.5 s on production.
 - **The rows it locks** are the fixture rows it inserts and deletes, and the
   rows those reference. Section 1 references only rows it created, so all
-  of them are synthetic. This comes from reading the SQL: `pg_locks` lists
-  a row lock only while a session waits on it.
+  of them are synthetic. This comes from reading the SQL, not from
+  `pg_locks`: row locks normally are not listed there, and waits on them
+  commonly appear as transaction-id waits. **An empty row-lock list proves
+  no absence of row conflicts.**
 - **Not shown locally:**
   - locks taken and released inside a subtransaction that rolled back.
     Every `stage0_expect_error` probe ends that way, and section 1b is seen
     only at its boundaries;
   - Supabase's event triggers (P0′ lists them, §2.2);
   - any wait, which needs a second session.
-- **On Supabase,** P1′ records its own `pg_locks` at each section boundary
-  in its result (§6.1). R1 on the throwaway and P1′ on production each
-  report their own footprint, subject to the same limits.
+- **On Supabase,** P1′ records its own `pg_locks` at named boundaries
+  outside its savepoint, in an exact result schema of bounded size (§6.1).
+  R1 on the throwaway and P1′ on production each report their own
+  footprint, subject to the same limits.
 - **Contrast with what is already done:** 01 (P2-01) added
   `employees_id_store_uniq`, which took ACCESS EXCLUSIVE on `employees`.
   RB-1 would take the same, plus locks on the tables its foreign keys
@@ -212,8 +268,29 @@ its ROLLBACK, except inside the savepoint:
   - A `git grep` of `src/` at `7ec5af4` finds no Release 2 table or
     function.
 - **The upload queue** runs through main's Netlify functions with the
-  service-role key: `pending_jobs`, `print_jobs` and Storage.
-  `complete-job` deletes a job's files and its `pending_jobs` row.
+  service-role key: `pending_jobs` and the `customer-uploads` bucket.
+  `complete-job` calls Storage's `remove` on the job's file paths, does not
+  inspect its returned error, and then deletes the `pending_jobs` row
+  (`netlify/functions/complete-job.js:36–39`). Its 200, or the job leaving
+  the queue, therefore does not show that the file is gone (Codex, review
+  of V).
+- **What else writes the tables P1′ reaches,** at main (§6.4 relies on it):
+  - `pending_jobs`: the queue functions. `register-job` is called by the
+    customer upload page and by the kiosk's submit, and `fetch-link-job`
+    by the upload page. Then the scheduled `cleanup-stale-jobs`, and
+    `complete-job` from the Queue tab. The browser app itself only reads
+    it (the Queue tab, and its badge at `src/App.jsx:1360`);
+  - `print_jobs`: only the browser app's job-history helpers
+    (`src/lib/supabase.js`);
+  - `auth.users`: Supabase Auth, on a sign-in and on a recovery or
+    magic-link request;
+  - every other table P1′ reaches: only the browser app. No Netlify
+    function at main writes one, apart from the Release 2 endpoints, which
+    are dark on production.
+  - So while the counter and the admin panel are closed, `pending_jobs`
+    is the only one with a writer expected to act (customers and the
+    schedule). Supabase Auth can still write `auth.users` if someone
+    requests a link for an account.
 - **main's four Release 2 endpoints do name them:**
   - `enroll-redeem`, `staff-login` and `release2-auth.js` call
     `redeem_enrollment_ticket`, `release2_create_staff_session` and
@@ -259,22 +336,46 @@ migration integration, and no branching.
    - Data API: keep `public` exposed. The app check in §4 needs it.
 2. **Ryan reports its ref in chat.** A ref is not a secret. The ref enters
    the repository only through the reviewed extension in §2.3.
-3. **BUILD-00, a pinned read, comes first.** It reads the fresh project's
-   real initial shape, using §2.2's parts:
-   - any object in `public` (none expected);
-   - whether the ledger schema and table exist, and any rows in them;
-   - every default ACL row at every scope;
-   - the schema privileges, roles, extensions and event triggers.
+3. **Two pinned reads come first: BUILD-00 and BUILD-00W.**
+   - **BUILD-00** (R, `read_only`) reads the fresh project's real initial
+     shape, using §2.2's parts:
+     - any object in `public` (none expected);
+     - whether the ledger schema and table exist, and any rows in them;
+     - every default ACL row at every scope;
+     - the schema privileges, roles, extensions and event triggers;
+     - **the non-public preflight below** (V-1).
+   - **BUILD-00W** (W, without `read_only`, `effect` read) is the minimal W
+     identity read. It runs exactly as BUILD-01 will be sent, so it
+     observes the role BUILD-01 will run as on this project: its name, its
+     attributes and memberships, and the preflight's authority facts
+     evaluated for that role. It is SELECT-only, confined statement by
+     statement as M-6e confines item 3's texts. No DDL, write or
+     capability probe is sent.
 
-   **Its acceptance is reviewed code.** Anything it does not expect is a
-   STOP for review. Nothing is erased to make a project fit.
+   **Their acceptance has two layers:**
+   - **predicates in reviewed code:** each fact the pinned migrations need
+     in order to run as written (below). A failing predicate, or a fact the
+     role cannot read, is a STOP for review;
+   - **the full receipt is evidence.** BUILD-00's and BUILD-00W's first
+     receipts go to Codex as evidence, not through a comparator that would
+     need them approved before it could report them. After that review a
+     **binding commit** pins the accepted facts by hash and assembles
+     BUILD-01's text with them (§10).
+
+   Nothing is erased, granted or replaced to make a project fit. An
+   unexpected fact is a STOP, and an accepted state for it needs its own
+   review.
 4. **One pinned writing text, BUILD-01, then builds the database,** through
    the guarded sender, to the rehearsal target only.
    - **Its transaction:** one transaction, unless a migration file cannot
      run inside a transaction block. The local run finds out which. Any
      such file makes BUILD-01 a short sequence of texts instead.
    - **In order, it:**
-     - asserts BUILD-00's accepted shape again, inside the transaction;
+     - **re-asserts the bound acceptance inside its transaction, before
+       the first migration file runs:** it reads the same facts again as
+       the role it runs as, requires each part's digest to equal the
+       bound one, and runs the predicates again. Any difference raises,
+       and the transaction rolls back;
      - **sets the default ACL rows to an exact target, then asserts them:**
        - the target is the pre-30-October set that production's 21
          migrations ran under: tables, functions and sequences to anon,
@@ -310,6 +411,51 @@ migration integration, and no branching.
    principle). It makes no claim that production's API calls ran on this
    project, and it is never a reason to repair production's or staging's
    history (Codex item 4).
+
+**The non-public preflight** (V-1). Three migrations write platform objects
+outside `public`, and BUILD-01 writes more of its own. Replaying those bytes
+on a newer image needs each object's shape and the W role's authority over
+it. BUILD-00 reads the shapes and BUILD-00W reads the authority, as catalog
+metadata only. "The W role" is the role BUILD-00W observes on this project,
+never one assumed from staging.
+
+| object | what writes it | what is read | the predicates (else STOP) |
+|---|---|---|---|
+| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes; its triggers (name, timing, events, enabled, function and the function's owner); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to; every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; a unique index or constraint is exactly on (`id`), so the conflict arbiter exists; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; the triggers are the reviewed set; **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
+| `storage.objects` | `20260506182318`: `DROP POLICY IF EXISTS` and `CREATE POLICY` of `job_files_anon_insert`, `job_files_anon_select` and `job_files_anon_delete` | presence, kind and owner; every existing policy's name; the `bucket_id` column and its type; RLS | an ordinary table with a `bucket_id` text column; **none of the three policy names exists,** so each `DROP … IF EXISTS` removes nothing; the W role owns the table or holds its owner's privileges (`pg_has_role(…, 'USAGE')`; a superuser passes). Table DML privileges do not confer policy authority: PostgreSQL requires ownership for `CREATE POLICY` and `DROP POLICY` |
+| publication `supabase_realtime` | `20260629173251`: reads `pg_publication_tables`, then `ALTER PUBLICATION supabase_realtime ADD TABLE public.pending_jobs` | presence, owner, `puballtables`, the insert/update/delete/truncate flags, `pubviaroot`, every member table | it exists; it is not `FOR ALL TABLES`; `public.pending_jobs` is not a member; the W role owns the publication or holds its owner's privileges. Reading `pg_publication_tables` is not authority to alter it. The table's ownership, which `ADD TABLE` also requires, comes from the W role creating `pending_jobs` earlier in the same file |
+| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers; RLS | the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; the trigger set is the reviewed one (none is expected) |
+| schemas `supabase_migrations`, `stage0_rehearsal` | BUILD-01: the ledger schema and table where absent, and the marker | their presence and owners; the W role's CREATE on the database | the marker schema is absent; the ledger schema is absent, or exactly as BUILD-00 found it; CREATE on the database |
+| default privileges | BUILD-01's two exact targets (step 4) | every `pg_default_acl` row (§2.2 part 3) | the W role is the object-creating role, or holds its privileges |
+
+**Facts that depend on the reader are read as the W role.** Row visibility
+under RLS, and any fact about `current_user`, change with who reads. So the
+target-row checks and the authority facts are BUILD-00W's, read as the role
+BUILD-01 runs as, and that role's exemption from RLS on `storage.buckets` is
+itself a predicate. A row check by a role that RLS filters would prove
+nothing. BUILD-00's other facts are catalog facts, the same for any reader
+that can see them.
+
+**What the preflight shows, and what it does not:**
+- **BUILD's SQL compatibility is checked:** the pinned bytes can run as
+  written, as the W role, on this project, without overwriting anything.
+  It is an extra bounded gate. The transaction's rollback on any SQL error
+  remains the backstop, and the preflight does not promise that every
+  runtime failure becomes impossible.
+- **Storage service, real file operations, Realtime delivery and the
+  production queue are tested only by the final production smoke**
+  (§4.2). The rehearsal neither uploads nor downloads a file, and no
+  Realtime client connects. The publication's BUILD compatibility is
+  checked, not Realtime equivalence.
+- **Production's Storage schema and publication are not read** by this
+  plan, apart from §4.2's labelled check of the smoke test's own file.
+- **It never** reads a stored object, copies a platform schema or its data,
+  grants a platform role membership, disables a hook, or replaces a pinned
+  historical file to get past a shape.
+- **Not known yet:** whether the new image gives the W role policy
+  authority on `storage.objects` and ownership-level authority on the
+  publication. BUILD-00W reads it. If either is missing, BUILD stops and
+  the plan comes back for review.
 
 ### 2.2 The checked state: what must match, what is a named residual, what stops
 
@@ -358,6 +504,10 @@ parts:
        ledger;
      - EXECUTE on the Release 2 functions, `auth.uid()`,
        `extensions.gen_random_bytes` and `extensions.digest`.
+   - Each EXECUTE fact on a Release 2 function is a row (role, signature,
+     true or false), explicit false rows included. After a step, POST′
+     permits only the reviewed Release 2 delta of these rows (V-2, §6.4).
+     P0′ permits none.
 5. **The settings** (`pg_db_role_setting`, per role and per database, and
    the session's own values). **Values are read only for an allowlist of
    non-secret names:**
@@ -386,12 +536,28 @@ parts:
    enabled, tags, and the function's name and owner. Supabase installs DDL
    event triggers. One that fires on `CREATE FUNCTION` is an effect the
    public fingerprint cannot see.
+   - **Matching names and owners do not establish equal bodies** (Codex,
+     review of V). So each trigger function's non-secret implementation
+     facts are bound too: its language, `md5(prosrc)`, and the extension
+     that owns it with that extension's version, if one does. No
+     definition is dumped.
+   - **What an equal digest shows:** the same source text. For a C
+     function, `prosrc` is only its symbol name. Whatever the function
+     calls is not covered.
+   - **A difference** is either a STOP, or a named residual entry under
+     R-IMG that records the trigger and what its behaviour leaves
+     unproven. Behavioural equality is never inferred from names alone.
 9. **The server:** `version()` and `server_version_num`.
-10. **Data, recorded but not compared:**
+10. **Data, recorded but not compared across projects:**
     - row counts for the tables P1′ touches;
+    - the real-row digests of the five tables P1′'s fixtures write, as
+      P1's section 0 computes them (an md5, never a value);
     - `free_pins`, `stores_without_org`;
     - the probe and nil identities;
     - `rehearsal_marker`.
+
+    Within one project, around P1′ and after each step, §6.4's data scope
+    says which of these must stay equal.
 
 **Each fact is in one of three tiers,** fixed in a reviewed table in the
 comparator's code (§6.4):
@@ -404,7 +570,8 @@ comparator's code (§6.4):
   - part 6: the same signatures, owners and EXECUTE, the same fixture
     columns, no NOT NULL column without a default beyond production's, no
     user trigger, and the same `auth.uid()` md5;
-  - part 8: event triggers are on the path, so any difference is reviewed;
+  - part 8: event triggers are on the path, so any difference is reviewed,
+    and either stops or becomes a recorded R-IMG entry;
   - a **major or minor server change** (part 9) is reviewed too (Codex).
 - **A named residual, each reviewed and recorded with what it leaves
   unproven.** None is innocuous by default:
@@ -435,13 +602,19 @@ the throwaway's own default ACL rows, to an exact target, and asserts them.
 
 **The image record (Codex's ruling):**
 - **Recorded,** with each observation's time:
-  - production's image, 17.6.1.111, and staging's, 17.6.1.166, as Ryan
-    reported them on 2026-11-02 from Supabase;
+  - production's image, 17.6.1.111, and staging's, 17.6.1.166: observed
+    through Supabase's project list by Claude in chat on 2026-10-31, at
+    about 16:55Z, and relayed by Ryan. That report reached Codex's review
+    on 2026-11-02, a separate date;
+  - separately, this plan's own working session holds Supabase MCP
+    `list_projects` results with the same two values at 2026-10-31
+    13:16:42Z, and earlier at 2026-10-29 23:56:06Z. Whether either is the
+    observation Ryan relays is not established here;
   - the new project's image when it is created;
   - each project's region and SQL `version()` and build.
 
-  Ryan's values are operator and platform metadata, not an independent
-  read.
+  These values are operator and platform metadata, not an independent
+  live read by Codex's review.
 - **A matching `server_version_num` does not establish matching images.**
 - **Changing production's image is not proposed.** It would be a
   production change outside this plan, and the throwaway may run a newer
@@ -457,14 +630,21 @@ the throwaway's own default ACL rows, to an exact target, and asserts them.
   boundary nor identical behaviour for every request.
 - **Item 3's finding stands for staging only.** It was measured on
   staging's image, 17.6.1.166. Only WHO-P speaks for production (Q-4).
+- **On the throwaway, the W leg comes first:** BUILD-00W is WHO-R's W
+  identity read, sent before BUILD-01 so that the preflight's authority
+  facts refer to the role BUILD-01 will actually run as (§2.1).
 
 **The production half is a separate, reviewed, read-only session** (§10,
 step 4): P0′, STATE′ and WHO-P. It comes before BUILD-01, because BUILD-01
-copies production's default ACL rows.
+copies production's default ACL rows. **Its first receipt is evidence:**
+P0′ checks only its baseline-only preconditions there (§6.4) and reports
+every observation. Codex reviews the receipt, and a binding commit then
+pins it by hash. Every later comparison is against that bound receipt.
 
 **What the checked state does not cover:**
 - the `auth`, `storage` and `realtime` schemas beyond part 6's
-  dependencies. Copying platform schemas wholesale, or reading real auth
+  dependencies and BUILD's preflight (§2.1), which is read on the
+  throwaway only. Copying platform schemas wholesale, or reading real auth
   or customer data, is not a way to close that gap;
 - whatever the image changes outside these reads (R-IMG);
 - production's data, load, hardware and network path.
@@ -539,10 +719,20 @@ Every text goes through the guarded sender, one request at a time, and each
 is timed by its receipt. After each write comes POST′ for the intended state
 (§6.4).
 
+**Three sessions, each with its own clearance,** because a first receipt is
+evidence to review before anything is compared with it:
+- **session 1, R0a,** read-only;
+- **session 2, R0b,** one write (BUILD-01) and its reads;
+- **session 3, R1–R4.**
+
+Between them, Codex reviews the receipts, and a binding commit pins what was
+accepted (§10).
+
 | # | what | shows |
 |---|---|---|
-| R0 | BUILD-00, accepted; BUILD-01; P0′ and WHO-R; compared with production's P0′ and WHO-P | the checked state: each fact MATCH, a named residual, or a STOP (§2.2) |
-| R1 | P1′, rolled back; then P0′ again | P1′ commits nothing: P0′ equals R0's, data included. P1′'s lock rows (§1.2) |
+| R0a | BUILD-00 and BUILD-00W, read-only; their receipts to Codex; then the binding commit | the fresh project's shape and the W role's authority, the non-public preflight included (§2.1) |
+| R0b | BUILD-01; P0′ and WHO-R; compared with production's bound P0′ and WHO-P; the receipts to Codex; then the binding commit | the checked state: each fact MATCH, a named residual, or a STOP (§2.2). The throwaway's own baseline, bound by hash for its POST′ reads |
+| R1 | P1′, rolled back; then P0′ again | P1′ commits nothing: P0′ equals R0b's bound baseline, data included. Nothing else writes the throwaway between those reads: it has no deployed functions and no schedule, and the app check first runs in R3. P1′'s lock rows (§1.2) |
 | R2 | planned single-request refusals (below) | each guard's refusal through the real API route, as classified; the state unchanged |
 | R3 | P2-02 → POST′ → app check; P2-0304 → POST′ → app check; P2-05 → POST′ → A2 → app check | the forward path, committed step by step; the app check of §4.2 at "after 02", "after 04" and "after 05" |
 | R4 | RB-5 → POST′; RB-43 → POST′; RB-2 → POST′ → app check | every recovery operation, each committed on its own |
@@ -604,7 +794,7 @@ which means STOP-and-review under UO-1:
 **Not reachable on one project:** a second forward pass after a recovery.
 The forward texts refuse once a rollback row exists (4(b)). The proposal is
 one project, one forward pass and one full back-out. A second project is
-created only if R0–R4 change a text.
+created only if R0a–R4 change a text.
 
 **RB-1 is not run** (§3.2).
 
@@ -632,6 +822,8 @@ creates it (Codex):
 - This plan does not estimate disk or egress. For a database this small
   they are expected to be negligible, and the organization's usage page
   shows the actual charge.
+- The project lives through three sessions and the reviews between them
+  (§2.5), so days rather than hours: about $2.26 for 7 days.
 
 **Deletion:**
 - **When:** after the rehearsal's record commit, and before the production
@@ -766,7 +958,7 @@ not treated as the same state until each is checked:
 
 | ledger history | catalog state | local PGlite run | the rehearsal (R3, R4) |
 |---|---|---|---|
-| fresh 01 | after 01 | yes | yes (R0) |
+| fresh 01 | after 01 | yes | yes (R0b) |
 | fresh 01–02 | after 02 | yes | yes (after P2-02) |
 | fresh 01–04 | after 04 | yes | yes (after P2-0304) |
 | fresh 01–05 | after 05 | yes | yes (after P2-05) |
@@ -820,6 +1012,8 @@ about the code, not a run.
   STOP.
 - **The synthetic PIN** exists only in BUILD-01's rows. Claude does not
   type it: it would go to a non-local host.
+- **Each saved order's id and time** go into the session record. The next
+  POST′ expects exactly those new `orders` rows (§6.4).
 
 **The production smoke test, made representative.** On the live site, at
 whatever settled state the window ends in, before re-opening (§7.1, step
@@ -828,27 +1022,67 @@ whatever settled state the window ends in, before re-opening (§7.1, step
 2. **Owner sign-in:** Ryan signs in to the admin panel with the owner
    account, and the order history opens. That covers Supabase Auth,
    membership resolution and RLS.
-3. **Order save:** an order `STAGE0 SMOKE` is reported saved, not queued
-   offline, and appears in the order history.
+3. **Order save: one minimal order,** for example a single black-and-white
+   copy, with `STAGE0 SMOKE <date>` in the Save Order dialog's notes. It
+   is reported saved, not queued offline, and appears in the order
+   history. **Recorded** in the session record: its id, store, time
+   (UTC), amount and purpose ("stage-0 window smoke test, kept as a test
+   record"). No other test order is made.
 4. **An upload through the queue:**
-   - a small synthetic file is sent through `/upload`;
+   - a small synthetic file is sent through `/upload`, with
+     `STAGE0 SMOKE` as the customer name;
+   - **before completion,** a labelled ad-hoc read (below) records the
+     job's id and its file's bucket path, and shows that the Storage
+     object record for that path exists. That is the read's positive
+     control;
    - the job appears in the Queue tab, and it opens;
-   - the job is completed. `complete-job` deletes its files and its
-     `pending_jobs` row (main's code).
+   - the job is completed through the app;
+   - **after completion,** the same read again (below).
 5. **Sign out.**
 
-**The test data is removed afterwards:**
-- **the upload** by its own completion (item 4);
-- **the `STAGE0 SMOKE` order:** main's app has no way to delete an order.
-  The proposal:
-  - Ryan removes it after the counter re-opens and the tokens are gone,
-    with its id and time recorded;
-  - then a labelled ad-hoc read confirms that no smoke order, job or file
-    remains;
-  - so the removal can never hold the counter.
+**The smoke order is kept** (C10: Codex's ruling on V, and Ryan's decision,
+2026-11-02):
+- **It stays as a durable, labelled test record.** Nothing deletes it: no
+  removal step, no dashboard deletion, no SQL.
+- **It shows in the ordinary history and reports.** Main's order history
+  has no exclusion for test orders (`src/components/OrdersDashboard.jsx`
+  at `7ec5af4`), so the order counts in its volume and revenue rollups,
+  and in the margin view if it carries a cost. Ryan should expect it
+  there. No price, margin or report is altered to hide it.
+- **If Ryan later wants it deleted,** that is a separately reviewed,
+  exact-row guarded operation on Codex's terms: the recorded id, store
+  and label, the expected row, its dependencies and side effects, an
+  asserted affected-row count, its own policy, go, receipt and readback,
+  and its unknown-outcome handling. Never a wildcard by label or a bulk
+  "smoke cleanup". It is not part of this plan or its window.
 
-  The alternative is a pinned cleanup text inside the window. Codex rules
-  (§12, C10).
+**The upload's file removal is checked separately** (Codex, review of V).
+`complete-job` does not inspect `storage.remove`'s error before it deletes
+the job row (§1.3), so neither its 200 nor the job leaving the queue shows
+that the file is gone.
+- **The read:** a labelled ad-hoc read, through `execute_sql`, of exactly
+  the synthetic job:
+  - the `pending_jobs` row, found first by its `STAGE0 SMOKE` customer
+    name and its time, then read by its recorded id: its file paths before
+    completion, and its absence after;
+  - the `storage.objects` record with `bucket_id = 'customer-uploads'`
+    and each recorded path as `name`: present before, and expected absent
+    after.
+
+  It reads metadata of that one synthetic job only: no other row, no file
+  content.
+- **What it can show:** that the Storage service's object record for the
+  path is gone. It does not show that the underlying stored bytes were
+  erased, and the record says so.
+- **If the record remains, or the result is uncertain** (an error, an
+  unreadable fact, a disagreement between the reads): record it with both
+  reads, and bring it back to Codex for a bounded disposition. **No cleanup
+  write** is made for it, through the app, the dashboard or SQL.
+- **Re-opening:** this plan proposes that a remaining file does not hold
+  the counter: 02–05 and P1′ touch no Storage object, and the file is
+  synthetic, in a private bucket. Codex rules (§12, C13).
+- `complete-job` creates no order row, so the upload path needs no order
+  cleanup.
 
 **What the smoke test leaves unproven:**
 - other staff PINs, and the manager role's margin view;
@@ -985,12 +1219,13 @@ manifest. Its send policy fixes its targets, `read_only`, window and
 | text | effect | window, `read_only` | targets | what it is |
 |---|---|---|---|---|
 | **P0′** | read | R, true | production, rehearsal | **The baseline at 01, and only at 01** (§6.4). §2.2's diagnostic rows, parts 1–10, with an md5 per part. 01's identity: version, md5, 13 720 bytes, `created_by`, one element, final LF. The ledger is exactly the 21 files, head `20261009151706`. The six Release 2 tables present and empty, `employees_id_store_uniq` present, catalog state 01 (A1a). `catalog_fingerprint` as P0 defines it. `server_version_num` ≥ 170000. The probe and nil identities absent; `auth_users_user_triggers` 0; `free_pins` ≥ 3; `stores_without_org` 0. `rehearsal_marker` |
-| **POST′** | read | R, true | production, rehearsal | **The post-step readback** (U-4). The same observations as P0′, without P0′'s baseline-only preconditions. Its acceptance takes one intended state, bound to the step just sent (§6.4) |
+| **POST′** | read | R, true | production, rehearsal | **The post-step readback** (U-4). The same observations as P0′, without P0′'s baseline-only preconditions. Its acceptance takes one intended state, bound to the step just sent, with that state's reviewed Release 2 EXECUTE rows (V-2, §6.4) |
 | **WHO-P**, **WHO-R** | read | R and W, each with and without `read_only` | production; rehearsal | Codex's Q-4, on each project: the role, the transaction mode and the relevant effective privileges, for each token and mode. Modelled on item 3's WHO texts: SELECTs only, confined statement by statement as M-6e confines item 3's. No INSERT, DDL or mode-switch probe |
-| **P1′** | write | W, false | production, rehearsal | `begin isolation level repeatable read`, then E1's settings (statement 90 s, transaction 110 s). **Section 0′:** capture the catalog and the real-row md5s. S0.2 is replaced by a check that the catalog is state 01 (A1a) and the ledger's head is 01's row. Then **P2-02's body verbatim**, section 1's fixtures, a `savepoint`, 03 alone, the 42702 proof (1b), and `rollback to savepoint`. **P2-0304's and P2-05's bodies verbatim.** Section 2 (A2, end to end), section 3 (fixture removal), **RB-5, RB-43, RB-2** through their wrappers, and section 4: the catalog equals section 0′'s row for row. **Lock rows:** at each section boundary, `pg_locks` for its own backend goes into its proof rows. A row recorded inside the savepoint would be undone with it, so 1b is seen at its boundaries. Then its rows, then `ROLLBACK`. Unlike P1: no 01 body, and **no RB-1** |
+| **P1′** | write | W, false | production, rehearsal | `begin isolation level repeatable read`, then E1's settings (statement 90 s, transaction 110 s). **Section 0′:** capture the catalog and the real-row md5s. S0.2 is replaced by a check that the catalog is state 01 (A1a) and the ledger's head is 01's row. Then **P2-02's body verbatim**, section 1's fixtures, a `savepoint`, 03 alone, the 42702 proof (1b), and `rollback to savepoint`. **P2-0304's and P2-05's bodies verbatim.** Section 2 (A2, end to end), section 3 (fixture removal), **RB-5, RB-43, RB-2** through their wrappers, and section 4: the catalog equals section 0′'s row for row. **Lock rows** at named boundaries, never inside the savepoint (below). Then its one final result, then `ROLLBACK`. Unlike P1: no 01 body, and **no RB-1** |
 | **STATE′** | read | R, true | production, rehearsal | STATE's reads, with §3.2's mapping |
-| **BUILD-00** | read | R, true | rehearsal only | The fresh project's real initial shape (§2.1) |
-| **BUILD-01** | write | W, false | rehearsal only | §2.1 |
+| **BUILD-00** | read | R, true | rehearsal only | The fresh project's real initial shape and the non-public preflight's shapes (§2.1) |
+| **BUILD-00W** | read | W, false | rehearsal only | The W role BUILD-01 will run as, and its authority over each preflight object (§2.1). SELECT-only, confined as M-6e confines item 3's texts |
+| **BUILD-01** | write | W, false | rehearsal only | §2.1. Assembled in the binding commit, with BUILD-00's and BUILD-00W's accepted facts, which it re-asserts before the first file runs |
 | P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2 | write | W, false | production, **plus rehearsal** | **Bytes preserved** (C8, accepted), subject to the local run and the rehearsal showing that their guards accept the 01 state as written: they assert "after 01" and check the identity rows as a subset. Gaining a target changes their policy, so each now **declares `effect`** (§6.3) |
 | CANCEL-INSPECT, CANCEL-STEP-TEMPLATE | as now, plus `effect` | C | production, plus rehearsal | preserved |
 | P0, P1, P2-01, RB-1, STATE | — | — | — | **Not in any new phase.** They stay in the manifest as history. P0 expects pre-01 values, P1 and P2-01 refuse over 01, RB-1 is outside the mapping, and STATE encodes the old mapping |
@@ -1000,6 +1235,44 @@ manifest. Its send policy fixes its targets, `read_only`, window and
 - **01's ledger identity is preserved:** no text writes, moves or deletes
   01's row. P0′ and POST′ check it at every read.
 - **U's FAULT-LOCK is dropped** (U-1).
+
+**P1′'s result and its lock rows** (C9, accepted as bounded evidence):
+- **One final result, with an exact schema:** `n integer, kind text,
+  at text, fact text`, ordered by `n`, returned just before `ROLLBACK`.
+  `kind` is `proof` or `lock`:
+  - a `proof` row is one of P1's proof rows: `at` is the proof id, and
+    `fact` what it proved;
+  - a `lock` row is one lock of P1′'s own backend
+    (`pid = pg_backend_pid()`) at one boundary: `at` is the boundary's
+    name, and `fact` is `locktype|mode|granted|target`. The target is the
+    relation's schema-qualified name, or `pg_describe_object` for an
+    object lock.
+- **Bounded size:**
+  - locks on `pg_catalog` and `pg_toast` relations are one summary row per
+    boundary, with their count and modes;
+  - so are the lock types other than relation and object, with a count per
+    type;
+  - the success predicate requires exactly the declared boundary names, and
+    at most a fixed total row count. The implementation sets that count
+    from the local run's, with a stated margin. A larger or differently
+    shaped result is not success: STOP-and-review.
+- **Recorded outside the rolled-back subtransaction.** Every lock row is
+  written at a boundary of the top-level transaction: after section 0′,
+  after P2-02's body, after section 1 (just before `savepoint`), just after
+  `rollback to savepoint`, after P2-0304's body, after P2-05's body, after
+  sections 2 and 3, after each RB wrapper, and after section 4. **None is
+  written inside the savepoint,** so none is undone with it.
+- **What the savepoint hides:** 1b's own proof rows are written inside it
+  and undone with it, as in P1. Their only evidence is that the
+  transaction continued past them, since a failing check raises. The
+  locks held inside the savepoint are not observed either.
+- **The implementation's tests:** the local run shows every declared
+  boundary's rows present in the result, and a mutant that records a
+  boundary inside the savepoint loses those rows and fails the success
+  predicate.
+- **The stated gaps stay:** failed subtransactions (every
+  `stage0_expect_error` probe), transient locks between boundaries, row
+  locks (§1.2), platform hooks, and concurrency.
 
 ### 6.2 The classifier scope (Codex's review of `95ecd65`, plan §I)
 
@@ -1014,8 +1287,8 @@ together:
   failure can surface through them;
 - the **witnessed ordered profile** and its receipt;
 - the success and result predicates: SUCCESS entries for P0′, POST′,
-  WHO-P, WHO-R, P1′, STATE′, BUILD-00 and BUILD-01, with the preserved
-  texts' entries unchanged;
+  WHO-P, WHO-R, P1′, STATE′, BUILD-00, BUILD-00W and BUILD-01, with the
+  preserved texts' entries unchanged;
 - **tests** that refuse the same query or frame under another text, or in
   an unreviewed combination.
 
@@ -1060,17 +1333,62 @@ amended terms.
 ### 6.4 State-aware readback contracts (U-4)
 
 **P0′ accepts only state 01.**
-- **What it requires:**
+- **Its baseline-only preconditions, in code, at every run:**
   - the ledger is exactly the 21 rows, with head 01;
   - the catalog is state 01 (A1a);
-  - every MATCH fact of §2.2 equals the reviewed baseline receipt of that
-    project. Data columns are recorded, not compared.
+  - the Release 2 EXECUTE rows are exactly 01's (below), with no row of a
+    later state;
+  - P0′'s other preconditions (§6.1).
+- **The first capture on each project is evidence, not a comparison**
+  (Codex, review of V):
+  - at the production baseline session, and at R0b on the throwaway, P0′
+    checks only those preconditions and reports every observation;
+  - Codex reviews that receipt;
+  - a binding commit then pins it by hash: the md5 of each part, and of
+    the whole;
+  - from then on, every P0′ and POST′ on that project is compared with
+    the bound receipt.
+
+  No comparator needs a receipt approved before it can report it.
 - **When it runs:**
-  - at each baseline session;
-  - at the window's start;
-  - after P1′, where it must equal the window-start P0′ exactly, data
-    included;
-  - after R1 on the throwaway.
+  - at each baseline session: the first capture;
+  - at the window's start: every MATCH fact equal to production's bound
+    baseline;
+  - after P1′ on production: under the data scope below;
+  - after R1 on the throwaway: equal to R0b's bound baseline, data
+    included, since nothing else has written there yet (§2.5).
+
+**P0′ around production P1′: the data-comparison scope** (Codex, review of
+V). Customers and the scheduled cleanup can act while the counter is
+closed. Two kinds of read answer different questions:
+- **inside P1′,** under repeatable read, sections 3 and 4 compare against
+  section 0′'s snapshot. They show that P1′'s own actions left the real-row
+  digests of the five tables its fixtures write (`employees`, `stores`,
+  `organizations`, `memberships`, `auth.users`), and the catalog, as they
+  were. Another session's commit after the snapshot is invisible to them;
+- **the P0′ after P1′** is a new transaction. It shows the database as it
+  is now, including what others committed meanwhile, and it cannot
+  separate P1′'s effect from theirs.
+
+So the window-start P0′ and the P0′ after P1′ are compared fact by fact:
+
+| fact | rule | why |
+|---|---|---|
+| the ledger | equal, else STOP | P1′'s wrappers write ledger rows inside its transaction (P1 wrote ten), so a committed P1′ would leave them |
+| every MATCH fact of parts 1–9 | equal, else STOP | as at every read |
+| the six Release 2 tables empty; the probe and nil identities absent; `rehearsal_marker` false | equal, else STOP | as at every read |
+| the row counts and real-row digests of `employees`, `stores`, `organizations`, `memberships` and `auth.users`; `free_pins`; `stores_without_org` | equal, else STOP | P1′'s fixtures write these tables. While the counter and the admin panel are closed (the runbook closes every counter and admin tab first), nothing is expected to write them. Supabase Auth could still write `auth.users` on a link request (§1.3); that too stops, as unexplained until reviewed |
+| the row counts of `orders`, `settings`, `addons`, `discounts`, `outsourced_products`, `paper_types`, `print_jobs` and `sheet_prices`, which section 3 reaches through foreign keys | equal, else STOP | only the browser app writes them, and the counter and admin panel are closed (§1.3) |
+| the row count of `pending_jobs` | recorded with its attribution, not compared | the customer upload functions and `cleanup-stale-jobs` stay live (§4.3) |
+
+- **A STOP here is conservative:** no further write starts, and the
+  receipts go to review. A difference is not read as proof that P1′
+  committed.
+- **A change in `pending_jobs` is not evidence either way.** It is
+  attributed to the live actors that write it, and that is all.
+- **Part 10 therefore adds** the real-row digests of those five tables,
+  computed as P1's section 0 computes them: an md5 over the rows, never a
+  value.
 
 **POST′ accepts one intended state, taken from the step just sent:**
 - the workflow declares each step's intended state, and the gate passes it
@@ -1091,11 +1409,113 @@ amended terms.
 - 01's identity unchanged;
 - the six protected tables empty;
 - every catalog row outside the permitted Release 2 delta identical to the
-  baseline, shown by diagnostic rows and by a fingerprint of the rest;
-- the default ACL, role, setting, dependency and event-trigger rows
-  identical to the same project's baseline;
+  bound baseline, shown by diagnostic rows and by a fingerprint of the
+  rest;
+- **the Release 2 EXECUTE rows exactly the intended state's reviewed rows,
+  and every other role fact identical to the bound baseline** (V-2,
+  below);
+- the default ACL, setting, dependency and event-trigger rows identical to
+  the same project's bound baseline;
+- the data facts under the same scope as around P1′ (above):
+  - on production, the STOP rows equal to the window-start P0′, and
+    `pending_jobs` recorded. The smoke test comes after the last POST′;
+  - on the throwaway, every data fact equal to the previous accepted
+    readback, except `orders`, which grows by exactly the orders that the
+    app checks since then saved and recorded (§4.2);
 - on production, the four Release 2 endpoints dark: an HTTP read, as in
   the re-opening checks. The throwaway has no deployed endpoints.
+
+**V-2: the role facts each intended state permits to change.** Part 4
+holds one row per role and Release 2 signature, with its effective EXECUTE
+(`has_function_privilege`), explicit false rows included. A step changes
+those rows legitimately: at 01 there are three rows for `anon`,
+`authenticated` and `service_role`, and after P2-02 nine (Codex's local
+probe). So POST′ compares part 4 in two halves:
+- **every role fact outside the Release 2 EXECUTE rows stays exactly the
+  bound baseline's:** attributes; memberships with their admin, inherit and
+  set options; schema and table privileges; EXECUTE on `auth.uid()`,
+  `extensions.gen_random_bytes`, `extensions.digest` and every other
+  function;
+- **the Release 2 EXECUTE rows must be exactly the reviewed rows of the
+  intended state:** no row missing, no row extra, no value different.
+
+**The reviewed rows for `anon`, `authenticated` and `service_role`.** They
+come from Codex's local probe, and agree with A1a's grantee sets
+(production plan §A1a). T is true, F false:
+
+| intended state | signature | anon | authenticated | service_role |
+|---|---|---|---|---|
+| **01** | `redeem_enrollment_ticket(bytea, bytea, bytea, text)` | F | F | T |
+| **after 02** | `redeem_enrollment_ticket(…)` | F | F | T |
+| | `release2_record_attempt(text, text, integer, integer, integer)` | F | F | T |
+| | `release2_clear_lockout(text, text, uuid)` | F | **T** | T |
+| **after 04** | `redeem_enrollment_ticket(…)` | F | F | T |
+| | `release2_record_attempt(…)`, replaced in place by 03, ACL kept | F | F | T |
+| | `release2_clear_lockout(text, text, uuid, uuid)` | F | **T** | T |
+| | `release2_create_staff_session(uuid, uuid, bytea, bytea, timestamp with time zone, timestamp with time zone)` | F | F | T |
+| | `release2_prune_auth_attempts(integer)` | F | F | T |
+| **after 05** | the five rows of after 04 | as after 04 | | |
+| | `release2_revoke_enrollment(uuid, uuid, text)` | F | F | T |
+
+- **Counts:** 3 rows at 01, 9 after 02, 15 after 04, 18 after 05, as the
+  probe found.
+- **Removed signatures:** after 04 and after 05, a row for the
+  three-argument `release2_clear_lockout` is an unexplained extra row.
+  After RB-43, a row for the four-argument form is.
+- **Replacement in place** (`release2_record_attempt` in 03,
+  `release2_create_staff_session` in 04) keeps the signature, so its rows
+  do not change. The new bodies are part 2's catalog delta.
+
+**The other roles part 4 names** (`postgres`, `authenticator`,
+`supabase_read_only_user`, the owners of SECURITY DEFINER functions in
+`public`, and R's and W's roles). Their rows depend on each role's
+attributes and memberships on that project, which only the bound baseline
+shows:
+- the implementation commit carries the rule their rows follow. A role's
+  row is true when it is in A1a's grantee set for that signature, holds a
+  grantee's privileges through a baseline membership, owns the function,
+  or is a superuser; otherwise it is false;
+- after each project's baseline review, the binding commit adds those
+  roles' literal rows for every state, reviewed with the receipt;
+- POST′ compares against the literal rows, never against the rule at run
+  time. A test checks that the literal rows agree with the rule and the
+  bound memberships.
+
+**Bound to the same intended state as the ledger and catalog delta.** The
+gate passes one intended state, and it selects all three:
+- RB-5's POST′ takes the after-04 rows, RB-43's the after-02 rows and
+  RB-2's the 01 rows, each with its own ledger history;
+- a planned refusal takes the previous accepted readback's rows;
+- P0′ takes only the 01 rows.
+
+**The tests the implementation brings** (Codex, review of V). They run on
+the comparator, with observation rows read from the local run's real
+catalog at each state:
+- **every legitimate transition passes:**
+  - fresh 02, 04 and 05;
+  - RB-5, RB-43 and RB-2 after the full forward pass;
+  - §3.6's two local-only histories: RB-2 from a fresh 01–02, and RB-43
+    from a fresh 01–04;
+- **each of these fails, with its reason named:**
+  - **a wrong EXECUTE grant,** made by a real `GRANT` in the local
+    database: for example `anon` on `release2_record_attempt` after 02,
+    or `authenticated` on `release2_create_staff_session` after 04;
+  - **an unrelated membership change:** for example `authenticator`
+    granted `service_role`, or a membership's inherit option changed;
+  - **an unrelated privilege change:** for example `anon` gaining SELECT
+    on a `public` table, or EXECUTE on `auth.uid()` or on a
+    non-Release-2 function changing;
+  - **a missing expected row:** for example `service_role` on
+    `release2_revoke_enrollment` absent after 05;
+  - **an unexplained extra row:** the three-argument
+    `release2_clear_lockout` still present after 04, or a row for a role
+    outside the bound role set;
+  - **the right rows under the wrong history:** after-05 rows offered to
+    RB-5's POST′;
+  - **any Release 2 row beyond 01's** offered to P0′.
+- **Each negative is a required-failing mutant,** as in item 3's mutation
+  companions: it must turn into exactly its expected refusal, never an
+  exception.
 
 **Progression is bound to it:**
 - the gate admits the next step only after POST′ for the intended state is
@@ -1124,12 +1544,13 @@ closed from §2 to §11.**
 | 7 | P2-0304: as §6, POST′ (after 04) | R + C | 7 | 1:01 | as §6 |
 | 8 | P2-05: as §6, POST′ (after 05) | R + C | 7 | 1:08 | as §6 |
 | 9 | A2, STATE′, CONSUMERS, the endpoints' darkness | R + C | 8 | 1:16 | R reads, as in §4 |
-| 10 | **The smoke test (§4.2):** PIN sign-in, owner sign-in, the `STAGE0 SMOKE` order, an upload through the queue and its completion, sign out | R | 15 | 1:31 | — |
-| 11 | Tokens deleted, windows closed, store status | R + C | 5 | 1:36 | deleted |
-| 12 | **Counter re-opens,** if §3.5 holds | R | — | **≈ 1:36** | — |
-| 13 | The smoke order's removal and its read (§4.2); the record commits (about 5 min of suite per commit) | R + C | 0 | — | — |
+| 10 | **The smoke test (§4.2):** PIN sign-in, owner sign-in, the minimal `STAGE0 SMOKE` order (its id, store, time, amount and purpose recorded), an upload through the queue with the labelled file read before and after its completion, sign out | R + C | 18 | 1:34 | — |
+| 11 | Tokens deleted, windows closed, store status | R + C | 5 | 1:39 | deleted |
+| 12 | **Counter re-opens,** if §3.5 holds | R | — | **≈ 1:39** | — |
+| 13 | The record commits (about 5 min of suite per commit). The smoke order stays (§4.2); a remaining or uncertain upload file goes to Codex for a disposition | C | 0 | — | — |
 
-- **Total counter-closed time on the planned path: about 96 minutes.**
+- **Total counter-closed time on the planned path: about 99 minutes.**
+  V's 96 grows by the upload file's two reads (§4.2).
 - **The clock check** is refreshed relative to when it was actually made
   and how much of its freshness is left. No step starts on a check that
   would lapse before that step's deadline.
@@ -1151,27 +1572,26 @@ D is the reserve end. A step's ceiling is D less the time its whole
 required path needs:
 - the step itself, with its read-backs;
 - under policy B, no in-window recovery;
-- the close-out: final reads 5, smoke test 15, tokens 5, so 25.
+- the close-out: final reads 5, smoke test 18, tokens 5, so 28.
 
 | step | path under B | ceiling |
 |---|---|---|
-| P1′ | 12 + 25 | D − 37 |
-| P2-02 | 7 + 25 | D − 32 |
-| P2-0304 | 7 + 25 | D − 32 |
-| P2-05 | 7 + A2 8 + 25 | **D − 40** |
+| P1′ | 12 + 28 | D − 40 |
+| P2-02 | 7 + 28 | D − 35 |
+| P2-0304 | 7 + 28 | D − 35 |
+| P2-05 | 7 + A2 8 + 28 | **D − 43** |
 
 - **A later step can have an earlier ceiling.** That is the P1–P3
   runbook's own shape (P-R1), and no ordering rule is added.
 - **The window's length, provisional:** D = start + 2 h 15 min. The planned
-  path takes 96 minutes, which leaves 39 minutes of margin. P2-05's
-  expected start (start + 1:01) is 34 minutes before its ceiling
-  (start + 1:35).
+  path takes 99 minutes, which leaves 36 minutes of margin. P2-05's
+  expected start (start + 1:01) is 31 minutes before its ceiling
+  (start + 1:32).
 - **Before a declaration is concrete,** each estimate is replaced by its
   measured time and a stated margin (Codex):
   - the requests, the operator steps and the comparisons;
-  - owner sign-in and the queue;
-  - a disposition, if one is needed;
-  - cleanup.
+  - owner sign-in and the queue, with the upload file's two reads;
+  - a disposition, if one is needed.
 - **The production phase is declared in code:**
   - its steps, its gate and its ceilings, in the form
     `scripts/manual/stage0-guard.mjs` `WORKFLOWS` already takes;
@@ -1190,7 +1610,7 @@ required path needs:
 
 | window, counter closed from the start | counter re-opens (planned) | reserve end D | UTC |
 |---|---|---|---|
-| Sunday 17:00 EST | about 18:36 | 19:15 | 22:00Z – 00:15Z |
+| Sunday 17:00 EST | about 18:39 | 19:15 | 22:00Z – 00:15Z |
 
 - **The slack before the next opening** is Sunday evening and night. A STOP
   leaves it for review. After an UNRESOLVED send the counter stays closed
@@ -1277,7 +1697,8 @@ the backup's time:
     a release for an unknown R4 (U-1);
   - the WHO texts as the model for WHO-P and WHO-R;
   - the finding that the Read token is an accident barrier only (§7.1).
-- **From item 6, the guarded sender unchanged except for §2.3's target
+- **From item 6, the guarded sender as W leaves it** (F1–F3, once Codex has
+  reviewed W; §0), **changed by this plan only through §2.3's target
   extension:**
   - the existing store (no `init`);
   - one request in flight per project (SG-2, G-7);
@@ -1288,24 +1709,33 @@ the backup's time:
 
 ## 10. What Codex will need to clear, in order
 
-0. **G-6** (Codex, 2026-11-02): ruled an open investigation. It holds every
-   new guard-dependent session, the rehearsal included, and any production
-   phase, until it is resolved. The capture with every worker's output is
-   in its own addendum.
-1. **This plan (V).** The questions in §12.
+0. **G-6 and W** (Codex's ruling on the G-6 addendum, 2026-11-02): F1–F3
+   are implemented and reviewed before any new guard-dependent session.
+   W (`4b7450d`) is with Codex. W clears no session by itself: each
+   session still needs its own exact-head clearance.
+1. **This plan (V2).** The questions in §12.
 2. **The implementation commit:**
-   - the texts and pins, the policies and effects: BUILD-00, BUILD-01,
-     P0′, POST′, WHO-P, WHO-R, P1′ with its lock rows, STATE′;
-   - the comparator, with its MATCH, residual and STOP table (§2.2, §6.4);
+   - the texts and pins, the policies and effects: BUILD-00, BUILD-00W,
+     P0′, POST′, WHO-P, WHO-R, P1′ with its result schema, STATE′; and
+     BUILD-01's assembly, whose accepted facts come with B1 (step 5);
+   - the comparator: its MATCH, residual and STOP table, the data scope,
+     and V-2's Release 2 EXECUTE rows with the rule for the other roles
+     (§2.2, §6.4);
+   - BUILD's predicates (§2.1);
    - §2.3's rehearsal target and store events;
    - M-12's update (§6.3);
    - the PERFORM entries and frames;
-   - the rehearsal workflow, with its expected-refusal steps (§2.5), and
-     the production phase declaration, with its ceilings;
-   - the rehearsal runbook, and the production runbook with its smoke test
-     and the removal of its data;
-   - tests and mutation companions, including the static main check
-     (§4.2);
+   - the rehearsal workflow, with its three sessions and its
+     expected-refusal steps (§2.5), and the production phase declaration,
+     with its ceilings;
+   - the rehearsal runbook, and the production runbook with its smoke
+     test, the kept order's record and the upload file check (§4.2);
+   - tests and mutation companions:
+     - the static main check (§4.2);
+     - V-2's legitimate transitions and its negatives (§6.4);
+     - P1′'s result schema, and its savepoint-boundary mutant (§6.1);
+     - each of BUILD's predicates, with a passing and a failing local
+       shape (§2.1);
    - the local PGlite run: from a reconstructed 01, under both defaults
      (§5.4); P1′'s lock inventory (§1.2); and the recovery coverage of
      §3.6;
@@ -1313,25 +1743,36 @@ the backup's time:
      needs it.
 3. **Ryan creates the throwaway,** once 1 and the store change in 2 are
    accepted (§0.2).
-4. **The production baseline and identity read:** P0′, STATE′ and WHO-P.
-   Read-only, with its own clearance and tokens.
-5. **The rehearsal session(s)** on the throwaway: R0–R4, the app checks and
-   the session record. Then a record commit, and the deletion with the
-   ref's retirement.
-6. **A capture commit,** if §2.5's receipts are to extend SUPPORT.
-7. **Push clearances** for those commits, each by exact hash.
-8. **The production window's clearance** at the exact head, with Ryan's
-   drafted go line, on a Sunday under option A (§7.3).
-9. **The C5 credential runbook** keeps its own separate review.
+4. **Two read-only sessions,** each with its own clearance and tokens:
+   - the production baseline and identity read: P0′, STATE′ and WHO-P;
+   - rehearsal session 1 (R0a): BUILD-00 and BUILD-00W.
+
+   Their receipts go to Codex as evidence.
+5. **Binding commit B1:**
+   - production's reviewed baseline, pinned by hash, with its other
+     roles' literal Release 2 EXECUTE rows (§6.4);
+   - BUILD-00's and BUILD-00W's accepted facts, pinned, and BUILD-01
+     assembled and pinned with them.
+6. **Rehearsal session 2 (R0b):** BUILD-01, then P0′ and WHO-R. The tiered
+   comparison with production and its residuals go to Codex.
+7. **Binding commit B2:** the throwaway's reviewed baseline, pinned by
+   hash; its residual records; its other roles' literal rows.
+8. **Rehearsal session 3:** R1–R4, the app checks and the session record.
+   Then a record commit, and the deletion with the ref's retirement.
+9. **A capture commit,** if §2.5's receipts are to extend SUPPORT.
+10. **Push clearances** for those commits, each by exact hash.
+11. **The production window's clearance** at the exact head, with Ryan's
+    drafted go line, on a Sunday under option A (§7.3).
+12. **The C5 credential runbook** keeps its own separate review.
 
 ## 11. What this plan does not do
 
 - No project is created, no token, no send, no push.
 - **Nothing in production or staging is read or changed** by this plan.
   The Supabase calls behind it were metadata and docs only (2026-10-31),
-  and V added none.
+  and neither V nor V2 added any.
 - **The local lock inventory** (§1.2) ran on PGlite, outside the
-  repository.
+  repository. So did Codex's role-privilege probe, whose rows §6.4 uses.
 - No code, test, SQL text, manifest or pin changes. Those are the
   implementation commit.
 - It clears no window. Every time in §7 is an estimate until the rehearsal
@@ -1340,31 +1781,37 @@ the backup's time:
 ## 12. Questions
 
 **Recorded rulings** (Codex, 2026-11-02):
-- C1, C2, C5 and C8: accepted.
-- C4: policy B, conditionally.
-- C6: rejected.
-- C3 and C7: amended, as U-2 and U-1. Both are answered above.
+- **on U:** C1, C2, C5 and C8 accepted; C4 policy B, conditionally; C6
+  rejected; C3 and C7 amended, as U-2 and U-1;
+- **on V:** C7′ and U-3 accepted; C9 accepted as bounded evidence; C12
+  accepted in principle; C3′ amended by V-1 and C11 by V-2; **C10: the
+  labelled smoke order is kept.**
 
 **For Codex:**
-- **C3′, the checked state** (§2.2):
-  - P0′'s ten parts, as diagnostic rows;
-  - the MATCH, residual and STOP tiers;
-  - the settings allowlist.
-- **C7′, the planned refusals** (§2.5):
-  - the list of single-request refusals;
-  - the rule that one outside a witnessed profile holds, with its first
-    receipt to Codex.
-- **C9. P1′'s lock rows** (§1.2, §6.1): `pg_locks` for its own backend,
-  recorded at each section boundary in its result.
-- **C10. The smoke order's removal** (§4.2): by Ryan after re-opening,
-  with a labelled read (recommended), or a pinned cleanup text inside the
-  window.
-- **C11. The readback contracts** (§6.4): one POST′ text, whose acceptance
-  takes the intended state from the step.
-- **C12. Recovery coverage** (§3.6): local runs and guard analysis for the
-  two histories the rehearsal does not reach.
+- **V-1, the non-public preflight** (§2.1, §2.2):
+  - BUILD-00W as the minimal W identity read before BUILD-01;
+  - the predicates, object by object;
+  - B1, which assembles BUILD-01 with the accepted facts;
+  - the event-trigger binding (part 8).
+- **V-2, the role facts** (§6.4):
+  - the reviewed rows for `anon`, `authenticated` and `service_role`;
+  - the rule for the other roles, and their literal rows bound in B1 and
+    B2;
+  - the planned tests.
+- **The data scope around P1′** (§6.4): which facts must stay equal, and
+  why `pending_jobs` alone is recorded.
+- **P1′'s result** (§6.1): the schema, the size bound and the boundaries.
+- **The order of sessions and binding commits** (§2.5, §10): three
+  rehearsal sessions and two binding commits, B1 carrying both
+  production's baseline and BUILD's accepted facts.
+- **C13. A remaining upload file** (§4.2): recorded and brought back for a
+  disposition, with no cleanup write. The plan proposes that it does not
+  hold re-opening.
 
 **For Ryan:**
 - **The date:** a Sunday, chosen with the window's clearance, and that
   Sunday's closing time.
-- **The smoke order's removal,** with C10.
+- **The image observation** (§2.2): you relayed one at about 16:55Z on
+  2026-10-31. This plan's working session holds a `list_projects` read
+  with the same values at 13:16:42Z that day. Is that the same
+  observation?
