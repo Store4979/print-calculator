@@ -1,22 +1,31 @@
-- Last updated: 2026-11-02
+- Last updated: 2026-11-03
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
-## 2026-11-02 — T pushed; G-6 fixed (W, W2); the 4(c) plan revised (V, V2)
-- Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); 3624efd..this commit local, for Codex's review
-  - ed393be V: docs/security/stage0-item4c-plan.md answers Codex's review of U (U-1 to U-5, C1–C8) and records Ryan's decisions (Codex: AMEND, V-1 and V-2)
-  - 4b7450d W: G-6's F1–F3 under Codex's review of the G-6 addendum (withLock retries EPERM/EACCES/EBUSY on acquisition only; status, gate and the sender's first check read one locked snapshot, BUSY not DAMAGED; G-6/AP-3 released on acknowledgement; LK-*, SN-* tests); the guard chain re-pinned (Codex: AMEND, W-R1 to W-R3, W-N1)
-  - ea0c616 V2: the plan answers Codex's review of V: BUILD's non-public preflight with BUILD-00W (V-1); POST′'s reviewed Release 2 EXECUTE rows (V-2); the smoke order kept (C10) and the upload's file read; the data scope around P1′; P1′'s result schema; first receipts bound by hash; G-6's status; the image provenance
-  - this commit (W2): Codex's review of W: status, gate and corroborate read their clock under the lock (W-R1, TM-*); LK-6 counts only witnessed sections (W-R2, LK-6b); the stale-lock procedure, procedure §7.1, in the refusal and the docs (W-R3, SN-6); within() clears the helpers' timers (W-N1, HL-1); the guard chain re-pinned
-  - Not commits: the G-6 capture and addendum (Codex: ACCEPTED); W verified 537/537, build, replay 14 × 537; W's load campaign, as Codex counted it: 48 complete passing race TAP results (40 with exit 0, four 010 runs with exit 127, four 012 runs with no exit line), nine load suites 537/537, B #4 and C #4 stopped incomplete; T's push record with Ryan's Netlify read (§E13), uncommitted
+## 2026-11-03 — The records (X0); X1, the rehearsal target
+- Shipped: security/release-2-slice-2 d8ec242..this commit (local, for Codex's review)
+  - this commit (X0): the records only, no code: T's and W2's push records (production plan §E13); in the 4(c) plan, V2's acceptance and rulings (C13, Realtime, attribution), the two image observations, W's AMEND and W2, the load accounting, and Ryan's four decisions on the outline (§0.2); this log
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward the V2 and W2 review requests to Codex
+- Needs from Ryan: none
 - Needs a ruling from Claude (chat): none
-- Next planned step: Codex's rulings on V2 and W2; then the 4(c) implementation commit and the session clearances
+- Next planned step: X1 on top of X0 (the rehearsal target and M-12, synthetic refs only), then one Codex review request for X0 and X1
+
+## 2026-11-02 — T and W2 pushed; G-6 fixed (W, W2); the 4(c) plan accepted (V2)
+- Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); c62644a..d8ec242 pushed 2026-11-03 02:20Z (U, V, W, V2, W2, under Codex's review of d8ec242 after its replay condition; staging deploy 6ae9450b; production unchanged)
+  - ed393be V: docs/security/stage0-item4c-plan.md answers Codex's review of U (U-1 to U-5, C1–C8) and records Ryan's decisions (Codex: AMEND, V-1 and V-2)
+  - 4b7450d W: G-6's F1–F3 under Codex's review of the G-6 addendum (withLock retries EPERM/EACCES/EBUSY on acquisition only; status, gate and the sender's first check read one locked snapshot, BUSY not DAMAGED; G-6/AP-3 released on acknowledgement; LK-*, SN-* tests); the guard chain re-pinned (Codex: AMEND, W-R1 to W-R3, W-N1)
+  - ea0c616 V2: the plan answers Codex's review of V: BUILD's non-public preflight with BUILD-00W (V-1); POST′'s reviewed Release 2 EXECUTE rows (V-2); the smoke order kept (C10) and the upload's file read; the data scope around P1′; P1′'s result schema; first receipts bound by hash; G-6's status; the image provenance (Codex: ACCEPT at plan level; its push held for W2)
+  - d8ec242 W2: Codex's review of W: status, gate and corroborate read their clock under the lock (W-R1, TM-*); LK-6 counts only witnessed sections (W-R2, LK-6b); the stale-lock procedure, procedure §7.1, in the refusal and the docs (W-R3, SN-6); within() clears the helpers' timers (W-N1, HL-1); the guard chain re-pinned (Codex: ACCEPT, with the outline's split and decisions 5–9 ruled)
+  - Not commits: the G-6 capture and addendum (Codex: ACCEPTED); W verified 537/537, build, replay 14 × 537; W's load campaign, as Codex counted it: 48 complete passing race TAP results (40 with exit 0, four 010 runs with exit 127, four 012 runs with no exit line), nine load suites 537/537, B #4 and C #4 stopped incomplete; not 200 completed runs, and not 48 captured zero exits; W2 verified 546/546, build, replay 14 × 546 (exit 0); W2's short cold-load sample after the push: 12 runs, all exit 0, the nine race tests ok in each, 35–40 s per run, at a mild load; the 4(c) implementation outline (reviews/requests); this session's records (the push records, V2's acceptance, the image observations, W's AMEND and W2) went into the next session's X0
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: the outline's decisions 1–4; the word to start X1 (both given 2026-11-03)
+- Needs a ruling from Claude (chat): none
+- Next planned step: X1 (the rehearsal target and M-12) under the outline, when Ryan says; the docs commit for these records when he asks
 
 ## 2026-10-31 — T verified; the item 4(c) plan (docs commit U)
 - Shipped: security/release-2-slice-2 c62644a..this commit (local, for Codex's review)
@@ -52,15 +61,3 @@
 - Needs from Ryan: the Netlify reads after both pushes (done)
 - Needs a ruling from Claude (chat): none
 - Next planned step: item 3 phase E on staging at H = 04b6520
-
-## 2026-10-28 — Item 6 per-step ceilings (P, Q); first guard-store init; item 3 implementation (R)
-- Shipped: O 22610f8 pushed 15:49Z (9404ee5..22610f8; staging only, cleared by Codex); the rest local
-  - 30c0eba P: item 6 follow-up: per-step ceilings; Codex's tail-loss ruling (Codex: AMEND)
-  - 4e2a375 Q: P-R1, Q-P1 (the exact go line), the per-send not-after, Q-P2
-  - ba1a0bd R: item 3 read-token experiment implementation + guard store anchor (Codex, 10-29: AMEND)
-  - Not a commit: the first guard-store init ran 17:23Z under Codex's narrow clearance (store 3389bb8f…)
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: relay the Q and R review requests to Codex
-- Needs a ruling from Claude (chat): none
-- Next planned step: Codex's reviews of Q and R, then item 3's staging session at the head Codex names

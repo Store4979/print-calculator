@@ -10,6 +10,15 @@ nothing: no project is created, no token, no send, no window. After Codex
 accepts this plan, the implementation commit (§10) and its runbooks come
 back for review before any session.
 
+**Codex accepted V2 at plan level** (review of `ea0c616`, 2026-11-02,
+`reviews/2026-11-02-ea0c616-review.md`). V-1 and V-2 are closed at this
+level. The preflight, the comparator, the SQL, the target extension and the
+runbooks are implementation still to be reviewed. The acceptance authorizes
+no project creation, baseline capture, rehearsal session or window. V2's
+push waited for W2, because V2 contains W (§0). It was pushed with W2 to
+the staging branch on 2026-11-03 (production plan §E13). Its rulings are in
+§12.
+
 **Sources:**
 - Codex's incident review, 2026-10-12, §4(b) and §4(c)
   (`docs/security/stage0-incident-2026-10-09.md`, Appendix A);
@@ -41,9 +50,9 @@ back for review before any session.
   project", "Manage Compute usage", "Billing FAQ", "Deleting Your
   Project"; and, through the Supabase MCP (metadata reads only, no SQL):
   the organization's plan, its project list and the new-project cost;
-- the platform images (§2.2): observed through Supabase's project list by
-  Claude in chat on 2026-10-31, at about 16:55Z, and relayed by Ryan. That
-  report reached Codex's review on 2026-11-02;
+- the platform images (§2.2): two separate observations of Supabase's
+  project list on 2026-10-31, by Claude Code at 13:16:42Z and by Claude in
+  chat at about 16:55Z (relayed by Ryan);
 - Ryan, 2026-11-02: the decisions in §0.2;
 - a local lock inventory, 2026-11-02 (§1.2), rerun by Codex;
 - main@7ec5af4, read from git for §4.2: `netlify/functions/complete-job.js`,
@@ -82,8 +91,30 @@ back for review before any session.
     as unidentified, not explained by the capture;
   - **F1–F3 are required before any new guard-dependent session,** this
     plan's rehearsal included, and before any production phase. W
-    (`4b7450d`) implements them, and Codex's review of W comes first
-    (§10, step 0).
+    (`4b7450d`) implemented them, and Codex returned it **AMEND**
+    (review of `4b7450d`, 2026-11-02), with three blocking corrections
+    and one non-blocking note:
+    - W-R1: the gate's eligibility time must be read after the warm-up
+      and the lock wait;
+    - W-R2: an exclusion witness that cannot be established must fail
+      LK-6;
+    - W-R3: a usable stale-holder check outside the store, and a real
+      dead-holder regression;
+    - W-N1: the race helpers' timers.
+
+    **W2 (`d8ec242`, on V2) answers them. Codex accepted it** (review of
+    `d8ec242`, 2026-11-02), keeping t0 in the sender's first check, and
+    found F1–F3 addressed by W and W2 together. It was pushed to the
+    staging branch, with U, V, W and V2, on 2026-11-03, after its 14-state
+    replay was green (production plan §E13). That closes the prerequisite;
+    it clears no live session.
+  - **W's load campaign, as Codex counted it:**
+    - 48 complete passing race TAP outputs: 40 with wrapper exit 0; four
+      010 runs with exit 127 and passing TAP; four 012 runs with passing
+      TAP and no exit line;
+    - not 200 completed runs, and not 48 captured zero exits;
+    - nine complete load suites 537/537, with B #4 and C #4 stopped
+      incomplete.
   - **W's guard changes are separate from this plan's store extension**
     (§2.3). W corrects the guard: the lock's retry on acquisition, and
     status, gate and the sender's first check reading one locked
@@ -144,6 +175,26 @@ back for review before any session.
   minimal labelled order stays as a durable test record. Nothing deletes
   it.
 - **No concurrency protocol is built** for the rehearsal (U-1, §2.5).
+
+**Ryan's decisions on the implementation outline (2026-11-03;**
+`reviews/requests/stage0-item4c-implementation-outline.md` §5, after
+Codex's rulings in its review of `d8ec242`):
+1. **The production phase:** X4 declares the production workflow's steps
+   and gate without ceilings. A production timing commit after the
+   rehearsal adds the measured ceilings and the window length. Until then
+   the production workflow cannot draft, register, issue or send, and there
+   is no legacy fallback.
+2. **The throwaway project** is created once X4 is in review, so the
+   ref-binding commit can follow it straight away. Nothing can run on the
+   project before X4's workflows exist. This refines the first decision
+   above.
+3. **The rehearsal ref:** a separate reviewed ref-binding commit, then
+   `target add` under its own clearance.
+4. **The production smoke test (§4.2): Ryan does it himself.**
+   - On a computer: the app and the Queue tab, signed in with his own staff
+     PIN, then owner sign-in with his owner account.
+   - On his phone: the upload through `/upload`, a one-page PDF.
+   - The order: one black-and-white copy.
 
 ## 1. What the remaining path touches
 
@@ -602,19 +653,24 @@ the throwaway's own default ACL rows, to an exact target, and asserts them.
 
 **The image record (Codex's ruling):**
 - **Recorded,** with each observation's time:
-  - production's image, 17.6.1.111, and staging's, 17.6.1.166: observed
-    through Supabase's project list by Claude in chat on 2026-10-31, at
-    about 16:55Z, and relayed by Ryan. That report reached Codex's review
-    on 2026-11-02, a separate date;
-  - separately, this plan's own working session holds Supabase MCP
-    `list_projects` results with the same two values at 2026-10-31
-    13:16:42Z, and earlier at 2026-10-29 23:56:06Z. Whether either is the
-    observation Ryan relays is not established here;
+  - production's image, 17.6.1.111, and staging's, 17.6.1.166, in **two
+    separate observations** of Supabase's project list on 2026-10-31,
+    each reporting both values (Ryan, 2026-11-02; Codex's review of
+    `ea0c616`):
+    1. Claude Code, through the Supabase MCP `list_projects`, at
+       13:16:42Z;
+    2. Claude in chat, at about 16:55Z, relayed by Ryan. That time is
+       approximate, and stays so.
+
+    They are not merged. The Claude Code `list_projects` result of
+    2026-10-29 23:56:06Z is another, earlier observation, neither of these
+    two;
   - the new project's image when it is created;
   - each project's region and SQL `version()` and build.
 
   These values are operator and platform metadata, not an independent
-  live read by Codex's review.
+  live read by Codex's review. They do not make item 3's staging
+  measurement production evidence.
 - **A matching `server_version_num` does not establish matching images.**
 - **Changing production's image is not proposed.** It would be a
   production change outside this plan, and the throwaway may run a newer
@@ -1078,9 +1134,31 @@ that the file is gone.
   unreadable fact, a disagreement between the reads): record it with both
   reads, and bring it back to Codex for a bounded disposition. **No cleanup
   write** is made for it, through the app, the dashboard or SQL.
-- **Re-opening:** this plan proposes that a remaining file does not hold
-  the counter: 02–05 and P1′ touch no Storage object, and the file is
-  synthetic, in a private bucket. Codex rules (§12, C13).
+- **Re-opening (C13, Codex's ruling on V2):** a remaining or uncertain
+  object from this one synthetic upload does not, **by itself**, hold
+  re-opening. It is recorded as a cleanup residual and brought back for a
+  bounded disposition, with no further cleanup write. It is never reported
+  as a successful removal.
+  - **The exception is narrow.** Every other gate of §3.5 still holds:
+    - the exact settled database state accepted;
+    - the four endpoints dark;
+    - no writing request unresolved or in flight;
+    - the tokens deleted and the windows closed;
+    - the smoke checks passed.
+  - **It excuses nothing else:** not a failure to save the order, sign in,
+    open the uploaded file or complete the queue action, and not a state
+    that cannot be established. It never waives an unknown writing-send
+    hold, and never covers a customer's file.
+  - The runbook's smoke-and-re-opening predicate carries this exception
+    explicitly, so it cannot contradict a generic "smoke passed".
+- **Realtime (Codex's note on V2):** opening the Queue tab after the upload
+  can load the job from its first query, which shows nothing about
+  Realtime. So the Queue tab is open and subscribed before the upload. The
+  record claims Realtime delivery only if the new job appears there without
+  a reload.
+- **One job, bound first:** the reads are of one uniquely identified
+  synthetic job, by its recorded id and exact bucket path. A missing or
+  ambiguous identification never widens the read, and starts no cleanup.
 - `complete-job` creates no order row, so the upload path needs no order
   cleanup.
 
@@ -1379,13 +1457,15 @@ So the window-start P0′ and the P0′ after P1′ are compared fact by fact:
 | the six Release 2 tables empty; the probe and nil identities absent; `rehearsal_marker` false | equal, else STOP | as at every read |
 | the row counts and real-row digests of `employees`, `stores`, `organizations`, `memberships` and `auth.users`; `free_pins`; `stores_without_org` | equal, else STOP | P1′'s fixtures write these tables. While the counter and the admin panel are closed (the runbook closes every counter and admin tab first), nothing is expected to write them. Supabase Auth could still write `auth.users` on a link request (§1.3); that too stops, as unexplained until reviewed |
 | the row counts of `orders`, `settings`, `addons`, `discounts`, `outsourced_products`, `paper_types`, `print_jobs` and `sheet_prices`, which section 3 reaches through foreign keys | equal, else STOP | only the browser app writes them, and the counter and admin panel are closed (§1.3) |
-| the row count of `pending_jobs` | recorded with its attribution, not compared | the customer upload functions and `cleanup-stale-jobs` stay live (§4.3) |
+| the row count of `pending_jobs` | recorded, with its known possible writers as context, not compared | the customer upload functions and `cleanup-stale-jobs` stay live (§4.3) |
 
 - **A STOP here is conservative:** no further write starts, and the
   receipts go to review. A difference is not read as proof that P1′
   committed.
-- **A change in `pending_jobs` is not evidence either way.** It is
-  attributed to the live actors that write it, and that is all.
+- **A change in `pending_jobs` is not evidence either way.** A changed
+  count does not identify its writer. The record names the known possible
+  writers as context, and never attributes a change to one of them without
+  evidence for it (Codex's review of V2).
 - **Part 10 therefore adds** the real-row digests of those five tables,
   computed as P1's section 0 computes them: an md5 over the rows, never a
   value.
@@ -1709,10 +1789,12 @@ the backup's time:
 
 ## 10. What Codex will need to clear, in order
 
-0. **G-6 and W** (Codex's ruling on the G-6 addendum, 2026-11-02): F1–F3
-   are implemented and reviewed before any new guard-dependent session.
-   W (`4b7450d`) is with Codex. W clears no session by itself: each
-   session still needs its own exact-head clearance.
+0. **G-6, W and W2** (Codex's ruling on the G-6 addendum, 2026-11-02):
+   F1–F3 are implemented and reviewed before any new guard-dependent
+   session. W (`4b7450d`) was returned AMEND; W2 (`d8ec242`) answers it,
+   and Codex accepted W2 (review of `d8ec242`). That prerequisite is
+   closed. Neither clears a session by itself: each session still needs
+   its own exact-head clearance.
 1. **This plan (V2).** The questions in §12.
 2. **The implementation commit:**
    - the texts and pins, the policies and effects: BUILD-00, BUILD-00W,
@@ -1786,32 +1868,35 @@ the backup's time:
 - **on V:** C7′ and U-3 accepted; C9 accepted as bounded evidence; C12
   accepted in principle; C3′ amended by V-1 and C11 by V-2; **C10: the
   labelled smoke order is kept.**
+- **on V2** (review of `ea0c616`): **ACCEPT at plan level.**
+  - V-1 and V-2 are closed at this level. So are BUILD-00W, the data scope,
+    P1′'s result (as bounded evidence), the three sessions with B1 and B2,
+    C10, and the upload's metadata reads.
+  - **C13:** accepted with the narrow scope in §4.2.
+  - The images: two separate observations (§2.2).
+  - **V2's push was held for W2,** and went with W2's on 2026-11-03.
+- **on W2** (review of `d8ec242`): ACCEPT, with t0 kept in the sender's
+  first check. The outline's split was accepted and its decisions 5–9
+  ruled (§0.2; the outline, §5).
 
-**For Codex:**
-- **V-1, the non-public preflight** (§2.1, §2.2):
-  - BUILD-00W as the minimal W identity read before BUILD-01;
-  - the predicates, object by object;
-  - B1, which assembles BUILD-01 with the accepted facts;
-  - the event-trigger binding (part 8).
-- **V-2, the role facts** (§6.4):
-  - the reviewed rows for `anon`, `authenticated` and `service_role`;
-  - the rule for the other roles, and their literal rows bound in B1 and
-    B2;
-  - the planned tests.
-- **The data scope around P1′** (§6.4): which facts must stay equal, and
-  why `pending_jobs` alone is recorded.
-- **P1′'s result** (§6.1): the schema, the size bound and the boundaries.
-- **The order of sessions and binding commits** (§2.5, §10): three
-  rehearsal sessions and two binding commits, B1 carrying both
-  production's baseline and BUILD's accepted facts.
-- **C13. A remaining upload file** (§4.2): recorded and brought back for a
-  disposition, with no cleanup write. The plan proposes that it does not
-  hold re-opening.
+  Points for the implementation:
+  - BUILD's predicates are tested with accepted and refused local shapes,
+    reader visibility included, and with a fact that changes between
+    BUILD-00 and BUILD-01;
+  - the other roles' literal EXECUTE rows reflect inherited privileges,
+    owners and superusers under the bound memberships. The rule-checking
+    test uses the bound baseline, never memberships observed at run time;
+  - the throwaway's `orders` delta is exactly the app checks' recorded
+    orders, never a matching count alone;
+  - P1′'s test moves a required observation into the savepoint and fails;
+  - BUILD-00W has an explicit policy and effect, with statement
+    confinement. Its observed identity and authority must agree at the
+    build; a name or token class alone is no authority.
+
+**For Codex:** nothing open at plan level. V2's questions (V-1, V-2, the
+data scope, P1′'s result, the session order and C13) are ruled above. The
+implementation (§10, step 2) comes back for its own review.
 
 **For Ryan:**
 - **The date:** a Sunday, chosen with the window's clearance, and that
   Sunday's closing time.
-- **The image observation** (§2.2): you relayed one at about 16:55Z on
-  2026-10-31. This plan's working session holds a `list_projects` read
-  with the same values at 13:16:42Z that day. Is that the same
-  observation?

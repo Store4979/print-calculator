@@ -2850,6 +2850,115 @@ window.**
     message of about 11:53 EDT (15:53Z) on Fri 2026-10-30. That is after
     the item 3 phase E session, which ended about 15:41Z. It finds no new
     production deploy, and Published still `6ab020c5…` at main@7ec5af4.
+- **Codex accepted T `c62644a`, 2026-11-02**
+  (`reviews/2026-11-02-c62644a-3624efd-review.md`). The same review sends
+  U `3624efd` back for amendment (U-1 to U-5). It clears exactly one push:
+  T only, to the existing staging branch, with U and any working draft
+  left out. G-6 stays an open investigation. It does not hold this
+  docs-only push, but it does hold any new guard-dependent session.
+- **The push, Mon 2026-11-02, 16:59:17–21Z, under that clearance only:**
+  - **Before (16:58:57Z):**
+    - the remote is `github.com/Store4979/print-calculator`;
+    - T's tree was `b01d5ca2…`, the review's identity, and its parent S;
+    - S..T held exactly `c62644a`;
+    - `ls-remote` showed the branch at `04b6520aecbc597c6d963e3d7d64d58fcdcd0b7e`,
+      `main` at `7ec5af4`, and no tags.
+  - **The command:**
+    `git push origin c62644adbead14af952dfa744438e8fcd3b56727:refs/heads/security/release-2-slice-2`
+    gave `04b6520..c62644a`, exit 0, with no force and no tags.
+  - **After:** the branch is at `c62644a` and `main` is still at `7ec5af4`
+    (16:59:21Z, and again 17:04:55Z). There are no tags (both times).
+  - **Staging,** before at 16:59:07Z: deploy `6ae3db97…` at `04b6520`.
+    Polled every 20 s from the push, it was still S's at 17:02:15Z. First
+    seen at 17:02:36Z: deploy **`6ae8c169aadd439679feae9c`**, commitRef
+    `c62644a…`, built 2026-11-02T17:02:19.093Z. Its permalink reported the
+    same at 17:04:51Z, with `contextAllowed`, `flagPresent` and
+    `flagEnabled` all true. A deploy is published only when its build
+    command exits 0, and that command runs `yarn test` before `yarn build`.
+  - **Production is unchanged** at 17:02:36Z and 17:04:22Z, as it was
+    before the push (16:59:07Z). The live `index.html`, `main-DZt0oGiJ.js`
+    and `index-ftBg9V1i.js` (md5 `d67e9e91…`, `47ab9406…`, `57fb08e6…`, the
+    same files as in the records above) are byte-identical to deploy
+    `6ab020c5`'s permalink. `/.netlify/functions/deploy-context` on
+    production returns the same bytes as `index.html`.
+  - **Ryan's §12 dashboard read, read-only, nothing clicked,** done just
+    before his message, which arrived by about 13:22 EST (18:22Z) on Mon
+    2026-11-02, about 1 h 23 min after the push (the read's own time is not
+    stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above.
+- **Codex accepted W2 `d8ec242`, 2026-11-02**
+  (`reviews/2026-11-02-d8ec242-review.md`), with a conditional
+  staging-only push clearance:
+  - **the push:** exactly `d8ec2421ae55009519e935f8e24af7fe82738ddf` to
+    `refs/heads/security/release-2-slice-2`, carrying U, V, W and V2.
+    Codex had accepted V2 at plan level (review of `ea0c616`) and held its
+    push for W2;
+  - **the conditions:** the independent focused run green, and the
+    exact-W2, unhooked 14-state record replay finished with every expected
+    state green and a final exit of 0. A failure, a cancellation, a
+    missing state or an incomplete result keeps the push held;
+  - **what it clears nothing for:** a later head, tags, main, a
+    production build, an integration change, a guard-store command, a
+    token, target-add, project creation, a send, a capture, a rehearsal or
+    a window.
+- **The conditions, as met:**
+  - Codex's focused run: 122/122, exit 0. Claude's at W2 was also 122/122
+    (2026-11-03 01:26–01:30Z);
+  - the clean clone of W2 (`.review/verify-d8ec242`): install, the suite
+    546/546, the build and the manifest check, each exit 0 (01:32–01:38Z);
+  - **the replay,** `STAGE0_REPLAY_KEEP=1`, 01:38:40Z → 02:19:42Z, final
+    exit 0. Every one of its 14 states is 546/546, read from its kept TAP:
+    0 failed, cancelled, skipped or todo, and no `not ok` line
+    (`.review/verify-W2-replay-states.txt`). It ran on after the session
+    that started it ended, and its exit line was read from its own summary.
+- **Ryan's dashboard read before the push,** read-only, nothing clicked,
+  done just before his message, which arrived by about 21:14 EST
+  (02:14Z) on Mon 2026-11-02. His message called it the check after the
+  push, but the push had not been made: the branch was still at
+  `c62644a` at 02:13:58Z. It finds no new production deploy, and Published
+  still `6ab020c5…` at main@7ec5af4.
+- **The push, Tue 2026-11-03, 02:20:55–58Z (Mon 21:20 EST), under that
+  clearance only:**
+  - **Before (02:20:30Z):**
+    - the remote is `github.com/Store4979/print-calculator`;
+    - W2's tree was `67b5dfb7…`, the review's identity;
+    - T..W2 held exactly U `3624efd`, V `ed393be`, W `4b7450d`, V2
+      `ea0c616` and W2 `d8ec242`, with T an ancestor of W2;
+    - `ls-remote` showed the branch at `c62644adbead14af952dfa744438e8fcd3b56727`,
+      `main` at `7ec5af4`, and no tags.
+  - **The command:**
+    `git push origin d8ec2421ae55009519e935f8e24af7fe82738ddf:refs/heads/security/release-2-slice-2`
+    gave `c62644a..d8ec242`, exit 0, with no force and no tags. None of
+    the uncommitted plan, STATUS or push-record edits is in it.
+  - **After:** the branch is at `d8ec242` and `main` is still at `7ec5af4`
+    (02:20:58Z, and again 02:24:26Z). There are no tags (both times).
+  - **Staging,** before at 02:20:41Z: deploy `6ae8c169…` at `c62644a`.
+    Polled every 20 s from the push, it was still T's at 02:23:43Z. First
+    seen at 02:24:04Z: deploy **`6ae9450b94638bc462fdd80b`**, commitRef
+    `d8ec242…`, built 2026-11-03T02:23:50.893Z. Its permalink reported the
+    same at 02:24:26Z, context `production`, with `contextAllowed`,
+    `flagPresent` and `flagEnabled` all true. A deploy is published only
+    when its build command exits 0, and that command runs `yarn test`
+    before `yarn build`.
+  - **Production is unchanged** at 02:24:27Z, as it was before the push
+    (02:20:41Z). The live `index.html`, `main-DZt0oGiJ.js` and
+    `index-ftBg9V1i.js` (md5 `d67e9e91…`, `47ab9406…`, `57fb08e6…`, the
+    same files as in the records above) are byte-identical to deploy
+    `6ab020c5`'s permalink. `/.netlify/functions/deploy-context` on
+    production returns the same bytes as `index.html`.
+  - **Ryan's §12 dashboard read after the push,** read-only, nothing
+    clicked, done just before his message, which arrived by about
+    21:30 EST (02:30Z) on Mon 2026-11-02, about 10 min after the push and
+    6 min after staging published W2 (the read's own time is not stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
+
+    It agrees with the live-site checks above.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 
