@@ -14,7 +14,9 @@
 //
 // THE STORE (I6-R1). The records live in one per-user directory outside every
 // checkout (~/.stage0-guard). It exists only once `stage0-go.mjs init` has
-// made it: no other command creates it, or any directory in it. Its identity
+// made it: no other command creates it. Only `target add` and `target retire`
+// create a directory in it (targets/, journal/<ref>/, targets/retired/), each
+// recorded in the ledger. Its identity
 // (store.json) is recorded in the repository (ANCHOR_PATH) in a reviewed
 // commit, and every live command refuses unless the store here is that one.
 // So a lost or replaced store is not a fresh start: `init` refuses while the
@@ -39,7 +41,18 @@
 //                          a voided one to gos/void/;
 //   journal/<ref>/         the claim of each admitted send, written before any
 //                          request can be made, then its outcome and any
-//                          disposition.
+//                          disposition;
+//   targets/<ref>.json     an added target (item 4(c) §2.3: the rehearsal
+//                          project), bound to its review file; a retired one
+//                          moves to targets/retired/.
+// THE REFS. production and staging are the store's own (store.json, as the
+// anchor records them; they never change). A third ref is used only once
+// `stage0-go.mjs target add` has added it, under a name the manifest binds to
+// it, after its own reviewed commit and clearance; at most one is active at
+// a time. `target retire` ends it: from then on every command refuses that
+// ref, by any name (activeRef), and a retired ref is never added again.
+// Retiring refuses while anything of the ref is live, pending or held, and
+// moves nothing but its target record.
 // storeCheck() replays the ledger and requires every file it names to exist
 // with its recorded sha256 where its lifecycle puts it, every file present to
 // be one it names, and every claim, outcome and disposition to belong to a go,
@@ -98,7 +111,7 @@
 //     controls for that.
 import { execFileSync } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync, openSync, writeSync, fsyncSync, closeSync, readdirSync, renameSync, unlinkSync, mkdirSync, existsSync, statSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, openSync, writeSync, fsyncSync, closeSync, readdirSync, renameSync, unlinkSync, mkdirSync, rmdirSync, existsSync, statSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix } from "node:path";
 import * as A from "./assemble-stage0.mjs";
@@ -202,6 +215,8 @@ const REQUEST_SPEC = { md5: hex(32), bytes: isPos, readOnly: isBool, endpoint: i
 const isRequest = (v) => shapeProblems(v, REQUEST_SPEC, "request").length === 0;
 const isReviewed = (v) => v === null || shapeProblems(v, { path: isStr(1024), sha256: isSha }, "reviewed").length === 0;
 const isRefs = (v) => sameKeys(v, ["production", "staging"]) && isRef(v.production) && isRef(v.staging);
+/** The name of an added target (stage0-go.mjs target add): never production or staging, which are the store's own refs. */
+const isTargetName = (v) => typeof v === "string" && /^[a-z][a-z0-9-]{0,39}$/.test(v) && v !== "production" && v !== "staging";
 const isPredecessor = (v) => v === null || (shapeProblems(v, { storeId: isId, reviewed: (r) => r !== null && isReviewed(r) }, "predecessor").length === 0);
 
 export const STORE_SPEC = { schema: (v) => v === "stage0-store/1", storeId: isId, createdAt: isUtc, refs: isRefs, predecessor: isPredecessor };
@@ -241,6 +256,8 @@ export const OUTCOME_SPEC = {
   },
 };
 export const DISPOSITION_SPEC = { schema: (v) => v === "stage0-disposition/1", attemptId: isId, reviewed: (v) => v !== null && isReviewed(v), recordedAt: isUtc };
+/** An added target's record, targets/<ref>.json, moved to targets/retired/ when the ref is retired. */
+export const TARGET_SPEC = { schema: (v) => v === "stage0-target/1", target: isTargetName, ref: isRef, addedAt: isUtc, reviewed: (v) => v !== null && isReviewed(v) };
 const CLOCK_SPEC = {
   schema: (v) => v === "stage0-clock/1", at: isUtc, reference: (v) => v === CLOCK.reference, offsetsMs: (v) => Array.isArray(v) && v.length === CLOCK.samples && v.every(Number.isSafeInteger),
   maxAbsOffsetMs: isInt, toleranceMs: (v) => v === CLOCK.toleranceMs, source: isStr(120), lastSync: isStr(120), leap: isStr(120),
@@ -263,6 +280,8 @@ const EVENT_SPECS = {
   claim: { attemptId: isId, goId: isId, ref: isRef, claimSeq: isPos, sha256: isSha },
   outcome: { attemptId: isId, state: (v) => v === "NOT_SENT" || v === "DISPATCHED", sha256: isSha },
   disposition: { attemptId: isId, sha256: isSha },
+  "target-add": { target: isTargetName, ref: isRef, sha256: isSha, reviewedSha256: isSha },
+  "target-retire": { target: isTargetName, ref: isRef, reviewedSha256: isSha },
 };
 const LINE_SPEC = { seq: isPos, prev: isSha, at: isUtc, kind: (v) => typeof v === "string" && own(EVENT_SPECS, v) };
 const ZERO = "0".repeat(64);
@@ -286,6 +305,8 @@ export function statePaths(dir) {
     voided: join(dir, "gos", "void"),
     journalRoot: join(dir, "journal"),
     journal: (ref) => join(dir, "journal", ref),
+    targets: join(dir, "targets"),
+    retired: join(dir, "targets", "retired"),
   };
 }
 const SUBDIRS = (p, refs) => [p.clockLog, p.phases, p.approvals, p.markers, p.closed, p.gos, p.used, p.voided, p.journalRoot, ...refs.map((r) => p.journal(r))];
@@ -492,6 +513,7 @@ function logged(paths, chk, kind, fields, steps, now) {
 }
 const fileStep = (file, value) => [() => writeOnce(file, value), () => unlinkSync(file)];
 const moveStep = (from, to) => [() => renameSync(from, to), () => renameSync(to, from)];
+const dirStep = (dir) => [() => mkdirSync(dir), () => rmdirSync(dir)];
 
 /**
  * The store, checked against its ledger (I6-R1). Returns { ok, problems,
@@ -504,11 +526,19 @@ const moveStep = (from, to) => [() => renameSync(from, to), () => renameSync(to,
  * where its lifecycle puts it, with the recorded sha256 and the ids the
  * event names; and no file is present that no event names. A disposition
  * releases a hold; it never excuses a problem found here.
+ *
+ * The store's refs are production and staging (store.json, as the anchor
+ * records them), plus any ref a target-add event added. An added ref is
+ * active from its target-add to its target-retire; any other event for it
+ * outside that span, a second add of a ref, a second active target at once,
+ * and an add of production's or staging's ref are problems. Its journal
+ * directory, targets/ and targets/retired/ exist exactly when the ledger
+ * says so. A store with no target events is checked exactly as before.
  */
 export function storeCheck({ paths, anchor, manifest }) {
   const problems = [];
   const say = (s) => problems.push(s);
-  const index = { drafts: new Map(), phases: new Map(), approvals: new Map(), markers: new Map(), gos: new Map(), claims: new Map(), outcomes: new Map(), dispositions: new Map(), clocks: [], claimSeq: {} };
+  const index = { drafts: new Map(), phases: new Map(), approvals: new Map(), markers: new Map(), gos: new Map(), claims: new Map(), outcomes: new Map(), dispositions: new Map(), clocks: [], claimSeq: {}, targets: new Map() };
   const result = (store, L) => ({ ok: problems.length === 0, problems, store, seq: L ? L.seq : 0, tail: L ? L.tail : ZERO, index });
   if (!isDir(paths.dir)) { say(`no guard store at ${paths.dir}: it was never made here (stage0-go.mjs init), or it is lost`); return result(null, null); }
   let store = null;
@@ -518,11 +548,19 @@ export function storeCheck({ paths, anchor, manifest }) {
   if (!anchor) say(`the repository records no established store at HEAD (${ANCHOR_PATH})`);
   else if (JSON.stringify(anchorFor(store)) !== JSON.stringify(anchor)) say(`the store here (${store.storeId}) is not the one the repository records (${anchor.storeId})`);
   if (manifest && (store.refs.production !== manifest.send.targets.production || store.refs.staging !== manifest.send.targets.staging)) say("the store's refs are not the manifest's");
-  const refs = [store.refs.production, store.refs.staging];
-  for (const d of SUBDIRS(paths, refs)) if (!isDir(d)) say(`${d.slice(paths.dir.length + 1)} is missing or not a directory`);
+  const base = [store.refs.production, store.refs.staging];
+  for (const d of SUBDIRS(paths, base)) if (!isDir(d)) say(`${d.slice(paths.dir.length + 1)} is missing or not a directory`);
   const L = readLedger(paths);
   problems.push(...L.problems);
   if (problems.length) return result(store, L);
+  const added = [...new Set(L.events.filter((e) => e.kind === "target-add" && !base.includes(e.ref)).map((e) => e.ref))];
+  const anyAdd = L.events.some((e) => e.kind === "target-add");
+  const anyRetire = L.events.some((e) => e.kind === "target-retire");
+  for (const r of added) if (!isDir(paths.journal(r))) say(`journal/${r} is missing or not a directory`);
+  if (anyAdd && !isDir(paths.targets)) say("targets is missing or not a directory");
+  if (anyRetire && !isDir(paths.retired)) say("targets/retired is missing or not a directory");
+  if (problems.length) return result(store, L);
+  const refs = [...base, ...added];
   const ev0 = L.events[0];
   if (ev0.kind !== "init" || ev0.storeId !== store.storeId) say("the ledger does not start with this store's init");
 
@@ -536,10 +574,31 @@ export function storeCheck({ paths, anchor, manifest }) {
     for (const [k, x] of Object.entries(fields)) if (!bad.length && v[k] !== x) bad.push(`${label}.${k} is not the ledger's`);
     return bad;
   };
+  const activeAt = (r) => base.includes(r) || (index.targets.has(r) && index.targets.get(r).retired === null);
+  const notActive = (r) => (index.targets.has(r) ? `ref ${r} was retired at ledger line ${index.targets.get(r).retired + 1}` : `ref ${r} is not this store's`);
   for (const [i, ev] of L.events.entries()) {
     if (i === 0) continue;
+    if (ev.kind === "target-add") {
+      const prior = index.targets.get(ev.ref);
+      if (base.includes(ev.ref)) { rel(i, `target ${ev.target} adds ${ev.ref}, one of the store's own refs`); continue; }
+      if (prior) { rel(i, `ref ${ev.ref} was already added at ledger line ${prior.added + 1}: a ref is added once, and a retired one never comes back`); continue; }
+      const live = [...index.targets.values()].find((t) => t.retired === null);
+      if (live) rel(i, `target ${ev.target} is added while ${live.target} (${live.ref}) is active`);
+      index.targets.set(ev.ref, { target: ev.target, ref: ev.ref, added: i, retired: null, ev });
+      want(join(paths.targets, `${ev.ref}.json`), ev.sha256, idsMatch(TARGET_SPEC, { target: ev.target, ref: ev.ref }, `target ${ev.ref}`));
+      continue;
+    }
+    if (ev.kind === "target-retire") {
+      const t = index.targets.get(ev.ref);
+      if (!t || t.retired !== null || t.target !== ev.target) { rel(i, `target ${ev.target} (${ev.ref}) is retired but is not an active target`); continue; }
+      t.retired = i;
+      const e = expect.get(join(paths.targets, `${ev.ref}.json`));
+      del(join(paths.targets, `${ev.ref}.json`));
+      want(join(paths.retired, `${ev.ref}.json`), e.sha, e.check);
+      continue;
+    }
     const ref = ev.ref;
-    if (ref !== undefined && !refs.includes(ref)) { rel(i, `ref ${ref} is not this store's`); continue; }
+    if (ref !== undefined && !activeAt(ref)) { rel(i, notActive(ref)); continue; }
     switch (ev.kind) {
       case "init": rel(i, "a second init"); break;
       case "clock":
@@ -616,6 +675,7 @@ export function storeCheck({ paths, anchor, manifest }) {
         if (map.has(ev.attemptId)) rel(i, `a second ${ev.kind} for attempt ${ev.attemptId}`);
         map.set(ev.attemptId, ev);
         const cref = c.ev.ref;
+        if (!activeAt(cref)) rel(i, `${ev.kind} for attempt ${ev.attemptId}: ${notActive(cref)}`);
         const spec = ev.kind === "outcome" ? OUTCOME_SPEC[ev.state] : DISPOSITION_SPEC;
         want(join(paths.journal(cref), `${ev.attemptId}.${ev.kind}.json`), ev.sha256, (v) => {
           const bad = shapeProblems(v, spec, `${ev.kind} ${ev.attemptId}`);
@@ -642,12 +702,13 @@ export function storeCheck({ paths, anchor, manifest }) {
     }
   }
   const listing = (dir, skip = []) => { try { return readdirSync(dir).filter((n) => !skip.includes(n)); } catch { say(`${dir.slice(paths.dir.length + 1)} cannot be listed`); return []; } };
-  for (const [dir, skip] of [[paths.clockLog, []], [paths.phases, []], [paths.approvals, []], [paths.markers, ["closed"]], [paths.closed, []], [paths.gos, ["used", "void"]], [paths.used, []], [paths.voided, []], ...refs.map((r) => [paths.journal(r), []])]) {
+  const targetDirs = anyAdd ? [[paths.targets, anyRetire ? ["retired"] : []], ...(anyRetire ? [[paths.retired, []]] : [])] : [];
+  for (const [dir, skip] of [[paths.clockLog, []], [paths.phases, []], [paths.approvals, []], [paths.markers, ["closed"]], [paths.closed, []], [paths.gos, ["used", "void"]], [paths.used, []], [paths.voided, []], ...refs.map((r) => [paths.journal(r), []]), ...targetDirs]) {
     for (const n of listing(dir, skip)) if (!expect.has(join(dir, n))) say(`${join(dir, n).slice(paths.dir.length + 1)} is present, but the ledger does not record it`);
   }
   for (const n of listing(paths.journalRoot)) if (!refs.includes(n)) say(`journal/${n} is not one of the store's refs`);
   for (const n of listing(paths.dir)) {
-    if (["store.json", "ledger.jsonl", "hwm.json", "lock", "clock", "phases", "approvals", "markers", "gos", "journal"].includes(n) || /^hwm\.json\.[0-9]+\.tmp$/.test(n)) continue;
+    if (["store.json", "ledger.jsonl", "hwm.json", "lock", "clock", "phases", "approvals", "markers", "gos", "journal"].includes(n) || (n === "targets" && anyAdd) || /^hwm\.json\.[0-9]+\.tmp$/.test(n)) continue;
     say(`${n} is present in the store, but is not one of its files`);
   }
   return result(store, L);
@@ -661,6 +722,30 @@ export function requireStore({ paths, anchor, manifest }) {
     throw new Refusal(`the guard store is DAMAGED or not the established one: ${list}. Nothing is registered, issued or sent until a reviewed restoration; refusing`);
   }
   return chk;
+}
+
+/**
+ * The ref of `target` that a live command may use, from a checked store
+ * (`chk`, under the store lock) and the manifest. Production and staging are
+ * the store's own refs. Any other target must be active in the store: added
+ * by a target-add under that same name and that same ref, and not retired.
+ * Refuses otherwise: a target the manifest does not name, a ref the store
+ * never added, a retired ref (never back, by any name, through any old
+ * phase, marker or go), and an added ref under another name.
+ */
+export function activeRef(chk, manifest, target) {
+  const targets = manifest && manifest.send && isObj(manifest.send.targets) ? manifest.send.targets : {};
+  const ref = typeof target === "string" && own(targets, target) ? targets[target] : null;
+  if (!isRef(ref)) throw new Refusal(`the manifest has no ref for ${typeof target === "string" ? target.slice(0, 40) : "that target"}; refusing`);
+  if (target === "production" || target === "staging") {
+    if (chk.store.refs[target] !== ref) throw new Refusal(`the manifest's ${target} ref is not the store's; refusing`);
+    return ref;
+  }
+  const t = chk.index.targets.get(ref);
+  if (!t) throw new Refusal(`target ${target} (${ref}) was never added to this guard store; it is added only by stage0-go.mjs target add, under its own clearance; refusing`);
+  if (t.retired !== null) throw new Refusal(`target ${t.target} (${ref}) was retired at ledger line ${t.retired + 1}; a retired ref never comes back; refusing`);
+  if (t.target !== target) throw new Refusal(`${ref} was added as target ${t.target}, not ${target.slice(0, 40)}; refusing`);
+  return ref;
 }
 
 // ── the policy's window roles (Q2) ──────────────────────────────────────────
@@ -1075,10 +1160,10 @@ export function draftApproval({ paths, anchor, manifest, workflows = WORKFLOWS, 
   if (!wf || !own(wf.phases, phase)) throw new Refusal(`no reviewed workflow phase ${JSON.stringify(`${String(workflow).slice(0, 20)} ${String(phase).slice(0, 20)}`)} is declared; refusing`);
   ceilingReserve(wf, phase);
   const legacy = isLegacyPhase(wf, phase);
-  const ref = manifest.send.targets[wf.target];
   return withLock(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
     checkClock(paths, now, chk);
+    const ref = activeRef(chk, manifest, wf.target);
     const dl = legacy ? null : utcMs(deadline);
     if (legacy && deadline !== null) throw new Refusal(`capture phase ${phase} keeps its legacy go line; it is drafted without a deadline; refusing`);
     if (!legacy && (dl === null || dl % 60000 !== 0)) throw new Refusal("this phase is drafted with its deadline, a whole-minute UTC time, YYYY-MM-DDTHH:MM:00.000Z (--deadline); refusing");
@@ -1127,7 +1212,6 @@ export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, wo
   const ids = [...goText.matchAll(APPROVAL_IN_TEXT)].map((m) => m[1]);
   if (ids.length !== 1) throw new Refusal(`the go text must carry exactly one "approval <16 hex>" (it carries ${ids.length}); refusing`);
   const approvalId = ids[0];
-  const ref = manifest.send.targets[wf.target];
   return withLock(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
     if (chk.index.approvals.has(approvalId)) {
@@ -1137,10 +1221,10 @@ export function recordPhase({ paths, anchor, manifest, workflows = WORKFLOWS, wo
       return { phase: existing.phase, existing: true };
     }
     checkClock(paths, now, chk);
+    const ref = activeRef(chk, manifest, wf.target);
     const draft = chk.index.drafts.get(approvalId);
     if (!draft) throw new Refusal(`approval ${approvalId} was never drafted in this store; refusing`);
     if (draft.workflow !== workflow || draft.phase !== phase || draft.ref !== ref || draft.head !== head) throw new Refusal(`approval ${approvalId} was drafted for ${draft.workflow} ${draft.phase} at ${draft.head.slice(0, 7)} on ${draft.ref}; refusing`);
-    if (!isRef(ref)) throw new Refusal(`the manifest has no ref for ${wf.target}; refusing`);
     const arrived = utcMs(arrivedAt);
     const dl = utcMs(deadline);
     if (arrived === null || dl === null) throw new Refusal("the arrival and the deadline must be UTC times, YYYY-MM-DDTHH:MM:SS.sssZ; refusing");
@@ -1227,6 +1311,7 @@ export function openMarker({ paths, anchor, manifest, phaseId, role, env, head, 
     checkClock(paths, now, chk);
     const { phase, sha } = loadPhase(paths, phaseId);
     if (phase.head !== head || phase.checkout !== checkout) throw new Refusal(`phase ${phaseId} was recorded for ${phase.head.slice(0, 7)} in ${phase.checkout}; this is ${head.slice(0, 7)} in ${checkout}; refusing`);
+    if (activeRef(chk, manifest, phase.target) !== phase.ref) throw new Refusal(`phase ${phaseId}'s ref ${phase.ref} is not the manifest's ${phase.target} ref; refusing`);
     if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
     if (now >= utcMs(phase.deadline)) throw new Refusal(`phase ${phase.phase}'s deadline ${phase.deadline} has passed; refusing`);
     const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
@@ -1560,6 +1645,7 @@ export function issueGo({ paths, anchor, manifest, phaseId, step, head, checkout
     checkClock(paths, now, chk);
     const { phase, sha } = loadPhase(paths, phaseId);
     if (phase.head !== head || phase.checkout !== checkout) throw new Refusal(`phase ${phaseId} was recorded for ${phase.head.slice(0, 7)} in ${phase.checkout}; refusing`);
+    if (activeRef(chk, manifest, phase.target) !== phase.ref) throw new Refusal(`phase ${phaseId}'s ref ${phase.ref} is not the manifest's ${phase.target} ref; refusing`);
     if (!(utcMs(phase.recordedAt) <= now)) throw new Refusal("the phase is recorded later than now: the clock went back; refusing");
     const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
     if (!wf || !phase.steps.includes(step)) throw new Refusal(`phase ${phase.phase} has no step ${isName(step) ? step : "of that name"}; refusing`);
@@ -1636,6 +1722,105 @@ export function dispose({ paths, anchor, manifest, ref, attemptId, reviewedPath,
   }, now);
 }
 
+// ── added targets (item 4(c) plan §2.3; X1) ─────────────────────────────────
+
+/** The review file must be bytes naming both the target and its ref. */
+function reviewNames(reviewedBytes, target, ref) {
+  if (!Buffer.isBuffer(reviewedBytes)) return false;
+  const s = reviewedBytes.toString("utf8");
+  return s.includes(target) && s.includes(ref);
+}
+
+/**
+ * Add a target to the store (stage0-go.mjs target add): the rehearsal
+ * project of item 4(c) §2.3, after the reviewed commit that binds its ref,
+ * and under its own clearance. Refuses unless:
+ *   - `target` is a lower-case name other than production and staging;
+ *   - the manifest names exactly `ref` for it;
+ *   - the review file names both;
+ *   - the store passes storeCheck;
+ *   - the ref is neither production's nor staging's, and was never added
+ *     before (so a retired ref never comes back);
+ *   - no other added target is active.
+ * Under the store lock it makes targets/ (if absent) and the ref's journal
+ * directory, writes targets/<ref>.json with the review file's path and
+ * sha256, and records target-add. A failure before the ledger line undoes
+ * them. store.json, the anchor and every other record are left as they are.
+ */
+export function addTarget({ paths, anchor, manifest, target, ref, reviewedPath, reviewedBytes, now }) {
+  if (!isTargetName(target)) throw new Refusal("an added target has a lower-case name other than production and staging, which are the store's own refs; refusing");
+  if (!isRef(ref)) throw new Refusal("the ref is a project ref of 20 lower-case letters; refusing");
+  const named = manifest && manifest.send && isObj(manifest.send.targets) && own(manifest.send.targets, target) ? manifest.send.targets[target] : null;
+  if (named !== ref) throw new Refusal(`the manifest does not name ${ref} as target ${target}: a target is added only after the reviewed commit that binds its ref; refusing`);
+  if (!reviewNames(reviewedBytes, target, ref)) throw new Refusal("the review file does not name the target and its ref; refusing");
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    if (ref === chk.store.refs.production || ref === chk.store.refs.staging) throw new Refusal(`${ref} is one of the store's own refs; refusing`);
+    const prior = chk.index.targets.get(ref);
+    if (prior) throw new Refusal(prior.retired !== null ? `${ref} was retired at ledger line ${prior.retired + 1}; a retired ref never comes back; refusing` : `${ref} is already active as target ${prior.target}; refusing`);
+    const live = [...chk.index.targets.values()].find((t) => t.retired === null);
+    if (live) throw new Refusal(`target ${live.target} (${live.ref}) is active; at most one added target is active, so it is retired first; refusing`);
+    const rec = { schema: "stage0-target/1", target, ref, addedAt: iso(now), reviewed: { path: reviewedPath, sha256: sha256(reviewedBytes) } };
+    const bad = shapeProblems(rec, TARGET_SPEC, "the target");
+    if (bad.length) throw new Refusal(`${bad.join("; ")}; refusing`);
+    const text = JSON.stringify(rec, null, 2) + "\n";
+    logged(paths, chk, "target-add", { target, ref, sha256: sha256(Buffer.from(text, "utf8")), reviewedSha256: rec.reviewed.sha256 }, [
+      ...(isDir(paths.targets) ? [] : [dirStep(paths.targets)]),
+      dirStep(paths.journal(ref)),
+      fileStep(join(paths.targets, `${ref}.json`), text),
+    ], now);
+    return rec;
+  }, now);
+}
+
+/**
+ * Retire an added target (stage0-go.mjs target retire), after the rehearsal
+ * and its record, before the production window is cleared. Refuses unless
+ * the target is active under that name and ref, the review file names both,
+ * and nothing of the ref is live, pending or held:
+ *   - no attempt in its journal is PENDING or HOLD (holdsOf);
+ *   - no live go is before its deadline;
+ *   - no open marker is before its end;
+ *   - no phase is before its deadline.
+ * Under the store lock it moves targets/<ref>.json to targets/retired/
+ * (made if absent) and records target-retire. Nothing else moves: the ref's
+ * journal, phases, markers and gos stay, as evidence. From then on every
+ * command refuses the ref (activeRef), storeCheck reads any later event for
+ * it as damage, and addTarget never adds it again.
+ */
+export function retireTarget({ paths, anchor, manifest, target, ref, reviewedPath, reviewedBytes, now, readReceipt = RECEIPT_READER, ctxAt }) {
+  if (!isTargetName(target) || !isRef(ref)) throw new Refusal("retire names an added target and its 20-letter ref; refusing");
+  if (!reviewNames(reviewedBytes, target, ref)) throw new Refusal("the review file does not name the target and its ref; refusing");
+  if (!isStr(1024)(reviewedPath)) throw new Refusal("the review file's path is missing; refusing");
+  return withLock(paths, () => {
+    const chk = requireStore({ paths, anchor, manifest });
+    const t = chk.index.targets.get(ref);
+    if (!t || t.retired !== null || t.target !== target) throw new Refusal(`${ref} is not an active target named ${target}; refusing`);
+    const holds = holdsOf(readJournal(paths, ref), { readReceipt, ctxAt });
+    if (holds.length) throw new Refusal(`${heldMessage(holds)}. A held or pending attempt is disposed of, under review, before its ref is retired; refusing`);
+    for (const [goId, g] of chk.index.gos) {
+      if (g.state !== "live" || g.ev.ref !== ref) continue;
+      const live = readGo(paths, goId);
+      if (now < utcMs(live.deadline)) throw new Refusal(`go ${goId} (${live.step}) is live until ${live.deadline}; refusing`);
+    }
+    for (const [markerId, m] of chk.index.markers) {
+      if (!m.open || m.ev.ref !== ref) continue;
+      const mk = readState(join(paths.markers, `${markerId}.json`));
+      if (now < utcMs(mk.until)) throw new Refusal(`marker ${markerId} (${mk.role}) is open until ${mk.until}; close its window first; refusing`);
+    }
+    for (const [phaseId, p] of chk.index.phases) {
+      if (p.ref !== ref) continue;
+      const { phase } = loadPhase(paths, phaseId);
+      if (now < utcMs(phase.deadline)) throw new Refusal(`phase ${phaseId} (${phase.phase}) runs until ${phase.deadline}; refusing`);
+    }
+    logged(paths, chk, "target-retire", { target, ref, reviewedSha256: sha256(reviewedBytes) }, [
+      ...(isDir(paths.retired) ? [] : [dirStep(paths.retired)]),
+      moveStep(join(paths.targets, `${ref}.json`), join(paths.retired, `${ref}.json`)),
+    ], now);
+    return { target, ref, retiredAt: iso(now), reviewed: { path: reviewedPath, sha256: sha256(reviewedBytes) } };
+  }, now);
+}
+
 // ── admission and the send (SG-1 to SG-5) ───────────────────────────────────
 
 /**
@@ -1681,9 +1866,10 @@ export async function guardedSend(o) {
   const snap = readSnapshot(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
     checkClock(paths, t0, chk);
-    return { chk, markers: settle(() => readMarkers(paths)), go: settle(() => { const g = readGo(paths, goId); return { g, phase: settle(() => loadPhase(paths, g.phaseId)) }; }) };
+    return { chk, target: settle(() => activeRef(chk, manifest, plan.target)), markers: settle(() => readMarkers(paths)), go: settle(() => { const g = readGo(paths, goId); return { g, phase: settle(() => loadPhase(paths, g.phaseId)) }; }) };
   }, () => t0, o.lockWaitMs ?? LOCK_WAIT_MS, "the send's first check");
   const chk0 = snap.chk;
+  if (taken(snap.target) !== plan.ref) throw new Refusal(`${plan.target}'s ref in the manifest is not this send's ${plan.ref}; refusing`);
   const nonce = sessionOf(env);
   const sid = sessionIdOf(nonce);
   const mine = taken(snap.markers).filter((e) => !e.marker || e.marker.sessionId === sid);
@@ -1725,6 +1911,7 @@ export async function guardedSend(o) {
     const t1 = now();
     const chk = requireStore({ paths, anchor, manifest });
     const entries = readJournal(paths, plan.ref);
+    if (activeRef(chk, manifest, plan.target) !== plan.ref) throw new Refusal(`${plan.target}'s ref in the manifest is not this send's ${plan.ref}; refusing`);
     const holds = holdsOf(entries, { readReceipt, ctxAt });
     if (holds.length) throw new Refusal(`${heldMessage(holds)}; refusing`);
     const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now: t1 });
@@ -1785,7 +1972,8 @@ export async function guardedSend(o) {
  * taking and releasing the store lock: the store check, the holds, the
  * attempts, the gos and the markers come from one snapshot under that lock
  * (readSnapshot), as they were at that moment. Three answers:
- *   - intact: the snapshot, with its holds;
+ *   - intact: the snapshot, with its holds (and, once a target was ever
+ *     added, every added target and whether it is active or retired);
  *   - DAMAGED (intact false): the store fails storeCheck under the lock, or
  *     there is no store. The problems are listed, and no holds list: an
  *     empty list would claim a history that is not known to be intact;
@@ -1817,6 +2005,7 @@ export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECE
         attempts: entries.map((e) => ({ attemptId: e.attemptId, seq: e.claim && e.claim.seq, step: e.claim && e.claim.step, state: e.outcome ? e.outcome.state : e.claim ? "PENDING" : "MALFORMED", disposed: Boolean(e.disposition) })),
         gos,
         markers: readMarkers(paths).map((e) => (e.marker ? { markerId: e.marker.markerId, role: e.marker.role, phaseId: e.marker.phaseId, until: e.marker.until, ref: e.marker.ref } : { malformed: e.problems[0] })),
+        ...(chk.index.targets.size ? { targets: [...chk.index.targets.values()].map((x) => ({ target: x.target, ref: x.ref, state: x.retired === null ? "active" : "retired" })) } : {}),
       };
     }, clock, lockWaitMs, "the status");
   } catch (e) {

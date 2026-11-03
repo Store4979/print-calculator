@@ -85,7 +85,7 @@ const ceilingIn = (phase, step) => (Object.hasOwn(phase.ceilings, step) ? phase.
  * process), with the anchor the repository would record for it. `identity`
  * replaces the injected shell processes. Call cleanup() when done.
  */
-export function fixture({ workflows = {}, t0 = T0, attach = null, identity = null, init = true } = {}) {
+export function fixture({ workflows = {}, t0 = T0, attach = null, identity = null, init = true, manifest: MF = M, ctxAt = null } = {}) {
   const dir = attach ? null : mkdtempSync(join(tmpdir(), "s0-guard-"));
   const stateDir = attach ? attach.stateDir : join(dir, "state");
   const paths = G.statePaths(stateDir);
@@ -101,9 +101,9 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
     add: (ms) => { t += ms; },
     identity: identity || ((pid) => shells.get(pid) ?? null),
     git: () => ({ head: HEAD, dirty: [] }),
-    ctxAt: () => ctx(),
+    ctxAt: ctxAt || (() => ctx()),
     init() {
-      const store = G.initStore({ paths, manifest: M, anchor: null, now: t });
+      const store = G.initStore({ paths, manifest: MF, anchor: null, now: t });
       fx.anchor = G.anchorFor(store);
       return store;
     },
@@ -112,18 +112,18 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
       return pid;
     },
     clock(offsets = ["+00.0100000", "+00.0110000", "-00.0090000"]) {
-      return G.recordClock({ paths, anchor: fx.anchor, manifest: M, measurement: { status: "Leap Indicator: 0(no warning)\nLast Successful Sync Time: 10/28/2026 9:00:00 AM\nSource: time.windows.com,0x9\n", stripchart: offsets.map((o, i) => `10:00:0${i}, ${o}s`).join("\n") + "\n" }, now: t });
+      return G.recordClock({ paths, anchor: fx.anchor, manifest: MF, measurement: { status: "Leap Indicator: 0(no warning)\nLast Successful Sync Time: 10/28/2026 9:00:00 AM\nSource: time.windows.com,0x9\n", stripchart: offsets.map((o, i) => `10:00:0${i}, ${o}s`).join("\n") + "\n" }, now: t });
     },
-    check: () => G.storeCheck({ paths, anchor: fx.anchor, manifest: M }),
+    check: () => G.storeCheck({ paths, anchor: fx.anchor, manifest: MF }),
     /** Draft an approval id; a phase that declares ceilings is drafted with its deadline (default: 45 min ahead, to the minute). */
     draft(workflow, phase, deadline = Math.floor((t + 45 * 60000) / 60000) * 60000) {
       const legacy = G.isLegacyPhase(all()[workflow], phase);
-      return G.draftApproval({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, head: HEAD, deadline: legacy ? null : G.iso(deadline), now: t }).approvalId;
+      return G.draftApproval({ paths, anchor: fx.anchor, manifest: MF, workflows: all(), workflow, phase, head: HEAD, deadline: legacy ? null : G.iso(deadline), now: t }).approvalId;
     },
     /** Ryan's go line: goLine() for a phase that declares ceilings, the old hand-written form for a legacy capture phase. */
     goText(workflow, phase, deadline, approvalId) {
       const wf = all()[workflow];
-      const ref = M.send.targets[wf.target];
+      const ref = MF.send.targets[wf.target];
       if (G.isLegacyPhase(wf, phase)) return `GO phase ${phase} at X ${HEAD.slice(0, 7)}, approval ${approvalId}: steps ${wf.phases[phase].steps.join(", ")} to ${wf.target} ${ref} only. Deadline ${G.iso(deadline).slice(0, 16).replace("T", " ")} UTC.`;
       return G.goLine({ workflow, phase, approvalId, head: HEAD, target: wf.target, ref, steps: wf.phases[phase].steps, ceilings: G.stepCeilings(wf, phase, deadline), deadline });
     },
@@ -132,7 +132,7 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
       const dl = deadline ?? Math.floor((t + minutes * 60000) / 60000) * 60000;
       const id = approvalId ?? (goText === null ? fx.draft(workflow, phase, dl) : null);
       const text = goText ?? fx.goText(workflow, phase, dl, id);
-      const r = guard.recordPhase({ paths, anchor: fx.anchor, manifest: M, workflows: all(), workflow, phase, goText: text, arrivedAt: arrivedAt ?? G.iso(t), deadline: G.iso(dl), reviewed, head: HEAD, checkout: ROOT, now: t });
+      const r = guard.recordPhase({ paths, anchor: fx.anchor, manifest: MF, workflows: all(), workflow, phase, goText: text, arrivedAt: arrivedAt ?? G.iso(t), deadline: G.iso(dl), reviewed, head: HEAD, checkout: ROOT, now: t });
       return { ...r, goText: text, approvalId: id };
     },
     phase(workflow, phase, opts = {}) { return fx.register(workflow, phase, opts).phase; },
@@ -140,7 +140,7 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
     window(role, phaseId, { pid, n = pid, token = TOKEN } = {}) {
       fx.shell(pid);
       const env = { [G.SESSION_ENV]: nonce(n), [G.TOKEN_ENV]: token };
-      const r = G.openMarker({ paths, anchor: fx.anchor, manifest: M, phaseId, role, env, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, ppid: pid, selfStartMs: t, workflows: all() });
+      const r = G.openMarker({ paths, anchor: fx.anchor, manifest: MF, phaseId, role, env, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, ppid: pid, selfStartMs: t, workflows: all() });
       return { env, pid, marker: r.marker };
     },
     /**
@@ -156,17 +156,17 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
         try {
           const { phase } = G.loadPhase(paths, phaseId);
           if (phase.target === "production") {
-            const role = G.roleOf(M, all()[phase.workflow].stepText(step));
+            const role = G.roleOf(MF, all()[phase.workflow].stepText(step));
             const ends = readdirSync(paths.markers).filter((f) => f.endsWith(".json")).map((f) => G.readState(join(paths.markers, f))).filter((m) => m.phaseId === phaseId && m.role === role).map((m) => G.utcMs(m.until));
             na = Math.min(G.utcMs(phase.ceilings[step]), ...ends);
           }
         } catch { na = null; }
       }
-      return guard.issueGo({ paths, anchor: fx.anchor, manifest: M, phaseId, step, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, workflows: all(), ctxAt: fx.ctxAt, planFor: (text, target) => S.planSend(M, text, target, { cwd: ROOT }), notAfter: Number.isFinite(na) ? na : null });
+      return guard.issueGo({ paths, anchor: fx.anchor, manifest: MF, phaseId, step, head: HEAD, checkout: ROOT, now: t, identity: fx.identity, workflows: all(), ctxAt: fx.ctxAt, planFor: (text, target) => S.planSend(MF, text, target, { cwd: ROOT }), notAfter: Number.isFinite(na) ? na : null });
     },
-    void: (goId) => G.voidGo({ paths, anchor: fx.anchor, manifest: M, goId, now: t }),
-    dispose: (attemptId, reviewedPath, ref = M.send.targets.production) => G.dispose({ paths, anchor: fx.anchor, manifest: M, ref, attemptId, reviewedPath, reviewedBytes: readFileSync(reviewedPath), now: t }),
-    status: (ref = M.send.targets.production) => G.status({ paths, anchor: fx.anchor, manifest: M, ref, ctxAt: fx.ctxAt, clock: fx.now }),
+    void: (goId) => G.voidGo({ paths, anchor: fx.anchor, manifest: MF, goId, now: t }),
+    dispose: (attemptId, reviewedPath, ref = MF.send.targets.production) => G.dispose({ paths, anchor: fx.anchor, manifest: MF, ref, attemptId, reviewedPath, reviewedBytes: readFileSync(reviewedPath), now: t }),
+    status: (ref = MF.send.targets.production) => G.status({ paths, anchor: fx.anchor, manifest: MF, ref, ctxAt: fx.ctxAt, clock: fx.now }),
     /**
      * Write a go by hand, with its ledger line, as an issuer that skipped its
      * checks would: the store stays consistent, so only the sender's own
@@ -175,13 +175,13 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
      * fixture's issue() gives) and null otherwise.
      */
     forgeGo({ phase, marker, step, text, target, over = {} }) {
-      const plan = S.planSend(M, text, target, { cwd: ROOT });
+      const plan = S.planSend(MF, text, target, { cwd: ROOT });
       const go = {
         schema: "stage0-go/3", goId: randomBytes(16).toString("hex"), phaseId: phase.phaseId, phaseSha: marker.phaseSha, workflow: phase.workflow, phase: phase.phase, step, text, target,
-        ref: plan.ref, head: HEAD, checkout: ROOT, role: G.roleOf(M, text), markerId: marker.markerId, issuedAt: G.iso(t),
+        ref: plan.ref, head: HEAD, checkout: ROOT, role: G.roleOf(MF, text), markerId: marker.markerId, issuedAt: G.iso(t),
         ceiling: ceilingIn(phase, step), notAfter: null,
         deadline: G.iso(Math.min(G.utcMs(ceilingIn(phase, step)), G.utcMs(marker.until))),
-        request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: M.send.endpoint.replace("{ref}", plan.ref) },
+        request: { md5: plan.md5, bytes: plan.bytes, readOnly: plan.readOnly, endpoint: MF.send.endpoint.replace("{ref}", plan.ref) },
         cancel: null, gate: { next: step, after: [] }, ...over,
       };
       if (!Object.hasOwn(over, "notAfter")) go.notAfter = phase.target === "production" ? go.deadline : null;
@@ -201,16 +201,16 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
       return async (url, init) => {
         calls.push({ url, init });
         const q = JSON.parse(init.body).query;
-        const name = Object.keys(M.outputs).find((k) => ctx().texts[k] === q) || "";
+        const name = Object.keys(MF.outputs).find((k) => ctx().texts[k] === q) || "";
         if (respond) return respond(name, url, init);
         return new Response(okBody(name), { status: 201 });
       };
     },
     /** The guarded send with this fixture's deps; `over` replaces any of them. */
     send(G2, { text, target, win, goId, token = null, over = {} }) {
-      const plan = S.planSend(M, text, target, { cwd: ROOT });
+      const plan = S.planSend(MF, text, target, { cwd: ROOT });
       return G2.guardedSend({
-        plan, goId, token: token ?? win.env[G.TOKEN_ENV], env: win.env, anchor: fx.anchor, manifest: M, root: ROOT, stateDir, now: fx.now, identity: fx.identity, git: fx.git,
+        plan, goId, token: token ?? win.env[G.TOKEN_ENV], env: win.env, anchor: fx.anchor, manifest: MF, root: ROOT, stateDir, now: fx.now, identity: fx.identity, git: fx.git,
         workflows: all(), ctxAt: fx.ctxAt, execArgv: [], ppid: win.pid, selfStartMs: t,
         send: (p, extra) => S.send(p, { token: token ?? win.env[G.TOKEN_ENV], fetchImpl: over.fetchImpl || fx.fetchImpl(), ...extra }),
         writeReceipt: (rec) => S.writeRecord(rec, results),
@@ -220,7 +220,7 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
     /** The same through the sender's command line, as Ryan runs it. */
     main(argv, env, over = {}) {
       return S.main(argv, env, {
-        stdout: () => {}, manifest: M, root: ROOT, stateDir, anchor: fx.anchor, now: fx.now, identity: fx.identity, git: fx.git, workflows: all(),
+        stdout: () => {}, manifest: MF, root: ROOT, stateDir, anchor: fx.anchor, now: fx.now, identity: fx.identity, git: fx.git, workflows: all(),
         ctxAt: fx.ctxAt, execArgv: [], selfStartMs: t, resultsDir: results, fetchImpl: fx.fetchImpl(), ...over,
       });
     },

@@ -10,6 +10,8 @@
 //   node scripts/manual/stage0-go.mjs issue --phase <phase id> --step <STEP> [--not-after <UTC>]
 //   node scripts/manual/stage0-go.mjs void --go <go id>
 //   node scripts/manual/stage0-go.mjs dispose --target <t> --attempt <attempt id> --reviewed <file>
+//   node scripts/manual/stage0-go.mjs target add --target <name> --ref <ref> --reviewed <file>
+//   node scripts/manual/stage0-go.mjs target retire --target <name> --ref <ref> --reviewed <file>
 //   node scripts/manual/stage0-go.mjs status --target <t>
 //   node scripts/manual/stage0-go.mjs gate --phase <phase id>
 //   node scripts/manual/stage0-go.mjs corroborate --phase <phase id> --rows <file>
@@ -49,6 +51,14 @@
 // void     moves an unused go to gos/void/.
 // dispose  records a reviewed disposition of one held or pending attempt;
 //          the review file must name the attempt id.
+// target   add: adds a third ref to the store, under the name the manifest
+//          binds to it (item 4(c) §2.3: the rehearsal project), after the
+//          reviewed commit that binds it and under its own clearance; the
+//          review file names the target and the ref. At most one added
+//          target is active, and a ref is added once. retire: ends it, once
+//          nothing of it is live, pending or held; a retired ref is never
+//          added again, and every command refuses it. Neither changes the
+//          store's identity or anchor.
 // status   prints the holds, attempts, gos and markers, read under the store
 //          lock; on a damaged store, the damage and no holds list; when the
 //          lock cannot be taken within its wait, BUSY: the state is not
@@ -111,8 +121,8 @@ export function main(argv, env, deps = {}) {
   const manifest = deps.manifest || A.manifestAt("HEAD", root);
   const anchor = deps.anchor !== undefined ? deps.anchor : G.anchorAt(root);
   const refOf = (target) => {
-    const ref = manifest.send.targets[target];
-    if (typeof ref !== "string") throw new G.Refusal("--target is production or staging; refusing");
+    const ref = typeof target === "string" && Object.prototype.hasOwnProperty.call(manifest.send.targets, target) ? manifest.send.targets[target] : null;
+    if (typeof ref !== "string") throw new G.Refusal(`--target is one the manifest names: ${Object.keys(manifest.send.targets).join(", ")}; refusing`);
     return ref;
   };
 
@@ -219,7 +229,22 @@ export function main(argv, env, deps = {}) {
     out(`attempt ${d.attemptId}: disposition recorded from ${d.reviewed.path} (sha256 ${d.reviewed.sha256})\n`);
     return { disposition: d };
   }
-  throw new G.Refusal("usage: stage0-go.mjs init | clock | draft … | phase … | issue … | void … | dispose … | status … | gate … | corroborate …");
+  if (cmd === "target") {
+    const [action, ...more] = rest;
+    if (action !== "add" && action !== "retire") throw new G.Refusal("usage: stage0-go.mjs target add|retire --target <name> --ref <ref> --reviewed <file>");
+    const o = args(more, ["target", "ref", "reviewed"]);
+    need(o, ["target", "ref", "reviewed"], `target ${action}`);
+    const common = { paths, anchor, manifest, target: o.target, ref: o.ref, reviewedPath: resolve(o.reviewed), reviewedBytes: readFile(o.reviewed, "review file"), now: t };
+    if (action === "add") {
+      const rec = G.addTarget(common);
+      out(`target ${rec.target} = ${rec.ref} added at ${rec.addedAt}, bound to ${rec.reviewed.path} (sha256 ${rec.reviewed.sha256})\n`);
+      return { target: rec };
+    }
+    const r = G.retireTarget({ ...common, ctxAt, readReceipt: deps.readReceipt });
+    out(`target ${r.target} = ${r.ref} retired at ${r.retiredAt}, under ${r.reviewed.path} (sha256 ${r.reviewed.sha256}); it is never added again\n`);
+    return { retired: r };
+  }
+  throw new G.Refusal("usage: stage0-go.mjs init | clock | draft … | phase … | issue … | void … | dispose … | target add|retire … | status … | gate … | corroborate …");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -88,6 +88,39 @@ test("M-12/M-13 catch a wrong window role, a dropped chain pin, an extra pin and
   assert.deepEqual(checkManifest(ROOT, Y)["M-13"], ["guard.entries is not stage0-guard.mjs's CHAIN_ENTRIES"]);
 });
 
+test("M-12b C8 (Codex's review of U; X1): a text before item 3 declares an effect exactly when its pin or policy is no longer LEGACY_EFFECT's, and only the effect the legacy rule gave it; the classifier's LEGACY_EFFECT is unchanged, and a missing or invalid effect on a changed policy is unknown, counted as writing", async () => {
+  const C = await import("../manual/stage0-classify.mjs");
+  const effectSays = (X) => checkManifest(ROOT, X)["M-12"].filter((s) => /effect|LEGACY_EFFECT/.test(s));
+  const withPolicy = (name, edit) => { const X = JSON.parse(JSON.stringify(M)); edit(X.send.texts[name]); return X; };
+  const gains = (p) => { p.targets = [...p.targets, "rehearsal"]; };
+  // Under its listed pin and policy, a legacy text still declares none.
+  assert.deepEqual(effectSays(withPolicy("P2-02", (p) => { p.effect = "write"; })), ["P2-02: a text before item 3 under its listed pin and policy keeps its read_only-derived effect; it declares none"]);
+  // A changed policy without an effect is refused, as before C8.
+  assert.deepEqual(effectSays(withPolicy("P2-02", gains)), ["P2-02: its pin or policy is not the one the classifier's LEGACY_EFFECT lists; declare its effect, or review the change"]);
+  // A changed policy declares exactly the effect it was reviewed with.
+  assert.deepEqual(effectSays(withPolicy("P2-02", (p) => { gains(p); p.effect = "write"; })), []);
+  assert.deepEqual(effectSays(withPolicy("P2-02", (p) => { gains(p); p.effect = "read"; })), ['P2-02: a text before item 3 whose policy changed declares the effect it was reviewed with, "write"; the policy says "read"']);
+  assert.deepEqual(effectSays(withPolicy("P0", (p) => { gains(p); p.effect = "read"; })), []);
+  assert.deepEqual(effectSays(withPolicy("P0", (p) => { gains(p); p.effect = "write"; })), ['P0: a text before item 3 whose policy changed declares the effect it was reviewed with, "read"; the policy says "write"']);
+  assert.deepEqual(effectSays(withPolicy("RB-43", (p) => { gains(p); p.effect = "maybe"; })), ['RB-43: a text before item 3 whose policy changed declares the effect it was reviewed with, "write"; the policy says "maybe"']);
+  // X1 does not yet admit the rehearsal target: that is the ref-binding and texts commits' change.
+  assert.ok(checkManifest(ROOT, withPolicy("P2-02", (p) => { gains(p); p.effect = "write"; }))["M-12"].includes('P2-02 must go to production only; the policy says ["production","rehearsal"]'));
+  // LEGACY_EFFECT is the table it was: 29 texts, each under the manifest's current pin and policy.
+  assert.equal(Object.keys(C.LEGACY_EFFECT).length, 29);
+  for (const [k, [md5, policy]] of Object.entries(C.LEGACY_EFFECT)) {
+    assert.equal(M.outputs[k].md5, md5, k);
+    assert.deepEqual(JSON.parse(JSON.stringify(M.send.texts[k])), JSON.parse(JSON.stringify(policy)), k);
+  }
+  // The runtime side: the classifier's effectWriting under each manifest.
+  assert.equal(C.effectWriting(M, "P2-02"), true, "the legacy rule: writes unless read_only");
+  assert.equal(C.effectWriting(M, "P0"), false);
+  assert.equal(C.effectWriting(withPolicy("P2-02", (p) => { gains(p); p.effect = "write"; }), "P2-02"), true);
+  assert.equal(C.effectWriting(withPolicy("P0", (p) => { gains(p); p.effect = "read"; }), "P0"), false);
+  assert.equal(C.effectWriting(withPolicy("P2-02", gains), "P2-02"), null, "a changed policy without an effect is unknown: writing");
+  assert.equal(C.effectWriting(withPolicy("P0", gains), "P0"), null, "even for a read_only text");
+  assert.equal(C.effectWriting(withPolicy("P2-02", (p) => { gains(p); p.effect = "maybe"; }), "P2-02"), null, "an invalid effect is unknown");
+});
+
 test("M-11 CANCEL-STEP is instantiated only for a stage-0 step and CANCEL-INSPECT's exact backend_start; the values are the only change", async () => {
   const A = await import("../manual/assemble-stage0.mjs");
   const t = A.assembleAll(M, { cwd: ROOT })["CANCEL-STEP-TEMPLATE"];

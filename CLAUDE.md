@@ -369,9 +369,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       the 29 under exactly the pin and policy the classifier's
       LEGACY_EFFECT lists (R-R1; M-12 checks that table against the
       manifest). Changing a legacy text means declaring its effect, never
-      editing the table to match. An INSERT sent with read_only is still a
-      write, so its unresolved outcome holds the project. Never derive a
-      new text's effect from its request mode;
+      editing the table to match. M-12 (C8, X1) allows that declaration
+      ONLY once the text's pin or policy has left LEGACY_EFFECT's (a
+      preserved text gaining the rehearsal target), and only the effect
+      the legacy rule gave it: "write" unless read_only. An INSERT sent with
+      read_only is still a write, so its unresolved outcome holds the
+      project. Never derive a new text's effect from its request mode;
     - M-6e (item3Problems) confines item 3's texts. A write text must be,
       statement by statement, exactly its family's sequence of I3_FORMS:
       the schema is exactly stage0_item3, never a prefix (R-R2). A quoted
@@ -399,8 +402,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       with an earlier ceiling, stale and enlarged ceilings, the exact go
       line, the not-after), stage0-guard.shell.test.js (G-27, real
       PowerShell windows; Windows only), stage0-guard.lock.test.js
-      (LK-*, SN-*, HL-1: below) and stage0-guard.time.test.js (TM-*:
-      below). synthWorkflow(…) in the fixture
+      (LK-*, SN-*, HL-1: below), stage0-guard.time.test.js (TM-*:
+      below) and stage0-guard.target.test.js (TG-*: below).
+      synthWorkflow(…) in the fixture
       declares 60 s per step for any phase a test does not name (`null`
       declares none), and fx.issue() gives a production go the latest
       not-after the issuer admits unless the test passes one. Item 3's are
@@ -423,8 +427,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         and read it once they hold the lock, after warm-up and any wait.
         Every deadline is judged then (readAt, decidedAt). The sender's
         first check still uses its start time t0, because the claim and
-        admit() read the clock again; G-26's scenarios count those clock
-        calls, so never add one there. stage0-guard.time.test.js (TM-*);
+        admit() read the clock again (Codex accepted it, review of
+        d8ec242). G-26's scenarios and LK-5 count those clock calls: a
+        future change that adds one updates them deliberately; it is not
+        forbidden. stage0-guard.time.test.js (TM-*);
       - BUSY IS NOT A LIVENESS CHECK (W-R3): a killed holder's lock reads
         BUSY with the same pid and time, and nothing removes it. The only
         removal is the stale-lock procedure, guarded-send procedure §7.1,
@@ -444,6 +450,24 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       - a test process started with node options (an `--import` hook, say)
         makes SEND-4 fail: the sender's preflight refuses them, by design.
         Never weaken that preflight for an instrumented run.
+    - ADDED TARGETS (item 4(c) plan §2.3; X1; procedure §7). The store's
+      own refs are production and staging (store.json and the anchor,
+      never changed). A third ref exists only after its reviewed
+      ref-binding commit, its own clearance and `stage0-go.mjs target add
+      --target <name> --ref <ref> --reviewed <file>`: a target-add event,
+      targets/<ref>.json and journal/<ref>/. Every live command (draft,
+      registration, marker, issue, the sender's first check and claim)
+      takes its ref from activeRef(chk, manifest, target), which refuses a
+      ref never added, retired, or added under another name. At most one
+      added target is active; a ref is added once, so a retired one never
+      comes back. `target retire` refuses while anything of the ref is
+      live, pending or held, and moves only the target record. A store
+      with no target events, the real one included, checks exactly as
+      before. Tests: stage0-guard.target.test.js (TG-1…TG-7, and TG-M,
+      its mutation companion), every ref synthetic; the fixture's
+      `manifest` and `ctxAt` options carry a manifest naming the target.
+      In X1 no manifest names a rehearsal target yet, and M-12 still
+      refuses one: the ref-binding commit adds it.
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
     capture gate and the item 3 gate) are pinned in the manifest's `guard`.

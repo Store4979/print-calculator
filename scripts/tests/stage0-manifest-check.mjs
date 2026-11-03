@@ -549,7 +549,20 @@ export function checkManifest(repo, M) {
     const want = k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) || Object.hasOwn(I3_POLICY, k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
     // The effect (Codex, item 3 plan review I3-1): declared by every text but
     // the ones before item 3; for an item 3 text, exactly its declared effect.
-    if (LEGACY_EFFECT_TEXTS.includes(k)) { if (Object.hasOwn(e, "effect")) say("M-12", `${k}: a text before item 3 keeps its read_only-derived effect; it declares none`); }
+    // A text before item 3 declares one exactly when its pin or policy is no
+    // longer the one LEGACY_EFFECT lists (C8, Codex's review of U: a preserved
+    // text that gains the rehearsal target), and then only the effect the
+    // legacy rule gave it: it writes unless it is read_only. LEGACY_EFFECT
+    // itself never changes to match.
+    if (LEGACY_EFFECT_TEXTS.includes(k)) {
+      if (Object.hasOwn(e, "effect")) {
+        const [md5, listed] = Object.hasOwn(C.LEGACY_EFFECT, k) ? C.LEGACY_EFFECT[k] : [null, null];
+        const { effect, ...rest } = e;
+        const reviewed = listed && listed.readOnly === true ? "read" : "write";
+        if (listed && M.outputs[k]?.md5 === md5 && canonicalJson(rest) === canonicalJson(listed)) say("M-12", `${k}: a text before item 3 under its listed pin and policy keeps its read_only-derived effect; it declares none`);
+        else if (effect !== reviewed) say("M-12", `${k}: a text before item 3 whose policy changed declares the effect it was reviewed with, ${JSON.stringify(reviewed)}; the policy says ${JSON.stringify(effect)}`);
+      }
+    }
     else if (e.effect !== "read" && e.effect !== "write") say("M-12", `${k}: effect must be "read" or "write"; the policy says ${JSON.stringify(e.effect)}`);
     // The runtime side (Codex, review of ba1a0bd, R-R1): the classifier keeps
     // the read_only-derived effect only for a text in its LEGACY_EFFECT table

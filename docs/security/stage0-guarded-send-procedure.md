@@ -412,6 +412,26 @@ never edited, moved or deleted by hand,** with one exception: a stale
   This is a limit of a local mistake barrier, not an anti-rollback
   guarantee and not a behaviour to keep: another head file inside the same
   store would roll back with it and prove nothing.
+- **Added targets** (item 4(c) plan §2.3; X1). The store's own refs are
+  production and staging, as `store.json` and the anchor record them; they
+  never change. A third ref, the rehearsal project's, is used only after:
+  1. a reviewed commit binds it: the manifest's `send.targets` names it,
+     under its target name;
+  2. its own clearance;
+  3. `node scripts/manual/stage0-go.mjs target add --target <name> --ref <ref> --reviewed <review file>`.
+     The review file names the target and the ref, and its sha256 is
+     recorded.
+
+  The add writes `targets/<ref>.json` and the ref's journal directory, and
+  records `target-add`. At most one added target is active, and a ref is
+  added only once. `target retire` (the same arguments) ends it: it refuses
+  while anything of the ref is live, pending or held (a phase before its
+  deadline, an open marker, a live go, a PENDING or HOLD attempt), and moves
+  only the target record, to `targets/retired/`. From then on every command
+  refuses that ref, by any name, and storeCheck reads any later event for
+  it as damage. Its journal, phases, markers and gos stay, as evidence.
+  Neither command changes the store's identity or the anchor, and neither
+  is a disposition.
 - **The lock.** One `lock` file, created exclusively, serializes every
   change and the reads behind `status`, `gate`, `corroborate` and the
   sender's first check. A command waits up to 10 s for it, retrying while
