@@ -1,0 +1,1 @@
+{"added":[{"part":"defaults","key":"row|postgres|*|S","value":"anon=SELECT/postgres,postgres=SELECT/postgres,postgres=UPDATE/postgres,postgres=USAGE/postgres"}],"removed":[{"part":"defaults","key":"implicit|postgres|S","value":"postgres=SELECT/postgres,postgres=UPDATE/postgres,postgres=USAGE/postgres"}]}

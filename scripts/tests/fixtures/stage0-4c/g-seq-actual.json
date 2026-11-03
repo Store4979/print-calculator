@@ -1,0 +1,1 @@
+{"implicit":"postgres=SELECT/postgres,postgres=UPDATE/postgres,postgres=USAGE/postgres","actual":"postgres=SELECT/postgres,postgres=UPDATE/postgres,postgres=USAGE/postgres","foreignServer":"USAGE"}

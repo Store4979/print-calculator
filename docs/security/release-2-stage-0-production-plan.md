@@ -2959,6 +2959,75 @@ window.**
       main@7ec5af4.
 
     It agrees with the live-site checks above.
+- **Codex accepted X1c `a5a05ec`, 2026-11-03**
+  (`reviews/2026-11-03-a5a05ec-review.md`), with a conditional
+  staging-only push clearance:
+  - **the push:** exactly `a5a05eccd66ced2f30baa66bff3b099163bf7a37` to
+    `refs/heads/security/release-2-slice-2`, carrying X0 `50f8f0e`, X1
+    `4037d12`, X1b `d160c6e` and X1c. Codex's earlier reviews:
+    - X0's records accepted (review of `50f8f0e`/`4037d12`);
+    - X1-R1, X1-N1, the standing rule and §E16 closed (review of
+      `7168fc0`);
+    - the four ORD requirements closed at `d160c6e`, with the launch
+      analyzer held (review of `f1d6112`/`d160c6e`). Ryan deferred the
+      analyzer, and X1c removed it;
+  - **the condition:** the exact-`a5a05ec` 14-state replay completes all
+    14 expected states at 559/559, with 0 failed, cancelled, skipped or
+    todo, and the replay process exits 0. A failure, an incomplete result
+    or a push that cannot fast-forward keeps it held;
+  - **what it clears nothing for:** project creation, target-add, a
+    real-store command, a token, a send, a rehearsal, an integration change
+    or a production window.
+- **The condition, as met:**
+  - Codex's own checks: LN-3 1/1, the manifest current, and the contract
+    and identity checks;
+  - the clean clone of X1c (`.review/verify-a5a05ec`, HEAD exactly
+    `a5a05ec`): install, the suite 559/559, the build and the manifest
+    check, each exit 0 (17:55:02–18:00:22Z);
+  - **the replay,** `STAGE0_REPLAY_KEEP=1`, 18:00:23Z → 18:36:09Z, final
+    exit 0 (`.review/verify-X1c-summary.txt`, `verify-X1c-replay.txt`).
+    Every one of its 14 states is 559/559, read from its kept TAP
+    (`.review/verify-a5a05ec/.stage0-replay/state-00.tap` …
+    `state-13.tap`): 0 failed, cancelled, skipped or todo, and no `not ok`
+    line.
+- **The push, Tue 2026-11-03, 18:37:04.762–18:37:19.642Z (13:37 EST),
+  under that clearance only:**
+  - **Before (18:36:23Z):**
+    - the remote is `github.com/Store4979/print-calculator`, and
+      `push.default` is `nothing`;
+    - W2..X1c held exactly X0 `50f8f0e`, X1 `4037d12`, X1b `d160c6e` and
+      X1c `a5a05ec`, with W2 an ancestor of X1c (a fast-forward);
+    - `ls-remote` showed the branch at
+      `d8ec2421ae55009519e935f8e24af7fe82738ddf`, `main` at
+      `7ec5af48666e3779266464f77cdbe4bdf851ae5a`, and no tags;
+    - the working tree held only the untracked `AGENTS.md`.
+  - **The command:**
+    `git push origin a5a05eccd66ced2f30baa66bff3b099163bf7a37:refs/heads/security/release-2-slice-2`
+    gave `d8ec242..a5a05ec`, exit 0, with no force and no tags. No
+    uncommitted edit is in it.
+  - **After:** the branch is at `a5a05ec` and `main` is still at `7ec5af4`
+    (18:37:19Z, and again 18:41:46Z). There are no tags (both times).
+  - **Staging,** before at 18:36:52Z: deploy `6ae9450b…` at `d8ec242`.
+    Polled every 15 s from the push. First seen at 18:41:15Z: deploy
+    **`6aea29e4592ac5ac765a6cec`**, commitRef `a5a05ec…`, built
+    2026-11-03T18:41:05.205Z, context `production`, with `contextAllowed`,
+    `flagPresent` and `flagEnabled` all true. Its permalink reported the
+    same at 18:41:53Z. A deploy is published only when its build command
+    exits 0, and that command runs `yarn test` before `yarn build`.
+  - **Production is unchanged** at 18:41:23Z, as it was before the push
+    (18:36:52Z). The live `index.html`, `main-DZt0oGiJ.js` and
+    `index-ftBg9V1i.js` (md5 `d67e9e91…`, `47ab9406…`, `57fb08e6…`, the
+    same files as in the records above) are byte-identical to deploy
+    `6ab020c5`'s permalink. `/.netlify/functions/deploy-context` on
+    production returns the same bytes as `index.html`. The checks are in
+    this session's scratchpad, `x1c-push/pre` and `x1c-push/post`.
+  - **Ryan's §12 dashboard read after the push,** read-only, nothing
+    clicked, done just before his message, which arrived by about 22:14Z
+    on Tue 2026-11-03, about 3 h 37 min after the push (the read's own
+    time is not stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at
+      main@7ec5af4.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 

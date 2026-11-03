@@ -17,13 +17,24 @@
 //   4C-6  the data scope: orders grow by exactly the recorded orders; a
 //         STOP row stops; pending_jobs is recorded, never a STOP
 //   4C-7  the tiers: a MATCH fact that differs stops; a residual needs its
-//         record; an unreadable fact stops, never equal; an event trigger's
-//         differing digest stops or needs an R-IMG record
+//         record; an unreadable fact stops, never equal
 //   4C-8  a reading must reproduce its own md5s; a receipt binds by hash
 //   4C-9  the comparator is pinned and audited by listing (CHAIN_LISTED),
 //         and no entry loads it
 //   4C-10 none of the new texts can be drafted, registered, issued or sent
 //         before X4 declares a workflow that names it (Ryan, 2026-11-03)
+//   4C-11 R1: a sequence's implicit default is a real sequence owner's, and a
+//         real global sequence row replaces it
+//   4C-12 R2: a real GRANT and REVOKE GRANT OPTION change the observation and
+//         stop an unequal comparison
+//   4C-13 R3: any different server_version_num stops, every record present; a
+//         build and an image show only in their own evidence
+//   4C-14 R4: each differing event trigger needs its own record
+//   4C-15 R5: a required fact missing or unusable on both sides stops; an
+//         optional one does not
+//   4C-16 BUILD-00's guarded ledger read: each real case's status, and what
+//         it leaves for BUILD-01; never an empty ledger from a denied read
+//   4C-17 M-6f holds query_to_xml to the one reviewed literal in BUILD-00
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -35,7 +46,7 @@ import * as G from "../manual/stage0-guard.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import * as CL from "../manual/stage0-classify.mjs";
 import * as GO from "../manual/stage0-go.mjs";
-import { I4C_POLICY, item4cProblems } from "./stage0-manifest-check.mjs";
+import { I4C_POLICY, I4C_LEDGER_QUERY, item4cProblems } from "./stage0-manifest-check.mjs";
 import { fixture, synthWorkflow, M, ROOT } from "./stage0-guard-fixture.mjs";
 import { FIX, raw, json, readingRows, edited as editedWith } from "./stage0-4c-fixture.mjs";
 
@@ -46,6 +57,11 @@ const reasons = (findings) => stops(findings).map((f) => `${f.key}: ${f.reason}`
 const others = (base) => Object.fromEntries(["01", "02", "04", "05"].map((s) => [s, C.otherRoleRows(M, base, s)]));
 const post = (o, step, { baseline, previous, previousState, recordedOrders = 0, target = "rehearsal", windowStart } = {}) =>
   C.postFindings(M, o, { step, target, baseline, previous, previousState, otherRows: others(baseline), recordedOrders, windowStart });
+/** One image on both sides, unless a test says otherwise. */
+const SAME_IMAGE = { production: "17.6.1.111", rehearsal: "17.6.1.111" };
+const cross = (a, b, records = {}, images = SAME_IMAGE) => C.crossProject(a, b, { creator: "postgres", records, images });
+/** Every generic residual record, each saying nothing specific. */
+const ALL_GENERIC = Object.fromEntries(C.RESIDUALS.map((r) => [r, `a generic ${r} record`]));
 
 test("4C-1 the item 4(c) texts are pinned with exactly their policies, and M-6f admits each and refuses each forbidden form", () => {
   const out = A.assembleAll(M, { cwd: ROOT });
@@ -197,25 +213,17 @@ test("4C-6 the data scope: on the rehearsal orders grow by exactly the recorded 
   assert.match(reasons(post(at02, "P2-02", { baseline, previous: baseline, previousState: "01", target: "production" })), /no window-start P0′/);
 });
 
-test("4C-7 the tiers between two projects: a MATCH fact that differs stops; a residual needs its record; an unreadable fact stops, never equal; an event trigger's differing digest stops or needs an R-IMG record", () => {
+test("4C-7 the tiers between two projects: a MATCH fact that differs stops; a residual needs its record; an unreadable fact stops, never equal", () => {
   const prod = obs("c-01.json");
-  const same = C.crossProject(prod, prod, { creator: "postgres", records: { "R-AUTHCFG": "the rehearsal claims no owner sign-in (§4.2)" } });
+  const same = cross(prod, prod, { "R-AUTHCFG": "the rehearsal claims no owner sign-in (§4.2)" });
   assert.deepEqual(stops(same), []);
-  assert.match(reasons(C.crossProject(prod, prod, { creator: "postgres" })), /R-AUTHCFG.*with no record/);
-  const rec = { "R-AUTHCFG": "no owner sign-in claimed", "R-IMG|version": "the new image", "R-IMG|evt|x": "reviewed", "R-SET": "named only" };
+  assert.match(reasons(cross(prod, prod)), /R-AUTHCFG.*with no record/);
+  const rec = { "R-AUTHCFG": "no owner sign-in claimed", "R-VER": "the new build", "R-SET": "named only" };
   const differs = edited("c-01.json", (rows) => { rows.find((r) => r.key === "function|has_store_role(uuid, text[])").value += "x"; });
-  assert.match(reasons(C.crossProject(prod, differs, { creator: "postgres", records: rec })), /function\|has_store_role.*a MATCH fact differs/);
+  assert.match(reasons(cross(prod, differs, rec)), /function\|has_store_role.*a MATCH fact differs/);
   const unreadable = edited("c-01.json", (rows) => rows.splice(rows.findIndex((r) => r.key === "fn|auth.uid()"), 1));
-  assert.match(reasons(C.crossProject(prod, unreadable, { creator: "postgres", records: rec })), /fn\|auth\.uid\(\): a MATCH fact differs/);
-  const image = edited("c-01.json", (rows) => { rows.find((r) => r.key === "version").value += " (another build)"; });
-  assert.deepEqual(stops(C.crossProject(prod, image, { creator: "postgres", records: rec })), [], "R-IMG with its record");
-  assert.match(reasons(C.crossProject(prod, image, { creator: "postgres", records: { "R-AUTHCFG": "x" } })), /R-IMG: the image's version string differs, with no record/);
-  const minor = edited("c-01.json", (rows) => { rows.find((r) => r.key === "server_version_num").value = "170100"; });
-  assert.match(reasons(C.crossProject(prod, minor, { creator: "postgres", records: rec })), /a major or minor server change is reviewed/);
-  const trigger = edited("c-01.json", (rows) => rows.push({ part: 8, key: "evt|x", value: "ddl_command_end|O||f|postgres|plpgsql|0123|" }));
-  assert.match(reasons(C.crossProject(prod, trigger, { creator: "postgres", records: { "R-AUTHCFG": "x" } })), /evt\|x: R-IMG: an event trigger on the path differs, with no record/);
-  assert.deepEqual(stops(C.crossProject(prod, trigger, { creator: "postgres", records: rec })), []);
-  assert.ok(C.crossProject(prod, prod, { creator: "postgres", records: rec }).filter((f) => f.part === 10).every((f) => f.verdict === "RECORDED"), "part 10 is recorded");
+  assert.match(reasons(cross(prod, unreadable, rec)), /fn\|auth\.uid\(\): a MATCH fact differs/);
+  assert.ok(cross(prod, prod, rec).filter((f) => f.part === 10).every((f) => f.verdict === "RECORDED"), "part 10 is recorded");
 });
 
 test("4C-8 a reading must reproduce its own md5s, and a reviewed receipt binds by hash", () => {
@@ -283,4 +291,319 @@ test("4C-10 none of the new texts can be drafted, registered, issued or sent bef
   for (const k of ["BUILD-00", "BUILD-00W"]) for (const t of ["production", "staging"]) assert.throws(() => S.planSend(M, k, t, { cwd: ROOT }), /may not be sent/);
   for (const k of A.TEXTS_4C.filter((x) => !x.startsWith("BUILD-"))) assert.throws(() => S.planSend(M, k, "staging", { cwd: ROOT }), /may not be sent/);
   assert.throws(() => S.planSend(M, "P0-4C", "rehearsal", { cwd: ROOT }), /unknown target/);
+});
+
+// The literal values below are written here, from what PostgreSQL documents,
+// not read from the harness's results.
+const SEQ_OWNER = "postgres=SELECT/postgres,postgres=UPDATE/postgres,postgres=USAGE/postgres";
+const part = (o, n, k) => o.parts[n][k];
+const factOf = (rows, p, k) => rows.find((r) => r.part === p && r.key === k)?.value;
+
+test("4C-11 R1: the implicit default for a sequence is a real sequence owner's, not acldefault's foreign server; a real global sequence row replaces it", () => {
+  assert.equal(factOf(json("a-build00.json"), "defaults", "implicit|postgres|S"), SEQ_OWNER, "BUILD-00, on a fresh shim");
+  assert.equal(part(obs("c-01.json"), 3, "implicit|postgres|S"), SEQ_OWNER, "the checked state, at 01");
+  const real = json("g-seq-actual.json");
+  assert.equal(real.actual, SEQ_OWNER, "a real sequence's owner entry");
+  assert.equal(real.implicit, real.actual, "BUILD-00 reports exactly it");
+  assert.equal(real.foreignServer, "USAGE", "acldefault's S is a foreign server: the letter X2 passed");
+  // The other four letters are the same in both code systems, and unchanged.
+  assert.equal(part(obs("c-01.json"), 3, "implicit|postgres|f"), "PUBLIC=EXECUTE/postgres,postgres=EXECUTE/postgres");
+  assert.equal(part(obs("c-01.json"), 3, "implicit|postgres|n"), "postgres=CREATE/postgres,postgres=USAGE/postgres");
+  assert.equal(part(obs("c-01.json"), 3, "implicit|postgres|T"), "PUBLIC=USAGE/postgres,postgres=USAGE/postgres");
+  assert.match(part(obs("c-01.json"), 3, "implicit|postgres|r"), /^postgres=DELETE\/postgres,.*postgres=UPDATE\/postgres$/);
+  // The control: a real global row, and the absent-row and explicit-row readings told apart.
+  const d = json("g-seq-row-build00.json");
+  assert.deepEqual(d.removed.map((r) => [r.key, r.value]), [["implicit|postgres|S", SEQ_OWNER]]);
+  assert.deepEqual(d.added.map((r) => [r.key, r.value]), [["row|postgres|*|S", `anon=SELECT/postgres,${SEQ_OWNER}`]]);
+  const row = obs("g-seq-row.json");
+  assert.equal(part(row, 3, "row|postgres|*|S"), `anon=SELECT/postgres,${SEQ_OWNER}`);
+  assert.equal(part(row, 3, "implicit|postgres|S"), undefined);
+  assert.deepEqual(C.requiredFindings(row), [], "a global row covers the sequence default as an implicit one does");
+  const f = stops(cross(obs("c-01.json"), row, ALL_GENERIC));
+  assert.deepEqual(f.map((x) => x.key).sort(), ["implicit|postgres|S", "row|postgres|*|S"], "the two readings stop on exactly these");
+  assert.ok(f.every((x) => /default ACL/.test(x.reason)));
+});
+
+test("4C-12 R2: a real GRANT, GRANT OPTION and REVOKE GRANT OPTION change the default-ACL observation and stop an unequal comparison", () => {
+  const FN = "PUBLIC=EXECUTE/postgres,anon=EXECUTE/postgres,postgres=EXECUTE/postgres";
+  const FNG = "PUBLIC=EXECUTE/postgres,anon=EXECUTE*/postgres,postgres=EXECUTE/postgres";
+  const plain = obs("g-grant-plain.json"), option = obs("g-grant-option.json"), revoked = obs("g-grant-revoked.json");
+  assert.equal(part(plain, 3, "row|postgres|*|f"), FN);
+  assert.equal(part(option, 3, "row|postgres|*|f"), FNG);
+  assert.equal(part(revoked, 3, "row|postgres|*|f"), FN, "revoking the option restores it");
+  assert.notEqual(plain.md5[3], option.md5[3], "part 3's md5 moves with the grant option");
+  assert.equal(plain.md5[3], revoked.md5[3]);
+  const f = stops(cross(plain, option, ALL_GENERIC));
+  assert.deepEqual(f.map((x) => x.key), ["row|postgres|*|f"], "exactly that row stops, every generic record present");
+  assert.match(f[0].reason, /default ACL/);
+  assert.deepEqual(stops(cross(plain, revoked, ALL_GENERIC)), []);
+  // Within one project, POST′ against the bound baseline.
+  const within = stops(post(option, C.REFUSAL, { baseline: plain, previous: plain, previousState: "01" }));
+  assert.deepEqual(within.map((x) => x.key), ["row|postgres|*|f"]);
+  // BUILD-00: the same real statements change exactly that row.
+  const b = json("g-grant-build00.json");
+  assert.equal(factOf(b.plain, "defaults", "row|postgres|*|f"), FN);
+  assert.deepEqual(b.option.removed.map((r) => [r.key, r.value]), [["row|postgres|*|f", FN]]);
+  assert.deepEqual(b.option.added.map((r) => [r.key, r.value]), [["row|postgres|*|f", FNG]]);
+  assert.deepEqual([b.revoked.added, b.revoked.removed], [[], []]);
+  // Public's own ACL, the row both texts read outside the preserved catalog block.
+  const schema = obs("g-schema-option.json");
+  assert.match(part(schema, 2, "schema|public"), /anon=USAGE\*,/);
+  assert.match(part(obs("c-01.json"), 2, "schema|public"), /anon=USAGE,/);
+  assert.deepEqual(stops(cross(obs("c-01.json"), schema, ALL_GENERIC)).map((x) => x.key), ["schema|public"]);
+});
+
+test("4C-13 R3: any different server_version_num stops with every record present; a same-number build and an image each need their own record", () => {
+  const prod = obs("c-01.json");
+  assert.equal(part(prod, 9, "server_version_num"), "170005");
+  const at = (num, version = "PostgreSQL synthetic") => edited("c-01.json", (rows) => {
+    rows.find((r) => r.key === "server_version_num").value = num;
+    rows.find((r) => r.key === "version").value = version;
+  });
+  // Every generic record, and a keyed one too: none of them can waive a version change.
+  const every = { ...ALL_GENERIC, "R-VER|server_version_num": "keyed", "R-IMG|server_version_num": "keyed", "R-VER|version": "keyed", "R-IMG|version": "keyed" };
+  for (const [a, b] of [["170005", "170006"], ["170006", "180000"], ["170006", "170005"]]) {
+    const f = stops(cross(at(a), at(b), every));
+    assert.deepEqual(f.map((x) => x.key), ["server_version_num"], `${a} to ${b}`);
+    assert.match(f[0].reason, new RegExp(`a major or minor server change is reviewed: ${a} and ${b}`));
+  }
+  // The same number, a different build: its own evidence, version(), and its own record.
+  const build = at("170005", "PostgreSQL 17.5 another build");
+  const none = stops(cross(at("170005", "PostgreSQL 17.5 one build"), build, { "R-AUTHCFG": "x" }));
+  assert.deepEqual(none.map((x) => x.key), ["version"]);
+  assert.match(none[0].reason, /R-VER: version\(\) differs at one server_version_num.*with no record/);
+  const ok = cross(at("170005", "PostgreSQL 17.5 one build"), build, { "R-AUTHCFG": "x", "R-VER": "the new build" });
+  assert.deepEqual(stops(ok), []);
+  assert.ok(ok.some((f) => f.verdict === "RESIDUAL" && f.key === "version"));
+  assert.ok(ok.some((f) => f.verdict === "MATCH" && f.key === "server_version_num"));
+  // The image: no SQL read shows it, so it is given, and a difference needs R-IMG's record.
+  const noImage = stops(C.crossProject(prod, prod, { creator: "postgres", records: ALL_GENERIC }));
+  assert.deepEqual(noImage.map((x) => x.key), ["image"]);
+  for (const images of [{ production: "17.6.1.111" }, { production: "17.6.1.111", rehearsal: " " }, "17.6.1.111", null]) {
+    assert.deepEqual(stops(C.crossProject(prod, prod, { creator: "postgres", records: ALL_GENERIC, images })).map((x) => x.key), ["image"], JSON.stringify(images));
+  }
+  const other = { production: "17.6.1.111", rehearsal: "17.6.1.166" };
+  assert.match(reasons(cross(prod, prod, { "R-AUTHCFG": "x" }, other)), /image: R-IMG: the images differ: 17\.6\.1\.111 and 17\.6\.1\.166, with no record/);
+  const img = cross(prod, prod, { "R-AUTHCFG": "x", "R-IMG": "the current image" }, other);
+  assert.deepEqual(stops(img), []);
+  assert.ok(img.some((f) => f.verdict === "RESIDUAL" && f.key === "image"));
+  assert.ok(cross(prod, prod, { "R-AUTHCFG": "x" }).some((f) => f.verdict === "MATCH" && f.key === "image"));
+  // A number that is not one, on both sides, equal or not.
+  for (const bad of ["17.6", "1e6", "160010", "", "0170005", "170005 "]) {
+    assert.match(reasons(C.p0Findings(M, at(bad), { target: "production" })), /server_version_num: a required fact is not usable/, JSON.stringify(bad));
+    assert.match(reasons(cross(at(bad), at(bad), ALL_GENERIC)), /server_version_num: production's baseline: a required fact is not usable/, JSON.stringify(bad));
+  }
+});
+
+test("4C-14 R4: each differing event trigger needs its own record: an added trigger, a changed body and a removed trigger are refused with only a generic R-IMG, and accepted with theirs", () => {
+  const TRIGGER = "ddl_command_end|O||f|postgres|plpgsql|00000000000000000000000000000000|";
+  const OTHER = "ddl_command_end|O||f|postgres|plpgsql|11111111111111111111111111111111|";
+  const push = (key, value) => (rows) => rows.push({ part: 8, key, value });
+  const base = edited("c-01.json", push("evt|one", TRIGGER));
+  const cases = [
+    ["added", edited("c-01.json", (rows) => { push("evt|one", TRIGGER)(rows); push("evt|two", TRIGGER)(rows); }), "evt|two"],
+    ["a changed body", edited("c-01.json", push("evt|one", OTHER)), "evt|one"],
+    ["removed", obs("c-01.json"), "evt|one"],
+  ];
+  for (const [label, reh, key] of cases) {
+    const generic = stops(cross(base, reh, ALL_GENERIC));
+    assert.deepEqual(generic.map((x) => x.key), [key], `${label}: a generic R-IMG does not cover it`);
+    assert.match(generic[0].reason, new RegExp(`with no record under R-IMG\\|${key.replace("|", "\\|")}`), label);
+    const another = stops(cross(base, reh, { ...ALL_GENERIC, "R-IMG|evt|unrelated": "reviewed, another trigger" }));
+    assert.deepEqual(another.map((x) => x.key), [key], `${label}: another trigger's record does not cover it`);
+    assert.deepEqual(stops(cross(base, reh, { ...ALL_GENERIC, [`R-IMG|${key}`]: "   " })).map((x) => x.key), [key], `${label}: a blank record is none`);
+    const own = cross(base, reh, { ...ALL_GENERIC, [`R-IMG|${key}`]: `${key}: reviewed; what its behaviour leaves unproven` });
+    assert.deepEqual(stops(own), [], `${label}: its own record`);
+    assert.ok(own.some((f) => f.verdict === "RESIDUAL" && f.key === key && f.part === 8), label);
+  }
+  // Equal triggers, and an empty part 8 on both sides, need no record.
+  assert.deepEqual(stops(cross(base, base, { "R-AUTHCFG": "x" })), []);
+  assert.deepEqual(Object.keys(obs("c-01.json").parts[8]), [], "the local run has no event trigger");
+  assert.deepEqual(stops(cross(obs("c-01.json"), obs("c-01.json"), { "R-AUTHCFG": "x" })), []);
+});
+
+test("4C-15 R5: a required fact missing or unusable on both sides stops every comparison; optional settings and an empty event-trigger part do not", () => {
+  const records = { ...ALL_GENERIC };
+  const drop = (keys) => edited("c-01.json", (rows) => { for (const k of keys) { const i = rows.findIndex((r) => r.key === k); assert.ok(i >= 0, k); rows.splice(i, 1); } });
+  const set = (values) => edited("c-01.json", (rows) => { for (const [k, v] of Object.entries(values)) { const r = rows.find((x) => x.key === k); assert.ok(r, k); r.value = v; } });
+  const REQUIRED = ["pgcrypto", ...C.REQUIRED_FUNCTIONS.map((f) => `fn|${f}`), ...Object.keys(C.REQUIRED_AUTH_COLUMNS).map((c) => `authusers-col|${c}`),
+    "authusers-notnull-nodefault", "authusers-user-triggers", "ext|pgcrypto", "server_version_num", "version", "fingerprint", "schema|public", "columns", "count", "head",
+    ...C.DATA_SCOPE.stop, ...Object.keys(C.DATA_SCOPE.recorded)];
+  assert.equal(C.REQUIRED_FUNCTIONS.length, 4);
+  assert.deepEqual(Object.keys(C.REQUIRED_AUTH_COLUMNS).sort(), ["aud", "email", "id", "instance_id", "role"]);
+  for (const k of REQUIRED) {
+    const o = drop([k]);
+    assert.ok(stops(C.requiredFindings(o)).some((f) => f.key === k), `${k}: requiredFindings names it`);
+    for (const [label, f] of [["P0′", C.p0Findings(M, o, { target: "production" })], ["both sides", cross(o, o, records)], ["the data scope", C.dataScope(o, o)]]) {
+      assert.ok(stops(f).some((x) => x.key === k && /a required fact is missing/.test(x.reason)), `${k}: ${label}`);
+    }
+  }
+  // Codex's reading: pgcrypto and its functions absent, equal on both sides.
+  const absent = edited("c-01.json", (rows) => {
+    for (const r of rows) if (r.part === 6 && (r.key === "pgcrypto" || r.key.startsWith("fn|extensions."))) r.value = "<absent>";
+    for (let i = rows.length - 1; i >= 0; i--) if ((rows[i].part === 7 && rows[i].key === "ext|pgcrypto") || (rows[i].part === 4 && rows[i].key.includes("|extensions."))) rows.splice(i, 1);
+  });
+  for (const f of [C.p0Findings(M, absent, { target: "production" }), cross(absent, absent, records)]) {
+    assert.match(reasons(f), /pgcrypto: .*a required fact is not usable \(<absent>\)/);
+    assert.match(reasons(f), /fn\|extensions\.digest\(text, text\): .*a required fact is not usable \(<absent>\)/);
+    assert.match(reasons(f), /ext\|pgcrypto: .*a required fact is missing/);
+    assert.match(reasons(f), /exec\|service_role\|extensions\.gen_random_bytes\(integer\): .*a required fact is missing/);
+  }
+  // Equal on both sides, and each unusable.
+  for (const [label, values, key] of [
+    ["auth.uid() absent", { "fn|auth.uid()": "<absent>" }, "fn|auth.uid()"],
+    ["a function fact without its md5", { "fn|auth.uid()": "postgres|s|" }, "fn|auth.uid()"],
+    ["a fixture column of another type", { "authusers-col|id": "text|true|" }, "authusers-col|id"],
+    ["a fixture column cut short", { "authusers-col|email": "character varying(255)" }, "authusers-col|email"],
+    ["a NOT NULL column beyond the fixtures'", { "authusers-notnull-nodefault": "id,tenant_id" }, "authusers-notnull-nodefault"],
+    ["a user trigger", { "authusers-user-triggers": "1" }, "authusers-user-triggers"],
+    ["pgcrypto elsewhere", { pgcrypto: "1.3|public", "ext|pgcrypto": "1.3|public" }, "pgcrypto"],
+    ["part 7 not part 6's", { "ext|pgcrypto": "9.9|extensions" }, "ext|pgcrypto"],
+    ["a count that is no count", { "count|public.employees": "many" }, "count|public.employees"],
+    ["a digest that is no digest", { "digest|public.employees": "<null>" }, "digest|public.employees"],
+    ["a flag that is no flag", { probe_slug_absent: "<null>" }, "probe_slug_absent"],
+    ["a free-PIN count that is no count", { free_pins: "" }, "free_pins"],
+    ["a role absent", { "attr|service_role": "<absent>" }, "attr|service_role"],
+    ["an EXECUTE fact that is no flag", { "exec|anon|auth.uid()": "<null>" }, "exec|anon|auth.uid()"],
+  ]) {
+    const o = set(values);
+    assert.ok(stops(cross(o, o, records)).some((f) => f.key === key && /a required fact/.test(f.reason)), `${label}: both sides`);
+    assert.ok(stops(C.p0Findings(M, o, { target: "production" })).some((f) => f.key === key), `${label}: P0′`);
+  }
+  // Postgres's default for each object type: a global row or an implicit one, never neither or both.
+  const neither = drop(["implicit|postgres|f"]);
+  assert.match(reasons(cross(neither, neither, records)), /postgres\|f: .*this reading has neither/);
+  const both = edited("c-01.json", (rows) => rows.push({ part: 3, key: "row|postgres|*|f", value: "postgres=EXECUTE/postgres" }));
+  assert.match(reasons(C.p0Findings(M, both, { target: "production" })), /postgres\|f: .*this reading has both/);
+  // POST′: the same hole, with the reading, the baseline and the window start each lacking the fact.
+  const baseline = obs("c-01.json");
+  const noEmp = (name) => edited(name, (rows) => rows.splice(rows.findIndex((r) => r.key === "count|public.employees"), 1));
+  const after = noEmp("c-P2-02.json"), base = noEmp("c-01.json");
+  assert.match(reasons(post(after, "P2-02", { baseline: base, previous: base, previousState: "01", target: "production", windowStart: base })), /count\|public\.employees: a required fact is missing/);
+  assert.match(reasons(post(after, "P2-02", { baseline: base, previous: base, previousState: "01" })), /count\|public\.employees: a required fact is missing/);
+  assert.match(reasons(post(obs("c-P2-02.json"), "P2-02", { baseline, previous: baseline, previousState: "01", target: "production", windowStart: base })), /count\|public\.employees: the window-start P0′: a required fact is missing/);
+  // A receipt without them is not bound.
+  assert.throws(() => C.bindReceipt(drop(["fn|auth.uid()"])), /without its required facts cannot be bound: fn\|auth\.uid\(\): a required fact is missing/);
+  // Not every sentinel: an optional setting and an empty part 8 stay allowed.
+  const noSession = drop(["session|lock_timeout"]);
+  assert.deepEqual(stops(cross(noSession, noSession, { "R-AUTHCFG": "x" })), [], "an allowlisted setting's absence is compared, and is not a required fact");
+  const named = edited("c-01.json", (rows) => rows.push({ part: 5, key: "setting|postgres|*|app.settings.jwt_secret", value: "<name only>" }));
+  assert.deepEqual(stops(cross(named, named, { "R-AUTHCFG": "x" })), [], "an unlisted setting, known by name only, on both sides");
+  assert.deepEqual(C.requiredFindings(obs("c-01.json")), [], "the 01 reading, with an empty part 8, holds them all");
+  // A required fact on one side only stays a difference too.
+  assert.ok(stops(cross(baseline, drop(["fn|auth.uid()"]), records)).some((f) => f.key === "fn|auth.uid()" && /a MATCH fact differs/.test(f.reason)));
+});
+
+test("4C-16 BUILD-00's guarded ledger read: each real case gives its status in an ordinary and a read-only transaction; only nothing there, or the pinned table with no row, leaves BUILD-01 free; a denied or hidden read is never empty", () => {
+  const ledger = (f) => json(`l-${f}.json`);
+  for (const [name, status, stopRe] of [
+    ["absent-schema", "absent-schema", null],
+    ["absent-table", "absent-table", null],
+    ["empty", "empty", null],
+    ["reader-empty", "empty", null],
+    ["populated", "populated", /already holds rows/],
+    ["reader-populated", "populated", /already holds rows/],
+    ["extra-column", "unsupported-shape", /not an ordinary table with production's six columns/],
+    ["missing-columns", "unsupported-shape", /not an ordinary table with production's six columns/],
+    ["wrong-type", "unsupported-shape", /not an ordinary table with production's six columns/],
+    ["view", "unsupported-shape", /not an ordinary table with production's six columns/],
+    ["denied-schema", "denied-schema", /no USAGE on the ledger's schema/],
+    ["denied-read", "denied-read", /may not read the ledger/],
+    ["hidden-read", "hidden-read", /rows may be hidden/],
+    ["partial-read", "hidden-read", /rows may be hidden/],
+  ]) {
+    const { ordinary, readOnly } = ledger(name);
+    assert.deepEqual(ordinary, readOnly, `${name}: the same in a read-only transaction`);
+    assert.equal(factOf(ordinary, "ledger", "status"), status, name);
+    const f = C.build00LedgerFindings(ordinary);
+    if (stopRe) assert.match(reasons(f), stopRe, name);
+    else assert.deepEqual(stops(f), [], name);
+    assert.ok(f.some((x) => x.verdict === "RECORDED" && x.key === "status" && x.reason === status), `${name}: the status is reported`);
+    const read = status === "empty" || status === "populated";
+    assert.equal(factOf(ordinary, "ledger", "rows") === "<not read>", !read, `${name}: rows are read only under a read status`);
+    assert.ok(!JSON.stringify(ordinary).includes("BODY-MARKER") && !JSON.stringify(ordinary).includes("one;"), `${name}: never a statement's text`);
+  }
+  assert.equal(factOf(ledger("absent-schema").ordinary, "ledger", "schema"), "false");
+  assert.equal(factOf(ledger("absent-table").ordinary, "ledger", "schema"), "true");
+  assert.equal(factOf(ledger("absent-table").ordinary, "ledger", "table"), "false");
+  // The rows: identity and digests, written here independently of the harness.
+  const rows = factOf(ledger("populated").ordinary, "ledger", "rows");
+  for (const piece of ["<version>20260101000000</version>", "<name>a &lt;row&gt; &amp; name</name>", `<statements_md5>${C.md5("select 'BODY-MARKER';")}</statements_md5>`,
+    "<statements_bytes>21</statements_bytes>", "<statements_count>1</statements_count>", "<created_by>store4979@theupsstore.com</created_by>",
+    "<version>20260102000000</version>", "<name xsi:nil=\"true\"/>", `<statements_md5>${C.md5("one;")}</statements_md5>`, "<statements_count>2</statements_count>",
+    "<idempotency_key_null>false</idempotency_key_null>", "<rollback_null>true</rollback_null>"]) assert.ok(rows.includes(piece), piece);
+  assert.equal(rows.split("<row>").length - 1, 2, "a name holding <row> is escaped, so it counts no row");
+  // The six columns are the manifest's, in catalog terms.
+  const asManifest = C.LEDGER_COLUMNS.split(", ").map((c) => { const [n, t, nn, d] = c.split(":"); return `${n}:${t === "text[]" ? "ARRAY" : t}:${nn === "true" ? "NO" : "YES"}:${d}`; }).join(", ");
+  assert.equal(asManifest, M.ledgerRow.columns);
+  assert.equal(factOf(ledger("empty").ordinary, "ledger", "columns"), C.LEDGER_COLUMNS);
+  // The local database at 01 has the 21 rows, and BUILD-00 would stop on them.
+  const at01 = json("l-at01.json");
+  assert.equal(factOf(at01, "ledger", "rows").split("<row>").length - 1, 21);
+  assert.match(reasons(C.build00LedgerFindings(at01)), /already holds rows/);
+  // Without the guard, a hidden read shows no row and a denied one fails.
+  assert.deepEqual(json("l-bare-controls.json"), { hidden: { ownerSeesRow: true, reader: { seesRow: false } }, denied: { ownerSeesRow: true, reader: "error 42501" } });
+  // Total: malformed readings stop, and a reading cannot pass for empty.
+  const EMPTY = ledger("empty").ordinary;
+  const change = (key, value) => EMPTY.map((r) => (r.key === key ? { ...r, value } : r));
+  assert.deepEqual(stops(C.build00LedgerFindings(EMPTY)), []);
+  for (const [label, input, re] of [
+    ["not a list", null, /not a list of rows/],
+    ["no ledger part", [{ part: "defaults", key: "x", value: "y" }], /did not report it/],
+    ["no status", EMPTY.filter((r) => r.key !== "status"), /status: BUILD-00 did not report it/],
+    ["no rows", EMPTY.filter((r) => r.key !== "rows"), /rows: BUILD-00 did not report it/],
+    ["an unknown status", change("status", "readable"), /not a status BUILD-00 reports/],
+    ["a key twice", [...EMPTY, EMPTY[0]], /the key appears twice/],
+    ["a value that is not text", [...EMPTY.filter((r) => r.key !== "rows"), { part: "ledger", key: "rows", value: null }], /a ledger row is not text/],
+    ["empty, holding a row", change("rows", "<table xmlns:xsi=\"x\">\n<row>\n</row>\n</table>\n"), /rows disagree with the status empty/],
+    ["empty, cut short", change("rows", "<table xmlns:xsi=\"x\">\n"), /not one whole document/],
+    ["empty, without a document", change("rows", "<not read>"), /not one whole document/],
+    ["empty, from other columns", change("columns", "version:text:true:"), /without production's six columns/],
+    ["empty, from a view", change("relation", "v|postgres|false|false"), /other than an ordinary table/],
+    ["empty, with no table", change("table", "false"), /table: false, under the status empty/],
+    ["empty, with no schema", change("schema", "false"), /schema: false, under the status empty/],
+  ]) assert.match(reasons(C.build00LedgerFindings(input)), re, label);
+  const DENIED = ledger("denied-read").ordinary;
+  assert.match(reasons(C.build00LedgerFindings(DENIED.map((r) => (r.key === "rows" ? { ...r, value: "<table x>\n</table>\n" } : r)))), /a result under the status denied-read/);
+  assert.match(reasons(C.build00LedgerFindings(ledger("absent-table").ordinary.map((r) => (r.key === "schema" ? { ...r, value: "false" } : r)))), /schema: false, under the status absent-table/);
+});
+
+test("4C-17 M-6f holds query_to_xml to the one reviewed literal, in BUILD-00 only: a nested write, a non-literal argument, changed flags and other XML functions each fail", () => {
+  const out = A.assembleAll(M, { cwd: ROOT });
+  const text = out["BUILD-00"];
+  assert.deepEqual(item4cProblems(text, "BUILD-00"), []);
+  const call = `query_to_xml('${I4C_LEDGER_QUERY}', true, false, '')`;
+  assert.equal(text.split(call).length, 2, "the text holds the reviewed call once");
+  const literal = `'${I4C_LEDGER_QUERY}'`;
+  // Read as a text of its own, M-6f's other rules find one word in the literal: the ledger's rollback column.
+  assert.deepEqual(item4cProblems(`${I4C_LEDGER_QUERY};`, "the literal"), ["the literal holds rollback"]);
+  // It names no statement's text: each of the three stored columns appears only under md5, octet_length, cardinality or a null test.
+  assert.ok(!/m\.statements\s*(,| from)/.test(I4C_LEDGER_QUERY) && !/m\.rollback\s*(,| from)/.test(I4C_LEDGER_QUERY) && !/m\.idempotency_key\s*(,| from)/.test(I4C_LEDGER_QUERY));
+  const NOT_REVIEWED = /query_to_xml arguments are not the reviewed literal and flags/;
+  for (const [label, mutated, re] of [
+    ["a nested write", text.replace(literal, "'insert into public.stores (slug) values (''x'') returning slug'"), NOT_REVIEWED],
+    ["a nested delete", text.replace(literal, "'with d as (delete from supabase_migrations.schema_migrations returning version) select * from d'"), NOT_REVIEWED],
+    ["a nested read of the bodies", text.replace(literal, "'select statements from supabase_migrations.schema_migrations'"), NOT_REVIEWED],
+    ["one space added", text.replace(literal, `' ${I4C_LEDGER_QUERY}'`), NOT_REVIEWED],
+    ["a column for an argument", text.replace(literal, "g.verdict"), NOT_REVIEWED],
+    ["a concatenation after the literal", text.replace(literal, `${literal} || ' limit 1'`), NOT_REVIEWED],
+    ["a concatenation before it", text.replace(literal, `'select 1;' || ${literal}`), NOT_REVIEWED],
+    ["a built string", text.replace(literal, "chr(115) || 'elect 1'"), NOT_REVIEWED],
+    ["a string continued onto the literal", text.replace(literal, `${literal}\n' limit 1'`), NOT_REVIEWED],
+    ["another flag", text.replace(`${literal}, true, false, ''`, `${literal}, false, false, ''`), NOT_REVIEWED],
+    ["a target namespace", text.replace(`${literal}, true, false, ''`, `${literal}, true, false, 'x'`), NOT_REVIEWED],
+    ["no call", text.replace(call, "null::text"), /calls query_to_xml 0 times/],
+    ["a second call", text.replace(call, `${call} || ${call}`), /calls query_to_xml 2 times/],
+    ["another XML function", text.replace(call, `table_to_xml('supabase_migrations.schema_migrations', true, false, '')`), /table_to_xml/],
+    ["the schema form", text.replace(call, `${call} || query_to_xml_and_xmlschema('select 1', true, false, '')`), /query_to_xml_and_xmlschema/],
+  ]) {
+    assert.notEqual(mutated, text, label);
+    assert.match(item4cProblems(mutated, "BUILD-00").join("; "), re, label);
+  }
+  for (const k of A.TEXTS_4C.filter((x) => x !== "BUILD-00")) {
+    const mutated = out[k].replace(/;\n$/, ` union all select query_to_xml(${literal}, true, false, '')::text;\n`);
+    assert.notEqual(mutated, out[k], k);
+    assert.match(item4cProblems(mutated, k).join("; "), /calls query_to_xml; only BUILD-00 may/, k);
+    assert.deepEqual(item4cProblems(out[k], k), [], `${k}: as it is`);
+  }
 });

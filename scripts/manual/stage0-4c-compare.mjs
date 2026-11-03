@@ -12,6 +12,8 @@
 //                    commit pins once Codex has reviewed a first receipt;
 //   catalogState     A1a's state of the Release 2 functions (the manifest's
 //                    `functions` and `stateAfter`);
+//   requiredFindings the facts every reading must hold, present and usable,
+//                    whatever the other side of a comparison shows;
 //   p0Findings       P0′: state 01 and only 01 (§6.4's baseline-only
 //                    preconditions);
 //   postFindings     POST′: one intended state (STEP_STATES), against the
@@ -21,7 +23,9 @@
 //                    from a bound baseline (for the test that the literal
 //                    rows a binding commit adds agree with it);
 //   crossProject     the tier table (TIERS) between two projects' baselines;
-//   dataScope        §6.4's data facts around P1′ on production.
+//   dataScope        §6.4's data facts around P1′ on production;
+//   build00LedgerFindings  what BUILD-00's guarded ledger read leaves for
+//                    BUILD-01 (§2.1).
 // A finding is { verdict, part, key, reason }. STOP stops for review;
 // RESIDUAL is a named residual, accepted only with its record; RECORDED is
 // reported. An empty list of STOP and unrecorded RESIDUAL findings is
@@ -173,9 +177,11 @@ export function readObservation(rows) {
   return { parts, md5: md5s, whole, problems };
 }
 
-/** The binding a reviewed first receipt is pinned by: its parts' md5s and the whole's. */
+/** The binding a reviewed first receipt is pinned by: its parts' md5s and the whole's. It holds requiredFindings' facts, or it is not bound. */
 export function bindReceipt(obs) {
   if (obs.problems.length) throw new Error(`a reading with problems cannot be bound: ${obs.problems.join("; ")}`);
+  const unusable = requiredFindings(obs);
+  if (unusable.length) throw new Error(`a reading without its required facts cannot be bound: ${unusable.map((f) => `${f.key}: ${f.reason}`).join("; ")}`);
   return { parts: { ...obs.md5 }, whole: obs.whole };
 }
 
@@ -188,6 +194,62 @@ export function bindingFindings(obs, binding) {
   if (obs.whole !== binding.whole) out.push(stop(0, null, "the whole is not the bound receipt's"));
   return out;
 }
+
+// ── the facts every reading must hold ──────────────────────────────────────
+
+/** The four dependency functions of part 6, by signature (plan §2.2). */
+export const REQUIRED_FUNCTIONS = Object.freeze(["extensions.gen_random_bytes(integer)", "extensions.digest(bytea, text)", "extensions.digest(text, text)", "auth.uid()"]);
+const TEXT_TYPE = /^(character varying(\([0-9]+\))?|text)$/;
+/** The auth.users columns P1′'s fixtures write, with the types their literals assign to. */
+export const REQUIRED_AUTH_COLUMNS = Object.freeze({ instance_id: /^uuid$/, id: /^uuid$/, aud: TEXT_TYPE, role: TEXT_TYPE, email: TEXT_TYPE });
+/** The roles whose attributes and dependency EXECUTE rows every reading holds. */
+export const REQUIRED_ROLES = Object.freeze(["postgres", ...V2_ROLES]);
+/** The object types of pg_default_acl, each of which a reading covers for `postgres` by a global row or an implicit one. */
+const DEFAULT_ACL_TYPES = Object.freeze(["r", "S", "f", "T", "n"]);
+
+const isCount = (v) => typeof v === "string" && /^(0|[1-9][0-9]*)$/.test(v);
+const isBool = (v) => v === "true" || v === "false";
+/** A PostgreSQL 17 or later server_version_num: major × 10000 + minor. */
+const isServerNum = (v) => typeof v === "string" && /^[1-9][0-9]{5}$/.test(v) && Number(v) >= 170000;
+const usableDataFact = (k, v) => (k.startsWith("digest|") ? typeof v === "string" && md5Hex.test(v) : k.startsWith("count|") || k === "free_pins" || k === "stores_without_org" ? isCount(v) : isBool(v));
+
+/**
+ * STOP findings for each fact the reviewed contract needs and `obs` does not
+ * hold in a usable form: absent, the `<absent>` sentinel, or the wrong shape.
+ * It reads one reading, so a fact two readings both lack still stops. An
+ * optional setting (part 5) and an empty part 8 are not in it.
+ */
+export function requiredFindings(obs) {
+  const out = [];
+  const need = (part, key, ok, what) => {
+    if (!Object.hasOwn(obs.parts[part], key)) out.push(stop(part, key, `a required fact is missing: ${what}`));
+    else if (!ok(obs.parts[part][key])) out.push(stop(part, key, `a required fact is not usable (${obs.parts[part][key]}): ${what}`));
+  };
+  need(1, "columns", (v) => v !== "", "the ledger's columns");
+  need(1, "count", isCount, "the ledger's row count");
+  need(1, "head", (v) => /^[0-9]{14}$/.test(v), "the ledger's head");
+  need(2, "fingerprint", (v) => md5Hex.test(v), "P0's catalog_fingerprint");
+  need(2, "schema|public", (v) => /^[^|]+\|/.test(v), "public's owner and ACL");
+  for (const t of DEFAULT_ACL_TYPES) {
+    const row = Object.hasOwn(obs.parts[3], `row|postgres|*|${t}`), implicit = Object.hasOwn(obs.parts[3], `implicit|postgres|${t}`);
+    if (row === implicit) out.push(stop(3, `postgres|${t}`, `a required fact: postgres's default for ${t} is exactly one of a global row and an implicit default; this reading has ${row ? "both" : "neither"}`));
+  }
+  for (const r of REQUIRED_ROLES) {
+    need(4, `attr|${r}`, (v) => /^((true|false)\|){7}-?[0-9]+$/.test(v), `${r}'s attributes`);
+    for (const sig of REQUIRED_FUNCTIONS) need(4, `exec|${r}|${sig}`, isBool, `${r}'s EXECUTE on ${sig}`);
+  }
+  need(6, "pgcrypto", (v) => /^[^|<]+\|extensions$/.test(v), "pgcrypto, in the extensions schema");
+  for (const sig of REQUIRED_FUNCTIONS) need(6, `fn|${sig}`, (v) => /^[^|<]+\|[ivs]\|[0-9a-f]{32}$/.test(v), `${sig}: its owner, volatility and definition's md5`);
+  for (const [c, type] of Object.entries(REQUIRED_AUTH_COLUMNS)) need(6, `authusers-col|${c}`, (v) => { const f = v.split("|"); return f.length >= 3 && type.test(f[0]) && isBool(f[1]); }, `auth.users.${c}, which P1′'s fixtures write`);
+  need(6, "authusers-notnull-nodefault", (v) => v === "" || v.split(",").every((c) => Object.hasOwn(REQUIRED_AUTH_COLUMNS, c)), "no NOT NULL column without a default beyond those P1′'s fixtures write");
+  need(6, "authusers-user-triggers", (v) => v === "0", "auth.users has no user trigger");
+  need(7, "ext|pgcrypto", (v) => v === obs.parts[6].pgcrypto, "pgcrypto's extension row, as part 6 reads it");
+  need(9, "server_version_num", isServerNum, "a PostgreSQL 17 or later server");
+  need(9, "version", (v) => v !== "", "the server's version string");
+  for (const k of [...DATA_SCOPE.stop, ...Object.keys(DATA_SCOPE.recorded)]) need(10, k, (v) => usableDataFact(k, v), "a fixed data-scope fact");
+  return out;
+}
+const requiredOf = (label, o) => requiredFindings(o).map((f) => ({ ...f, reason: `${label}: ${f.reason}` }));
 
 // ── the Release 2 functions ────────────────────────────────────────────────
 
@@ -322,7 +384,7 @@ function ledgerShapeFindings(manifest, obs) {
 export function p0Findings(manifest, obs, { target } = {}) {
   if (obs.problems.length) return obs.problems.map((p) => stop(0, null, p));
   if (target !== "production" && target !== "rehearsal") return [stop(0, null, "P0′ names its target, production or rehearsal")];
-  const out = [...ledgerShapeFindings(manifest, obs)];
+  const out = [...requiredFindings(obs), ...ledgerShapeFindings(manifest, obs)];
   const want = baselineLedger(manifest);
   const have = ledgerRows(obs);
   if (have.length !== want.length) out.push(stop(1, "count", `the ledger has ${have.length} rows; P0′ requires exactly ${want.length}, head 01`));
@@ -344,11 +406,9 @@ export function p0Findings(manifest, obs, { target } = {}) {
   if (obs.parts[2][`constraint|${c.table}.${c.name}`] !== c.definition) out.push(stop(2, `constraint|${c.table}.${c.name}`, `${c.name} is not present as ${c.definition}`));
   out.push(...v2Findings(obs, "01"));
   for (const k of Object.keys(obs.parts[4])) if (R2_EXEC.test(k) && !Object.keys(V2_EXEC["01"]).some((sig) => k.endsWith(`|public.${sig}`))) out.push(stop(4, k, "a Release 2 row beyond 01's"));
-  if (!(Number(obs.parts[9].server_version_num) >= 170000)) out.push(stop(9, "server_version_num", "the server is older than PostgreSQL 17"));
   const p10 = obs.parts[10];
   if (p10.probe_slug_absent !== "true") out.push(stop(10, "probe_slug_absent", "the probe identity is present"));
   if (p10.nil_job_absent !== "true") out.push(stop(10, "nil_job_absent", "the nil job identity is present"));
-  if (obs.parts[6]["authusers-user-triggers"] !== "0") out.push(stop(6, "authusers-user-triggers", "auth.users has a user trigger"));
   if (!(Number(p10.free_pins) >= 3)) out.push(stop(10, "free_pins", "fewer than three free PINs"));
   if (p10.stores_without_org !== "0") out.push(stop(10, "stores_without_org", "a store has no organization"));
   const marker = target === "rehearsal" ? "true" : "false";
@@ -390,7 +450,7 @@ export function postFindings(manifest, obs, { step, target, baseline, previous, 
   if (target !== "production" && target !== "rehearsal") return [stop(0, null, "POST′ names its target, production or rehearsal")];
   const s = step === REFUSAL ? { catalog: previousState, adds: [] } : STEP_STATES[step];
   if (!s || !["01", "02", "04", "05"].includes(s.catalog)) return [stop(0, null, `POST′ takes one intended state; ${String(step)} is none`)];
-  const out = [...ledgerShapeFindings(manifest, obs)];
+  const out = [...requiredFindings(obs), ...requiredOf("the baseline", baseline), ...(previous === baseline ? [] : requiredOf("the previous readback", previous)), ...ledgerShapeFindings(manifest, obs)];
 
   // Part 1: the previous rows unchanged, then exactly the step's rows.
   const prev = ledgerRows(previous);
@@ -436,7 +496,10 @@ export function postFindings(manifest, obs, { step, target, baseline, previous, 
   // Part 10: the data scope.
   if (target === "production") {
     if (!windowStart || windowStart.problems.length) out.push(stop(10, null, "no window-start P0′ to compare the data with"));
-    else for (const k of DATA_SCOPE.stop) if (obs.parts[10][k] !== windowStart.parts[10][k]) out.push(stop(10, k, "differs from the window-start P0′"));
+    else {
+      out.push(...requiredOf("the window-start P0′", windowStart));
+      for (const k of DATA_SCOPE.stop) if (obs.parts[10][k] !== windowStart.parts[10][k]) out.push(stop(10, k, "differs from the window-start P0′"));
+    }
     for (const [k, why] of Object.entries(DATA_SCOPE.recorded)) out.push(finding("RECORDED", 10, k, `${obs.parts[10][k]} (window start ${windowStart ? windowStart.parts[10][k] : "?"}): ${why}`));
   } else {
     if (!Number.isInteger(recordedOrders) || recordedOrders < 0) out.push(stop(10, "count|public.orders", "the recorded app-check orders are not given"));
@@ -454,15 +517,21 @@ export function postFindings(manifest, obs, { step, target, baseline, previous, 
 /**
  * §2.2's tiers, by part: MATCH (else STOP), a named residual (accepted only
  * with its record), or RECORDED. `creator` is the object-creating role WHO
- * names; `records` maps a residual's name, or "R-IMG|evt|<trigger>", to its
- * record. Every fact of either reading gets one finding.
+ * names. `records` maps a residual's name, or "<name>|<key>", to its record;
+ * an event trigger's difference takes only its own "R-IMG|evt|<trigger>", so
+ * a generic R-IMG record never covers one. Whether a record says enough is
+ * review's; this checks that the one it needs is there. `images` is the two
+ * projects' image versions, { production, rehearsal }, as the Management API's
+ * project list reports them: no SQL read shows them. Each reading must first
+ * hold requiredFindings' facts. Every fact of either reading gets one finding.
  */
-export function crossProject(prod, reh, { creator, records = {} } = {}) {
+export function crossProject(prod, reh, { creator, records = {}, images } = {}) {
   for (const [label, o] of [["production's baseline", prod], ["the rehearsal's baseline", reh]]) if (!o || o.problems.length) return [stop(0, null, `${label} is missing or not self-consistent`)];
-  const out = [];
-  const residual = (part, key, name, why) => {
-    const rec = records[`${name}|${key}`] ?? records[name];
-    out.push(typeof rec === "string" && rec.trim() ? finding("RESIDUAL", part, key, `${name}: ${why}; recorded: ${rec}`) : stop(part, key, `${name}: ${why}, with no record`));
+  const out = [...requiredOf("production's baseline", prod), ...requiredOf("the rehearsal's baseline", reh)];
+  const recordFor = (k) => (isObj(records) && Object.hasOwn(records, k) && typeof records[k] === "string" && records[k].trim() ? records[k] : null);
+  const residual = (part, key, name, why, { ownOnly = false } = {}) => {
+    const rec = recordFor(`${name}|${key}`) ?? (ownOnly ? null : recordFor(name));
+    out.push(rec ? finding("RESIDUAL", part, key, `${name}: ${why}; recorded: ${rec}`) : stop(part, key, `${name}: ${why}, with no record${ownOnly ? ` under ${name}|${key}` : ""}`));
   };
   const both = (p) => [...new Set([...Object.keys(prod.parts[p]), ...Object.keys(reh.parts[p])])];
   const eq = (p, k) => prod.parts[p][k] === reh.parts[p][k];
@@ -485,14 +554,20 @@ export function crossProject(prod, reh, { creator, records = {} } = {}) {
   }
   for (const k of both(8)) {
     if (eq(8, k)) out.push(finding("MATCH", 8, k, "equal"));
-    else residual(8, k, "R-IMG", "an event trigger on the path differs");
+    else residual(8, k, "R-IMG", "an event trigger on the path differs", { ownOnly: true });
   }
-  const minor = (o) => Math.floor(Number(o.parts[9].server_version_num) / 100);
-  if (minor(prod) !== minor(reh)) out.push(stop(9, "server_version_num", "a major or minor server change is reviewed"));
-  else if (prod.parts[9].server_version_num !== reh.parts[9].server_version_num) residual(9, "server_version_num", "R-VER", "a different build within the same minor version");
+  // From PostgreSQL 10 the number is major × 10000 + minor, so it holds no
+  // build: any difference is a major or minor change. A build or an image
+  // shows only in its own evidence, below.
+  const num = (o) => o.parts[9].server_version_num;
+  if (num(prod) !== num(reh)) out.push(stop(9, "server_version_num", `a major or minor server change is reviewed: ${num(prod)} and ${num(reh)}`));
   else out.push(finding("MATCH", 9, "server_version_num", "equal"));
   if (eq(9, "version")) out.push(finding("MATCH", 9, "version", "equal"));
-  else residual(9, "version", "R-IMG", "the image's version string differs");
+  else residual(9, "version", "R-VER", "version() differs at one server_version_num: a different build");
+  const image = (k) => (isObj(images) && typeof images[k] === "string" && images[k].trim() ? images[k] : null);
+  if (!image("production") || !image("rehearsal")) out.push(stop(9, "image", "the two projects' image versions are not given; no SQL read shows them"));
+  else if (image("production") === image("rehearsal")) out.push(finding("MATCH", 9, "image", "equal"));
+  else residual(9, "image", "R-IMG", `the images differ: ${image("production")} and ${image("rehearsal")}`);
   for (const k of both(10)) out.push(finding("RECORDED", 10, k, `production ${prod.parts[10][k]}, rehearsal ${reh.parts[10][k]}`));
   residual(0, "auth-config", "R-AUTHCFG", "the Auth service's configuration is not readable by SQL");
   return out;
@@ -500,15 +575,70 @@ export function crossProject(prod, reh, { creator, records = {} } = {}) {
 
 /**
  * §6.4's data scope around production P1′: `before` is the window-start P0′,
- * `after` the P0′ after P1′. The ledger and every MATCH fact of parts 1 to 9
- * equal, the STOP data rows equal, pending_jobs recorded.
+ * `after` the P0′ after P1′. Each must hold requiredFindings' facts, so two
+ * missing values are never equal. The ledger and every MATCH fact of parts 1
+ * to 9 equal, the STOP data rows equal, pending_jobs recorded.
  */
 export function dataScope(before, after) {
   for (const [label, o] of [["the window-start P0′", before], ["the P0′ after P1′", after]]) if (!o || o.problems.length) return [stop(0, null, `${label} is missing or not self-consistent`)];
-  const out = [];
+  const out = [...requiredOf("the window-start P0′", before), ...requiredOf("the P0′ after P1′", after)];
   for (let p = 1; p <= 9; p++) out.push(...sameFacts(p, after.parts[p], before.parts[p], "the window-start P0′"));
   for (const k of DATA_SCOPE.stop) if (after.parts[10][k] !== before.parts[10][k]) out.push(stop(10, k, "differs from the window-start P0′; not read as proof that P1′ committed"));
   for (const [k, why] of Object.entries(DATA_SCOPE.recorded)) out.push(finding("RECORDED", 10, k, `${before.parts[10][k]} -> ${after.parts[10][k]}: ${why}`));
+  return out;
+}
+
+// ── BUILD-00's guarded ledger read ─────────────────────────────────────────
+
+/** Production's six ledger columns as BUILD-00 reads them from pg_attribute: name, type, NOT NULL, default. */
+export const LEDGER_COLUMNS = "version:text:true:, statements:text[]:false:, name:text:false:, created_by:text:false:, idempotency_key:text:false:, rollback:text[]:false:";
+const LEDGER_NOT_READ = "<not read>";
+/**
+ * Each status the text reports: the schema and table facts it implies (null,
+ * either), whether its query_to_xml ran, and, unless BUILD-01 may go on, why
+ * it stops. A denied or hidden read is never an empty ledger.
+ */
+const LEDGER_STATUS = Object.freeze({
+  "absent-schema": { schema: "false", table: "false", read: false },
+  "absent-table": { schema: "true", table: "false", read: false },
+  empty: { schema: "true", table: "true", read: true },
+  "denied-schema": { schema: "true", table: null, read: false, stops: "the reader has no USAGE on the ledger's schema: its contents are unknown" },
+  "unsupported-shape": { schema: "true", table: "true", read: false, stops: "the ledger is not an ordinary table with production's six columns" },
+  "denied-read": { schema: "true", table: "true", read: false, stops: "the reader may not read the ledger: its rows are unknown" },
+  "hidden-read": { schema: "true", table: "true", read: false, stops: "row security is active for the reader: its rows may be hidden" },
+  populated: { schema: "true", table: "true", read: true, stops: "the ledger already holds rows: a pre-existing ledger needs its own review before BUILD-01" },
+});
+
+/**
+ * Whether BUILD-00's rows (its `ledger` part is read) leave BUILD-01 free to
+ * go on: a STOP unless the read reports nothing there, or the pinned table
+ * with no row, and every fact agrees with that status. Malformed input is a
+ * STOP.
+ */
+export function build00LedgerFindings(rows) {
+  if (!Array.isArray(rows)) return [stop("ledger", null, "BUILD-00's reading is not a list of rows")];
+  const facts = {};
+  for (const r of rows) {
+    if (!isObj(r) || r.part !== "ledger") continue;
+    if (typeof r.key !== "string" || typeof r.value !== "string") return [stop("ledger", null, "a ledger row is not text")];
+    if (Object.hasOwn(facts, r.key)) return [stop("ledger", r.key, "the key appears twice")];
+    facts[r.key] = r.value;
+  }
+  const missing = ["schema", "table", "relation", "columns", "status", "rows"].filter((k) => !Object.hasOwn(facts, k));
+  if (missing.length) return missing.map((k) => stop("ledger", k, "BUILD-00 did not report it"));
+  if (!Object.hasOwn(LEDGER_STATUS, facts.status)) return [stop("ledger", "status", `not a status BUILD-00 reports: ${facts.status}`)];
+  const want = LEDGER_STATUS[facts.status];
+  const out = [finding("RECORDED", "ledger", "status", facts.status)];
+  if (want.stops) out.push(stop("ledger", "status", `${facts.status}: ${want.stops}`));
+  if (facts.schema !== want.schema) out.push(stop("ledger", "schema", `${facts.schema}, under the status ${facts.status}`));
+  if (want.table !== null && facts.table !== want.table) out.push(stop("ledger", "table", `${facts.table}, under the status ${facts.status}`));
+  if (want.read) {
+    if (facts.columns !== LEDGER_COLUMNS) out.push(stop("ledger", "columns", "the rows were read from a table without production's six columns"));
+    if (!facts.relation.startsWith("r|")) out.push(stop("ledger", "relation", "the rows were read from something other than an ordinary table"));
+    const whole = facts.rows.startsWith("<table ") && facts.rows.endsWith("</table>\n");
+    if (!whole) out.push(stop("ledger", "rows", "the read's result is not one whole document"));
+    if (facts.rows.includes("<row>") !== (facts.status === "populated")) out.push(stop("ledger", "rows", `the read's rows disagree with the status ${facts.status}`));
+  } else if (facts.rows !== LEDGER_NOT_READ) out.push(stop("ledger", "rows", `a result under the status ${facts.status}, which reads nothing`));
   return out;
 }
 

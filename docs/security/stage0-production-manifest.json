@@ -246,9 +246,9 @@
     "sources": {
       "checkedState": {
         "path": "supabase/rehearsals/release2_stage0_4c_checked_state.sql",
-        "blob": "d0ba818fb862d0883364e13ddd690e86006a99ab",
-        "md5": "b867eb38dfe2a6a4c12f559e555da36a",
-        "bytes": 20512,
+        "blob": "0b90c7d3c511b72c8e08ffc1b5e35c5e0da90cf5",
+        "md5": "5c6795835b037bcfaa9cd59e871df438",
+        "bytes": 21262,
         "pinnedAt": "manifest-commit"
       },
       "who": {
@@ -260,9 +260,9 @@
       },
       "build00": {
         "path": "supabase/rehearsals/release2_stage0_4c_build00.sql",
-        "blob": "65a702bc7db22d147a2c2b6dd9a02d757a1afb69",
-        "md5": "593fb74274b911f41b17148f40ce28bf",
-        "bytes": 10907,
+        "blob": "7d7fd2bd0d3b4d708b0ab814451e74c2f82793f0",
+        "md5": "bc74f93a85cfc4d360f02924ad7816e9",
+        "bytes": 15369,
         "pinnedAt": "manifest-commit"
       },
       "build00w": {
@@ -308,9 +308,9 @@
       },
       {
         "path": "scripts/manual/stage0-4c-compare.mjs",
-        "blob": "349c15cdc32f6c1d35191d064b7983a167c76d2c",
-        "md5": "7195be9ff0c8adfe89124725946936b7",
-        "bytes": 32865,
+        "blob": "a02fc46ecf1a33c0ca3d452fd9f46fd02e32f012",
+        "md5": "793e2eff822c5abb026e94ad96ae5f43",
+        "bytes": 43400,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -775,12 +775,12 @@
       "bytes": 17688
     },
     "P0-4C": {
-      "md5": "4c61bc406df0ec72675d2a961358993d",
-      "bytes": 20625
+      "md5": "1f3f58552cf50d8b6ee211bad1038fe6",
+      "bytes": 21375
     },
     "POST-4C": {
-      "md5": "3dbdc00808d43c58527fa4fb66e8d614",
-      "bytes": 20652
+      "md5": "042c468978b89f9607d664da49535058",
+      "bytes": 21402
     },
     "WHO-4C-R-RO": {
       "md5": "1b69b5582f6b58a65789f95dc6c20429",
@@ -803,8 +803,8 @@
       "bytes": 10759
     },
     "BUILD-00": {
-      "md5": "0a9e0ac03e2dfc5452f63becabd444ed",
-      "bytes": 11014
+      "md5": "3e5b1be4729d83958370580d5dcf1d16",
+      "bytes": 15476
     },
     "BUILD-00W": {
       "md5": "7cb8e53d526bb2d2f6f9a4d24bd94a66",

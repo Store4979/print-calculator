@@ -509,8 +509,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       fixture's `manifest` and `ctxAt` options carry a manifest naming the
       target. No manifest names a rehearsal target yet, and M-12 still
       refuses one: the ref-binding commit adds it.
-    - ITEM 4(c)'s READ TEXTS AND THE COMPARATOR (X2; the outline's X2,
-      plan §2.1, §2.2, §6.1–§6.4). Texts, each one read-only SELECT:
+    - ITEM 4(c)'s READ TEXTS AND THE COMPARATOR (X2 and X2b; the outline's X2,
+      plan §0.3, §2.1, §2.2, §6.1–§6.4). Texts, each one read-only SELECT:
       P0-4C and POST-4C (one source, release2_stage0_4c_checked_state.sql:
       §2.2's ten parts as (part, key, value) rows with an md5 per part and
       of the whole), WHO-4C-{R,W}-{RO,DEF}, STATE-4C (STATE's generator
@@ -521,17 +521,45 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       effect "read"; no workflow names them before X4, so nothing new is
       sendable. M-6f (item4cProblems) confines them: one statement, no
       E-string/dollar body, quoted identifiers only "char" and "C", no
-      write word or set_config, calls only I4C_READ_CALLS. The comparator
+      write word or set_config, calls only I4C_READ_CALLS, and query_to_xml
+      only in BUILD-00, once, on the reviewed literal I4C_LEDGER_QUERY and
+      its flags, byte for byte (the blanked view cannot judge what it runs).
+      The comparator
       (scripts/manual/stage0-4c-compare.mjs) is PURE and decides acceptance
       (the classifier's SUCCESS entries are shape only): V2_EXEC (3/9/15/18
-      rows), FUNCTION_FACTS, STEP_STATES, DATA_SCOPE, p0Findings,
-      postFindings, crossProject (tiers), dataScope, bindReceipt. Its
+      rows), FUNCTION_FACTS, STEP_STATES, DATA_SCOPE, requiredFindings,
+      p0Findings, postFindings, crossProject (tiers), dataScope, bindReceipt,
+      build00LedgerFindings. Its
       fixtures come from scripts/manual/stage0-item4c-local-pglite.mjs
-      (PGLITE_DIR; runs A, C, D, F) in scripts/tests/fixtures/stage0-4c/
+      (PGLITE_DIR; runs A, C, D, F, G, L) in scripts/tests/fixtures/stage0-4c/
       with an index of sha256s; each separate local build has its own data
       digests (now(), random ids), so a reading is compared with ITS OWN
-      build's 01 reading. Tests: stage0-4c.test.js (4C-1…4C-10) and
-      stage0-4c.mutation.test.js (4C-M1, 12 mutants).
+      build's 01 reading. Tests: stage0-4c.test.js (4C-1…4C-17) and
+      stage0-4c.mutation.test.js (4C-M1, 34 mutants). What Codex's review of
+      e6f99bf taught (R1–R5, each reproduced on a real database or receipt):
+      - **acldefault's letters are not pg_default_acl's.** A sequence is S in
+        defaclobjtype and s in acldefault, whose S is a FOREIGN SERVER. The
+        key keeps S; the call maps it. A successful query and a matching
+        fixture did not catch this: assert the value against a real sequence;
+      - **an ACL fact includes is_grantable** (`anon=EXECUTE*/postgres`), and
+        its order runs over every serialized field. The preserved catalog
+        block stays as P0 defines it;
+      - **server_version_num holds no build.** From PostgreSQL 10 it is major
+        × 10000 + minor, so any difference is a minor or major change: STOP,
+        whatever records exist. A build shows only in version() (R-VER), an
+        image only in the project list (crossProject's `images`, R-IMG);
+      - **a generic record never covers an event trigger:** each differing
+        part-8 fact takes its own `R-IMG|evt|<name>`;
+      - **equal is not present.** requiredFindings runs on each reading before
+        any comparison, so two sides lacking a required fact, or both showing
+        `<absent>`, stop;
+      - **to_regclass RAISES 42501 on a schema without USAGE,** so it goes
+        after has_schema_privilege in a CASE, never in a WHERE on a column
+        (the planner may evaluate a stable call there). information_schema
+        hides columns from a role without grants: read pg_attribute. A role
+        under active RLS reads an empty-looking table: row_security_active
+        decides hidden-read. On PGlite a role is tested with
+        `begin read only; set local role …`
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
     capture gate and the item 3 gate), plus the modules CHAIN_LISTED names

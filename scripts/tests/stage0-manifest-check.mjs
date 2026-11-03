@@ -376,7 +376,7 @@ export const I4C_READ_CALLS = Object.freeze(["acldefault", "aclexplode", "and", 
   "count", "current_database", "current_setting", "exists", "format_type", "generate_series", "has_column_privilege", "has_database_privilege",
   "has_function_privilege", "has_schema_privilege", "has_table_privilege", "in", "json_agg", "json_build_object", "jsonb_typeof", "lateral", "lpad", "max",
   "md5", "not", "obj_description", "octet_length", "oidvectortypes", "or", "over", "pg_get_constraintdef", "pg_get_expr", "pg_get_function_result",
-  "pg_get_indexdef", "pg_get_triggerdef", "pg_get_userbyid", "pg_has_role", "right", "select", "split_part", "string_agg", "strpos", "substr",
+  "pg_get_indexdef", "pg_get_triggerdef", "pg_get_userbyid", "pg_has_role", "right", "row_security_active", "select", "split_part", "string_agg", "strpos", "substr",
   "to_jsonb", "to_regclass", "to_regnamespace", "to_regprocedure", "unnest", "values", "version", "when", "where", "with",
   "all", "as", "bool_and", "filter", "from", "join",
   // the texts' CTE names and column-alias lists
@@ -384,6 +384,27 @@ export const I4C_READ_CALLS = Object.freeze(["acldefault", "aclexplode", "and", 
   "c", "f", "g", "t", "u", "x", "v00", "v01", "v02", "v03", "v04", "v05", "w00", "w01", "w02", "w03", "w04", "w05"]);
 /** The quoted identifiers item 4(c)'s read texts use: a type and a collation, nothing else. */
 const I4C_QUOTED = ["\"char\"", "\"C\""];
+/**
+ * The one query a 4(c) read text may hand to query_to_xml: BUILD-00's ledger
+ * read, reviewed as SQL. Row identity and digests, never a statement's text.
+ */
+export const I4C_LEDGER_QUERY = "select m.version, m.name, md5(m.statements[1]) as statements_md5, octet_length(m.statements[1]) as statements_bytes, cardinality(m.statements) as statements_count, m.created_by, m.idempotency_key is null as idempotency_key_null, m.rollback is null as rollback_null from supabase_migrations.schema_migrations m order by m.version";
+
+/**
+ * query_to_xml runs the text it is given, so the blanked view cannot judge
+ * its argument: exactly one call, in BUILD-00 only, whose whole argument list
+ * is the reviewed literal and the fixed flags, compared byte for byte from
+ * the call's open parenthesis. `view` is `text` with comments and strings
+ * blanked, offset for offset.
+ */
+function nestedQueryProblems(text, view, name) {
+  const calls = [...view.matchAll(/\bquery_to_xml\s*\(/gi)];
+  if (name !== "BUILD-00") return calls.length ? [`${name} calls query_to_xml; only BUILD-00 may`] : [];
+  if (calls.length !== 1) return [`BUILD-00 calls query_to_xml ${calls.length} times, not once`];
+  const at = calls[0].index + calls[0][0].length;
+  const want = `'${I4C_LEDGER_QUERY}', true, false, '')`;
+  return text.slice(at, at + want.length) === want ? [] : ["BUILD-00's query_to_xml arguments are not the reviewed literal and flags"];
+}
 
 /**
  * M-6f: an item 4(c) read text (the implementation outline's X2), a sibling
@@ -395,7 +416,8 @@ const I4C_QUOTED = ["\"char\"", "\"C\""];
  *   - no quoted identifier but "char" and "C";
  *   - read with its strings blanked: no write word (INTO included), no
  *     set_config, and no call but I4C_READ_CALLS (the CTE names and the
- *     keywords these texts parenthesize after included).
+ *     keywords these texts parenthesize after included);
+ *   - query_to_xml only as nestedQueryProblems allows.
  * A write assembled at run time is not seen: the md5 pin and review are that
  * control. It is a regression check of these fixed texts, not a SQL sandbox.
  */
@@ -415,8 +437,9 @@ export function item4cProblems(text, name) {
   if (semis !== 1 || !code.endsWith(";")) out.push(`${name} is not exactly one statement ending in its one semicolon (${semis} found)`);
   const words = [...new Set([...b.view.matchAll(I3_READ_WORDS)].map((m) => m[0].toLowerCase()))];
   if (/\bset_config\b/i.test(b.view)) words.push("set_config");
-  const calls = [...new Set([...b.view.matchAll(/\b([a-z_][a-z0-9_$]*)\s*\(/gi)].map((m) => m[1].toLowerCase()))].filter((f) => !I4C_READ_CALLS.includes(f));
+  const calls = [...new Set([...b.view.matchAll(/\b([a-z_][a-z0-9_$]*)\s*\(/gi)].map((m) => m[1].toLowerCase()))].filter((f) => f !== "query_to_xml" && !I4C_READ_CALLS.includes(f));
   if (words.length || calls.length) out.push(`${name} holds ${[...words, ...calls].join(", ")}`);
+  out.push(...nestedQueryProblems(text, b.view, name));
   return out;
 }
 

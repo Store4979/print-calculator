@@ -2,12 +2,17 @@
 -- Item 4(c) plan §2.1: BUILD-00, READ-ONLY. One statement. The rehearsal
 -- project's real initial shape, read as catalog metadata, before BUILD-01:
 --   public       every relation, function and type in public, with its owner
---   ledger       whether supabase_migrations and its schema_migrations table
---                exist, and the table's columns. Its rows are not read here:
---                a static statement cannot name a table that may not exist.
---                BUILD-01 asserts the table it finds, inside its transaction
+--   ledger       supabase_migrations.schema_migrations: whether the schema and
+--                table exist, the relation's kind, owner and RLS flags, its
+--                columns (from pg_attribute, which does not depend on the
+--                reader's grants), constraints and triggers; then its rows,
+--                through one guarded read (below)
 --   defaults     every pg_default_acl row, and each object-creating role's
---                implicit default where it has no global row
+--                implicit default where it has no global row. Each ACL entry
+--                is grantee=PRIVILEGE/grantor, with a * after the privilege
+--                when it carries the grant option. The key keeps the catalog's
+--                object-type letter; acldefault's own letter for a sequence
+--                is s (its S is a foreign server)
 --   roles        the named roles' attributes, and the ACLs of public, auth,
 --                storage, extensions and supabase_migrations
 --   extensions   every extension
@@ -25,8 +30,26 @@
 --                their owners
 -- It returns (part, key, value) rows ordered by part and key in byte order.
 -- Facts that depend on the reader (rows under RLS, current_user's
--- authority) are BUILD-00W's. It never reads a stored row of a platform
--- table here.
+-- authority) are BUILD-00W's, except the ledger read's status. The ledger's
+-- rows are the one stored rows this text reads; it reads no other platform
+-- table's.
+--
+-- The guarded ledger read: `status` is, by the first that holds,
+--   absent-schema      no supabase_migrations schema
+--   denied-schema      the reader has no USAGE on it
+--   absent-table       no schema_migrations relation in it
+--   unsupported-shape  not an ordinary table with exactly production's six
+--                      columns
+--   denied-read        the reader has no table-level SELECT on it
+--   hidden-read        row security is active for the reader, so rows may be
+--                      hidden
+--   empty, populated   the read ran: no row, or at least one
+-- Only the last two run query_to_xml, on the one reviewed literal (M-6f pins
+-- it), and `rows` is its result: each row's version, name, the md5, octet
+-- length and element count of its statements, created_by and two null flags,
+-- never a statement's text. Otherwise `rows` is <not read>. A read that fails
+-- for any other reason fails this whole statement: the query route returns an
+-- error, not a status.
 with
 named(rolname) as (
   select x.r from (values ('postgres'), ('anon'), ('authenticated'), ('service_role'),
@@ -36,6 +59,40 @@ named(rolname) as (
 creators as (
   select r.oid, r.rolname::text as rolname from pg_roles r
    where r.rolname = 'postgres' or r.oid in (select d.defaclrole from pg_default_acl d)
+),
+ledger_rel as (
+  select c.oid, c.relkind::text as kind,
+         c.relkind::text || '|' || pg_get_userbyid(c.relowner)::text || '|' || c.relrowsecurity::text || '|' || c.relforcerowsecurity::text as fact
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'supabase_migrations' and c.relname = 'schema_migrations'
+),
+ledger_cols as (
+  select coalesce(string_agg(a.attname::text || ':' || format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull::text || ':'
+                             || coalesce(pg_get_expr(d.adbin, d.adrelid), ''), ', ' order by a.attnum), '') as columns
+    from ledger_rel l
+    join pg_attribute a on a.attrelid = l.oid and a.attnum > 0 and not a.attisdropped
+    left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+),
+ledger_guard as (
+  select case
+           when to_regnamespace('supabase_migrations') is null then 'absent-schema'
+           when not has_schema_privilege('supabase_migrations', 'USAGE') then 'denied-schema'
+           when to_regclass('supabase_migrations.schema_migrations') is null then 'absent-table'
+           when (select l.kind from ledger_rel l) <> 'r'
+                or (select s.columns from ledger_cols s)
+                   <> 'version:text:true:, statements:text[]:false:, name:text:false:, created_by:text:false:, idempotency_key:text:false:, rollback:text[]:false:'
+             then 'unsupported-shape'
+           when not has_table_privilege('supabase_migrations.schema_migrations', 'SELECT') then 'denied-read'
+           when row_security_active('supabase_migrations.schema_migrations') then 'hidden-read'
+           else 'readable'
+         end as verdict
+),
+ledger_read as (
+  select g.verdict,
+         case when g.verdict = 'readable'
+              then query_to_xml('select m.version, m.name, md5(m.statements[1]) as statements_md5, octet_length(m.statements[1]) as statements_bytes, cardinality(m.statements) as statements_count, m.created_by, m.idempotency_key is null as idempotency_key_null, m.rollback is null as rollback_null from supabase_migrations.schema_migrations m order by m.version', true, false, '')::text
+         end as doc
+    from ledger_guard g
 ),
 obs(part, key, value) as (
   select 'public', 'relation|' || c.relname, c.relkind::text || '|' || pg_get_userbyid(c.relowner)::text
@@ -49,29 +106,45 @@ obs(part, key, value) as (
   union all
   select 'ledger', 'schema', (to_regnamespace('supabase_migrations') is not null)::text
   union all
-  select 'ledger', 'table', (to_regclass('supabase_migrations.schema_migrations') is not null)::text
+  select 'ledger', 'table', (exists (select 1 from ledger_rel l))::text
   union all
-  select 'ledger', 'columns', coalesce((select string_agg(c.column_name || ':' || c.data_type || ':' || c.is_nullable || ':'
-                                                          || coalesce(c.column_default, ''), ', ' order by c.ordinal_position)
-                                          from information_schema.columns c
-                                         where c.table_schema = 'supabase_migrations' and c.table_name = 'schema_migrations'), '')
+  select 'ledger', 'relation', coalesce((select l.fact from ledger_rel l), '')
+  union all
+  select 'ledger', 'columns', (select s.columns from ledger_cols s)
+  union all
+  select 'ledger', 'constraint|' || k.conname, k.contype::text || '|' || pg_get_constraintdef(k.oid)
+    from pg_constraint k join ledger_rel l on l.oid = k.conrelid
+  union all
+  select 'ledger', 'trigger|' || t.tgname, t.tgenabled::text || '|' || pg_get_triggerdef(t.oid)
+    from pg_trigger t join ledger_rel l on l.oid = t.tgrelid
+   where not t.tgisinternal
+  union all
+  select 'ledger', 'status', (case when r.verdict <> 'readable' then r.verdict
+                                   when strpos(r.doc, '<row>') > 0 then 'populated' else 'empty' end)
+    from ledger_read r
+  union all
+  select 'ledger', 'rows', coalesce(r.doc, '<not read>') from ledger_read r
   union all
   select 'defaults', 'row|' || pg_get_userbyid(d.defaclrole)::text || '|'
            || (case when d.defaclnamespace = 0 then '*' else d.defaclnamespace::regnamespace::text end) || '|' || d.defaclobjtype::text,
-         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || '/' || coalesce(o.rolname, '?'), ','
-                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C")
+         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end)
+                                       || '/' || coalesce(o.rolname, '?'), ','
+                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C",
+                                              coalesce(o.rolname, '?') collate "C", a.is_grantable)
                      from aclexplode(d.defaclacl) a
                      left join pg_roles g on g.oid = a.grantee
                      left join pg_roles o on o.oid = a.grantor), '')
     from pg_default_acl d
   union all
   select 'defaults', 'implicit|' || k.rolname || '|' || t.t,
-         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || '/' || coalesce(o.rolname, '?'), ','
-                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C")
-                     from aclexplode(acldefault(t.t::"char", k.oid)) a
+         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end)
+                                       || '/' || coalesce(o.rolname, '?'), ','
+                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C",
+                                              coalesce(o.rolname, '?') collate "C", a.is_grantable)
+                     from aclexplode(acldefault(t.acl_code::"char", k.oid)) a
                      left join pg_roles g on g.oid = a.grantee
                      left join pg_roles o on o.oid = a.grantor), '')
-    from creators k cross join (values ('r'), ('S'), ('f'), ('T'), ('n')) as t(t)
+    from creators k cross join (values ('r', 'r'), ('S', 's'), ('f', 'f'), ('T', 'T'), ('n', 'n')) as t(t, acl_code)
    where not exists (select 1 from pg_default_acl d
                       where d.defaclrole = k.oid and d.defaclnamespace = 0 and d.defaclobjtype = t.t::"char")
   union all
@@ -84,8 +157,8 @@ obs(part, key, value) as (
   union all
   select 'roles', 'schema|' || s.nspname,
          pg_get_userbyid(s.nspowner)::text || '|'
-           || coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type, ','
-                                          order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C")
+           || coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end), ','
+                                          order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C", a.is_grantable)
                           from aclexplode(coalesce(s.nspacl, acldefault('n', s.nspowner))) a
                           left join pg_roles g on g.oid = a.grantee), '')
     from pg_namespace s where s.nspname in ('public', 'auth', 'storage', 'extensions', 'supabase_migrations')

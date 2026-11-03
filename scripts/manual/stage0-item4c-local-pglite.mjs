@@ -16,9 +16,16 @@
 //   run D  RB-2 from a fresh 01–02, and RB-43 from a fresh 01–04 (§3.6)
 //   run F  real GRANTs and membership changes at a state, then POST-4C:
 //          the readings stage0-4c-compare.mjs must refuse (V-2's real half)
+//   run G  the default ACLs on real catalog rows: the implicit sequence
+//          default against a real sequence, a real global sequence row, and
+//          a real GRANT, GRANT OPTION and REVOKE GRANT OPTION
+//   run L  BUILD-00's guarded ledger read, each case in an ordinary and in a
+//          read-only transaction: absent schema or table, empty, populated,
+//          unsupported shapes, denied and hidden reads, real roles
 // It writes each reading to the fixtures directory: the 01 reading whole,
 // every other checked-state reading as its difference from it, and an
-// index of every file's sha256.
+// index of every file's sha256. A FAIL line below names a case that did not
+// give its expected value, and the process exits 1.
 //
 // WHAT IT CANNOT SHOW: Supabase's real roles (postgres is a superuser here),
 // platform hooks, event triggers, the image, concurrency, the query route.
@@ -188,6 +195,133 @@ for (const [label, steps, change] of F) {
   await db.exec(change);
   saveReading(`${label}.json`, await read(db, "POST-4C"));
   say(true, `run F: ${label}: ${change}`);
+}
+// run G: the default ACLs against real catalog rows. A reading's key letter is
+// pg_default_acl's; acldefault's letter for a sequence differs from it.
+const SEQ_OWNER = "postgres=SELECT/postgres,postgres=UPDATE/postgres,postgres=USAGE/postgres";
+const fact = (rows, part, key) => rows.find((r) => r.part === part && r.key === key)?.value;
+const rowDiff = (from, to) => {
+  const key = (r) => JSON.stringify([r.part, r.key, r.value]);
+  const a = new Set(from.map(key)), b = new Set(to.map(key));
+  return { added: to.filter((r) => !a.has(key(r))), removed: from.filter((r) => !b.has(key(r))) };
+};
+{
+  // A real sequence: once it has an ACL, its owner's entry is the implicit default.
+  const db = await fresh();
+  const build = await read(db, "BUILD-00");
+  await db.exec("create schema acl_probe; create sequence acl_probe.s; grant usage on sequence acl_probe.s to anon;");
+  const actual = (await db.query(`select string_agg(g.rolname || '=' || a.privilege_type || '/' || o.rolname, ',' order by a.privilege_type collate "C") as v
+    from pg_class c cross join lateral aclexplode(c.relacl) a join pg_roles g on g.oid = a.grantee join pg_roles o on o.oid = a.grantor
+   where c.oid = 'acl_probe.s'::regclass and a.grantee = c.relowner`)).rows[0].v;
+  const implicit = fact(build, "defaults", "implicit|postgres|S");
+  const foreignServer = (await db.query(`select string_agg(a.privilege_type, ',') as v from aclexplode(acldefault('S', (select oid from pg_roles where rolname = 'postgres'))) a`)).rows[0].v;
+  save("g-seq-actual.json", { implicit, actual, foreignServer });
+  say(implicit === actual && actual === SEQ_OWNER && foreignServer === "USAGE", "run G: BUILD-00's implicit sequence default is a real sequence owner's, not acldefault's foreign server");
+}
+{
+  // A real global sequence row: the implicit default gives way to it.
+  const db = await fresh();
+  const before = await read(db, "BUILD-00");
+  await db.exec("alter default privileges grant select on sequences to anon;");
+  const d = rowDiff(before, await read(db, "BUILD-00"));
+  save("g-seq-row-build00.json", d);
+  say(fact(d.removed, "defaults", "implicit|postgres|S") === SEQ_OWNER && fact(d.added, "defaults", "row|postgres|*|S") === `anon=SELECT/postgres,${SEQ_OWNER}`, "run G: BUILD-00 with a global sequence row");
+  const at = await at01();
+  await at.exec("alter default privileges grant select on sequences to anon;");
+  const rows = await read(at, "P0-4C");
+  saveReading("g-seq-row.json", rows);
+  say(fact(rows, 3, "row|postgres|*|S") === `anon=SELECT/postgres,${SEQ_OWNER}` && fact(rows, 3, "implicit|postgres|S") === undefined, "run G: the checked state with a global sequence row");
+}
+{
+  // Real GRANT, GRANT OPTION and REVOKE GRANT OPTION: the same database's three readings.
+  const FN = "PUBLIC=EXECUTE/postgres,anon=EXECUTE/postgres,postgres=EXECUTE/postgres";
+  const FNG = "PUBLIC=EXECUTE/postgres,anon=EXECUTE*/postgres,postgres=EXECUTE/postgres";
+  const db = await at01();
+  await db.exec("alter default privileges grant execute on functions to anon;");
+  const plain = await read(db, "P0-4C"), plainB = await read(db, "BUILD-00");
+  await db.exec("alter default privileges grant execute on functions to anon with grant option;");
+  const option = await read(db, "P0-4C"), optionB = await read(db, "BUILD-00");
+  await db.exec("alter default privileges revoke grant option for execute on functions from anon;");
+  const revoked = await read(db, "P0-4C"), revokedB = await read(db, "BUILD-00");
+  saveReading("g-grant-plain.json", plain);
+  saveReading("g-grant-option.json", option);
+  saveReading("g-grant-revoked.json", revoked);
+  save("g-grant-build00.json", { plain: plainB.filter((r) => r.part === "defaults"), option: rowDiff(plainB, optionB), revoked: rowDiff(plainB, revokedB) });
+  say(fact(plain, 3, "row|postgres|*|f") === FN && fact(option, 3, "row|postgres|*|f") === FNG && fact(revoked, 3, "row|postgres|*|f") === FN, "run G: the checked state shows the grant option come and go");
+  say(fact(plainB, "defaults", "row|postgres|*|f") === FN && fact(optionB, "defaults", "row|postgres|*|f") === FNG && fact(revokedB, "defaults", "row|postgres|*|f") === FN, "run G: BUILD-00 shows the grant option come and go");
+}
+{
+  // The same for a schema's own ACL, which both texts read outside the preserved catalog block.
+  const db = await at01();
+  const before = fact(await read(db, "P0-4C"), 2, "schema|public"), beforeB = fact(await read(db, "BUILD-00"), "roles", "schema|public");
+  await db.exec("grant usage on schema public to anon with grant option;");
+  const rows = await read(db, "P0-4C");
+  saveReading("g-schema-option.json", rows);
+  const afterB = fact(await read(db, "BUILD-00"), "roles", "schema|public");
+  say(before.includes("anon=USAGE,") && fact(rows, 2, "schema|public").includes("anon=USAGE*,") && beforeB.includes("anon=USAGE,") && afterB.includes("anon=USAGE*,"), "run G: public's own ACL shows the grant option");
+}
+// run L: BUILD-00's guarded ledger read, each case in an ordinary and in a
+// read-only transaction, as the role named. A fixture holds both readings'
+// `ledger` part.
+const LEDGER_BODY = "select 'BODY-MARKER';";
+const LEDGER_POPULATED = `${LEDGER}
+  insert into supabase_migrations.schema_migrations (version, name, statements, created_by) values ('20260101000000', 'a <row> & name', array['${LEDGER_BODY.replaceAll("'", "''")}'], 'store4979@theupsstore.com');
+  insert into supabase_migrations.schema_migrations (version, statements, idempotency_key) values ('20260102000000', array['one;', 'two;'], 'key-1');`;
+const READER = "create role ledger_reader nologin; grant usage on schema auth, storage, extensions to ledger_reader;";
+const CAN_READ = "grant usage on schema supabase_migrations to ledger_reader; grant select on supabase_migrations.schema_migrations to ledger_reader;";
+const LEDGER_CASES = [
+  ["absent-schema", "drop schema supabase_migrations;", null, "absent-schema"],
+  ["absent-table", "", null, "absent-table"],
+  ["empty", LEDGER, null, "empty"],
+  ["populated", LEDGER_POPULATED, null, "populated"],
+  ["extra-column", `${LEDGER_POPULATED} alter table supabase_migrations.schema_migrations add column extra text;`, null, "unsupported-shape"],
+  ["missing-columns", "create table supabase_migrations.schema_migrations (version text primary key, statements text[], name text);", null, "unsupported-shape"],
+  ["wrong-type", LEDGER.replace("statements text[]", "statements text"), null, "unsupported-shape"],
+  ["view", `create table supabase_migrations.real_rows (version text not null, statements text[], name text, created_by text, idempotency_key text, rollback text[]);
+    create view supabase_migrations.schema_migrations as select * from supabase_migrations.real_rows;`, null, "unsupported-shape"],
+  ["denied-schema", `${LEDGER_POPULATED} ${READER}`, "ledger_reader", "denied-schema"],
+  ["denied-read", `${LEDGER_POPULATED} ${READER} grant usage on schema supabase_migrations to ledger_reader;`, "ledger_reader", "denied-read"],
+  ["hidden-read", `${LEDGER_POPULATED} ${READER} ${CAN_READ} alter table supabase_migrations.schema_migrations enable row level security;`, "ledger_reader", "hidden-read"],
+  ["partial-read", `${LEDGER_POPULATED} ${READER} ${CAN_READ} alter table supabase_migrations.schema_migrations enable row level security;
+    create policy one_row on supabase_migrations.schema_migrations for select using (version = '20260101000000');`, "ledger_reader", "hidden-read"],
+  ["reader-empty", `${LEDGER} ${READER} ${CAN_READ}`, "ledger_reader", "empty"],
+  ["reader-populated", `${LEDGER_POPULATED} ${READER} ${CAN_READ}`, "ledger_reader", "populated"],
+];
+const ledgerPart = async (db, role, readOnly) => {
+  await db.exec(readOnly ? "begin read only" : "begin");
+  try {
+    if (role) await db.exec(`set local role ${role}`);
+    return (await db.query(TEXTS["BUILD-00"])).rows.filter((r) => r.part === "ledger");
+  } finally { await db.exec("rollback"); }
+};
+for (const [label, setup, role, status] of LEDGER_CASES) {
+  const db = await fresh();
+  if (setup) await db.exec(setup);
+  const ordinary = await ledgerPart(db, role, false), readOnly = await ledgerPart(db, role, true);
+  save(`l-${label}.json`, { ordinary, readOnly });
+  say(fact(ordinary, "ledger", "status") === status && JSON.stringify(ordinary) === JSON.stringify(readOnly), `run L: ${label}: ${status}, and the same in a read-only transaction`);
+}
+{
+  // The guard is what tells these from an empty ledger: the bare read shows no row, or fails.
+  const bare = async (setup) => {
+    const db = await fresh();
+    await db.exec(setup);
+    const ls = `select query_to_xml('select version from supabase_migrations.schema_migrations', true, false, '')::text as doc`;
+    const owner = (await db.query(ls)).rows[0].doc;
+    await db.exec("begin read only; set local role ledger_reader");
+    const reader = await db.query(ls).then((r) => r.rows[0].doc, (e) => `error ${e.code}`);
+    await db.exec("rollback");
+    return { ownerSeesRow: owner.includes("<row>"), reader: reader.startsWith("error") ? reader : { seesRow: reader.includes("<row>") } };
+  };
+  const hidden = await bare(`${LEDGER_POPULATED} ${READER} ${CAN_READ} alter table supabase_migrations.schema_migrations enable row level security;`);
+  const denied = await bare(`${LEDGER_POPULATED} ${READER} grant usage on schema supabase_migrations to ledger_reader;`);
+  save("l-bare-controls.json", { hidden, denied });
+  say(hidden.ownerSeesRow && hidden.reader.seesRow === false && denied.reader === "error 42501", "run L: without the guard, a hidden read looks empty and a denied one fails");
+  // 01's real ledger, the 21 rows.
+  const db = await at01();
+  const rows = await ledgerPart(db, null, true);
+  save("l-at01.json", rows);
+  say(fact(rows, "ledger", "status") === "populated" && fact(rows, "ledger", "rows").split("<row>").length - 1 === 21, "run L: the database at 01: populated, 21 rows");
 }
 writeFileSync(join(OUT, "index.json"), JSON.stringify({ note: "Written by scripts/manual/stage0-item4c-local-pglite.mjs; each file's sha256. stage0-4c.test.js refuses a fixture that is not this.", files }, null, 2) + "\n");
 console.log(`${Object.keys(files).length} fixtures written to ${OUT}`);

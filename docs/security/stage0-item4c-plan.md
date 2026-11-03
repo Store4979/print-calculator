@@ -196,6 +196,35 @@ Codex's rulings in its review of `d8ec242`):
    - On his phone: the upload through `/upload`, a one-page PDF.
    - The order: one black-and-white copy.
 
+### 0.3 Codex's review of X2 (`e6f99bf`), and where X2b answers it
+
+**AMEND, 2026-11-03** (`reviews/2026-11-03-e6f99bf-review.md`), with five
+findings and the BUILD-00 ledger amendment. **Ryan's two decisions:** the
+sender's text-to-step binding is fixed in X3, no separate commit; BUILD-00
+uses the guarded fixed read, not a first look in BUILD-01.
+
+| item | Codex's finding | X2b's answer | where |
+|---|---|---|---|
+| R1 | the implicit sequence default was acldefault's foreign server | the key keeps `S`; the call maps it to `s`; a real sequence and a real global row are the checks | §2.2 part 3 |
+| R2 | the default ACLs lost the grant option | `is_grantable` is in each entry and in the order; a real GRANT and REVOKE GRANT OPTION must change the reading and stop a comparison | §2.2 part 3 |
+| R3 | adjacent minor releases passed as builds | any different `server_version_num` stops, every record present; a build shows only in `version()` (R-VER), an image only in the project list (R-IMG) | §2.2 tiers |
+| R4 | a generic R-IMG record waived any event trigger | each differing part-8 fact takes its own `R-IMG\|evt\|<name>` | §2.2 part 8 |
+| R5 | two sides lacking a required fact compared equal | `requiredFindings` runs on each reading first, and on the data scope's fixed facts | §2.2, §6.4 |
+| BUILD-00 | keep the first-receipt read of an existing ledger's rows | one SELECT: a CASE decides the status, and only then does `query_to_xml` run the one reviewed literal (M-6f pins it) | §2.1 |
+
+**The sender gap, for X3 (Codex accepted the sequencing):** `guardedSend`
+compares the requested text with `go.text` and the step with the phase, but
+not the text with the workflow's `stepText(go.step)`. `issueGo` derives the
+right text, so a wrong one needs a direct store edit. In X3:
+- the declared text, `go.text` and the planned text must agree before an
+  attempt is claimed or a request made;
+- a synthetic-store regression sends an internally consistent wrong-text go
+  and shows the refusal, no request and no new attempt or hold;
+- the issued-go positive stays, and the guard chain is re-pinned.
+
+4C-10 shows the ordinary issued-go path. It is not resistance to that store
+edit. X3 is reviewed before any new live use relies on the changed sender.
+
 ## 1. What the remaining path touches
 
 These facts shape the rest of the plan. They come from reading the
@@ -391,7 +420,15 @@ migration integration, and no branching.
    - **BUILD-00** (R, `read_only`) reads the fresh project's real initial
      shape, using §2.2's parts:
      - any object in `public` (none expected);
-     - whether the ledger schema and table exist, and any rows in them;
+     - whether the ledger schema and table exist, and any rows in them. One
+       guarded SELECT reports a status: `absent-schema`, `denied-schema`,
+       `absent-table`, `unsupported-shape`, `denied-read`, `hidden-read`,
+       `empty` or `populated`. Only the last two read the table, through
+       `query_to_xml` on the one reviewed literal: each row's identity and
+       digests, never a statement's text. Only `absent-schema`,
+       `absent-table` and `empty` leave BUILD-01 free to go on
+       (`build00LedgerFindings`). A denied or hidden read is never an empty
+       ledger;
      - every default ACL row at every scope;
      - the schema privileges, roles, extensions and event triggers;
      - **the non-public preflight below** (V-1).
@@ -632,7 +669,7 @@ comparator's code (§6.4):
     mapping from a token and a `read_only` flag to a role, and the API
     route's envelopes;
   - **R-VER:** a different build within the same PostgreSQL minor
-    version;
+    version: the same `server_version_num`, a different `version()` (§0.3);
   - **R-EXT:** an extension that differs outside part 6's closure. It is
     accepted only after the record says why the complete path does not
     depend on it;

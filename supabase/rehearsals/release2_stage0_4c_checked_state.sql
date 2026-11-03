@@ -14,7 +14,11 @@
 --    2  the application objects in public, their owners, public's owner and
 --       ACL, and P0's catalog_fingerprint
 --    3  the default ACLs, global and per schema, with the implicit default
---       for each object-creating role and type that has no global row
+--       for each object-creating role and type that has no global row. Each
+--       entry is grantee=PRIVILEGE/grantor, with a * after the privilege when
+--       it carries the grant option. The key keeps the catalog's object-type
+--       letter; acldefault's own letter for a sequence is s (its S is a
+--       foreign server)
 --    4  the roles: attributes, memberships, schema USAGE, table privileges,
 --       and EXECUTE (Release 2's as exec-r2, every other as exec)
 --    5  the settings: values only for an allowlist of non-secret names
@@ -136,8 +140,8 @@ p2 as (
     from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
   union all
   select 'schema|public', pg_get_userbyid(n.nspowner)::text || '|'
-           || coalesce((select string_agg(coalesce(r.rolname, 'PUBLIC') || '=' || a.privilege_type, ','
-                                          order by coalesce(r.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C")
+           || coalesce((select string_agg(coalesce(r.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end), ','
+                                          order by coalesce(r.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C", a.is_grantable)
                           from aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a
                           left join pg_roles r on r.oid = a.grantee), '')
     from pg_namespace n where n.nspname = 'public'
@@ -149,20 +153,24 @@ p3 as (
   select 'row|' || pg_get_userbyid(d.defaclrole)::text || '|'
            || (case when d.defaclnamespace = 0 then '*' else d.defaclnamespace::regnamespace::text end) || '|'
            || d.defaclobjtype::text as key,
-         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || '/' || coalesce(o.rolname, '?'), ','
-                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C")
+         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end)
+                                       || '/' || coalesce(o.rolname, '?'), ','
+                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C",
+                                              coalesce(o.rolname, '?') collate "C", a.is_grantable)
                      from aclexplode(d.defaclacl) a
                      left join pg_roles g on g.oid = a.grantee
                      left join pg_roles o on o.oid = a.grantor), '') as value
     from pg_default_acl d
   union all
   select 'implicit|' || k.rolname || '|' || t.t,
-         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || '/' || coalesce(o.rolname, '?'), ','
-                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C")
-                     from aclexplode(acldefault(t.t::"char", k.oid)) a
+         coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end)
+                                       || '/' || coalesce(o.rolname, '?'), ','
+                                     order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C",
+                                              coalesce(o.rolname, '?') collate "C", a.is_grantable)
+                     from aclexplode(acldefault(t.acl_code::"char", k.oid)) a
                      left join pg_roles g on g.oid = a.grantee
                      left join pg_roles o on o.oid = a.grantor), '')
-    from creators k cross join (values ('r'), ('S'), ('f'), ('T'), ('n')) as t(t)
+    from creators k cross join (values ('r', 'r'), ('S', 's'), ('f', 'f'), ('T', 'T'), ('n', 'n')) as t(t, acl_code)
    where not exists (select 1 from pg_default_acl d
                       where d.defaclrole = k.oid and d.defaclnamespace = 0 and d.defaclobjtype = t.t::"char")
 ),
