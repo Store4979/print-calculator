@@ -324,9 +324,14 @@ at that moment; a writer may act right after. On a damaged store it prints
 DAMAGED, the problems found, and **no holds list**: an empty list would claim
 a history that is not known to be intact. When it cannot take the lock
 within its wait it prints **BUSY**: the state is not established, there is
-no holds list, and it is not damage. It exits 3 on damage, a hold or BUSY.
-`gate`, `corroborate` and the sender's first check read the same way, and
-refuse as busy when the lock cannot be taken.
+no holds list, and it is not damage. **BUSY is not a liveness check either:**
+a lock left by a killed process reads BUSY too, with the same pid and time
+(§7.1). It exits 3 on damage, a hold or BUSY. `gate`, `corroborate` and the
+sender's first check read the same way, and refuse as busy when the lock
+cannot be taken. `status`, `gate` and `corroborate` judge every deadline at
+the time they read their clock once they hold the lock, after any wait
+(`readAt`, `decidedAt`; W-R1): a deadline that passes while one waits has
+passed.
 
 The journal holds the **project**, for every window, phase and checkout
 (§7), when an attempt:
@@ -359,7 +364,8 @@ damage (§7), not even to the attempt it names.
 `%USERPROFILE%\.stage0-guard` holds the clock checks, the approval drafts,
 the phases, the markers, the gos and the journal for every checkout on this
 machine, so a fresh clone or a new window meets the same holds. **It is
-never edited, moved or deleted by hand.**
+never edited, moved or deleted by hand,** with one exception: a stale
+`lock` file, removed only under §7.1.
 
 - **The ledger.** Every change is one line of `ledger.jsonl`, with its
   sequence number, the sha256 of the line before, and the sha256 of each file
@@ -414,8 +420,8 @@ never edited, moved or deleted by hand.**
   existing file is reported as another process's lock. The wait covers
   taking the lock only: nothing done under it is repeated. A stale lock (a
   guard process killed while holding it) makes `status` print BUSY, with
-  the pid and time the lock names. It is removed by hand only after
-  confirming no guard process runs, and that removal is recorded.
+  the pid and time the lock names, exactly as a live holder does. No
+  command removes it; §7.1 is the procedure.
 - **Restoration, the only way past damage.** It is a reviewed decision, not
   a command:
   1. STOP. No send, no new go.
@@ -427,3 +433,72 @@ never edited, moved or deleted by hand.**
      makes a new store that records its predecessor and the review's sha256.
   5. The new anchor is committed in review. Until it is at HEAD, every live
      command refuses.
+
+## 7.1 A stale lock (W-R3, Codex's review of W)
+
+A guard process killed while it holds the store lock leaves the `lock` file
+behind. Every later command then waits 10 s and refuses, and `status`
+prints BUSY with the pid and time the file records.
+
+**BUSY is not a liveness check.** That record is not checked against any
+process, so a live holder and a dead one read the same, and `status` run
+again keeps returning BUSY. No command removes the file. The refusal names
+these four steps, and only these release it:
+
+1. **Stop and exit normally.** Stop issuing and sending. Exit every guard
+   window as §5 says, with its token deleted.
+2. **Check, read-only, that the recorded holder has exited and that no
+   guard process can use the store.** Keep the BUSY message, the exact lock
+   path and its header (`pid <n> since <time>`). Then, in a window holding
+   no token:
+
+   ```powershell
+   Get-CimInstance Win32_Process -Filter "ProcessId = <n>" | Select-Object ProcessId, Name, CreationDate, ParentProcessId
+   Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Select-Object ProcessId, Name, CreationDate, ParentProcessId
+   ```
+
+   Identity fields only. Never `CommandLine` and never an environment: either
+   can hold a token.
+   - The first read must return nothing: no process has that pid.
+   - Every `node.exe` the second lists must be accounted for as something
+     other than a guard command (`stage0-go`, `stage0-send`,
+     `stage0-window`) using this store, for example an editor or a dev
+     server Ryan names. Claude confirms that no guard command it started is
+     still running.
+   - **Review, not removal,** when:
+     - any process has the recorded pid, even one created after the
+       header's time: the pid may have been reused;
+     - the header is empty, unreadable or not of that form;
+     - the lock path is not `%USERPROFILE%\.stage0-guard\lock`, or any
+       other store file looks changed;
+     - a `node.exe` cannot be accounted for, or the state is uncertain.
+
+   Never kill a process to make this check pass, and never infer that a
+   holder died from an old time.
+3. **Only then remove that one file, and record it.** Ryan decides the
+   removal:
+
+   ```powershell
+   Remove-Item -LiteralPath "$env:USERPROFILE\.stage0-guard\lock"
+   ```
+
+   Nothing else is removed: not the store, the journal, a claim, an outcome
+   or a marker. `init` is never run. The session record names who removed
+   it, when (UTC) and why, the header it held, and both reads from step 2.
+4. **Run `status` again,** for each target:
+
+   ```bash
+   node scripts/manual/stage0-go.mjs status --target <t>
+   ```
+
+   It can still show **PENDING** or **HOLD**, or real **DAMAGE**. Removing
+   the lock is not a disposition: it releases no hold and no unknown
+   outcome. Those follow §6 and §7 as before.
+
+`scripts/tests/stage0-guard.lock.test.js` SN-6 shows the code's side, with a
+real process the test starts:
+- while it holds the lock, `status` is BUSY with its header;
+- once it is killed and its exit awaited, `status` gives the same BUSY, and
+  the lock file is untouched;
+- after the test's own removal, `status` reads the real state: intact, a
+  PENDING hold that survives the removal, or damage.

@@ -316,7 +316,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       against the repository's anchor (I6-R1). Any difference is DAMAGE:
       nothing is drafted, registered, issued or sent, and `status` prints no
       holds list. NEVER edit, move or delete it, and never write a file
-      into it (a test's stray phase-id.txt there was damage). A lost store
+      into it (a test's stray phase-id.txt there was damage). The one
+      exception is a stale `lock` file, removed only under the stale-lock
+      procedure (guarded-send procedure §7.1; below). A lost store
       is not a fresh start: `init` refuses while the anchor exists; only a
       reviewed `init --restore` and a new anchor commit replace it. A
       PENDING claim or an R1/R4 writing outcome holds the whole project
@@ -396,8 +398,9 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       (CE-*: before/at/after every ceiling, a late early step, a later step
       with an earlier ceiling, stale and enlarged ceilings, the exact go
       line, the not-after), stage0-guard.shell.test.js (G-27, real
-      PowerShell windows; Windows only) and stage0-guard.lock.test.js
-      (LK-*, SN-*: below). synthWorkflow(…) in the fixture
+      PowerShell windows; Windows only), stage0-guard.lock.test.js
+      (LK-*, SN-*, HL-1: below) and stage0-guard.time.test.js (TM-*:
+      below). synthWorkflow(…) in the fixture
       declares 60 s per step for any phase a test does not name (`null`
       declares none), and fx.issue() gives a production go the latest
       not-after the issuer admits unless the test passes one. Item 3's are
@@ -415,11 +418,29 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         one snapshot under the lock (readSnapshot). A lock not taken is
         BUSY, the state not established: never DAMAGED. The reader's own
         lock is not counted. No lock is held across the request;
+      - DECISION TIME (W-R1, Codex's review of W): status, gate and
+        corroborate take a `clock` (never a fixed `now`; a time refuses)
+        and read it once they hold the lock, after warm-up and any wait.
+        Every deadline is judged then (readAt, decidedAt). The sender's
+        first check still uses its start time t0, because the claim and
+        admit() read the clock again; G-26's scenarios count those clock
+        calls, so never add one there. stage0-guard.time.test.js (TM-*);
+      - BUSY IS NOT A LIVENESS CHECK (W-R3): a killed holder's lock reads
+        BUSY with the same pid and time, and nothing removes it. The only
+        removal is the stale-lock procedure, guarded-send procedure §7.1,
+        whose four steps the refusal (STALE_LOCK_STEPS) names. Its process
+        check reads identity fields only, never command lines or
+        environments. That one file is the only store file ever removed by
+        hand. SN-6 tests it with a real holder process;
       - tests inject lock faults, or a pause between an event's files and
         its ledger line, only through guardCopy(…) in the fixture, a copy
         of the real module. EEXIST_ONLY and NO_SNAPSHOT are its two
         required-failing mutants. Race workers are released by
-        releaseTogether(…), on acknowledgement, never after a fixed pause;
+        releaseTogether(…), on acknowledgement, never after a fixed pause.
+        Every bounded wait in the helpers goes through within(…), which
+        clears its timer on every path (W-N1; HL-1). LK-6 counts a
+        section only when its exclusion witness was established, and any
+        witness error fails it (W-R2; LK-6b);
       - a test process started with node options (an `--import` hook, say)
         makes SEND-4 fail: the sender's preflight refuses them, by design.
         Never weaken that preflight for an instrumented run.

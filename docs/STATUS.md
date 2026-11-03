@@ -5,17 +5,18 @@
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
-## 2026-11-02 — T pushed; G-6 captured and fixed (W); the 4(c) plan revised (V, V2)
+## 2026-11-02 — T pushed; G-6 fixed (W, W2); the 4(c) plan revised (V, V2)
 - Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); 3624efd..this commit local, for Codex's review
   - ed393be V: docs/security/stage0-item4c-plan.md answers Codex's review of U (U-1 to U-5, C1–C8) and records Ryan's decisions (Codex: AMEND, V-1 and V-2)
-  - 4b7450d W: G-6's F1–F3 under Codex's review of the G-6 addendum (withLock retries EPERM/EACCES/EBUSY on acquisition only; status, gate and the sender's first check read one locked snapshot, BUSY not DAMAGED; G-6/AP-3 released on acknowledgement; LK-*, SN-* tests); the guard chain re-pinned
-  - this commit (V2): the plan answers Codex's review of V: BUILD's non-public preflight with BUILD-00W (V-1); POST′'s reviewed Release 2 EXECUTE rows (V-2); the smoke order kept (C10) and the upload's file read; the data scope around P1′; P1′'s result schema; first receipts bound by hash; G-6's status; the image provenance
-  - Not commits: the G-6 capture and addendum (Codex: ACCEPTED); W verified 537/537, build, replay 14 × 537, 48 race runs under load all green; T's push record with Ryan's Netlify read (§E13), uncommitted
+  - 4b7450d W: G-6's F1–F3 under Codex's review of the G-6 addendum (withLock retries EPERM/EACCES/EBUSY on acquisition only; status, gate and the sender's first check read one locked snapshot, BUSY not DAMAGED; G-6/AP-3 released on acknowledgement; LK-*, SN-* tests); the guard chain re-pinned (Codex: AMEND, W-R1 to W-R3, W-N1)
+  - ea0c616 V2: the plan answers Codex's review of V: BUILD's non-public preflight with BUILD-00W (V-1); POST′'s reviewed Release 2 EXECUTE rows (V-2); the smoke order kept (C10) and the upload's file read; the data scope around P1′; P1′'s result schema; first receipts bound by hash; G-6's status; the image provenance
+  - this commit (W2): Codex's review of W: status, gate and corroborate read their clock under the lock (W-R1, TM-*); LK-6 counts only witnessed sections (W-R2, LK-6b); the stale-lock procedure, procedure §7.1, in the refusal and the docs (W-R3, SN-6); within() clears the helpers' timers (W-N1, HL-1); the guard chain re-pinned
+  - Not commits: the G-6 capture and addendum (Codex: ACCEPTED); W verified 537/537, build, replay 14 × 537; W's load campaign, as Codex counted it: 48 complete passing race TAP results (40 with exit 0, four 010 runs with exit 127, four 012 runs with no exit line), nine load suites 537/537, B #4 and C #4 stopped incomplete; T's push record with Ryan's Netlify read (§E13), uncommitted
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward W's and V2's review requests to Codex; say whether the 2026-10-31 image observation (about 16:55Z) is this session's 13:16:42Z list_projects read
+- Needs from Ryan: forward the V2 and W2 review requests to Codex
 - Needs a ruling from Claude (chat): none
-- Next planned step: Codex's rulings on W and V2; then the 4(c) implementation commit and the session clearances
+- Next planned step: Codex's rulings on V2 and W2; then the 4(c) implementation commit and the session clearances
 
 ## 2026-10-31 — T verified; the item 4(c) plan (docs commit U)
 - Shipped: security/release-2-slice-2 c62644a..this commit (local, for Codex's review)

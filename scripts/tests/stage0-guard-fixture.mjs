@@ -5,8 +5,9 @@
 // by pid, a clean HEAD, and a fetch stub that counts every request. Nothing
 // here reaches the network, the real ~/.stage0-guard or a real window.
 // Two helpers for separate processes and injected faults (Codex's review of
-// the G-6 addendum): releaseTogether, and guardCopy.
-import { mkdtempSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
+// the G-6 addendum): releaseTogether, and guardCopy. `within` bounds a wait
+// and clears its timer on every path (W-N1, Codex's review of W).
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, appendFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -165,7 +166,7 @@ export function fixture({ workflows = {}, t0 = T0, attach = null, identity = nul
     },
     void: (goId) => G.voidGo({ paths, anchor: fx.anchor, manifest: M, goId, now: t }),
     dispose: (attemptId, reviewedPath, ref = M.send.targets.production) => G.dispose({ paths, anchor: fx.anchor, manifest: M, ref, attemptId, reviewedPath, reviewedBytes: readFileSync(reviewedPath), now: t }),
-    status: (ref = M.send.targets.production) => G.status({ paths, anchor: fx.anchor, manifest: M, ref, ctxAt: fx.ctxAt, now: t }),
+    status: (ref = M.send.targets.production) => G.status({ paths, anchor: fx.anchor, manifest: M, ref, ctxAt: fx.ctxAt, clock: fx.now }),
     /**
      * Write a go by hand, with its ledger line, as an issuer that skipped its
      * checks would: the store stays consistent, so only the sender's own
@@ -234,6 +235,17 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms));
 const trim = (s) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
 
 /**
+ * Wait for `done` or for `ms`, whichever comes first, and clear the timer on
+ * every path (W-N1, Codex's review of W): a timer that lost the race would
+ * otherwise keep this process alive until it fired. True when `done` won.
+ */
+export async function within(done, ms) {
+  let id = null;
+  const timeout = new Promise((r) => { id = setTimeout(() => r(false), ms); });
+  try { return await Promise.race([done.then(() => true), timeout]); } finally { clearTimeout(id); }
+}
+
+/**
  * Start one node process per config, running `script` with its config file
  * as its one argument, and release them together once every one is ready
  * (Codex's review of the G-6 addendum, F1: an acknowledgement, not a pause).
@@ -248,6 +260,8 @@ const trim = (s) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
  *   - `afterStart(workers)` runs once the start file is written (G-8 kills a
  *     worker there). If it throws, the workers are killed and waited for,
  *     and its error is thrown.
+ *   - Every bounded wait here goes through `within`, so no timer it starts
+ *     outlives the call, on any path (W-N1; HL-1).
  * Returns, per worker: index, pid, exitCode, signal, readyAt, exitedAt,
  * stdout and stderr (the last 4000 characters of each), outRaw, and out (its
  * parsed JSON, or null when it wrote nothing parseable).
@@ -272,7 +286,7 @@ export async function releaseTogether({ dir, script, cfgs, readyMs = 60000, done
   };
   const fail = async (why) => {
     for (const w of ws) if (!w.exited) { try { w.p.kill(); } catch { /* reported by its exit */ } }
-    await Promise.race([Promise.all(ws.map((w) => w.done)), tick(30000)]);
+    await within(Promise.all(ws.map((w) => w.done)), 30000);
     throw new Error(`${why}; the workers: ${JSON.stringify(ws.map(result))}`);
   };
   const readyBy = Date.now() + readyMs;
@@ -288,14 +302,59 @@ export async function releaseTogether({ dir, script, cfgs, readyMs = 60000, done
   if (afterStart) {
     try { await afterStart(ws); } catch (e) {
       for (const w of ws) if (!w.exited) { try { w.p.kill(); } catch { /* reported by its exit */ } }
-      await Promise.race([Promise.all(ws.map((w) => w.done)), tick(30000)]);
+      await within(Promise.all(ws.map((w) => w.done)), 30000);
       throw e;
     }
   }
-  let all = false;
-  await Promise.race([Promise.all(ws.map((w) => w.done)).then(() => { all = true; }), tick(doneMs)]);
-  if (!all) await fail(`not every worker exited within ${doneMs} ms of the start`);
+  if (!(await within(Promise.all(ws.map((w) => w.done)), doneMs))) await fail(`not every worker exited within ${doneMs} ms of the start`);
   return ws.map(result);
+}
+
+const HOLDER = `
+import { readFileSync, writeFileSync } from "node:fs";
+const c = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const G = await import(c.guardUrl);
+G.withLock(G.statePaths(c.stateDir), () => {
+  const from = Date.now();
+  writeFileSync(c.ready, JSON.stringify({ pid: process.pid, from }));
+  while (Date.now() < from + c.holdMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+}, c.now);
+`;
+
+/**
+ * Start a process that takes the fixture store's real lock, through the real
+ * module, recording its pid and fx's time, and holds it for holdMs from
+ * `from`, the moment it held it (W-R1, W-R3: Codex's review of W). It releases
+ * the lock no earlier than releaseAt (from + holdMs). Resolves once it holds
+ * the lock, with kill(), which kills it and awaits its exit.
+ */
+export async function holder(fx, holdMs = 120000) {
+  const dir = join(fx.dir, `holder-${randomBytes(3).toString("hex")}`);
+  mkdirSync(dir);
+  const script = join(dir, "holder.mjs");
+  writeFileSync(script, HOLDER);
+  const cfg = join(dir, "cfg.json");
+  const ready = join(dir, "ready");
+  writeFileSync(cfg, JSON.stringify({ guardUrl: pathToFileURL(join(MANUAL, "stage0-guard.mjs")).href, stateDir: fx.stateDir, ready, holdMs, now: fx.now() }));
+  const p = spawn(process.execPath, [script, cfg], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let stderr = "";
+  p.stderr.on("data", (d) => { stderr = trim(stderr + d); });
+  const exited = new Promise((r) => p.on("exit", (code, signal) => r({ code, signal })));
+  const kill = async () => {
+    if (p.exitCode === null && p.signalCode === null) p.kill();
+    if (!(await within(exited, 30000))) throw new Error(`holder ${p.pid} did not exit`);
+    return exited;
+  };
+  const until = Date.now() + 60000;
+  while (!existsSync(ready)) {
+    if (p.exitCode !== null) throw new Error(`the holder exited before it held the lock: ${stderr}`);
+    if (Date.now() > until) { await kill(); throw new Error(`the holder never held the lock: ${stderr}`); }
+    await tick(10);
+  }
+  let rec = null;
+  for (let i = 0; i < 100 && !rec; i++) { try { rec = JSON.parse(readFileSync(ready, "utf8")); } catch { await tick(10); } }
+  if (!rec) { await kill(); throw new Error("the holder's record is unreadable"); }
+  return { pid: p.pid, from: rec.from, releaseAt: rec.from + holdMs, kill, exited };
 }
 
 const MANUAL = join(ROOT, "scripts", "manual");
@@ -303,7 +362,7 @@ const MANUAL = join(ROOT, "scripts", "manual");
 /** The original acquisition rule, as a mutant of the copy: only EEXIST is waited through (F2's required-failing case). */
 export const EEXIST_ONLY = { from: 'export const LOCK_BUSY_CODES = Object.freeze(["EEXIST", "EPERM", "EACCES", "EBUSY"]);', to: 'export const LOCK_BUSY_CODES = Object.freeze(["EEXIST"]);' };
 /** No protected snapshot, as a mutant of the copy: the readers read without the lock (F3's required-failing case). */
-export const NO_SNAPSHOT = { from: "  try { return withLock(paths, fn, now, waitMs); } catch (e) {", to: "  try { return fn(); } catch (e) {" };
+export const NO_SNAPSHOT = { from: "  try { return withLock(paths, () => fn(stamp()), stamp, waitMs); } catch (e) {", to: "  try { return fn(stamp()); } catch (e) {" };
 
 /**
  * A copy of scripts/manual/stage0-guard.mjs for injected faults (Codex's

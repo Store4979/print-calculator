@@ -70,7 +70,7 @@ async function wroteThenHeld(s) {
   return x;
 }
 
-const gateOf = (GM, s, phaseId = s.ph.phaseId) => GM.phaseGate({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId, ctxAt: s.fx.ctxAt, now: s.fx.now() });
+const gateOf = (GM, s, phaseId = s.ph.phaseId) => GM.phaseGate({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId, ctxAt: s.fx.ctxAt, clock: s.fx.now });
 
 /** [class, writing, holds] for a transport-failed send of `text` under `manifest`, with the guard module GM. */
 function holdVerdict(GM, CM, text, manifest, target = "staging") {

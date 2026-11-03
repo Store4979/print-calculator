@@ -52,15 +52,20 @@
 // status   prints the holds, attempts, gos and markers, read under the store
 //          lock; on a damaged store, the damage and no holds list; when the
 //          lock cannot be taken within its wait, BUSY: the state is not
-//          established, and no holds list. Read-only.
+//          established, and no holds list. BUSY is not a liveness check: a
+//          lock left by a killed process reads BUSY too, and nothing here
+//          removes it (the stale-lock procedure: the guarded-send procedure,
+//          §7.1). Read-only.
 // gate     prints one phase's gate: its next step, its STOP, or its terminal
 //          outcome; the holds; and whether the workflow's one
 //          separate-credential read is permitted now, with its exact query
 //          when it is (item 3 runbook §6). Read under the store lock; it
-//          refuses as busy when the lock cannot be taken. Read-only.
+//          refuses as busy when the lock cannot be taken. "Now" is the
+//          decision time, read once the lock is held (decidedAt). Read-only.
 // corroborate compares that read's rows (the JSON array execute_sql
 //          returned, saved exactly) with the readback it corroborates, and
-//          refuses unless `gate` permits the read now. Read-only.
+//          refuses unless `gate` permits the read at its own decision time.
+//          Read-only.
 //
 // Exit status: 0 done (status: intact and nothing held; corroborate: the
 // rows agree); 2 refused; 3 status found damage or a hold, or was busy, or
@@ -113,9 +118,9 @@ export function main(argv, env, deps = {}) {
 
   if (cmd === "status") {
     const o = args(rest, ["target"]);
-    const st = G.status({ paths, anchor, manifest, ref: refOf(o.target), ctxAt, now: now() });
+    const st = G.status({ paths, anchor, manifest, ref: refOf(o.target), ctxAt, clock: now });
     out(`${JSON.stringify(st, null, 2)}\n`);
-    if (st.busy) out("BUSY: the store lock could not be taken, so the state is not established. Holds are unknown. This is not damage: run status again once no guard command is running.\n");
+    if (st.busy) out("BUSY: the store lock could not be taken, so the state is not established. Holds are unknown. This is not damage, and it is not a liveness check: a lock left by a killed process reads BUSY too, with the same pid and time. Nothing here removes it. Before removing any lock file, follow the stale-lock procedure, docs/security/stage0-guarded-send-procedure.md §7.1.\n");
     else if (!st.intact) out("DAMAGED: the store does not match its ledger or its anchor. Holds are unknown; nothing is registered, issued or sent until a reviewed restoration.\n");
     return { status: st, exit: st.intact === true && !st.holds.length ? 0 : 3 };
   }
@@ -139,7 +144,7 @@ export function main(argv, env, deps = {}) {
   if (cmd === "gate") {
     const o = args(rest, ["phase"]);
     need(o, ["phase"], "gate");
-    const g = G.phaseGate({ paths, anchor, manifest, phaseId: o.phase, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt, now: t });
+    const g = G.phaseGate({ paths, anchor, manifest, phaseId: o.phase, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt, clock: now });
     out(`${JSON.stringify(g, null, 2)}\n`);
     out(g.corroborate ? `The one separate-credential read is permitted now, exactly the query above (${g.terminal.outcome}).\n` : "The separate-credential read is NOT permitted.\n");
     return { gate: g, exit: 0 };
@@ -148,7 +153,7 @@ export function main(argv, env, deps = {}) {
     const o = args(rest, ["phase", "rows"]);
     need(o, ["phase", "rows"], "corroborate");
     const rowsText = readFile(o.rows, "rows file").toString("utf8");
-    const r = G.corroborateRead({ paths, anchor, manifest, phaseId: o.phase, rowsText, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt, now: t });
+    const r = G.corroborateRead({ paths, anchor, manifest, phaseId: o.phase, rowsText, workflows: deps.workflows, ctxAt, readReceipt: deps.readReceipt, clock: now });
     out(r.agree ? `AGREE: the separate-credential read agrees with ${r.step} in every row, object and owner.\n` : `DISAGREE with ${r.step}: STOP, with no cleanup.\n${r.problems.map((p) => `  ${p}`).join("\n")}\n`);
     return { corroboration: r, exit: r.agree ? 0 : 3 };
   }

@@ -350,8 +350,8 @@ test("I3-7 R-R3: the separate-credential read's query is the runbook's, byte for
   assert.match(I.corroborationProblems(rows, null).join("; "), /no E17 readback/);
 
   // The permission, through the guarded tools.
-  const gateOf = (s) => G.phaseGate({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId: s.ph.phaseId, ctxAt: s.fx.ctxAt, now: s.fx.now() });
-  const readOf = (s, r) => G.corroborateRead({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId: s.ph.phaseId, rowsText: JSON.stringify(r), ctxAt: s.fx.ctxAt, now: s.fx.now() });
+  const gateOf = (s) => G.phaseGate({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId: s.ph.phaseId, ctxAt: s.fx.ctxAt, clock: s.fx.now });
+  const readOf = (s, r) => G.corroborateRead({ paths: s.fx.paths, anchor: s.fx.anchor, manifest: M, phaseId: s.ph.phaseId, rowsText: JSON.stringify(r), ctxAt: s.fx.ctxAt, clock: s.fx.now });
   const runE = async (s, a, upTo = 17) => { for (const id of I.PHASES.E.steps.slice(0, upTo)) await step(s, id, a[id]).catch(() => {}); };
   const throwing = (s) => async (...x) => { s.fx.calls.push(x); throw new TypeError("fetch failed"); };
   const cases = [

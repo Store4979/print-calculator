@@ -15,7 +15,10 @@
 //         through; a lasting one is AfterDispatch, the claim, receipt and hold
 //         kept, one request; the EEXIST-only rule loses the outcome; a lock
 //         wait never extends the go's deadline
-//   LK-6  F2: real processes on the real lock: never two holders at once
+//   LK-6  F2: real processes on the real lock: never two holders at once, by
+//         an exclusion witness every counted section established (W-R2)
+//   LK-6b W-R2: a witness that cannot be established (injected EACCES,
+//         EPERM) fails LK-6's verifier; W's checks alone accepted it
 //   SN-1  F3: a writer paused between a change's file and its ledger line:
 //         status, gate and the sender's first check are BUSY, never DAMAGED,
 //         and change nothing; afterwards each reads the finished state
@@ -28,6 +31,12 @@
 //   SN-5  F3: a missing store or ledger; the reader's own lock; a stale lock
 //   SN-M  F3's mutation companion: without the protected snapshot the
 //         paused-writer case reads as DAMAGED, which SN-1 refuses
+//   SN-6  W-R3: a real holder process, then killed: the same BUSY before and
+//         after its exit, the lock left in place; after a test-only removal,
+//         the real state (intact, a PENDING hold that survives, or damage)
+//   HL-1  W-N1: releaseTogether leaves no timer behind, on its success,
+//         early-exit and afterStart-failure paths; a deliberate leak is seen
+// (Codex's review of W, 2026-11-02, for LK-6b, SN-6 and HL-1.)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
@@ -35,8 +44,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import * as G from "../manual/stage0-guard.mjs";
-import { fixture, synthWorkflow, M, ROOT, nonce, releaseTogether, guardCopy, EEXIST_ONLY, NO_SNAPSHOT } from "./stage0-guard-fixture.mjs";
+import { fixture, synthWorkflow, M, ROOT, nonce, releaseTogether, within, holder, guardCopy, EEXIST_ONLY, NO_SNAPSHOT } from "./stage0-guard-fixture.mjs";
 
 const PROD = "gmxyisjjaxtpycsmmzef";
 const PHASES = { P: [["A1", "P2-01"], ["A2", "STATE"], ["A3", "P2-02"]], Y: [["Y1", "STATE"]] };
@@ -76,8 +86,8 @@ function setupP() {
   return { fx, ph, R, W, go };
 }
 
-const statusOf = (mod, fx, lockWaitMs) => mod.status({ paths: fx.paths, anchor: fx.anchor, manifest: M, ref: PROD, ctxAt: fx.ctxAt, now: fx.now(), ...(lockWaitMs ? { lockWaitMs } : {}) });
-const gateOf = (mod, fx, phaseId, lockWaitMs) => mod.phaseGate({ paths: fx.paths, anchor: fx.anchor, manifest: M, phaseId, workflows: all(fx), ctxAt: fx.ctxAt, now: fx.now(), ...(lockWaitMs ? { lockWaitMs } : {}) });
+const statusOf = (mod, fx, lockWaitMs) => mod.status({ paths: fx.paths, anchor: fx.anchor, manifest: M, ref: PROD, ctxAt: fx.ctxAt, clock: fx.now, ...(lockWaitMs ? { lockWaitMs } : {}) });
+const gateOf = (mod, fx, phaseId, lockWaitMs) => mod.phaseGate({ paths: fx.paths, anchor: fx.anchor, manifest: M, phaseId, workflows: all(fx), ctxAt: fx.ctxAt, clock: fx.now, ...(lockWaitMs ? { lockWaitMs } : {}) });
 
 // ── F2: the lock's acquisition ──────────────────────────────────────────────
 
@@ -134,7 +144,8 @@ test("LK-2 F2: a busy code that lasts refuses at the bound and names it; only EE
     let runs = 0;
     const e = await caught(() => G.withLock(fx.paths, () => { runs++; }, fx.now(), 300));
     assert.ok(e instanceof G.LockUnavailable);
-    assert.match(e.message, /^another guard process has held the store lock for over 0\.3 s \(pid 4242 since 2026-10-28T14:00:00\.000Z\)\. If none is running, the lock is stale/);
+    assert.equal(e.message, `another guard process has held the store lock for over 0.3 s (pid 4242 since 2026-10-28T14:00:00.000Z). ${G.STALE_LOCK_STEPS(fx.paths.lock)}; refusing`);
+    assert.ok(!/check with stage0-go\.mjs status, then remove/.test(e.message), "not the old advice, which sent status to check itself");
     assert.equal(runs, 0);
     assert.equal(readFileSync(fx.paths.lock, "utf8"), "pid 4242 since 2026-10-28T14:00:00.000Z", "the waiter left the lock file as it was");
   } finally { fx.cleanup(); }
@@ -251,44 +262,98 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 writeFileSync(c.ready, String(process.pid));
 const until = Date.now() + c.startWithinMs;
 while (!existsSync(c.start)) { if (Date.now() > until) process.exit(3); await new Promise((r) => setTimeout(r, 2)); }
-const out = { ran: 0, sections: 0, breaches: 0, markerErrors: {}, refusals: {} };
+const out = { ran: 0, sections: 0, witnessed: 0, breaches: 0, markerErrors: {}, refusals: {} };
+const count = (o, k) => { o[k] = (o[k] || 0) + 1; };
 for (let i = 0; i < c.m; i++) {
   try {
     G.withLock(paths, () => {
       out.sections++;
+      // The exclusion witness: its own exclusive create, then its removal. A
+      // section counts as observed only when both succeed (witnessed).
       let fd;
-      try { fd = openSync(c.marker, "wx"); } catch (e) { if (e.code === "EEXIST") out.breaches++; else out.markerErrors[e.code] = (out.markerErrors[e.code] || 0) + 1; return; }
+      try {
+        if (c.witnessFault) { const e = new Error(c.witnessFault + ": injected on the witness"); e.code = c.witnessFault; throw e; }
+        fd = openSync(c.marker, "wx");
+      } catch (e) { if (e.code === "EEXIST") out.breaches++; else count(out.markerErrors, "create " + e.code); return; }
       closeSync(fd);
       sleep(1);
-      for (let t = 0; ; t++) { try { unlinkSync(c.marker); break; } catch (e) { if (t > 500) throw e; sleep(1); } }
+      for (let t = 0; ; t++) { try { unlinkSync(c.marker); break; } catch (e) { if (t > 500) { count(out.markerErrors, "remove " + e.code); return; } sleep(1); } }
+      out.witnessed++;
     }, Date.now());
     out.ran++;
-  } catch (e) { const k = e.constructor.name; out.refusals[k] = (out.refusals[k] || 0) + 1; }
+  } catch (e) { count(out.refusals, e.constructor.name); }
 }
 writeFileSync(c.out, JSON.stringify(out));
 process.exit(0);
 `;
 
-test("LK-6 F2: real processes contend for the real lock: never two holders at once; each section that ran, ran once per acquisition; a refusal is only LockUnavailable", { timeout: 300000 }, async () => {
+/**
+ * LK-6's verifier (W-R2, Codex's review of W): the problems in the stress
+ * workers' results, [] when there are none. Every process ran to its end;
+ * no witness error of any kind; never two holders (no EEXIST on the
+ * witness); every acquisition ran its section once and every section
+ * established its witness (witnessed == sections == ran); every call either
+ * ran or was refused, and only as LockUnavailable.
+ */
+function stressProblems(res, m) {
+  const p = [];
+  for (const r of res) if (!(r.exitCode === 0 && r.signal === null && r.out)) p.push(`process ${r.pid} did not run to its end (exit ${r.exitCode}, signal ${r.signal})`);
+  if (p.length) return p;
+  const sum = (k) => res.reduce((n, r) => n + r.out[k], 0);
+  for (const r of res) for (const [k, n] of Object.entries(r.out.markerErrors)) p.push(`process ${r.pid}: ${n} witness error(s) ${k}`);
+  if (sum("breaches") !== 0) p.push(`${sum("breaches")} section(s) found another holder's witness`);
+  if (sum("witnessed") !== sum("sections")) p.push(`${sum("sections") - sum("witnessed")} section(s) without an established witness`);
+  if (sum("sections") !== sum("ran")) p.push(`${sum("sections")} sections for ${sum("ran")} acquisitions`);
+  const refusals = res.reduce((n, r) => n + Object.values(r.out.refusals).reduce((a, b) => a + b, 0), 0);
+  if (sum("ran") + refusals !== res.length * m) p.push(`${sum("ran")} ran and ${refusals} refused, of ${res.length * m} calls`);
+  for (const r of res) for (const k of Object.keys(r.out.refusals)) if (k !== "LockUnavailable") p.push(`process ${r.pid}: a refusal ${k}`);
+  return p;
+}
+
+/** W's checks alone, kept to show the gap LK-6b closes: they never read the witness's errors. */
+function wCheckProblems(res, m) {
+  const sum = (k) => res.reduce((n, r) => n + r.out[k], 0);
+  const refusals = res.reduce((n, r) => n + Object.values(r.out.refusals).reduce((a, b) => a + b, 0), 0);
+  return [sum("breaches") === 0, sum("sections") === sum("ran"), sum("ran") + refusals === res.length * m].every(Boolean) ? [] : ["W's checks fail"];
+}
+
+/** n real stress processes, m calls each, on the fixture's real lock; `extra` reaches each worker's config. */
+const stressRun = (fx, name, n, m, extra = {}) => {
+  const dir = join(fx.dir, name);
+  mkdirSync(dir);
+  writeFileSync(join(dir, "stress.mjs"), STRESS);
+  const marker = join(fx.dir, `${name}-inside`);
+  return releaseTogether({ dir, script: join(dir, "stress.mjs"), cfgs: Array.from({ length: n }, () => ({ guardUrl: pathToFileURL(join(ROOT, "scripts", "manual", "stage0-guard.mjs")).href, stateDir: fx.stateDir, marker, m, ...extra })), doneMs: 240000 });
+};
+
+test("LK-6 F2: real processes contend for the real lock: never two holders at once, by a witness every counted section established; each section ran once per acquisition; a refusal is only LockUnavailable", { timeout: 300000 }, async () => {
   const fx = fixture({ workflows: WF() });
   try {
-    const dir = join(fx.dir, "lk6");
-    mkdirSync(dir);
-    writeFileSync(join(dir, "stress.mjs"), STRESS);
-    const marker = join(fx.dir, "inside");
     const m = 150;
-    const res = await releaseTogether({ dir, script: join(dir, "stress.mjs"), cfgs: [0, 1, 2].map(() => ({ guardUrl: pathToFileURL(join(ROOT, "scripts", "manual", "stage0-guard.mjs")).href, stateDir: fx.stateDir, marker, m })), doneMs: 240000 });
+    const res = await stressRun(fx, "lk6", 3, m);
     const d = JSON.stringify(res.map((r) => ({ pid: r.pid, exitCode: r.exitCode, signal: r.signal, out: r.out, stderr: r.stderr || undefined })));
-    for (const r of res) assert.ok(r.exitCode === 0 && r.signal === null && r.out, `every process ran to its end: ${d}`);
-    const sum = (k) => res.reduce((n, r) => n + r.out[k], 0);
-    assert.equal(sum("breaches"), 0, `never two holders at once: ${d}`);
-    assert.equal(sum("sections"), sum("ran"), `each acquisition ran its section once: ${d}`);
-    const refusals = res.reduce((n, r) => n + Object.values(r.out.refusals).reduce((a, b) => a + b, 0), 0);
-    assert.equal(sum("ran") + refusals, 3 * m, `every call either ran or was refused: ${d}`);
-    for (const r of res) for (const k of Object.keys(r.out.refusals)) assert.equal(k, "LockUnavailable", `a refusal is only LockUnavailable: ${d}`);
+    assert.deepEqual(stressProblems(res, m), [], d);
+    assert.ok(res.reduce((n, r) => n + r.out.witnessed, 0) > 0, `some sections ran and were witnessed: ${d}`);
     assert.equal(existsSync(fx.paths.lock), false, "no lock is left");
     assert.equal(fx.check().ok, true, "the store is unchanged");
   } finally { fx.cleanup(); }
+});
+
+test("LK-6b W-R2: a witness that cannot be established (an injected EACCES or EPERM on its create) fails LK-6's verifier, though W's checks alone accept the same run", { timeout: 120000 }, async () => {
+  for (const code of ["EACCES", "EPERM"]) {
+    const fx = fixture({ workflows: WF() });
+    try {
+      const m = 5;
+      const res = await stressRun(fx, `lk6b-${code}`, 2, m, { witnessFault: code });
+      const d = JSON.stringify(res.map((r) => ({ pid: r.pid, exitCode: r.exitCode, out: r.out, stderr: r.stderr || undefined })));
+      for (const r of res) assert.ok(r.exitCode === 0 && r.out && r.out.sections > 0, `${code}: the workers ran their sections: ${d}`);
+      const p = stressProblems(res, m);
+      assert.ok(p.some((x) => x.includes(`witness error(s) create ${code}`)), `${code}: the witness error is a problem: ${p.join("; ")}`);
+      assert.ok(p.some((x) => / section\(s\) without an established witness$/.test(x)), `${code}: the unwitnessed sections are a problem: ${p.join("; ")}`);
+      assert.deepEqual(wCheckProblems(res, m), [], `${code}: W's checks alone accept this run, which is the gap: ${d}`);
+      assert.equal(existsSync(fx.paths.lock), false, `${code}: no lock is left`);
+    } finally { fx.cleanup(); }
+  }
 });
 
 // ── F3: the readers' locked snapshots ───────────────────────────────────────
@@ -524,4 +589,115 @@ test("SN-M F3's mutation companion: without the protected snapshot (NO_SNAPSHOT)
     }
     assert.equal(fx.calls.length, 0);
   } finally { fx.cleanup(); }
+});
+
+// ── W-R3: a stale lock, and W-N1: the helper's timers ───────────────────────
+
+test("SN-6 W-R3: a real holder process, then killed: status is BUSY with the lock's pid and time while it lives, and the same BUSY after its exit, with the lock file left as it was (BUSY is no liveness check, and nothing removes the lock); only after a test-only removal does status read the real state: intact, a PENDING hold that survives the removal, or damage", { timeout: 240000 }, async () => {
+  for (const kase of ["intact", "pending", "damaged"]) {
+    const { fx, ph, W, go } = setupP();
+    let h = null;
+    try {
+      if (kase === "pending") {
+        const e = await caught(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId, over: { writeReceipt: () => { throw new Error("the disk is full"); } } }));
+        assert.ok(e instanceof G.AfterDispatch, `${kase}: the claim stays pending (${e && e.message})`);
+      }
+      if (kase === "damaged") writeFileSync(join(fx.paths.gos, "planted.json"), "{}");
+      const before = fx.status();
+      h = await holder(fx);
+      const header = `pid ${h.pid} since ${G.iso(fx.now())}`;
+      assert.equal(readFileSync(fx.paths.lock, "utf8"), header, `${kase}: the lock records the holder`);
+      const busy = { busy: true, reason: `the guard store is busy, so the status is not established (another guard process has held the store lock for over 0.3 s (${header}). ${G.STALE_LOCK_STEPS(fx.paths.lock)}); refusing` };
+      assert.deepEqual(statusOf(G, fx, 300), busy, `${kase}: BUSY while the holder lives, with its header and the procedure`);
+      const ge = await caught(() => gateOf(G, fx, ph.phaseId, 300));
+      assert.ok(ge instanceof G.LockUnavailable && ge.message.includes(`(${header})`), `${kase}: the gate is busy too (${ge && ge.message})`);
+      const exit = await h.kill();
+      assert.ok(exit.code !== 0 || exit.signal !== null, `${kase}: the holder was killed (${JSON.stringify(exit)})`);
+      assert.deepEqual(statusOf(G, fx, 300), busy, `${kase}: the same BUSY once the holder has exited: status cannot tell`);
+      assert.deepEqual(statusOf(G, fx, 300), busy, `${kase}: and again: no reader removes the lock`);
+      assert.equal(readFileSync(fx.paths.lock, "utf8"), header, `${kase}: the lock file is as the holder left it`);
+      // The test's own removal, after it awaited its own holder's exit: the
+      // procedure's step 3 (§7.1), never something a command does.
+      unlinkSync(fx.paths.lock);
+      const st = fx.status();
+      if (kase === "intact") {
+        assert.equal(st.intact, true, JSON.stringify(st));
+        assert.deepEqual(st.holds, []);
+        assert.deepEqual(st, { ...before, readAt: st.readAt }, `${kase}: the state is as it was before the holder`);
+      } else if (kase === "pending") {
+        assert.equal(st.intact, true, JSON.stringify(st));
+        assert.equal(st.holds.length, 1, `${kase}: the hold survives the lock's removal: ${JSON.stringify(st.holds)}`);
+        assert.equal(st.holds[0].kind, "PENDING");
+        assert.deepEqual(st.holds, before.holds, `${kase}: the same hold as before the holder`);
+        const ie = await caught(() => fx.issue(ph.phaseId, "A1"));
+        assert.ok(ie instanceof G.Refusal, `${kase}: nothing is issued while it holds (${ie && ie.message})`);
+        assert.equal(fx.calls.length, 1, `${kase}: only the one request of the pending attempt`);
+      } else {
+        assert.equal(st.intact, false, JSON.stringify(st));
+        assert.ok(!("holds" in st), `${kase}: no holds list`);
+        assert.match(st.damaged.join("; "), /planted\.json is present, but the ledger does not record it/);
+      }
+      if (kase !== "pending") assert.equal(fx.calls.length, 0, `${kase}: no request`);
+    } finally {
+      if (h) await h.kill().catch(() => {});
+      fx.cleanup();
+    }
+  }
+});
+
+const LIFETIME_PROBE = `
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+const c = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const F = await import(c.fixtureUrl);
+const dirOf = (n) => { const d = join(c.dir, n); mkdirSync(d); return d; };
+const cases = {};
+const ok = await F.releaseTogether({ dir: dirOf("ok"), script: c.okWorker, cfgs: [{}], readyMs: 60000, doneMs: 60000 });
+cases.ok = ok[0].out;
+try { await F.releaseTogether({ dir: dirOf("early"), script: c.earlyWorker, cfgs: [{}], readyMs: 60000, doneMs: 60000 }); cases.early = "returned"; }
+catch (e) { cases.early = e.message.includes("exited before it was ready") ? "refused" : e.message; }
+try { await F.releaseTogether({ dir: dirOf("after"), script: c.okWorker, cfgs: [{}], readyMs: 60000, doneMs: 60000, afterStart: async () => { throw new Error("afterStart failed"); } }); cases.after = "returned"; }
+catch (e) { cases.after = e.message === "afterStart failed" ? "rethrown" : e.message; }
+if (c.leakMs) setTimeout(() => {}, c.leakMs);
+writeFileSync(c.out, JSON.stringify({ cases, returnedAt: Date.now() }));
+`;
+const OK_WORKER = `
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+const c = JSON.parse(readFileSync(process.argv[2], "utf8"));
+writeFileSync(c.ready, "1");
+while (!existsSync(c.start)) await new Promise((r) => setTimeout(r, 5));
+writeFileSync(c.out, JSON.stringify({ ok: true }));
+`;
+
+/** Run the lifetime probe; returns its cases and how long its process lived after releaseTogether last returned. */
+async function lifetime(dir, leakMs = 0) {
+  writeFileSync(join(dir, "probe.mjs"), LIFETIME_PROBE);
+  writeFileSync(join(dir, "ok.mjs"), OK_WORKER);
+  writeFileSync(join(dir, "early.mjs"), "process.exit(4);\n");
+  const out = join(dir, "probe-out.json");
+  writeFileSync(join(dir, "probe.json"), JSON.stringify({ fixtureUrl: FIXTURE_URL, dir, okWorker: join(dir, "ok.mjs"), earlyWorker: join(dir, "early.mjs"), out, leakMs }));
+  const p = spawn(process.execPath, [join(dir, "probe.mjs"), join(dir, "probe.json")], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let stderr = "";
+  p.stderr.on("data", (d) => { stderr += d; });
+  const exited = new Promise((r) => p.on("exit", (code, signal) => r({ code, signal })));
+  if (!(await within(exited, 150000))) { p.kill(); await within(exited, 30000); throw new Error(`the probe did not exit: ${stderr}`); }
+  const exitAt = Date.now();
+  const { code } = await exited;
+  assert.equal(code, 0, `the probe ran to its end: ${stderr}`);
+  const r = JSON.parse(readFileSync(out, "utf8"));
+  return { cases: r.cases, afterReturnMs: exitAt - r.returnedAt };
+}
+
+test("HL-1 W-N1: releaseTogether leaves no timer behind: a process that used it on its success, early-exit and afterStart-failure paths, with 60 s and 30 s bounds, exits within seconds of its return; a timer the probe leaves on purpose is seen", { timeout: 300000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "s0-hl1-"));
+  try {
+    mkdirSync(join(dir, "clean"));
+    const clean = await lifetime(join(dir, "clean"));
+    assert.deepEqual(clean.cases, { ok: { ok: true }, early: "refused", after: "rethrown" });
+    assert.ok(clean.afterReturnMs < 8000, `the process exited ${clean.afterReturnMs} ms after the helper's last return; a timer left referenced would hold it for up to 60 s`);
+    // The control: a 20 s timer left referenced on purpose is measured as such.
+    mkdirSync(join(dir, "leak"));
+    const leak = await lifetime(join(dir, "leak"), 20000);
+    assert.ok(leak.afterReturnMs >= 15000, `the measurement sees a referenced timer: ${leak.afterReturnMs} ms`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

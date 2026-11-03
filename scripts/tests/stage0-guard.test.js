@@ -324,8 +324,11 @@ function ranToEnd(ws, label) {
   }
 }
 
+/** The guard's stale-lock steps (STALE_LOCK_STEPS), as a pattern whose one group is the lock's path. */
+const PLACE = String.fromCharCode(0);
+const STEPS_PATTERN = G.STALE_LOCK_STEPS(PLACE).split(PLACE).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("(.+)");
 /** The guard's own lock-wait refusal after a wait of `secs`; its groups are the holder's pid, its time and the lock's path. */
-const lockWait = (secs) => new RegExp(`^another guard process has held the store lock for over ${secs} s \\(pid ([0-9]+) since ([^)]*)\\)\\. If none is running, the lock is stale: check with stage0-go\\.mjs status, then remove (.+) by hand and record it; refusing$`);
+const lockWait = (secs) => new RegExp(`^another guard process has held the store lock for over ${secs} s \\(pid ([0-9]+) since ([^)]*)\\)\\. ${STEPS_PATTERN}; refusing$`);
 /** A lock-wait LockUnavailable whose holder is another worker of this round, at the fixture's time, on this store's lock. */
 function siblingWait(o, w, ws, fx, secs = 10) {
   if (!o || o.name !== "LockUnavailable" || typeof o.message !== "string") return false;

@@ -52,7 +52,12 @@
 // of them reads a change half made, between its files and its ledger line.
 // A command waits up to LOCK_WAIT_MS for it. A lock it cannot take is
 // LockUnavailable; those readers report it as busy, the state not
-// established, which is not damage.
+// established, which is not damage. Status, gate and corroborate are given a
+// clock, and read their decision time from it once they hold the lock: after
+// their warm-up and their wait, never at the time the command started
+// (W-R1, Codex's review of W). BUSY is not a liveness check: a lock file left
+// by a killed process reads BUSY too, and no command removes one. The
+// stale-lock procedure is stage0-guarded-send-procedure.md §7.1.
 //
 // What the code checks, and what it does not:
 //   - Each check below throws a Refusal before any request. The one place a
@@ -132,6 +137,12 @@ export const LOCK_WAIT_MS = 10 * 1000;
  * at the bound.
  */
 export const LOCK_BUSY_CODES = Object.freeze(["EEXIST", "EPERM", "EACCES", "EBUSY"]);
+/**
+ * What a lock-wait refusal tells the operator about the lock file `lock`
+ * (W-R3, Codex's review of W): the four steps of the stale-lock procedure,
+ * stage0-guarded-send-procedure.md §7.1. No command takes any of them.
+ */
+export const STALE_LOCK_STEPS = (lock) => `This refusal cannot tell a live holder from a stale lock. Follow the stale-lock procedure (stage0-guarded-send-procedure.md §7.1): 1. stop issuing and sending, and exit every guard session normally; 2. confirm with a read-only Windows process check (Get-Process or Get-CimInstance, identity fields only, no command lines or environments) that the recorded holder has exited and that no guard process can use this store; 3. only then remove ${lock}, that one file, and record who, when and why; 4. run status again: it can still show PENDING, HOLD or damage`;
 /** The command lines that create authority or admit a send; the manifest pins everything they load (SG-6). */
 export const CHAIN_ENTRIES = Object.freeze(["scripts/manual/stage0-send.mjs", "scripts/manual/stage0-window.mjs", "scripts/manual/stage0-go.mjs"]);
 export const BUILTINS = Object.freeze(["node:child_process", "node:crypto", "node:fs", "node:os", "node:path", "node:url"]);
@@ -311,7 +322,10 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
  * for it and refuse). The lock serializes every change to the store
  * (approval drafts, phase registration, markers, gos, claims, outcomes,
  * dispositions and clock checks) and the reads behind status, gate,
- * corroborate and the sender's first check (readSnapshot).
+ * corroborate and the sender's first check (readSnapshot). The lock file
+ * records this process's pid and `now`: a time, or a clock read once the
+ * create succeeds. That record is what a waiter reports; it is not checked
+ * against the process, so it cannot show that the holder is still alive.
  */
 export function withLock(paths, fn, now, waitMs = LOCK_WAIT_MS) {
   if (!isDir(paths.dir)) throw new Refusal(`no guard store at ${paths.dir}; refusing`);
@@ -325,13 +339,13 @@ export function withLock(paths, fn, now, waitMs = LOCK_WAIT_MS) {
         if (code !== "EEXIST") throw new LockUnavailable(`the store lock could not be taken within ${waitMs / 1000} s: its exclusive create still failed with ${code}. That error does not show which process, if any, holds it; refusing`);
         let since = "an unknown time";
         try { since = readFileSync(paths.lock, "utf8").trim().slice(0, 80); } catch { /* reported as unknown */ }
-        throw new LockUnavailable(`another guard process has held the store lock for over ${waitMs / 1000} s (${since}). If none is running, the lock is stale: check with stage0-go.mjs status, then remove ${paths.lock} by hand and record it; refusing`);
+        throw new LockUnavailable(`another guard process has held the store lock for over ${waitMs / 1000} s (${since}). ${STALE_LOCK_STEPS(paths.lock)}; refusing`);
       }
       sleep(25);
     }
   }
   try {
-    try { writeSync(fd, `pid ${process.pid} since ${iso(now)}`); } finally { closeSync(fd); }
+    try { writeSync(fd, `pid ${process.pid} since ${iso(typeof now === "function" ? now() : now)}`); } finally { closeSync(fd); }
     return fn();
   } finally { try { unlinkSync(paths.lock); } catch { /* already gone */ } }
 }
@@ -344,13 +358,18 @@ const taken = (s) => { if (s.error) throw s.error; return s.value; };
  * G-6 addendum): fn runs while this process holds the lock, so no guard
  * process is between a file change and its ledger line while fn reads. What
  * fn returns describes the store at that moment; any writer may act as soon
- * as the lock is released. When the lock cannot be taken, this throws
+ * as the lock is released. `clock` is read once, after the lock is taken,
+ * and that one time is both the lock file's record and fn's argument: the
+ * reader's decision time (W-R1). When the lock cannot be taken, this throws
  * LockUnavailable saying that `what` is not established: contention is not
  * damage. A refusal fn itself throws (damage, a missing record) passes
  * through unchanged.
  */
-function readSnapshot(paths, fn, now, waitMs, what) {
-  try { return withLock(paths, fn, now, waitMs); } catch (e) {
+function readSnapshot(paths, fn, clock, waitMs, what) {
+  if (typeof clock !== "function") throw new Refusal(`${what} is read with a clock, not a fixed time; refusing`);
+  let at = null;
+  const stamp = () => (at === null ? (at = clock()) : at);
+  try { return withLock(paths, () => fn(stamp()), stamp, waitMs); } catch (e) {
     if (e instanceof LockUnavailable) throw new LockUnavailable(`the guard store is busy, so ${what} is not established (${e.message.replace(/; refusing$/, "")}); refusing`);
     throw e;
   }
@@ -1416,20 +1435,23 @@ function warmContexts(paths, ref, ctxAt) {
 /**
  * A phase's gate, the project's holds, and whether the one separate-credential
  * read is permitted now: one snapshot under the store lock (readSnapshot), so
- * no other guard process is part-way through a change while it is read.
+ * no other guard process is part-way through a change while it is read. Its
+ * decision time is read from `clock` once the lock is held, after the
+ * warm-up and the wait (W-R1), and every deadline in the gate is checked at
+ * that time; it is returned as decidedAt.
  */
-function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now, lockWaitMs = LOCK_WAIT_MS }) {
+function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, clock, lockWaitMs = LOCK_WAIT_MS }) {
   try { warmContexts(paths, loadPhase(paths, phaseId).phase.ref, ctxAt); } catch { /* read again under the lock */ }
-  return readSnapshot(paths, () => {
+  return readSnapshot(paths, (t) => {
     requireStore({ paths, anchor, manifest });
     const { phase } = loadPhase(paths, phaseId);
     const entries = readJournal(paths, phase.ref);
     const holds = holdsOf(entries, { readReceipt, ctxAt });
-    const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now });
+    const gate = guardedProgress({ phase, entries, workflows, ctxAt, readReceipt, now: t });
     const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
     const corroborate = Boolean(wf && wf.corroboration && gate.complete && gate.terminal && gate.terminal.corroborate === true && !holds.length);
-    return { phase, wf, gate, holds, corroborate };
-  }, now, lockWaitMs, `phase ${isId(phaseId) ? phaseId : "?"}'s gate`);
+    return { phase, wf, gate, holds, corroborate, decidedAt: t };
+  }, clock, lockWaitMs, `phase ${isId(phaseId) ? phaseId : "?"}'s gate`);
 }
 
 /**
@@ -1440,14 +1462,15 @@ function gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readRecei
  * COMPLETE-WROTE), with nothing held, before the phase deadline (the gate
  * reads a passed deadline as a STOP). Never after a STOP. It is read under
  * the store lock, so no other guard process held the lock at that moment;
- * the lock it took itself is not counted. Refuses on a damaged store, and
- * refuses as busy (LockUnavailable) when the lock cannot be taken: the gate
- * is then not established.
+ * the lock it took itself is not counted. "Now" is decidedAt: `clock` read
+ * once the lock is held. Refuses on a damaged store, and refuses as busy
+ * (LockUnavailable) when the lock cannot be taken: the gate is then not
+ * established.
  */
-export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now, lockWaitMs = LOCK_WAIT_MS }) {
-  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now, lockWaitMs });
+export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, clock, lockWaitMs = LOCK_WAIT_MS }) {
+  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, clock, lockWaitMs });
   return {
-    phaseId, workflow: g.phase.workflow, phase: g.phase.phase, stop: g.gate.stop, next: g.gate.next, complete: g.gate.complete,
+    phaseId, decidedAt: iso(g.decidedAt), workflow: g.phase.workflow, phase: g.phase.phase, stop: g.gate.stop, next: g.gate.next, complete: g.gate.complete,
     terminal: g.gate.terminal || null, reason: g.gate.reason,
     results: g.gate.results.map((r) => ({ step: r.step, verdict: r.verdict, ...(r.outcome ? { outcome: r.outcome } : {}) })),
     holds: g.holds, corroborate: g.corroborate,
@@ -1459,11 +1482,12 @@ export function phaseGate({ paths, anchor, manifest, phaseId, workflows = WORKFL
  * Compare the separate-credential read's rows (rowsText: the JSON array
  * execute_sql returned, exactly) with the readback of the workflow's
  * corroboration step, read-only (stage0-go.mjs corroborate). Refuses unless
- * phaseGate permits the read now. An empty `problems` is agreement; any
- * disagreement is a STOP with no cleanup (item 3 runbook §6).
+ * phaseGate permits the read now, at its decision time (clock, read once the
+ * lock is held). An empty `problems` is agreement; any disagreement is a STOP
+ * with no cleanup (item 3 runbook §6).
  */
-export function corroborateRead({ paths, anchor, manifest, phaseId, rowsText, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, now, lockWaitMs = LOCK_WAIT_MS }) {
-  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, now, lockWaitMs });
+export function corroborateRead({ paths, anchor, manifest, phaseId, rowsText, workflows = WORKFLOWS, ctxAt, readReceipt = RECEIPT_READER, clock, lockWaitMs = LOCK_WAIT_MS }) {
+  const g = gateNow({ paths, anchor, manifest, phaseId, workflows, ctxAt, readReceipt, clock, lockWaitMs });
   if (!g.corroborate) {
     const why = g.holds.length ? heldMessage(g.holds) : g.gate.stop ? `STOP: ${g.gate.reason}` : g.gate.complete ? `${g.gate.reason}; this outcome does not permit it` : `the next step is ${g.gate.next}`;
     throw new Refusal(`the gate does not permit the separate-credential read: ${why}; refusing`);
@@ -1472,9 +1496,9 @@ export function corroborateRead({ paths, anchor, manifest, phaseId, rowsText, wo
   const step = g.gate.results.find((r) => r.step === c.step);
   if (!step || step.verdict !== "MATCH" || !isObj(step.values)) throw new Refusal(`${c.step}'s readback values are not available; refusing`);
   let rows;
-  try { rows = C.strictJson(rowsText); } catch (e) { return { phaseId, step: c.step, agree: false, problems: [`the rows file is not exactly one JSON document: ${e.message}`] }; }
+  try { rows = C.strictJson(rowsText); } catch (e) { return { phaseId, decidedAt: iso(g.decidedAt), step: c.step, agree: false, problems: [`the rows file is not exactly one JSON document: ${e.message}`] }; }
   const problems = c.compare(rows, step.values);
-  return { phaseId, step: c.step, agree: problems.length === 0, problems };
+  return { phaseId, decidedAt: iso(g.decidedAt), step: c.step, agree: problems.length === 0, problems };
 }
 
 // ── gos (SG-1) ──────────────────────────────────────────────────────────────
@@ -1649,12 +1673,16 @@ export async function guardedSend(o) {
   // The first check reads the store once, under its lock (readSnapshot): the
   // store check, the clock check, the markers, the go and its phase. The
   // checks below then run on that snapshot, in their usual order, with the
-  // lock released; the claim takes it again and re-checks what admits.
+  // lock released; the claim takes it again and re-checks what admits. They
+  // use t0, the time this command started, not a time read after the wait.
+  // Admission does not rest on t0: the claim reads the clock again under its
+  // own lock for the go's deadline and the marker's end, and admit() reads it
+  // again, with the clock check, immediately before fetch.
   const snap = readSnapshot(paths, () => {
     const chk = requireStore({ paths, anchor, manifest });
     checkClock(paths, t0, chk);
     return { chk, markers: settle(() => readMarkers(paths)), go: settle(() => { const g = readGo(paths, goId); return { g, phase: settle(() => loadPhase(paths, g.phaseId)) }; }) };
-  }, t0, o.lockWaitMs ?? LOCK_WAIT_MS, "the send's first check");
+  }, () => t0, o.lockWaitMs ?? LOCK_WAIT_MS, "the send's first check");
   const chk0 = snap.chk;
   const nonce = sessionOf(env);
   const sid = sessionIdOf(nonce);
@@ -1763,22 +1791,26 @@ export async function guardedSend(o) {
  *     empty list would claim a history that is not known to be intact;
  *   - BUSY (busy true): the lock could not be taken within the wait, so the
  *     state is not established. That is not damage, and there is no holds
- *     list. A stale lock left by a killed process reads as BUSY too.
+ *     list. A stale lock left by a killed process reads as BUSY too, with
+ *     the same pid and time: BUSY cannot tell a live holder from a dead one
+ *     (the stale-lock procedure, stage0-guarded-send-procedure.md §7.1).
+ * A go's `live` is judged at readAt: `clock` read once the lock is held.
  */
-export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECEIPT_READER, now, lockWaitMs = LOCK_WAIT_MS }) {
+export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECEIPT_READER, clock, lockWaitMs = LOCK_WAIT_MS }) {
   if (!isDir(paths.dir)) return { intact: false, damaged: storeCheck({ paths, anchor, manifest }).problems };
   warmContexts(paths, ref, ctxAt);
   try {
-    return readSnapshot(paths, () => {
+    return readSnapshot(paths, (t) => {
       const chk = storeCheck({ paths, anchor, manifest });
       if (!chk.ok) return { intact: false, damaged: chk.problems };
       const entries = readJournal(paths, ref);
       const gos = [...chk.index.gos].filter(([, g]) => g.ev.ref === ref && g.state === "live").map(([goId]) => {
         const g = readState(join(paths.gos, `${goId}.json`));
-        return { goId, step: g.step, ceiling: g.ceiling, notAfter: g.notAfter, deadline: g.deadline, live: now < utcMs(g.deadline) };
+        return { goId, step: g.step, ceiling: g.ceiling, notAfter: g.notAfter, deadline: g.deadline, live: t < utcMs(g.deadline) };
       });
       return {
         intact: true,
+        readAt: iso(t),
         storeId: chk.store.storeId,
         events: chk.seq,
         holds: holdsOf(entries, { readReceipt, ctxAt }),
@@ -1786,7 +1818,7 @@ export function status({ paths, anchor, manifest, ref, ctxAt, readReceipt = RECE
         gos,
         markers: readMarkers(paths).map((e) => (e.marker ? { markerId: e.marker.markerId, role: e.marker.role, phaseId: e.marker.phaseId, until: e.marker.until, ref: e.marker.ref } : { malformed: e.problems[0] })),
       };
-    }, now, lockWaitMs, "the status");
+    }, clock, lockWaitMs, "the status");
   } catch (e) {
     if (e instanceof LockUnavailable) return { busy: true, reason: e.message };
     throw e;
