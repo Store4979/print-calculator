@@ -1,24 +1,34 @@
-- Last updated: 2026-11-03
+- Last updated: 2026-11-04
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
+## 2026-11-04 — Codex's review of X2b (R1 to R5 closed; AMEND on B1 and B2); X2c
+- Shipped: security/release-2-slice-2 5ae51c6..this commit local, for Codex's review; the branch on origin is still a5a05ec
+  - this commit (X2c): Codex's review of X2b: under `empty`, only the exact reviewed document, byte for byte (B1), and the one relation form; absent-schema and absent-table only with the matching schema and table facts, an empty relation and columns, no constraint or trigger fact, and <not read> (B2); an unknown fact and a non-object row stop; the schema-ACL comparison scope and X4's images obligation recorded (4(c) plan §0.4, §2.2); CLAUDE.md's to_regclass line narrowed; 4C-18, 4C-19, 4C-M1 at 52 mutants; the comparator re-pinned; no SQL text, send policy or fixture changed; this log
+  - Not commits: X2b's replay finished after Codex's inspection (14 × 577, exit 0, 00:17:54Z); a local check that BUILD-00's text reports `empty` for an RLS-exempt reader (.review/x2c-evidence)
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: forward the X2c review request to Codex (reviews/requests/codex-review-request-X2c.md)
+- Needs a ruling from Claude (chat): none
+- Next planned step: Codex's review of X2c, which asks a staging-only push clearance carrying X2 and X2b; then X3 (the writing texts and the sender's text-to-step binding)
+
 ## 2026-11-03 — X0 to X1c pushed to staging; X2, item 4(c)'s read texts and comparator (Codex: AMEND); X2b
-- Shipped: security/release-2-slice-2 d8ec242..a5a05ec pushed 18:37Z (X0, X1, X1b, X1c, under Codex's review of a5a05ec after its replay condition, 14 × 559/559, exit 0; staging deploy 6aea29e4; production unchanged); a5a05ec..this commit local, for Codex's review
+- Shipped: security/release-2-slice-2 d8ec242..a5a05ec pushed 18:37Z (X0, X1, X1b, X1c, under Codex's review of a5a05ec after its replay condition, 14 × 559/559, exit 0; staging deploy 6aea29e4; production unchanged); a5a05ec..5ae51c6 local, for Codex's review
   - 50f8f0e X0: the records only, no code: T's and W2's push records (production plan §E13); in the 4(c) plan, V2's acceptance and rulings (C13, Realtime, attribution), the two image observations, W's AMEND and W2, the load accounting, and Ryan's four decisions on the outline (§0.2) (Codex: ACCEPT)
   - 4037d12 X1: the rehearsal target in the guard store (target add/retire, activeRef in every live command, storeCheck's target rules; synthetic refs only, the store's identity and anchor unchanged) and M-12's C8 effect rule; TG-1..7, TG-M (10 mutants), M-12b; the guard chain re-pinned (Codex: AMEND, X1-R1 blocking, X1-N1, the standing rule)
   - d160c6e X1b: dispose refuses a retired ref's attempt before writing (X1-R1); the retirement rule as it is, with post-retirement close and void (X1-N1); TG-8, TG-9, TG-4's HOLD disposition, an 11th mutant; the standing rule on the real store (procedure §7.2, CLAUDE.md) and the departure record (§E16); no test falls back to the real store: syntheticHomeEnv for ORD's children and the fixture's launchers, ORD's default-path probe, ORD-S's early-read sentinel, SEND-4's explicit path; a whole-tree launch analyzer (LN-1, LN-2); the guard chain re-pinned (Codex: X1-R1, X1-N1, the rule, §E16 and all four ORD requirements ACCEPTED; the analyzer AMEND, LN-R1 and LN-R2; amended twice before review of the ORD part, from 7168fc0 and f1d6112)
   - a5a05ec X1c: the analyzer removed and deferred (Ryan; 4(c) plan §13): stage0-guard-launch-check.mjs, LN-1 and LN-2 gone, LN-3 kept, and no claim left that a static check enforces safe launches; CLAUDE.md workflow rule 7 (keep .review evidence until Codex's verdict) (Codex: ACCEPT, pushed)
   - e6f99bf X2: item 4(c)'s read texts (P0-4C, POST-4C, WHO-4C-*, STATE-4C, BUILD-00, BUILD-00W; four pinned SQL sources; policies exact, production only, BUILD-00/00W no target; M-6f) and the pure comparator stage0-4c-compare.mjs (V-2's rows, the step states, the data scope, the tiers, receipt binding), pinned by listing (CHAIN_LISTED); the classifier's shape entries; the local PGlite harness and its fixtures (runs A, C, D, F); 4C-1..4C-10 and 4C-M1 (12 mutants) (Codex: AMEND, R1 to R5 and the BUILD-00 ledger read; no push; the sender's text-to-step binding set for X3)
-  - this commit (X2b): Codex's review of X2: the sequence default maps S to s for acldefault (R1); default ACL entries keep the grant option (R2, and public's own ACL); any different server_version_num stops, a build in version() and an image in the project list each need their record (R3); an event trigger takes only its own record (R4); requiredFindings on each reading before any comparison, the data scope's facts included (R5); BUILD-00's guarded ledger read through query_to_xml on one reviewed literal, build00LedgerFindings, M-6f's nested rule; runs G and L, the fixtures regenerated, 4C-11..4C-17, 4C-M1 at 34 mutants; the X1c push record (production plan §E13); 4(c) plan §0.3; this log
-  - Not commits: X1's clean verification (555/555, build, replay 14 × 555, exit 0); 7168fc0's, f1d6112's and d160c6e's clean verifications, each stopped for the next commit after its suite, build and manifest check (557, 560, 561/561); their logs kept, and f1d6112's and d160c6e's clones (7168fc0's was deleted mid-review before rule 7: Codex's LC-3/4/5); X1c's verification (559/559, build, replay 14 × 559, exit 0); X2's clean verification (570/570, build, replay 14 × 570, exit 0; Codex accepted the results, which do not close R1 to R5); Ryan's Netlify read after the X1c push (no new production deploy, by about 22:14Z); the departure: an unreviewed, unlocked storeCheck on the real store at X1 (15:03Z), recorded in §E16, not evidence, not rerun
+  - 5ae51c6 X2b: Codex's review of X2: the sequence default maps S to s for acldefault (R1); default ACL entries keep the grant option (R2, and public's own ACL); any different server_version_num stops, a build in version() and an image in the project list each need their record (R3); an event trigger takes only its own record (R4); requiredFindings on each reading before any comparison, the data scope's facts included (R5); BUILD-00's guarded ledger read through query_to_xml on one reviewed literal, build00LedgerFindings, M-6f's nested rule; runs G and L, the fixtures regenerated, 4C-11..4C-17, 4C-M1 at 34 mutants; the X1c push record (production plan §E13); 4(c) plan §0.3; this log (Codex: R1 to R5, the guarded SQL read, M-6f's nested rule and both additions ACCEPTED; AMEND, B1 and B2 in build00LedgerFindings; no push)
+  - Not commits: X1's clean verification (555/555, build, replay 14 × 555, exit 0); 7168fc0's, f1d6112's and d160c6e's clean verifications, each stopped for the next commit after its suite, build and manifest check (557, 560, 561/561); their logs kept, and f1d6112's and d160c6e's clones (7168fc0's was deleted mid-review before rule 7: Codex's LC-3/4/5); X1c's verification (559/559, build, replay 14 × 559, exit 0); X2's clean verification (570/570, build, replay 14 × 570, exit 0; Codex accepted the results, which do not close R1 to R5); Ryan's Netlify read after the X1c push (no new production deploy, by about 22:14Z); X2b's clean verification (577/577, build, harness 33 PASS, replay 14 × 577, exit 0), after a first precheck that failed on the script's own node_modules link (kept, .review/precheck-X2b-1); the departure: an unreviewed, unlocked storeCheck on the real store at X1 (15:03Z), recorded in §E16, not evidence, not rerun
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward the X2b review request to Codex (reviews/requests/codex-review-request-X2b.md)
+- Needs from Ryan: forward the X2b review request to Codex (done)
 - Needs a ruling from Claude (chat): none
-- Next planned step: Codex's review of X2b; then X3 (the writing texts and the sender's text-to-step binding) under the outline; the launch analyzer only as its own reviewed work
+- Next planned step: Codex's review of X2b (done: AMEND); then X3 under the outline; the launch analyzer only as its own reviewed work
 
 ## 2026-11-02 — T and W2 pushed; G-6 fixed (W, W2); the 4(c) plan accepted (V2)
 - Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); c62644a..d8ec242 pushed 2026-11-03 02:20Z (U, V, W, V2, W2, under Codex's review of d8ec242 after its replay condition; staging deploy 6ae9450b; production unchanged)
@@ -55,15 +65,3 @@
 - Needs from Ryan: forward T's review request to Codex
 - Needs a ruling from Claude (chat): none
 - Next planned step: Codex's review of T; then the item 4(c) plan (the rehearsal from 01) for Codex
-
-## 2026-10-29 — Q pushed; S accepted and pushed with R; main back to origin
-- Shipped: security/release-2-slice-2 22610f8..04b6520, in two Codex-cleared pushes
-  - Q 4e2a375 pushed 17:35Z (22610f8..4e2a375, carrying P; staging deploy 6ae383ff)
-  - 04b6520 S: item 3, R-R1, R-R2, R-R3 and the gate's mutation companion (Codex: ACCEPT)
-  - R+S pushed 23:49Z (4e2a375..04b6520; staging deploy 6ae3db97); production unchanged
-  - main: 15e0c91 and 19dfb0a moved to the local-only branch session-log-draft; main reset to 7ec5af4
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: the Netlify reads after both pushes (done)
-- Needs a ruling from Claude (chat): none
-- Next planned step: item 3 phase E on staging at H = 04b6520

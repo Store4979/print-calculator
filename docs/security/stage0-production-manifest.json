@@ -308,9 +308,9 @@
       },
       {
         "path": "scripts/manual/stage0-4c-compare.mjs",
-        "blob": "a02fc46ecf1a33c0ca3d452fd9f46fd02e32f012",
-        "md5": "793e2eff822c5abb026e94ad96ae5f43",
-        "bytes": 43400,
+        "blob": "995215d626e5c952ee13a5ce165ce2cae9683b4a",
+        "md5": "013f537d6e4264680db1d25609f18d2a",
+        "bytes": 46069,
         "pinnedAt": "manifest-commit"
       },
       {

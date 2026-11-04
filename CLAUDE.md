@@ -509,7 +509,7 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       fixture's `manifest` and `ctxAt` options carry a manifest naming the
       target. No manifest names a rehearsal target yet, and M-12 still
       refuses one: the ref-binding commit adds it.
-    - ITEM 4(c)'s READ TEXTS AND THE COMPARATOR (X2 and X2b; the outline's X2,
+    - ITEM 4(c)'s READ TEXTS AND THE COMPARATOR (X2, X2b, X2c; the outline's X2,
       plan §0.3, §2.1, §2.2, §6.1–§6.4). Texts, each one read-only SELECT:
       P0-4C and POST-4C (one source, release2_stage0_4c_checked_state.sql:
       §2.2's ten parts as (part, key, value) rows with an md5 per part and
@@ -534,8 +534,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       (PGLITE_DIR; runs A, C, D, F, G, L) in scripts/tests/fixtures/stage0-4c/
       with an index of sha256s; each separate local build has its own data
       digests (now(), random ids), so a reading is compared with ITS OWN
-      build's 01 reading. Tests: stage0-4c.test.js (4C-1…4C-17) and
-      stage0-4c.mutation.test.js (4C-M1, 34 mutants). What Codex's review of
+      build's 01 reading. Tests: stage0-4c.test.js (4C-1…4C-19) and
+      stage0-4c.mutation.test.js (4C-M1, 52 mutants). What Codex's review of
       e6f99bf taught (R1–R5, each reproduced on a real database or receipt):
       - **acldefault's letters are not pg_default_acl's.** A sequence is S in
         defaclobjtype and s in acldefault, whose S is a FOREIGN SERVER. The
@@ -553,13 +553,36 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       - **equal is not present.** requiredFindings runs on each reading before
         any comparison, so two sides lacking a required fact, or both showing
         `<absent>`, stop;
-      - **to_regclass RAISES 42501 on a schema without USAGE,** so it goes
-        after has_schema_privilege in a CASE, never in a WHERE on a column
-        (the planner may evaluate a stable call there). information_schema
+      - **to_regclass RAISES 42501 on a schema without USAGE.** BUILD-00's
+        ledger read calls it only after has_schema_privilege, in a CASE, so a
+        denied schema is a status there (the planner may evaluate a stable call
+        in a WHERE before a guard). BUILD-00's storage and auth sections,
+        BUILD-00W and WHO-4C still call it unguarded, in a target list or a
+        WHERE: a reader with no USAGE on those schemas fails the whole
+        statement, an error and a STOP, never a false fact. information_schema
         hides columns from a role without grants: read pg_attribute. A role
         under active RLS reads an empty-looking table: row_security_active
         decides hidden-read. On PGlite a role is tested with
-        `begin read only; set local role …`
+        `begin read only; set local role …`;
+
+      and Codex's review of 5ae51c6 (B1, B2, reproduced on synthetic receipts):
+      - **a path that can ACCEPT compares exactly.** A start and an end do not
+        make a whole document, and no `<row>` does not make an empty one, so
+        `empty` takes only the reviewed document, byte for byte, with no XML
+        parser. `populated` stops anyway, so its rows are not parsed;
+      - **an absence status must agree with every fact about what is absent:**
+        the table fact, an empty relation and columns, no constraint or trigger
+        fact, `<not read>`. The same for the accepting relation form:
+        `r|postgres|false|false`, not its `r|` prefix. BUILD-00 itself reports
+        `empty` for a reader exempt from RLS, and the comparator stops on it;
+      - **X4's `images` input, an obligation nothing enforces yet:** X4 must
+        bind each value to its project's ref, its observation's source and time
+        and a reviewed evidence record, and must never default one from a SQL
+        version or reuse an older observation (plan §0.4). Equal strings show
+        equal metadata only;
+      - **`schema|…` rows omit the grantor:** owner and grantee, privilege and
+        grant option are compared, not grant provenance or what a cascading
+        REVOKE would remove (plan §2.2 part 2).
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
     capture gate and the item 3 gate), plus the modules CHAIN_LISTED names

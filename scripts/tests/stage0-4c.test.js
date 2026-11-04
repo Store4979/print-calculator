@@ -35,6 +35,9 @@
 //   4C-16 BUILD-00's guarded ledger read: each real case's status, and what
 //         it leaves for BUILD-01; never an empty ledger from a denied read
 //   4C-17 M-6f holds query_to_xml to the one reviewed literal in BUILD-00
+//   4C-18 B1: only the exact reviewed document shows an empty ledger
+//   4C-19 B2: an absence status holds only with facts that agree with it, and
+//         an empty ledger only from the one relation form
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -555,11 +558,8 @@ test("4C-16 BUILD-00's guarded ledger read: each real case gives its status in a
     ["an unknown status", change("status", "readable"), /not a status BUILD-00 reports/],
     ["a key twice", [...EMPTY, EMPTY[0]], /the key appears twice/],
     ["a value that is not text", [...EMPTY.filter((r) => r.key !== "rows"), { part: "ledger", key: "rows", value: null }], /a ledger row is not text/],
-    ["empty, holding a row", change("rows", "<table xmlns:xsi=\"x\">\n<row>\n</row>\n</table>\n"), /rows disagree with the status empty/],
-    ["empty, cut short", change("rows", "<table xmlns:xsi=\"x\">\n"), /not one whole document/],
-    ["empty, without a document", change("rows", "<not read>"), /not one whole document/],
+    ["a row that is not an object", [null, ...EMPTY], /a row is not an object/],
     ["empty, from other columns", change("columns", "version:text:true:"), /without production's six columns/],
-    ["empty, from a view", change("relation", "v|postgres|false|false"), /other than an ordinary table/],
     ["empty, with no table", change("table", "false"), /table: false, under the status empty/],
     ["empty, with no schema", change("schema", "false"), /schema: false, under the status empty/],
   ]) assert.match(reasons(C.build00LedgerFindings(input)), re, label);
@@ -605,5 +605,109 @@ test("4C-17 M-6f holds query_to_xml to the one reviewed literal, in BUILD-00 onl
     assert.notEqual(mutated, out[k], k);
     assert.match(item4cProblems(mutated, k).join("; "), /calls query_to_xml; only BUILD-00 may/, k);
     assert.deepEqual(item4cProblems(out[k], k), [], `${k}: as it is`);
+  }
+});
+
+// Written here, independently of the comparator and of the harness; 4C-18 and
+// 4C-19 check them against PostgreSQL's own results in the run L fixtures.
+const EMPTY_DOCUMENT = "<table xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n\n</table>\n";
+const SIX_COLUMNS = "version:text:true:, statements:text[]:false:, name:text:false:, created_by:text:false:, idempotency_key:text:false:, rollback:text[]:false:";
+const ledgerOnly = (rows, key, value) => rows.map((r) => (r.key === key ? { ...r, value } : r));
+
+test("4C-18 B1: only the exact reviewed document shows an empty ledger: Codex's three negatives, a cut-short document and every other form stop, on that fact alone; PostgreSQL's own result passes", () => {
+  for (const name of ["empty", "reader-empty"]) {
+    const { ordinary, readOnly } = json(`l-${name}.json`);
+    for (const rows of [ordinary, readOnly]) {
+      assert.equal(factOf(rows, "ledger", "rows"), EMPTY_DOCUMENT, `${name}: PostgreSQL's own empty result`);
+      assert.deepEqual(stops(C.build00LedgerFindings(rows)), [], `${name}: it passes`);
+    }
+  }
+  const EMPTY = json("l-empty.json").ordinary;
+  const XSI = "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"";
+  for (const [label, doc] of [
+    // Codex's three reproductions, byte for byte (review of 5ae51c6, B1).
+    ["malformed XML", "<table invalid>\n</table>\n"],
+    ["an unfamiliar child", `<table ${XSI}>\n<unexpected/>\n</table>\n`],
+    ["an empty row element", `<table ${XSI}>\n<row/>\n</table>\n`],
+    // A cut-short document, each way.
+    ["cut short, an opening tag only", "<table xmlns:xsi=\"x\">\n"],
+    ["cut short, the reviewed start", EMPTY_DOCUMENT.slice(0, -"</table>\n".length)],
+    ["cut short, its final newline", EMPTY_DOCUMENT.slice(0, -1)],
+    // A row, and every other form of no row.
+    ["a real row", `<table ${XSI}>\n\n<row>\n  <version>20260101000000</version>\n</row>\n\n</table>\n`],
+    ["another namespace value", "<table xmlns:xsi=\"x\">\n\n</table>\n"],
+    ["a further attribute", `<table ${XSI} xmlns="x">\n\n</table>\n`],
+    ["a wrapper around it", `<x>\n${EMPTY_DOCUMENT}</x>\n`],
+    ["a prolog before it", `<?xml version="1.0"?>\n${EMPTY_DOCUMENT}`],
+    ["a comment inside it", `<table ${XSI}>\n<!-- -->\n</table>\n`],
+    ["no blank line", `<table ${XSI}>\n</table>\n`],
+    ["CRLF line ends", EMPTY_DOCUMENT.replaceAll("\n", "\r\n")],
+    ["a leading space", ` ${EMPTY_DOCUMENT}`],
+    ["a trailing newline", `${EMPTY_DOCUMENT}\n`],
+    ["nothing at all", ""],
+    ["the words for a read that did not run", "<not read>"],
+  ]) {
+    const found = stops(C.build00LedgerFindings(ledgerOnly(EMPTY, "rows", doc)));
+    assert.deepEqual(found.map((f) => [f.key, f.reason]), [["rows", "not the reviewed empty document, byte for byte"]], label);
+  }
+  // `populated` stops whatever its document holds: no row parser is needed.
+  for (const doc of ["<table invalid>\n", EMPTY_DOCUMENT, ""]) {
+    const found = stops(C.build00LedgerFindings(ledgerOnly(json("l-populated.json").ordinary, "rows", doc)));
+    assert.deepEqual(found.map((f) => f.key), ["status"], doc);
+    assert.match(found[0].reason, /already holds rows/);
+  }
+});
+
+test("4C-19 B2: an absence status holds only with the facts that agree with it, keeping the schema's presence apart; an empty ledger holds only in the one relation form; an unknown fact stops", () => {
+  const ROW = (key, value) => ({ part: "ledger", key, value });
+  for (const [status, schema, other] of [["absent-schema", "false", "true"], ["absent-table", "true", "false"]]) {
+    const { ordinary, readOnly } = json(`l-${status}.json`);
+    for (const rows of [ordinary, readOnly]) {
+      // What PostgreSQL reported, written out here: exactly these six facts.
+      assert.deepEqual(Object.fromEntries(rows.map((r) => [r.key, r.value])), { columns: "", relation: "", rows: "<not read>", schema, status, table: "false" }, status);
+      assert.deepEqual(stops(C.build00LedgerFindings(rows)), [], `${status}: the SQL's own result passes`);
+    }
+    for (const [label, input, key, re] of [
+      // Codex's three reproductions (review of 5ae51c6, B2), for both statuses.
+      ["a relation", ledgerOnly(ordinary, "relation", "r|postgres|false|false"), "relation", /has no relation/],
+      ["the six columns", ledgerOnly(ordinary, "columns", SIX_COLUMNS), "columns", /a relation's columns/],
+      ["a constraint", [...ordinary, ROW("constraint|some_pkey", "p|PRIMARY KEY (version)")], "constraint|some_pkey", /a relation's fact/],
+      ["a trigger", [...ordinary, ROW("trigger|some_trigger", "O|CREATE TRIGGER some_trigger")], "trigger|some_trigger", /a relation's fact/],
+      ["a view for a relation", ledgerOnly(ordinary, "relation", "v|postgres|false|false"), "relation", /has no relation/],
+      ["one column", ledgerOnly(ordinary, "columns", "version:text:true:"), "columns", /a relation's columns/],
+      ["a table", ledgerOnly(ordinary, "table", "true"), "table", /^true, under the status/],
+      ["the other status's schema fact", ledgerOnly(ordinary, "schema", other), "schema", new RegExp(`^${other}, under the status ${status}$`)],
+      ["a document", ledgerOnly(ordinary, "rows", EMPTY_DOCUMENT), "rows", /a result under the status/],
+      ["no result at all", ledgerOnly(ordinary, "rows", ""), "rows", /a result under the status/],
+      ["no relation fact", ordinary.filter((r) => r.key !== "relation"), "relation", /did not report it/],
+      ["no columns fact", ordinary.filter((r) => r.key !== "columns"), "columns", /did not report it/],
+      ["an unknown fact", [...ordinary, ROW("other", "x")], "other", /not a fact BUILD-00 reports/],
+    ]) {
+      const found = stops(C.build00LedgerFindings(input));
+      assert.deepEqual(found.map((f) => f.key), [key], `${status}, ${label}`);
+      assert.match(found[0].reason, re, `${status}, ${label}`);
+    }
+    // Several contradictions at once are each named.
+    const all = [...ledgerOnly(ledgerOnly(ordinary, "relation", "r|postgres|false|false"), "columns", SIX_COLUMNS), ROW("constraint|a", "p"), ROW("trigger|b", "O")];
+    assert.deepEqual(stops(C.build00LedgerFindings(all)).map((f) => f.key).sort(), ["columns", "constraint|a", "relation", "trigger|b"], status);
+  }
+  // The empty path: the one relation form, on both real empty cases.
+  const FORM = "r|postgres|false|false";
+  for (const name of ["empty", "reader-empty"]) {
+    const { ordinary } = json(`l-${name}.json`);
+    assert.equal(factOf(ordinary, "ledger", "relation"), FORM, name);
+    assert.equal(factOf(ordinary, "ledger", "columns"), SIX_COLUMNS, name);
+    for (const form of ["v|postgres|false|false", "p|postgres|false|false", "r", "r|", "r|postgres", "r|postgres|false", "r|postgres|false|false|x", "r||false|false",
+      "r|postgres|true|false", "r|postgres|false|true", "r|postgres|true|true", "r|supabase_admin|false|false", " r|postgres|false|false", "R|postgres|false|false", ""]) {
+      const found = stops(C.build00LedgerFindings(ledgerOnly(ordinary, "relation", form)));
+      assert.deepEqual(found.map((f) => f.key), ["relation"], `${name}, ${form}`);
+      assert.match(found[0].reason, /not the one relation form reviewed/, `${name}, ${form}`);
+    }
+    // Its constraints are reported, not judged here; an unknown fact stops.
+    assert.ok(ordinary.some((r) => r.key.startsWith("constraint|")), name);
+    assert.deepEqual(stops(C.build00LedgerFindings(ordinary.filter((r) => !r.key.startsWith("constraint|")))), [], `${name}: binding the shape is the binding commit's`);
+    for (const key of ["other", "__proto__", "constraint", "trigger"]) {
+      assert.deepEqual(stops(C.build00LedgerFindings([...ordinary, ROW(key, "x")])).map((f) => f.reason), ["not a fact BUILD-00 reports"], `${name}, ${key}`);
+    }
   }
 });

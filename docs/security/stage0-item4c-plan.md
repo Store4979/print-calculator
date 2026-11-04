@@ -225,6 +225,43 @@ right text, so a wrong one needs a direct store edit. In X3:
 4C-10 shows the ordinary issued-go path. It is not resistance to that store
 edit. X3 is reviewed before any new live use relies on the changed sender.
 
+### 0.4 Codex's review of X2b (`5ae51c6`), and where X2c answers it
+
+**R1 to R5 closed; the guarded SQL read, M-6f's nested rule and both of X2b's
+additions accepted; AMEND on two gaps in the new `build00LedgerFindings`,**
+2026-11-03 (`reviews/2026-11-03-5ae51c6-review.md`). No push at `5ae51c6`. No
+SQL text, send policy or fixture changes in X2c.
+
+| item | Codex's finding | X2c's answer | where |
+|---|---|---|---|
+| B1 | a malformed or nonempty document passed as an empty ledger: a start and an end do not make a whole document, and no `<row>` does not make an empty one | under `empty`, only the exact reviewed document, byte for byte. No XML parser. `populated` stops whatever its document holds | §2.1 |
+| B2 | an absence status could contradict the reported catalog | `absent-schema` and `absent-table` hold only with the matching schema and table facts, an empty relation and columns, no constraint or trigger fact, and `<not read>`. Under `empty`, the exact relation form, not its `r\|` prefix | §2.1 |
+
+**The relation form is `r|postgres|false|false`** (kind, owner, RLS, forced).
+It is the only form the local positives reported, and it is deliberately
+exact:
+- **RLS on with an exempt reader:** BUILD-00's text itself reports `empty`
+  there (a local PGlite run, reported in X2c's review request). The comparator
+  stops on it.
+- **Another owner:** whether a fresh project's ledger, if it has one, is owned
+  by `postgres` is first known from BUILD-00's receipt. Another form is a STOP
+  and a reviewed change, never a fit.
+
+**The images input, for X4 (Codex's obligation):** `crossProject` compares the
+two strings it is given and enforces nothing about where they came from. X4's
+gate, not written yet, supplies them, and must:
+- bind each value to its project's ref, its observation's source and time, and
+  a reviewed evidence record;
+- never default one from a SQL version;
+- never reuse an earlier production or staging observation for a newly created
+  rehearsal project, or any older observation silently.
+
+Equal image strings establish only that metadata equality, not identical Auth,
+Storage, route or platform behaviour. This is an obligation on the planned
+gate, not a request for a live read now.
+
+**The schema ACL's comparison scope:** §2.2 part 2.
+
 ## 1. What the remaining path touches
 
 These facts shape the rest of the plan. They come from reading the
@@ -427,8 +464,15 @@ migration integration, and no branching.
        `query_to_xml` on the one reviewed literal: each row's identity and
        digests, never a statement's text. Only `absent-schema`,
        `absent-table` and `empty` leave BUILD-01 free to go on
-       (`build00LedgerFindings`). A denied or hidden read is never an empty
-       ledger;
+       (`build00LedgerFindings`), each only with facts that agree with it
+       (§0.4):
+       - the two absences: the matching schema and table facts, an empty
+         relation and columns, no constraint or trigger fact, and `<not read>`;
+       - `empty`: the relation form `r|postgres|false|false`, the six columns
+         and the reviewed empty document, byte for byte. Its constraints and
+         triggers are reported, and binding them is the binding commit's.
+
+       A denied or hidden read is never an empty ledger;
      - every default ACL row at every scope;
      - the schema privileges, roles, extensions and event triggers;
      - **the non-public preflight below** (V-1).
@@ -570,7 +614,13 @@ parts:
    - P0's catalog rows: functions with their ACLs, relations with their
      ACLs and RLS flags, columns, indexes, constraints, policies, triggers;
    - and what P0's fingerprint omits: each object's **owner**, and the
-     `public` schema's owner and ACL.
+     `public` schema's owner and ACL;
+   - **that ACL row's comparison scope (Codex, review of `5ae51c6`):** it
+     compares the owner and each grantee, privilege and grant option. It
+     omits the grantor, so it is not complete grant provenance, and it says
+     nothing of what a cascading REVOKE would later remove. A possible
+     platform difference alone is not proof that the omitted field is harmless.
+     BUILD-00's `schema|…` rows have the same scope.
 3. **The default ACLs, at the global scope and the `public` scope:**
    - every `pg_default_acl` row: role, scope, object type and ACL;
    - which roles: those that create objects on the path. That is the role
@@ -708,6 +758,10 @@ the throwaway's own default ACL rows, to an exact target, and asserts them.
   These values are operator and platform metadata, not an independent
   live read by Codex's review. They do not make item 3's staging
   measurement production evidence.
+- **What reaches the comparator (X4's obligation, §0.4):** each image value
+  bound to its project's ref, its observation's source and time, and a reviewed
+  evidence record. It is never defaulted from a SQL version or reused from an
+  older observation.
 - **A matching `server_version_num` does not establish matching images.**
 - **Changing production's image is not proposed.** It would be a
   production change outside this plan, and the throwaway may run a newer

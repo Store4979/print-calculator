@@ -522,8 +522,17 @@ export function postFindings(manifest, obs, { step, target, baseline, previous, 
  * a generic R-IMG record never covers one. Whether a record says enough is
  * review's; this checks that the one it needs is there. `images` is the two
  * projects' image versions, { production, rehearsal }, as the Management API's
- * project list reports them: no SQL read shows them. Each reading must first
- * hold requiredFindings' facts. Every fact of either reading gets one finding.
+ * project list reports them: no SQL read shows them. This compares only the
+ * two strings it is given and enforces nothing about where they came from. X4's
+ * gate, which does not exist yet, must bind each to its project's ref, its
+ * observation's source and time and a reviewed evidence record (plan §0.4), and
+ * must never default one from a SQL version or reuse an older observation. Equal
+ * strings show equal metadata, not equal Auth, Storage, route or platform
+ * behaviour. Part 2's `schema|public` compares the schema's owner and its
+ * grantee, privilege and grant-option entries, not who granted them: complete
+ * grant provenance, and what a cascading REVOKE would later remove, are outside
+ * it. Each reading must first hold requiredFindings' facts. Every fact of either
+ * reading gets one finding.
  */
 export function crossProject(prod, reh, { creator, records = {}, images } = {}) {
   for (const [label, o] of [["production's baseline", prod], ["the rehearsal's baseline", reh]]) if (!o || o.problems.length) return [stop(0, null, `${label} is missing or not self-consistent`)];
@@ -593,14 +602,31 @@ export function dataScope(before, after) {
 /** Production's six ledger columns as BUILD-00 reads them from pg_attribute: name, type, NOT NULL, default. */
 export const LEDGER_COLUMNS = "version:text:true:, statements:text[]:false:, name:text:false:, created_by:text:false:, idempotency_key:text:false:, rollback:text[]:false:";
 const LEDGER_NOT_READ = "<not read>";
+/** The one-row-each facts BUILD-00 always reports; a relation may add constraint| and trigger| facts. */
+const LEDGER_FACTS = Object.freeze(["schema", "table", "relation", "columns", "status", "rows"]);
+/**
+ * The one relation form the read may have come from, as relkind|owner|rls|force:
+ * an ordinary table owned by postgres, RLS off and not forced. Any other owner
+ * or flag stops for review, including a table with RLS on whose reader is
+ * exempt, which the text itself reports as readable.
+ */
+const LEDGER_RELATION = "r|postgres|false|false";
+/**
+ * The one result an empty ledger may show: query_to_xml's document for no row,
+ * as PostgreSQL 17.5 serialized it (run L). It is compared byte for byte, with
+ * no XML parser, so a result in any other form stops, even a well-formed one
+ * that holds no row.
+ */
+const LEDGER_EMPTY_DOCUMENT = `<table xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n\n</table>\n`;
 /**
  * Each status the text reports: the schema and table facts it implies (null,
- * either), whether its query_to_xml ran, and, unless BUILD-01 may go on, why
- * it stops. A denied or hidden read is never an empty ledger.
+ * either), whether its query_to_xml ran, whether it says no relation is there,
+ * and, unless BUILD-01 may go on, why it stops. A denied or hidden read is
+ * never an empty ledger.
  */
 const LEDGER_STATUS = Object.freeze({
-  "absent-schema": { schema: "false", table: "false", read: false },
-  "absent-table": { schema: "true", table: "false", read: false },
+  "absent-schema": { schema: "false", table: "false", read: false, absent: true },
+  "absent-table": { schema: "true", table: "false", read: false, absent: true },
   empty: { schema: "true", table: "true", read: true },
   "denied-schema": { schema: "true", table: null, read: false, stops: "the reader has no USAGE on the ledger's schema: its contents are unknown" },
   "unsupported-shape": { schema: "true", table: "true", read: false, stops: "the ledger is not an ordinary table with production's six columns" },
@@ -611,20 +637,28 @@ const LEDGER_STATUS = Object.freeze({
 
 /**
  * Whether BUILD-00's rows (its `ledger` part is read) leave BUILD-01 free to
- * go on: a STOP unless the read reports nothing there, or the pinned table
- * with no row, and every fact agrees with that status. Malformed input is a
- * STOP.
+ * go on. Two results can:
+ *   nothing there   absent-schema or absent-table, with the matching schema
+ *                   and table facts, an empty relation and columns, no
+ *                   constraint or trigger fact, and nothing read;
+ *   no row          empty, with the exact relation form, the six columns and
+ *                   the exact empty document.
+ * Anything else is a STOP, malformed input and an unknown fact included. An
+ * empty ledger's constraints and triggers are reported, not judged here:
+ * binding a pre-existing shape is the binding commit's (plan §2.1 and §10).
+ * `populated` stops whatever its document holds, so its rows are not parsed.
  */
 export function build00LedgerFindings(rows) {
   if (!Array.isArray(rows)) return [stop("ledger", null, "BUILD-00's reading is not a list of rows")];
-  const facts = {};
+  const facts = Object.create(null);
   for (const r of rows) {
-    if (!isObj(r) || r.part !== "ledger") continue;
+    if (!isObj(r)) return [stop("ledger", null, "a row is not an object")];
+    if (r.part !== "ledger") continue;
     if (typeof r.key !== "string" || typeof r.value !== "string") return [stop("ledger", null, "a ledger row is not text")];
     if (Object.hasOwn(facts, r.key)) return [stop("ledger", r.key, "the key appears twice")];
     facts[r.key] = r.value;
   }
-  const missing = ["schema", "table", "relation", "columns", "status", "rows"].filter((k) => !Object.hasOwn(facts, k));
+  const missing = LEDGER_FACTS.filter((k) => !Object.hasOwn(facts, k));
   if (missing.length) return missing.map((k) => stop("ledger", k, "BUILD-00 did not report it"));
   if (!Object.hasOwn(LEDGER_STATUS, facts.status)) return [stop("ledger", "status", `not a status BUILD-00 reports: ${facts.status}`)];
   const want = LEDGER_STATUS[facts.status];
@@ -632,12 +666,19 @@ export function build00LedgerFindings(rows) {
   if (want.stops) out.push(stop("ledger", "status", `${facts.status}: ${want.stops}`));
   if (facts.schema !== want.schema) out.push(stop("ledger", "schema", `${facts.schema}, under the status ${facts.status}`));
   if (want.table !== null && facts.table !== want.table) out.push(stop("ledger", "table", `${facts.table}, under the status ${facts.status}`));
+  for (const k of Object.keys(facts)) {
+    if (LEDGER_FACTS.includes(k)) continue;
+    if (!/^(constraint|trigger)\|/.test(k)) out.push(stop("ledger", k, "not a fact BUILD-00 reports"));
+    else if (want.absent) out.push(stop("ledger", k, `a relation's fact, under the status ${facts.status}, which has no relation`));
+  }
+  if (want.absent) {
+    if (facts.relation !== "") out.push(stop("ledger", "relation", `${facts.relation}, under the status ${facts.status}, which has no relation`));
+    if (facts.columns !== "") out.push(stop("ledger", "columns", `a relation's columns, under the status ${facts.status}, which has no relation`));
+  }
   if (want.read) {
     if (facts.columns !== LEDGER_COLUMNS) out.push(stop("ledger", "columns", "the rows were read from a table without production's six columns"));
-    if (!facts.relation.startsWith("r|")) out.push(stop("ledger", "relation", "the rows were read from something other than an ordinary table"));
-    const whole = facts.rows.startsWith("<table ") && facts.rows.endsWith("</table>\n");
-    if (!whole) out.push(stop("ledger", "rows", "the read's result is not one whole document"));
-    if (facts.rows.includes("<row>") !== (facts.status === "populated")) out.push(stop("ledger", "rows", `the read's rows disagree with the status ${facts.status}`));
+    if (facts.relation !== LEDGER_RELATION) out.push(stop("ledger", "relation", `${facts.relation}: not the one relation form reviewed, ${LEDGER_RELATION}`));
+    if (facts.status === "empty" && facts.rows !== LEDGER_EMPTY_DOCUMENT) out.push(stop("ledger", "rows", "not the reviewed empty document, byte for byte"));
   } else if (facts.rows !== LEDGER_NOT_READ) out.push(stop("ledger", "rows", `a result under the status ${facts.status}, which reads nothing`));
   return out;
 }

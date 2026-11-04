@@ -27,6 +27,13 @@ const setRows = (name, values) => (K) => edited(K, name, (rows) => { for (const 
 const dropRows = (name, keys) => (K) => edited(K, name, (rows) => { for (const k of keys) rows.splice(rows.findIndex((r) => r.key === k), 1); });
 const atVersion = (num, version) => setRows("c-01.json", { server_version_num: num, version });
 const ledger = (name) => json(`l-${name}.json`).ordinary;
+const withFact = (name, key, value) => ledger(name).map((r) => (r.key === key ? { ...r, value } : r));
+const EMPTY_DOC_CHECK = "if (facts.status === \"empty\" && facts.rows !== LEDGER_EMPTY_DOCUMENT) out.push(";
+const ABSENT_RELATION = "if (facts.relation !== \"\") out.push(";
+const ABSENT_COLUMNS = "if (facts.columns !== \"\") out.push(";
+const ABSENT_RELATION_FACT = "else if (want.absent) out.push(stop(\"ledger\", k,";
+const SCHEMA_FACT = "if (facts.schema !== want.schema) out.push(";
+const RELATION_FORM = "if (facts.relation !== LEDGER_RELATION) out.push(";
 
 /**
  * [name, [exact text, replacement], scenario(K) → findings, the original's
@@ -138,15 +145,72 @@ const MUTANTS = [
   ["the same, a hidden read", ["if (want.stops) out.push(", "if (false) out.push("],
     () => ledger("hidden-read"),
     /rows may be hidden/, "build00LedgerFindings"],
-  ["the rows against the status", ["if (facts.rows.includes(\"<row>\") !== (facts.status === \"populated\")) out.push(", "if (false) out.push("],
-    () => ledger("empty").map((r) => (r.key === "rows" ? { ...r, value: "<table x>\n<row>\n</row>\n</table>\n" } : r)),
-    /rows disagree with the status empty/, "build00LedgerFindings"],
-  ["a whole document", ["if (!whole) out.push(", "if (false) out.push("],
-    () => ledger("empty").map((r) => (r.key === "rows" ? { ...r, value: "<table x>\n" } : r)),
-    /not one whole document/, "build00LedgerFindings"],
   ["a result under a status that reads nothing", ["} else if (facts.rows !== LEDGER_NOT_READ) out.push(", "} else if (false) out.push("],
-    () => ledger("absent-table").map((r) => (r.key === "rows" ? { ...r, value: "<table x>\n</table>\n" } : r)),
+    () => withFact("absent-table", "rows", "<table x>\n</table>\n"),
     /a result under the status absent-table/, "build00LedgerFindings"],
+  // B1: the empty document, Codex's three negatives and a cut-short one.
+  ["the empty document: malformed XML", [EMPTY_DOC_CHECK, "if (false) out.push("],
+    () => withFact("empty", "rows", "<table invalid>\n</table>\n"),
+    /not the reviewed empty document/, "build00LedgerFindings"],
+  ["the empty document: an unfamiliar child", [EMPTY_DOC_CHECK, "if (false) out.push("],
+    () => withFact("empty", "rows", "<table xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n<unexpected/>\n</table>\n"),
+    /not the reviewed empty document/, "build00LedgerFindings"],
+  ["the empty document: an empty row element", [EMPTY_DOC_CHECK, "if (false) out.push("],
+    () => withFact("empty", "rows", "<table xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n<row/>\n</table>\n"),
+    /not the reviewed empty document/, "build00LedgerFindings"],
+  ["the empty document: cut short", [EMPTY_DOC_CHECK, "if (false) out.push("],
+    () => withFact("empty", "rows", "<table xmlns:xsi=\"x\">\n"),
+    /not the reviewed empty document/, "build00LedgerFindings"],
+  ["the empty document: a real row", [EMPTY_DOC_CHECK, "if (false) out.push("],
+    () => withFact("empty", "rows", "<table x>\n<row>\n</row>\n</table>\n"),
+    /not the reviewed empty document/, "build00LedgerFindings"],
+  // B2: an absence status against the catalog, for both statuses.
+  ["an absent table's relation", [ABSENT_RELATION, "if (false) out.push("],
+    () => withFact("absent-table", "relation", "r|postgres|false|false"),
+    /has no relation/, "build00LedgerFindings"],
+  ["an absent schema's relation", [ABSENT_RELATION, "if (false) out.push("],
+    () => withFact("absent-schema", "relation", "r|postgres|false|false"),
+    /has no relation/, "build00LedgerFindings"],
+  ["an absent table's columns", [ABSENT_COLUMNS, "if (false) out.push("],
+    () => withFact("absent-table", "columns", C.LEDGER_COLUMNS),
+    /a relation's columns/, "build00LedgerFindings"],
+  ["an absent schema's columns", [ABSENT_COLUMNS, "if (false) out.push("],
+    () => withFact("absent-schema", "columns", C.LEDGER_COLUMNS),
+    /a relation's columns/, "build00LedgerFindings"],
+  ["an absent table's constraint", [ABSENT_RELATION_FACT, "else if (false) out.push(stop(\"ledger\", k,"],
+    () => [...ledger("absent-table"), { part: "ledger", key: "constraint|some_pkey", value: "p|PRIMARY KEY (version)" }],
+    /a relation's fact/, "build00LedgerFindings"],
+  ["an absent schema's trigger", [ABSENT_RELATION_FACT, "else if (false) out.push(stop(\"ledger\", k,"],
+    () => [...ledger("absent-schema"), { part: "ledger", key: "trigger|t", value: "O|CREATE TRIGGER t" }],
+    /a relation's fact/, "build00LedgerFindings"],
+  ["an absent table's table fact", ["if (want.table !== null && facts.table !== want.table) out.push(", "if (false) out.push("],
+    () => withFact("absent-table", "table", "true"),
+    /true, under the status absent-table/, "build00LedgerFindings"],
+  ["the schema's presence, absent-table", [SCHEMA_FACT, "if (false) out.push("],
+    () => withFact("absent-table", "schema", "false"),
+    /false, under the status absent-table/, "build00LedgerFindings"],
+  ["the schema's presence, absent-schema", [SCHEMA_FACT, "if (false) out.push("],
+    () => withFact("absent-schema", "schema", "true"),
+    /true, under the status absent-schema/, "build00LedgerFindings"],
+  // B2: the empty path's relation form, and what else may be there.
+  ["the relation form: a view", [RELATION_FORM, "if (false) out.push("],
+    () => withFact("empty", "relation", "v|postgres|false|false"),
+    /not the one relation form reviewed/, "build00LedgerFindings"],
+  ["the relation form: RLS on", [RELATION_FORM, "if (false) out.push("],
+    () => withFact("empty", "relation", "r|postgres|true|false"),
+    /not the one relation form reviewed/, "build00LedgerFindings"],
+  ["the relation form: only its prefix", [RELATION_FORM, "if (false) out.push("],
+    () => withFact("empty", "relation", "r|"),
+    /not the one relation form reviewed/, "build00LedgerFindings"],
+  ["the six columns on the empty path", ["if (facts.columns !== LEDGER_COLUMNS) out.push(", "if (false) out.push("],
+    () => withFact("empty", "columns", "version:text:true:"),
+    /without production's six columns/, "build00LedgerFindings"],
+  ["an unknown fact", ["if (!/^(constraint|trigger)\\|/.test(k)) out.push(", "if (false) out.push("],
+    () => [...ledger("empty"), { part: "ledger", key: "other", value: "x" }],
+    /not a fact BUILD-00 reports/, "build00LedgerFindings"],
+  ["a row that is not an object", ["if (!isObj(r)) return [stop(\"ledger\", null, \"a row is not an object\")];", "if (!isObj(r)) continue;"],
+    () => [null, ...ledger("empty")],
+    /a row is not an object/, "build00LedgerFindings"],
   ["a part's md5 check", ["else if (partMd5(parts[p]) !== md5s[p]) problems.push(", "else if (false) problems.push("],
     (K) => K.p0Findings(M, K.readObservation(readingRows("c-01.json").map((r) => (r.key === "count|public.orders" ? { ...r, value: "9" } : r))), { target: "production" }),
     /part 10's rows do not reproduce its md5/],
