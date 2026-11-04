@@ -1,0 +1,1 @@
+{"ok":false,"code":"P0001","message":"STAGE0 PROOF S0.2 FAILED: the catalog is state 01 (plan A1a) and the ledger's head is 01's row","where":"PL/pgSQL function inline_code_block line 35 at RAISE","severity":"ERROR"}

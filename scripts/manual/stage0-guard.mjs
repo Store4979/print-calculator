@@ -1929,6 +1929,11 @@ export async function guardedSend(o) {
   if (!phase.steps.includes(go.step)) throw new Refusal(`go ${goId}'s step is not in its phase; refusing`);
   const wf = own(workflows, phase.workflow) ? workflows[phase.workflow] : null;
   if (!wf) throw new Refusal(`workflow ${phase.workflow} is not declared; refusing`);
+  // The text the workflow declares for this step, the go's and the plan's must
+  // be one text before any claim or request (Codex's review of e6f99bf). A go
+  // written consistently into the store, with its ledger line, stops here.
+  const declared = wf.stepText(go.step);
+  if (declared !== go.text || declared !== plan.name) throw new Refusal(`go ${goId} is not for this send: step ${go.step} declares another text than the go's or this request's; refusing`);
   const ceiling = ceilingOf(wf, phase, go.step);
   if (go.ceiling !== iso(ceiling)) throw new Refusal(`go ${goId} records ${go.step}'s ceiling as ${go.ceiling}; its declaration gives ${iso(ceiling)}: a stale or altered go; refusing`);
   if (go.notAfter !== null && go.deadline !== go.notAfter) throw new Refusal(`go ${goId}'s deadline ${go.deadline} is not its recorded not-after ${go.notAfter}; refusing`);

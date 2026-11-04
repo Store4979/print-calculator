@@ -224,6 +224,7 @@ right text, so a wrong one needs a direct store edit. In X3:
 
 4C-10 shows the ordinary issued-go path. It is not resistance to that store
 edit. X3 is reviewed before any new live use relies on the changed sender.
+**X3 closes this gap:** G-28 is the regression, and G-26 has its mutant (§0.5).
 
 ### 0.4 Codex's review of X2b (`5ae51c6`), and where X2c answers it
 
@@ -261,6 +262,64 @@ Storage, route or platform behaviour. This is an obligation on the planned
 gate, not a request for a live read now.
 
 **The schema ACL's comparison scope:** §2.2 part 2.
+
+### 0.5 X3: the writing texts, and what they settle
+
+Codex accepted X2c and cleared its push (`reviews/2026-11-04-47a0b69-review.md`).
+Its boundaries stand as ruled: the exact owner `postgres`, RLS off, and the exact
+empty-ledger serialization. A different receipt stops for review, and the form is
+not broadened to pass one. **Ryan's direction for X3 (2026-11-04):** keep X2's
+approach to targets, so no text names a rehearsal target, and no preserved text's
+policy changes under C8, until the ref-binding commit.
+
+**What X3 is:**
+- **P1′ is the text `P1-4C`,** from the new source
+  `supabase/rehearsals/release2_stage0_4c_p1prime_proofs.sql`. Its policy is
+  production only, W, `effect` write, and no workflow names it until X4.
+- **BUILD-01 is a function, `build01Text`, of the facts B1 will bind.** Until B1 it
+  has no text, no pin, no policy and no target. Its SUCCESS entry exists and cannot
+  be reached: a receipt naming it is R1 first.
+- **M-6g, M-6e's sibling, confines BUILD-01** statement by statement.
+- **The preflight predicates** exist twice: in the comparator, for the first
+  receipts (`buildPredicateFindings`), and in BUILD-01's first step, in SQL, under
+  the same names. The local run compares the two on every real shape it tries.
+- **The sender gap of §0.3 is closed:** before a claim or a request, the text the
+  workflow declares for the step, `go.text` and the planned text must be one text.
+
+**Choices the plan left open, each up for Codex's ruling:**
+- **P1-4C runs under P1's application name** (`release2-stage0-P1`) and E1's
+  settings, so the preserved CANCEL-STEP-TEMPLATE, which names P1, can reach it. No
+  reviewed phase sends a cancel.
+- **The handler:** `when others` re-raises from the top-level DO block. **55P03 is
+  raised as it is,** so a lock timeout keeps its own frames and stays R4, as §2.5
+  and §6.2 say. A plain `when others` would have made it R3, which is more than the
+  plan claims. 57014 is not matched by OTHERS, and 25P04 cannot be caught.
+- **The cap on P1-4C's result** is 1809 rows: the local run's 1206, plus 50%. The
+  margin is a choice, not a measurement. Over it is a STOP.
+- **A fourth summary group:** this session's own temp relations are one row per
+  boundary, like `pg_catalog` and `pg_toast`, because `pg_temp_N` differs per backend.
+- **The declared PERFORMs have no witness.** A new data module holds P1-4C's 70
+  distinct expressions and joins the guard chain through the classifier. They stay
+  out of `PERFORM_QUERIES`, whose entries each name a receipt. No PROFILE names one,
+  so an envelope quoting one stays R4. What they add is the reason, and that the
+  same query under another text does not parse.
+- **BUILD-01's `store` data:** the employees are named `Rehearsal Employee n`, not
+  the harness's `Real Staff`. Their number comes from the facts, two or more.
+
+**What the local runs found** (PGlite 0.4.6, PostgreSQL 17.5; not Supabase):
+- **All 21 files run in one transaction,** so §2.1's one transaction stands locally.
+- **P1-4C's 45 proof rows equal P1's production receipt,** row for row, but for S0.2.
+- **No boundary shows a strong lock on an app table,** which agrees with §1.2's
+  approximation. The stated gaps stay: row locks, failed subtransactions, transient
+  locks, hooks and waits.
+- **BUILD-00W fails, 42703, when a column it asks about is gone:** an error and a
+  STOP, never a false fact. The predicate `buckets-columns` then has only BUILD-00.
+- **BUILD-01 rebuilds the same catalog fingerprint and ledger part** as the local
+  01, under the old default and a current-default variant, and the default rows end
+  exactly at the target.
+
+**What stays for later:** the preserved texts' target and `effect` (the ref-binding
+commit); BUILD-01's facts, text and policy (B1); the workflows and gates (X4).
 
 ## 1. What the remaining path touches
 
@@ -500,8 +559,9 @@ migration integration, and no branching.
 4. **One pinned writing text, BUILD-01, then builds the database,** through
    the guarded sender, to the rehearsal target only.
    - **Its transaction:** one transaction, unless a migration file cannot
-     run inside a transaction block. The local run finds out which. Any
-     such file makes BUILD-01 a short sequence of texts instead.
+     run inside a transaction block. The local run finds out which, and on
+     PostgreSQL 17.5 none does (§0.5). Any such file makes BUILD-01 a short
+     sequence of texts instead.
    - **In order, it:**
      - **re-asserts the bound acceptance inside its transaction, before
        the first migration file runs:** it reads the same facts again as

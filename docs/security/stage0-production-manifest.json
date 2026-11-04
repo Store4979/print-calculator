@@ -242,7 +242,7 @@
     "pinnedAt": "manifest-commit"
   },
   "item4c": {
-    "note": "Item 4(c) plan §6.1 (the implementation outline's X2): the sources of the read texts P0-4C, POST-4C, WHO-4C-*, BUILD-00 and BUILD-00W, read by blob. STATE-4C is STATE's generator with §3.2's mapping.",
+    "note": "Item 4(c) plan §6.1 (the implementation outline's X2 and X3): the sources of the read texts P0-4C, POST-4C, WHO-4C-*, BUILD-00 and BUILD-00W and of P1-4C's proofs, read by blob. STATE-4C is STATE's generator with §3.2's mapping.",
     "sources": {
       "checkedState": {
         "path": "supabase/rehearsals/release2_stage0_4c_checked_state.sql",
@@ -271,14 +271,21 @@
         "md5": "6d49ef4d2ce8d57cb2608ac07eaf9804",
         "bytes": 5112,
         "pinnedAt": "manifest-commit"
+      },
+      "p1prime": {
+        "path": "supabase/rehearsals/release2_stage0_4c_p1prime_proofs.sql",
+        "blob": "558a7fbf3d2e4eb056bcaa9c1afa45417ea2fad0",
+        "md5": "59a833d7f9f6d65c76360493f5383b97",
+        "bytes": 43700,
+        "pinnedAt": "manifest-commit"
       }
     }
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "e0b156e9bab7d6e99d7b2ecc76b0ddfdd825abba",
-    "md5": "fdb435a4d6b95273ec9138a32e6d11c9",
-    "bytes": 68487,
+    "blob": "31224e23db538e7854d3892c760f58048d812d00",
+    "md5": "fe9b541c37cd9a2750eb8ecbeed1f30c",
+    "bytes": 93709,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -301,16 +308,23 @@
     "files": [
       {
         "path": "scripts/manual/assemble-stage0.mjs",
-        "blob": "e0b156e9bab7d6e99d7b2ecc76b0ddfdd825abba",
-        "md5": "fdb435a4d6b95273ec9138a32e6d11c9",
-        "bytes": 68487,
+        "blob": "31224e23db538e7854d3892c760f58048d812d00",
+        "md5": "fe9b541c37cd9a2750eb8ecbeed1f30c",
+        "bytes": 93709,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-4c-compare.mjs",
-        "blob": "995215d626e5c952ee13a5ce165ce2cae9683b4a",
-        "md5": "013f537d6e4264680db1d25609f18d2a",
-        "bytes": 46069,
+        "blob": "898df4bf20ada81411e055c0da95c43e7e6fad49",
+        "md5": "c4baa67bb74326eddc9a23e6df5e1ea4",
+        "bytes": 53991,
+        "pinnedAt": "manifest-commit"
+      },
+      {
+        "path": "scripts/manual/stage0-4c-performs.mjs",
+        "blob": "41c6a9fe90e058b56505c6f2ca6eede435ae9224",
+        "md5": "5951ad0efa336d43495627619d8de484",
+        "bytes": 20451,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -322,9 +336,9 @@
       },
       {
         "path": "scripts/manual/stage0-classify.mjs",
-        "blob": "6be9633583c4405cb92ccad033f7ac1285980bab",
-        "md5": "b1864a969007a19a82da0b880eb55c7e",
-        "bytes": 56697,
+        "blob": "52fc319c3125a974fec64709a3bd919a7ff1b40d",
+        "md5": "d614f463a7fcd29e3675987ce2417937",
+        "bytes": 62077,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -336,9 +350,9 @@
       },
       {
         "path": "scripts/manual/stage0-guard.mjs",
-        "blob": "35a7878d034ad5c15f177d1b7be263a48568bc38",
-        "md5": "0eafafeb69ba61cb0160b2db71b87d6a",
-        "bytes": 138771,
+        "blob": "0c91f98ee9fe2e6cdba748f2733d62eb633d0c17",
+        "md5": "6f364dbf2e8573efac651130bdfe4a38",
+        "bytes": 139236,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -809,6 +823,10 @@
     "BUILD-00W": {
       "md5": "7cb8e53d526bb2d2f6f9a4d24bd94a66",
       "bytes": 5245
+    },
+    "P1-4C": {
+      "md5": "8b52201d202a2e462ba57f3f0e338fcf",
+      "bytes": 206556
     }
   },
   "sizeProbe": {
@@ -1307,6 +1325,14 @@
         "readOnly": false,
         "window": "W",
         "effect": "read"
+      },
+      "P1-4C": {
+        "targets": [
+          "production"
+        ],
+        "readOnly": false,
+        "window": "W",
+        "effect": "write"
       }
     },
     "windowNote": "Codex item 6 (Q2): each text is sent only from a window of its role, R, W or C. The role is listed per text, never derived from readOnly: LOCKPROBE-READBACK and CANCEL-INSPECT go without read_only and write nothing. M-12 fixes the mapping."

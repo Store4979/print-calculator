@@ -155,7 +155,9 @@ test("CL-2 the real fixtures are the sender's files byte for byte: md5, no CR, n
 });
 
 test("CL-3 coverage: one predicate entry per send-policy text, both ways; the receipt keys are the real sender's; statuses {400}", async () => {
-  assert.deepEqual(Object.keys(C.SUCCESS).sort(), Object.keys(M.send.texts).sort(), "exactly the send policy's texts");
+  assert.deepEqual(Object.keys(C.SUCCESS).filter((k) => !C.SUCCESS_BEFORE_BINDING.includes(k)).sort(), Object.keys(M.send.texts).sort(), "exactly the send policy's texts");
+  assert.deepEqual([...C.SUCCESS_BEFORE_BINDING], ["BUILD-01"], "only BUILD-01, which has no text until binding commit B1");
+  for (const k of C.SUCCESS_BEFORE_BINDING) assert.ok(!Object.hasOwn(M.send.texts, k) && !Object.hasOwn(M.outputs, k), `${k} has no policy and no output before B1`);
   for (const [k, s] of Object.entries(C.SUCCESS)) {
     if (s.kind === "unsupported") assert.ok(s.why, `${k}: why it is unsupported`);
     else { assert.equal(typeof s.check, "function", k); assert.ok(s.source, `${k}: the SQL or receipt it comes from`); }
@@ -407,7 +409,8 @@ const MUTANTS = [
 const STATUS_CASES = [[500, env(M2)], [200, env(M2)], [502, env(M2)]];
 
 async function mutantModule(edits, dir, n) {
-  let s = SRC.split('from "./assemble-stage0.mjs"').join(`from ${JSON.stringify(pathToFileURL(join(ROOT, "scripts", "manual", "assemble-stage0.mjs")).href)}`);
+  let s = SRC;
+  for (const m of ["assemble-stage0.mjs", "stage0-4c-performs.mjs"]) s = s.split(`from "./${m}"`).join(`from ${JSON.stringify(pathToFileURL(join(ROOT, "scripts", "manual", m)).href)}`);
   for (const [from, to] of edits) {
     assert.equal(s.split(from).length, 2, `the mutant's target occurs exactly once: ${from.slice(0, 70)}`);
     s = s.split(from).join(to);
@@ -828,7 +831,8 @@ test("CL-25 the recorded progression replays through the gate: NEXT for each ste
 });
 
 test("CL-26 a PERFORM query is a candidate for its own text only, bound to its one source; a statement frame pairs with the frame of the statement that ran it", () => {
-  assert.deepEqual(ctx.performs, { "LOCKPROBE-B-TXTIMEOUT": [SLEEP] });
+  assert.deepEqual(Object.keys(ctx.performs).sort(), ["LOCKPROBE-B-TXTIMEOUT", "P1-4C", "RB-43"], "the one witnessed entry, and the two texts item 4(c) declares (4W-7)");
+  assert.deepEqual(ctx.performs["LOCKPROBE-B-TXTIMEOUT"], [SLEEP]);
   assert.deepEqual(C.candidatesFor(ctx, "LOCKPROBE-B-TXTIMEOUT").map((c) => c.via), ["EXECUTE", "PERFORM"]);
   assert.deepEqual(C.candidatesFor(ctx, "P1").map((c) => c.via), Array(10).fill("EXECUTE"), "P1's PERFORMs have no entry");
   // T2's exact message, under other texts' receipts: no bound candidate there.

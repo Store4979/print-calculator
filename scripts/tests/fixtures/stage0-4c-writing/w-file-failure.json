@@ -1,0 +1,1 @@
+{"code":"22012","message":"a planted failure","where":"PL/pgSQL function inline_code_block line 77 at RAISE","left":{"ledger_absent":true}}

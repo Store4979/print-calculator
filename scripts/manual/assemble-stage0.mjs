@@ -55,6 +55,7 @@ export const SOURCES_4C = Object.freeze({
   who: "supabase/rehearsals/release2_stage0_4c_who.sql",
   build00: "supabase/rehearsals/release2_stage0_4c_build00.sql",
   build00w: "supabase/rehearsals/release2_stage0_4c_build00w.sql",
+  p1prime: "supabase/rehearsals/release2_stage0_4c_p1prime_proofs.sql",
 });
 
 // A1 — the forward migrations, in apply order.
@@ -133,6 +134,12 @@ export function sourceFromManifest(manifest, { cwd, readBlob = (id) => gitBlob(i
       const e = manifest.item4c && manifest.item4c.sources && manifest.item4c.sources[k];
       if (!e || e.path !== SOURCES_4C[k]) throw new Error(`the manifest pins no 4(c) source ${k} at ${SOURCES_4C[k]}`);
       return get(e, SOURCES_4C[k]);
+    },
+    // A baseline ledger row's file: its blob, checked against its pinned md5. Bytes are not pinned for these rows.
+    baseline: (r) => {
+      const b = readBlob(r.blob);
+      if (md5(b) !== r.md5) throw new Error(`${r.name}: blob ${r.blob} differs from the manifest's md5`);
+      return b.toString("utf8");
     },
     ledger: () => ledger,
   };
@@ -977,6 +984,13 @@ export function executedInputs(manifest, opts = {}) {
   out.P1 = [...MIGRATIONS.map((m) => src.migration(m)), ...ROLLBACK_OPS.flatMap((op) => op.files.map((n) => src.rollback(byN(n))))];
   for (const k of ["B-LOCKTIMEOUT", "B-STMTTIMEOUT", "B-TXTIMEOUT", "B-CANCEL", "B-POSITIVE"]) out[`LOCKPROBE-${k}`] = [LOCKPROBE_FILE];
   out["ENVELOPE-PROBE-2"] = [ENVELOPE_PROBE_2_EXECUTED];
+  if (manifest.item4c && manifest.item4c.sources.p1prime) {
+    // P1-4C runs 02 to 05 and RB-5, RB-43, RB-2 through their wrappers: no 01, no RB-1.
+    const fwd = MIGRATIONS.filter((m) => m.n !== "01").map((m) => src.migration(m));
+    const back = ROLLBACK_OPS.filter((op) => op.op !== "RB-1").flatMap((op) => op.files.map((n) => src.rollback(byN(n))));
+    out["P1-4C"] = [...fwd, ...back];
+    if (manifest.item4c.build01) out["BUILD-01"] = buildFiles(src, manifest).map((f) => f.text);
+  }
   return out;
 }
 
@@ -1033,7 +1047,12 @@ export function assembleAll(manifest, opts = {}) {
   for (const op of ROLLBACK_OPS) {
     out[op.op] = `-- ${op.op} — rollback operation (plan §A6, §F4). Before P6 only.\nbegin;\n${settings(op.op, "RB", "45s", 40, "45s")}${RB[op.op]}commit;\n`;
   }
-  if (manifest.item4c) Object.assign(out, item4cTexts(src, rows));
+  if (manifest.item4c) {
+    Object.assign(out, item4cTexts(src, rows));
+    // A manifest from before X3 pins no P1′ source, and has no such text.
+    if (manifest.item4c.sources.p1prime) out["P1-4C"] = p1Prime(src, W, W03alone, RB);
+    if (manifest.item4c.build01) out["BUILD-01"] = build01Text(src, manifest, manifest.item4c.build01);
+  }
   return out;
 }
 
@@ -1054,6 +1073,345 @@ export function item4cTexts(src, rows) {
   out["BUILD-00"] = head("BUILD-00", "the rehearsal project's initial shape, before BUILD-01") + src.item4c("build00");
   out["BUILD-00W"] = head("BUILD-00W", "the role BUILD-01 will run as, and its authority, sent from W without read_only") + src.item4c("build00w");
   return out;
+}
+
+// ── item 4(c): P1-4C, P1′ (plan §6.1; the implementation outline's X3) ──────
+// One transaction ending in ROLLBACK: the proofs source's sections, the P2 and
+// RB wrapper bodies verbatim, and a lock boundary after each named piece. No
+// boundary is inside the savepoint, whose rollback would undo its rows. Its
+// application name and settings are P1's, so the preserved CANCEL-STEP-TEMPLATE,
+// which names release2-stage0-P1, reaches it; no reviewed phase sends a cancel.
+export const P1_4C_BOUNDARIES = Object.freeze(["after-section-0", "after-P2-02", "before-savepoint", "after-savepoint-rollback", "after-P2-0304",
+  "after-P2-05", "after-sections-2-3", "after-RB-5", "after-RB-43", "after-RB-2", "after-section-4"]);
+/** The handler every checking DO block ends with (plan §6.2): one frame, at RAISE, but for what it lets through. */
+export const RERAISE = "exception\n  when lock_not_available then raise;\n  when others then raise exception '%', sqlerrm using errcode = sqlstate;\nend\n";
+const lockBoundary = (name) => {
+  const i = P1_4C_BOUNDARIES.indexOf(name);
+  if (i < 0) throw new Error(`no lock boundary ${name}`);
+  return `\n-- ===== lock boundary ${name} =====\ndo $stage0_locks$\nbegin\n  perform pg_temp.stage0_locks(${i + 1}, ${q(name)});\n${RERAISE}$stage0_locks$;\n`;
+};
+
+/** The P1′ proofs source split at its section markers. */
+export function p1PrimeSections(src) {
+  const parts = src.item4c("p1prime").split(/^-- @@stage0-p1prime section (\d[a-z]?):.*$/m);
+  const sections = {};
+  const order = [];
+  for (let i = 1; i < parts.length; i += 2) { sections[parts[i]] = parts[i + 1]; order.push(parts[i]); }
+  if (order.join(",") !== "0,1,1b,2,3,4,5") throw new Error("the P1′ proofs: expected sections 0, 1, 1b, 2, 3, 4, 5 in order");
+  return sections;
+}
+
+function p1Prime(src, W, W03alone, RB) {
+  const s = p1PrimeSections(src);
+  return [
+    "-- P1-4C — P1′: 02–05, the proofs and RB-5, RB-43, RB-2 at 01, ONE transaction, ROLLBACK (item 4(c) plan §6.1).\n",
+    "begin isolation level repeatable read;\n",
+    settings("P1", "P1", "90s", 100, "110s"),
+    "\n-- ===== proofs section 0 =====", s["0"], lockBoundary("after-section-0"),
+    "\n-- ===== P2-02 body =====\n", W["02"], lockBoundary("after-P2-02"),
+    "\n-- ===== proofs section 1 =====", s["1"], lockBoundary("before-savepoint"),
+    "\n-- ===== 03 ALONE, in a savepoint (never a P2 step): its 42702, then undone =====\nsavepoint stage0_03_alone;\n", W03alone,
+    "\n-- ===== proofs section 1b =====", s["1b"],
+    "\nrollback to savepoint stage0_03_alone;\nrelease savepoint stage0_03_alone;\n", lockBoundary("after-savepoint-rollback"),
+    "\n-- ===== P2-0304 body =====\n", W["0304"], lockBoundary("after-P2-0304"),
+    "\n-- ===== P2-05 body =====\n", W["05"], lockBoundary("after-P2-05"),
+    "\n-- ===== proofs section 2 =====", s["2"],
+    "\n-- ===== proofs section 3 =====", s["3"], lockBoundary("after-sections-2-3"),
+    "\n-- ===== RB-5 =====\n", RB["RB-5"], lockBoundary("after-RB-5"),
+    "\n-- ===== RB-43 =====\n", RB["RB-43"], lockBoundary("after-RB-43"),
+    "\n-- ===== RB-2 =====\n", RB["RB-2"], lockBoundary("after-RB-2"),
+    "\n-- ===== proofs section 4 =====", s["4"], lockBoundary("after-section-4"),
+    "\n-- ===== the one final result =====", s["5"],
+    "\nrollback;\n",
+  ].join("");
+}
+
+// ── item 4(c): BUILD-01 (plan §2.1; the implementation outline's X3) ────────
+// A function of the facts binding commit B1 binds (manifest item4c.build01). No
+// text exists without them, so nothing here is sendable: it has no output, no
+// send policy and no target until B1 and the ref-binding commit. In one
+// transaction, in order, each step a DO block that re-raises (RERAISE):
+//   1. re-reads BUILD-00 and BUILD-00W, verbatim, as the role it runs as: each
+//      part's digest must equal the bound one, and each predicate of the plan's
+//      preflight table must hold, before anything is written;
+//   2. sets the object-creating role's default ACLs to the pre-30-October target
+//      at the global and public scopes, and asserts the rows;
+//   3. creates the ledger with production's six columns, if BUILD-00 found none;
+//   4. runs the 21 migration files from their blobs in version order, each md5-
+//      and byte-gated and followed by its ledger row at production's version,
+//      with the synthetic rows where production's data predates a file;
+//   5. creates the marker outside public;
+//   6. sets the default ACLs to production's current rows, and asserts them.
+// What it does not re-assert: anything the two reads do not report, and nothing
+// after step 1 re-reads them.
+export const BUILD01_APP = "release2-stage0-BUILD-01";
+const BUILD01_TAG = "stage0 BUILD-01";
+const BUILD_DO = (body) => `do $stage0_build$\n${body}$stage0_build$;\n`;
+/** Each default-ACL object type: its keyword, and the one implicit grant set PostgreSQL 17 gives an owner. */
+export const DEFAULT_TYPES = Object.freeze({
+  r: Object.freeze({ word: "tables", owner: ["DELETE", "INSERT", "MAINTAIN", "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"], publicGrant: [] }),
+  S: Object.freeze({ word: "sequences", owner: ["SELECT", "UPDATE", "USAGE"], publicGrant: [] }),
+  f: Object.freeze({ word: "functions", owner: ["EXECUTE"], publicGrant: ["EXECUTE"] }),
+  T: Object.freeze({ word: "types", owner: ["USAGE"], publicGrant: ["USAGE"] }),
+  n: Object.freeze({ word: "schemas", owner: ["CREATE", "USAGE"], publicGrant: [] }),
+});
+const ROLE_NAME = /^[a-z_][a-z0-9_]*$/;
+const entryKey = (e) => `${e.grantee}=${e.priv}`;
+const byBytes = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+/** An ACL as BUILD-00 and the checked state serialize it, from entries. */
+const aclText = (entries) => [...entries]
+  .sort((a, b) => byBytes(a.grantee, b.grantee) || byBytes(a.priv, b.priv) || byBytes(a.grantor, b.grantor))
+  .map((e) => `${e.grantee}=${e.priv}${e.option ? "*" : ""}/${e.grantor}`).join(",");
+/** Entries from that serialization. A form it does not produce throws. */
+function aclEntries(text, label) {
+  if (text === "") return [];
+  return text.split(",").map((x) => {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=([A-Z]+)(\*?)\/([A-Za-z_][A-Za-z0-9_]*)$/.exec(x);
+    if (!m) throw new Error(`${label}: "${x}" is not an ACL entry`);
+    return { grantee: m[1], priv: m[2], option: m[3] === "*", grantor: m[4] };
+  });
+}
+/** The implicit default a role has for one object type, as BUILD-00's `implicit|` row reads it. */
+export function implicitDefault(creator, t) {
+  const d = DEFAULT_TYPES[t];
+  return aclText([...d.publicGrant.map((priv) => ({ grantee: "PUBLIC", priv, option: false, grantor: creator })), ...d.owner.map((priv) => ({ grantee: creator, priv, option: false, grantor: creator }))]);
+}
+/**
+ * The pre-30-October target (plan §2.1): the implicit default at the global
+ * scope, and all privileges on tables, sequences and functions to anon,
+ * authenticated and service_role at the public scope. `<scope>|<type>` to ACL.
+ */
+export function oldDefaultTarget(creator) {
+  const out = {};
+  for (const t of Object.keys(DEFAULT_TYPES)) out[`*|${t}`] = implicitDefault(creator, t);
+  for (const t of ["r", "S", "f"]) {
+    out[`public|${t}`] = aclText(["anon", "authenticated", "service_role"].flatMap((grantee) => DEFAULT_TYPES[t].owner.map((priv) => ({ grantee, priv, option: false, grantor: creator }))));
+  }
+  out["public|T"] = "";
+  return out;
+}
+/**
+ * The ALTER DEFAULT PRIVILEGES statements that take the role's rows `from` one
+ * map to `to`, revokes first, in a fixed order. Each map names `<scope>|<type>`
+ * for the two scopes. A grant another role made, a scope or a type it does not
+ * name, or a role name out of form throws: such a shape needs its own review.
+ */
+export function defaultAclStatements(creator, from, to) {
+  if (!ROLE_NAME.test(creator)) throw new Error(`"${creator}" is not a role name this text writes`);
+  const out = [];
+  for (const key of [...new Set([...Object.keys(from), ...Object.keys(to)])].sort(byBytes)) {
+    const [scope, t] = key.split("|");
+    if (!["*", "public"].includes(scope) || !Object.hasOwn(DEFAULT_TYPES, t) || (scope === "public" && t === "n")) throw new Error(`${key} is not a default-ACL scope and type this text sets`);
+    const a = aclEntries(from[key] ?? "", `the current ${key}`), b = aclEntries(to[key] ?? "", `the target ${key}`);
+    for (const e of [...a, ...b]) {
+      if (e.grantor !== creator) throw new Error(`${key}: ${e.grantee}'s ${e.priv} was granted by ${e.grantor}, not ${creator}`);
+      if (e.grantee !== "PUBLIC" && !ROLE_NAME.test(e.grantee)) throw new Error(`${key}: "${e.grantee}" is not a role name this text writes`);
+    }
+    const want = new Map(b.map((e) => [entryKey(e), e])), have = new Map(a.map((e) => [entryKey(e), e]));
+    const head = `alter default privileges for role ${creator}${scope === "public" ? " in schema public" : ""}`;
+    const word = DEFAULT_TYPES[t].word;
+    const who = (e) => (e.grantee === "PUBLIC" ? "public" : e.grantee);
+    const line = (list, f) => [...new Set(list.map((e) => e.grantee))].sort(byBytes).forEach((g) => {
+      const mine = list.filter((e) => e.grantee === g);
+      out.push(f(mine.map((e) => e.priv.toLowerCase()).sort(byBytes).join(", "), who(mine[0])));
+    });
+    line(a.filter((e) => !want.has(entryKey(e))), (p, g) => `${head} revoke ${p} on ${word} from ${g};`);
+    line(a.filter((e) => e.option && want.has(entryKey(e)) && !want.get(entryKey(e)).option), (p, g) => `${head} revoke grant option for ${p} on ${word} from ${g};`);
+    line(b.filter((e) => !have.has(entryKey(e)) && !e.option), (p, g) => `${head} grant ${p} on ${word} to ${g};`);
+    line(b.filter((e) => e.option && !(have.has(entryKey(e)) && have.get(entryKey(e)).option)), (p, g) => `${head} grant ${p} on ${word} to ${g} with grant option;`);
+  }
+  return out;
+}
+/** The rows pg_default_acl must hold for the role at the two scopes: an implicit default has no row. */
+const wantedDefaultRows = (creator, target) => Object.entries(target)
+  .filter(([key, acl]) => { const [scope, t] = key.split("|"); return acl !== "" && !(scope === "*" && acl === implicitDefault(creator, t)); })
+  .sort(([a], [b]) => byBytes(a, b))
+  .map(([key, acl]) => { const [scope, t] = key.split("|"); return `(${q(scope)}, ${q(t)}, ${q(acl)})`; });
+function defaultsStep(creator, from, to, label) {
+  const want = wantedDefaultRows(creator, to);
+  return BUILD_DO(`begin
+${defaultAclStatements(creator, from, to).map((s) => `  ${s}\n`).join("")}  if (with have as (
+        select (case when d.defaclnamespace = 0 then '*' else d.defaclnamespace::regnamespace::text end) as scope, d.defaclobjtype::text as t,
+               coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end)
+                                             || '/' || coalesce(o.rolname, '?'), ','
+                                           order by coalesce(g.rolname, 'PUBLIC') collate "C", a.privilege_type collate "C",
+                                                    coalesce(o.rolname, '?') collate "C", a.is_grantable)
+                           from aclexplode(d.defaclacl) a
+                           left join pg_roles g on g.oid = a.grantee
+                           left join pg_roles o on o.oid = a.grantor), '') as acl
+          from pg_default_acl d
+         where d.defaclrole = ${q(creator)}::regrole and d.defaclnamespace in (0, 'public'::regnamespace)),
+      want as (${want.length ? `select * from (values ${want.join(", ")}) as w(scope, t, acl)` : "select null::text as scope, null::text as t, null::text as acl where false"})
+      select count(*) from ((select * from have except select * from want) union all (select * from want except select * from have)) x) <> 0 then
+    raise exception '${BUILD01_TAG}: the default ACLs are not ${label}' using errcode = 'P0001';
+  end if;
+${RERAISE}`);
+}
+
+/** The preflight table's predicates (plan §2.1), each a name and a SQL boolean over the CTE f(src, part, key, value). */
+function buildPredicates(facts) {
+  const v = (src, part, key) => `(select f.value from f where f.src = ${q(src)} and f.part = ${q(part)} and f.key = ${q(key)})`;
+  const b = (part, key) => v("build00", part, key);
+  const w = (part, key) => v("build00w", part, key);
+  const trues = (keys) => keys.map(([part, key]) => `${w(part, key)} = 'true'`).join(" and ");
+  const has = (src, part, keys) => `exists (select 1 from f where f.src = ${q(src)} and f.part = ${q(part)} and f.key in (${keys.map(q).join(", ")}))`;
+  const TEXTISH = "'^(text|character varying([(][0-9]+[)])?)[|]'";
+  return [
+    ["public-empty", `not exists (select 1 from f where f.src = 'build00' and f.part = 'public')`],
+    ["ledger", `${b("ledger", "status")} = ${q(facts.ledger)}`],
+    ["buckets-present", `${b("buckets", "present")} = 'true'`],
+    ["buckets-columns", `${b("buckets", "column|id")} ~ ${TEXTISH} and ${b("buckets", "column|name")} ~ ${TEXTISH} and ${b("buckets", "column|public")} ~ '^boolean[|]' and ${b("buckets", "column|file_size_limit")} ~ '^(bigint|integer)[|]' and ${b("buckets", "column|allowed_mime_types")} ~ '^text\\[\\][|]' and ${b("buckets", "column|updated_at")} ~ '^timestamp with time zone[|]'`],
+    ["buckets-notnull", `not exists (select 1 from f where f.src = 'build00' and f.part = 'buckets' and f.key like 'column|%' and f.value ~ '^[^|]*[|]true[|][|][|]$' and f.key not in ('column|id', 'column|name', 'column|public'))`],
+    ["buckets-generated", `not exists (select 1 from f where f.src = 'build00' and f.part = 'buckets' and f.key in ('column|id', 'column|name', 'column|public', 'column|file_size_limit', 'column|allowed_mime_types', 'column|updated_at') and f.value !~ '[|]d?[|]$')`],
+    ["buckets-arbiter", `exists (select 1 from f where f.src = 'build00' and f.part = 'buckets' and f.key like 'unique-index|%' and f.value ~ ' ON storage[.]buckets USING btree [(]id[)]$')`],
+    ["buckets-authority", trues([["buckets", "schema_usage"], ...["id", "name", "public", "file_size_limit", "allowed_mime_types"].map((c) => ["buckets", `insert|${c}`]), ...["public", "file_size_limit", "allowed_mime_types", "updated_at"].map((c) => ["buckets", `update|${c}`]), ["buckets", "select"]])],
+    ["buckets-rls", `${w("buckets", "rls_applies")} = 'false'`],
+    ["buckets-rows", `${w("buckets", "row|job-files")} = 'false' and ${w("buckets", "row|customer-uploads")} = 'false'`],
+    ["objects-table", `${b("objects", "table")} like 'r|%' and ${b("objects", "column|bucket_id")} = 'text'`],
+    ["objects-policies", `not ${has("build00", "objects", ["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"])}`],
+    ["objects-authority", trues([["objects", "owner_privileges"]])],
+    ["publication-present", `${b("publication", "pub|supabase_realtime")} ~ '^[^|]*[|]false[|]'`],
+    ["publication-member", `not ${has("build00", "publication", ["member|public.pending_jobs"])}`],
+    ["publication-authority", trues([["publication", "owner_privileges"]])],
+    ["authusers-columns", `${b("authusers", "column|instance_id")} ~ '^uuid[|]' and ${b("authusers", "column|id")} ~ '^uuid[|]' and ${b("authusers", "column|aud")} ~ ${TEXTISH} and ${b("authusers", "column|role")} ~ ${TEXTISH} and ${b("authusers", "column|email")} ~ ${TEXTISH}`],
+    ["authusers-notnull", `string_to_array(${b("authusers", "notnull-nodefault")}, ',') <@ array['instance_id', 'id', 'aud', 'role', 'email']`],
+    ["authusers-authority", trues([["authusers", "insert"], ["authusers", "select"], ["authusers", "references|id"]])],
+    ["authusers-rls", `${w("authusers", "rls_applies")} = 'false'`],
+    ["authusers-triggers", `${b("authusers", "user-triggers")} = '0'`],
+    ["marker-absent", `${b("schemas", "schema|stage0_rehearsal")} = '<absent>'`],
+    ["database-create", trues([["database", "create"]])],
+    ["creator", `${w("role", "name")} = ${q(facts.creator)} or ${has("build00w", "role", [`member|${facts.creator}`])} or split_part(${w("role", "attr")}, '|', 1) = 'true'`],
+  ];
+}
+/** The predicates' names, in order, for the comparator's own table to agree with. */
+export const BUILD_PREDICATE_NAMES = Object.freeze(buildPredicates({ ledger: "x", creator: "x" }).map(([n]) => n));
+
+function buildAssertStep(src, facts) {
+  const body = (k) => {
+    const t = src.item4c(k);
+    if (!t.endsWith(";\n")) throw new Error(`the ${k} source does not end in its one semicolon`);
+    return t.slice(0, -2);
+  };
+  const bound = Object.entries(facts.digests).flatMap(([s, parts]) => Object.entries(parts).map(([part, d]) => `(${q(s)}, ${q(part)}, ${q(d)})`));
+  return BUILD_DO(`declare
+  v_bad text;
+begin
+${SETTINGS_ASSERT(BUILD01_TAG, { lock: ["3s"], statement: ["90s"], tx: ["110s"], modes: ["BUILD"] })}  with f(src, part, key, value) as (
+    select 'build00', b.part, b.key, b.value from (
+${body("build00")}
+    ) b
+    union all
+    select 'build00w', w.part, w.key, w.value from (
+${body("build00w")}
+    ) w
+  ),
+  seen as (
+    select f.src, f.part, md5(string_agg(f.key || chr(9) || f.value || chr(10), '' order by f.key collate "C")) as digest from f group by f.src, f.part
+  ),
+  bound(src, part, digest) as (values ${bound.join(", ")}),
+  bad(name) as (
+    select 'digest ' || d.src || '.' || d.part from ((select * from seen except select * from bound) union all (select * from bound except select * from seen)) d
+    union all
+    select p.name from (values
+${buildPredicates(facts).map(([n, e]) => `      (${q(n)}, ${e})`).join(",\n")}
+    ) as p(name, ok) where p.ok is distinct from true
+  )
+  select string_agg(distinct x.name, ', ' order by x.name) into v_bad from bad x;
+  if v_bad is not null then
+    raise exception '${BUILD01_TAG}: the bound acceptance does not hold: %', v_bad using errcode = 'P0001';
+  end if;
+${RERAISE}`);
+}
+
+/** The ledger DDL for what BUILD-00 found, production's six columns (§E8, N6); none for an empty ledger. */
+function buildLedgerStep(facts) {
+  if (facts.ledger === "empty") return "";
+  return BUILD_DO(`begin
+${facts.ledger === "absent-schema" ? "  create schema supabase_migrations;\n" : ""}  create table supabase_migrations.schema_migrations (version text not null primary key, statements text[], name text, created_by text, idempotency_key text unique, rollback text[]);
+${RERAISE}`);
+}
+
+/** The 21 files, in version order, from their blobs: the 20 baseline rows, then 01 at its production version. */
+export function buildFiles(src, manifest) {
+  const one = manifest.migrations.find((m) => m.n === "01");
+  if (!one || !/^[0-9]{14}$/.test(String(one.productionVersion))) throw new Error("01 has no recorded production version");
+  const rows = manifest.baselineLedger.map((r) => ({ version: r.version, name: r.name, md5: r.md5, text: src.baseline(r) }));
+  rows.push({ version: one.productionVersion, name: one.name, md5: one.md5, text: src.migration(MIGRATIONS[0]) });
+  return rows;
+}
+/** One file: md5- and byte-gated, executed, and its ledger row in apply_migration's shape at production's version. */
+function buildFileStep(f) {
+  const tag = BUILD01_TAG;
+  return BUILD_DO(`declare
+  f constant text := ${fileLiteral(f.text, f.name)};
+begin
+  if md5(f) <> ${q(f.md5)} or octet_length(f) <> ${Buffer.byteLength(f.text)} then
+    raise exception '${tag}: the embedded bytes of ${f.name} differ from the manifest' using errcode = 'P0001';
+  end if;
+  execute f;
+  insert into supabase_migrations.schema_migrations (version, name, statements, created_by) values (${q(f.version)}, ${q(f.name)}, array[f], ${q(LEDGER_CREATED_BY)});
+  if not exists (select 1 from supabase_migrations.schema_migrations m where m.version = ${q(f.version)} and m.name = ${q(f.name)} and cardinality(m.statements) = 1 and array_lower(m.statements, 1) = 1 and md5(m.statements[1]) = md5(f) and octet_length(m.statements[1]) = octet_length(f) and m.created_by = ${q(LEDGER_CREATED_BY)} and m.idempotency_key is null and m.rollback is null) then
+    raise exception '${tag}: the ledger row of ${f.name} does not have apply_migration''s shape' using errcode = 'P0001';
+  end if;
+${RERAISE}`);
+}
+/** The synthetic users the files need: an owner for the store, and the mailbox one file looks up by address. */
+export const BUILD_USERS = Object.freeze([["11111111-1111-4111-8111-111111111111", "owner@example.invalid"], ["22222222-2222-4222-8222-222222222222", LEDGER_CREATED_BY]]);
+/** The file the store's data predates the next one of (the harness's construction). */
+export const BUILD_STORE_AFTER = "20260722003606";
+const buildUsersStep = () => BUILD_DO(`begin
+  insert into auth.users (instance_id, id, aud, role, email) values
+${BUILD_USERS.map(([id, email]) => `    ('00000000-0000-0000-0000-000000000000', ${q(id)}, 'authenticated', 'authenticated', ${q(email)})`).join(",\n")};
+${RERAISE}`);
+const buildPin = (i) => (i === 0 ? "1234" : i === 1 ? "0842" : String(2000 + i));
+const buildStoreStep = (employees) => BUILD_DO(`begin
+  insert into public.stores (slug, name) values ('store4979', 'The UPS Store #4979');
+  insert into public.memberships (store_id, user_id, role) select s.id, ${q(BUILD_USERS[0][0])}, 'owner' from public.stores s where s.slug = 'store4979';
+  insert into public.employees (name, pin, active) values
+${Array.from({ length: employees }, (_, i) => `    (${q(`Rehearsal Employee ${i + 1}`)}, ${q(buildPin(i))}, true)`).join(",\n")};
+${RERAISE}`);
+export const BUILD_MARKER_NOTE = "reconstruction: these ledger rows record a rebuild, not production's API history";
+const buildMarkerStep = (ref) => BUILD_DO(`begin
+  create schema stage0_rehearsal;
+  create table stage0_rehearsal.marker (ref text primary key, note text not null);
+  insert into stage0_rehearsal.marker (ref, note) values (${q(ref)}, ${q(BUILD_MARKER_NOTE)});
+${RERAISE}`);
+
+/**
+ * BUILD-01's text from the bound facts, with what they must hold checked first.
+ * `facts`: ref, creator, ledger (absent-schema, absent-table or empty), digests
+ * ({ build00: { part: md5 }, build00w: { part: md5 } }), defaultsNow and
+ * defaultsFinal (`<scope>|<type>` to ACL), employees (two or more).
+ */
+export function build01Text(src, manifest, facts) {
+  if (!/^[a-z]{20}$/.test(String(facts.ref)) || facts.ref === PRODUCTION_REF || facts.ref === STAGING_REF) throw new Error("BUILD-01's ref must be a rehearsal project's: not production's, not staging's");
+  if (!ROLE_NAME.test(String(facts.creator))) throw new Error("BUILD-01's creator is not a role name");
+  if (!["absent-schema", "absent-table", "empty"].includes(facts.ledger)) throw new Error(`BUILD-01 does not build over a ledger that is ${facts.ledger}`);
+  if (!Number.isSafeInteger(facts.employees) || facts.employees < 2) throw new Error("BUILD-01 needs two or more employees");
+  for (const s of ["build00", "build00w"]) {
+    const parts = facts.digests && facts.digests[s];
+    if (!parts || !Object.keys(parts).length || !Object.values(parts).every((d) => /^[0-9a-f]{32}$/.test(d))) throw new Error(`BUILD-01's bound digests of ${s} are missing or malformed`);
+  }
+  const files = buildFiles(src, manifest);
+  const at = files.findIndex((f) => f.version === BUILD_STORE_AFTER);
+  if (at < 0) throw new Error(`no baseline file ${BUILD_STORE_AFTER}`);
+  const old = oldDefaultTarget(facts.creator);
+  return [
+    "-- BUILD-01 — the rehearsal project's database, from its 21 migrations, ONE transaction (item 4(c) plan §2.1). The rehearsal project only.\n",
+    "begin;\n",
+    settings("BUILD-01", "BUILD", "90s", 100, "110s"),
+    buildAssertStep(src, facts),
+    defaultsStep(facts.creator, facts.defaultsNow, old, "the pre-30-October target"),
+    buildLedgerStep(facts),
+    buildUsersStep(),
+    ...files.slice(0, at + 1).map(buildFileStep),
+    buildStoreStep(facts.employees),
+    ...files.slice(at + 1).map(buildFileStep),
+    buildMarkerStep(facts.ref),
+    defaultsStep(facts.creator, old, facts.defaultsFinal, "the current production rows"),
+    BUILD_DO(`begin\n${DEADLINE(BUILD01_TAG)}${RERAISE}`),
+    "commit;\n",
+  ].join("");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -39,6 +39,7 @@
 //   G-24 the dry run needs no token, marker, go, clock or network; a live send needs --go
 //   G-25 the 2026-10-09 incident, replayed at its real times
 //   G-26 the mutation companion: each named check removed admits a request the original refuses
+//   G-28 X3: a consistently forged go for another text than its step declares refuses before any claim
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, mkdtempSync, rmSync, renameSync } from "node:fs";
@@ -145,7 +146,7 @@ test("G-1 Q2: each text goes only from a window of its policy role; R refuses W 
           n++;
         }
       }
-      assert.equal(n, target === "production" ? 38 : 33, "19 production texts (12, and item 4(c)'s seven read texts with a target) with two other roles each; 33 staging texts (item 2's 16, item 3's 17) with one");
+      assert.equal(n, target === "production" ? 40 : 33, "20 production texts (12, item 4(c)'s seven read texts with a target, and P1-4C) with two other roles each; 33 staging texts (item 2's 16, item 3's 17) with one");
       assert.equal(fx.calls.length, 0, "no request");
       if (target === "staging") await refused(() => fx.window("C", ph.phaseId, { pid: 3999 }), /sends nothing from a C window/, "no C window on staging");
     } finally { fx.cleanup(); }
@@ -1183,6 +1184,11 @@ const SCENARIOS = {
     const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-01", target: "production" });
     return [fx, () => fx.send(X, { text: "P2-01", target: "production", win: W, goId: go.goId })];
   },
+  "a go written consistently for another text than its step declares": async (X) => {
+    const { fx, ph, W } = setupP();
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-02", target: "production" });
+    return [fx, () => fx.send(X, { text: "P2-02", target: "production", win: W, goId: go.goId })];
+  },
   "an R window sends a W text": async (X) => {
     const { fx, ph, R } = setupP();
     const go = forgeGo(fx, { phase: ph, marker: R.marker, step: "A1", text: "P2-01", target: "production" });
@@ -1283,6 +1289,7 @@ const SCENARIOS = {
 
 /** The named checks, each removed by exact edits of stage0-guard.mjs, with the scenario that only it refuses. */
 const GUARD_MUTANTS = [
+  ["the step's declared text in the sender", "a go written consistently for another text than its step declares", [["  if (declared !== go.text || declared !== plan.name) throw", "  if (false) throw"]]],
   ["the role check", "an R window sends a W text", [["  if (role !== marker.role) throw new Refusal(`${plan.name} is sent from ${an(role)} window; this is ${an(marker.role)} window; refusing`);\n", ""]]],
   ["the shell binding", "a child shell with the inherited environment", [["  if (!sameShell(shell, marker.shell)) throw", "  if (false) throw"]]],
   ["the token binding", "another token in the window", [["  if (tokenTagOf(nonce, token) !== marker.tokenTag) throw", "  if (false) throw"]]],
@@ -1318,6 +1325,32 @@ const GUARD_MUTANTS = [
   ["the go's not-after in the sender", "a production go whose deadline passes its not-after", [["  if (go.notAfter !== null && go.deadline !== go.notAfter) throw", "  if (false) throw"]]],
   ["the production not-after in the sender", "a production go with no not-after", [["  if (phase.target === \"production\" && go.notAfter === null) throw", "  if (false) throw"]]],
 ];
+
+test("G-28 X3: a go written consistently into the store for another text than its step declares is refused before any claim or request, with no attempt or hold; the go the issuer writes still sends", async () => {
+  const { fx, ph, W } = setupP();
+  try {
+    const go = forgeGo(fx, { phase: ph, marker: W.marker, step: "A1", text: "P2-02", target: "production" });
+    assert.equal(go.text, "P2-02", "the go names the text its step does not declare");
+    assert.equal(fx.check().ok, true, "the store is consistent: no store check can refuse it");
+    const seqBefore = G.readLedger(fx.paths).seq;
+    await refused(() => fx.send(G, { text: "P2-02", target: "production", win: W, goId: go.goId }), /step A1 declares another text/, "the plan and the go agree, and the step does not");
+    await refused(() => fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId }), /its text differs/, "the plan is the step's, and the go is not");
+    assert.equal(fx.calls.length, 0, "no request");
+    assert.deepEqual(G.readJournal(fx.paths, PROD), [], "no attempt");
+    assert.deepEqual(holds(fx), [], "no hold");
+    assert.equal(G.readLedger(fx.paths).seq, seqBefore, "nothing was written");
+    assert.ok(liveGos(fx).includes(`${go.goId}.json`), "the go was not used");
+    assert.equal(fx.check().ok, true);
+    // The positive: the issuer's go, with the step's own text, sends.
+    fx.void(go.goId);
+    const issued = fx.issue(ph.phaseId, "A1");
+    assert.equal(issued.text, "P2-01");
+    const r = await fx.send(G, { text: "P2-01", target: "production", win: W, goId: issued.goId });
+    assert.equal(fx.calls.length, 1, "exactly one request");
+    assert.equal(r.record.httpStatus, 201);
+    assert.equal(r.record.text, "P2-01");
+  } finally { fx.cleanup(); }
+});
 
 test("G-26 the mutation companion: each named check, removed, admits exactly one request in the scenario where the original allows none", async () => {
   const dir = mkdtempSync(join(tmpdir(), "s0-guard-mutants-"));

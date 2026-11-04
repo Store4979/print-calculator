@@ -214,6 +214,17 @@ export const I4C_POLICY = Object.freeze({
   "BUILD-00W": Object.freeze({ targets: [], readOnly: false, window: "W", effect: "read" }),
 });
 /**
+ * Item 4(c)'s writing text (the outline's X3). Its policy follows X2's rule: it
+ * names production alone until the reviewed ref-binding commit adds the
+ * rehearsal's, and nothing sends it before X4 declares a workflow that names it
+ * (stage0-4c.test.js). BUILD-01 has no entry: it has no text and no policy until
+ * binding commit B1 binds its facts. The preserved step texts keep their policies
+ * until the ref-binding commit too, so C8 changes nothing yet.
+ */
+export const I4C_WRITE_POLICY = Object.freeze({
+  "P1-4C": Object.freeze({ targets: ["production"], readOnly: false, window: "W", effect: "write" }),
+});
+/**
  * The texts that predate item 3 and may leave `effect` out: the classifier
  * then takes their effect from read_only, as before (I3-1: no broad
  * reclassification). Every other text declares its effect.
@@ -227,7 +238,7 @@ export const LEGACY_EFFECT_TEXTS = Object.freeze(["P0", "P1", "SIZE-PROBE", "P2-
  * read_only and write nothing. R reads; W writes, or reads back inside a
  * writing phase; C is the second caller that cancels.
  */
-export const windowFor = (k) => (Object.hasOwn(I4C_POLICY, k) ? I4C_POLICY[k].window : Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].window : ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
+export const windowFor = (k) => (Object.hasOwn(I4C_WRITE_POLICY, k) ? I4C_WRITE_POLICY[k].window : Object.hasOwn(I4C_POLICY, k) ? I4C_POLICY[k].window : Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].window : ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES].includes(k) ? "R" : ["CANCEL-INSPECT", "CANCEL-STEP-TEMPLATE"].includes(k) ? "C" : "W");
 export const PROBE_WRITE_WORDS = /\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|lock|commit|rollback|savepoint|call|copy|set|reset|perform|notify|listen|vacuum|analyze|cluster|reindex|refresh|comment|security|import|load|prepare)\b|\bpg_\w+\s*\(/gi;
 
 const BACKSLASH = String.fromCharCode(92);
@@ -500,6 +511,214 @@ export function item3Problems(text, name, effect) {
   return out;
 }
 
+/** A step text's wrapper body: what lies between its settings and its commit, as the pinned output has it. */
+export function stepBody(stepText, label) {
+  const at = stepText.indexOf("do $stage0_wrap$\n");
+  if (at < 0 || !stepText.endsWith("$stage0_wrap$;\ncommit;\n")) throw new Error(`${label} is not a wrapper in a transaction`);
+  return stepText.slice(at, -"commit;\n".length);
+}
+
+/**
+ * P1-4C's shape (plan §6.1), checked from the pinned outputs rather than from
+ * how the assembler builds it:
+ *   - it begins repeatable read, ends in ROLLBACK and never commits, with P1's
+ *     application name and E1's 90 s and 110 s;
+ *   - it holds the P2-02, P2-0304, P2-05, RB-5, RB-43 and RB-2 wrapper bodies,
+ *     each byte for byte as its pinned step text has it, once and in that order,
+ *     and neither P2-01's nor RB-1's;
+ *   - each declared lock boundary is one DO block, in order, and none lies between
+ *     the savepoint and its rollback;
+ *   - its catalog query is P1's, byte for byte.
+ * It is a regression check of this fixed text, not a SQL sandbox.
+ */
+export function p1PrimeProblems(text, out) {
+  if (typeof text !== "string") return ["P1-4C is not assembled"];
+  const problems = [];
+  if (!/^begin isolation level repeatable read;$/m.test(text) || !text.endsWith("\nrollback;\n") || /^commit;$/m.test(text)) problems.push("P1-4C must begin repeatable read, end in ROLLBACK and never commit");
+  if (!text.includes("set_config('application_name', 'release2-stage0-P1', true)") || !text.includes("set_config('statement_timeout', '90s', true)") || !text.includes("set_config('transaction_timeout', '110s', true)")) problems.push("P1-4C does not run under P1's application name and E1's 90 s and 110 s");
+  let from = 0;
+  for (const k of ["P2-02", "P2-0304", "P2-05", "RB-5", "RB-43", "RB-2"]) {
+    let body;
+    try { body = stepBody(out[k], k); } catch (e) { problems.push(e.message); continue; }
+    if (text.split(body).length !== 2) { problems.push(`P1-4C does not hold ${k}'s body exactly once, byte for byte`); continue; }
+    const at = text.indexOf(body);
+    if (at < from) problems.push(`P1-4C holds ${k}'s body out of order`);
+    from = at;
+  }
+  for (const k of ["P2-01", "RB-1"]) { try { if (text.includes(stepBody(out[k], k))) problems.push(`P1-4C holds ${k}'s body`); } catch (e) { problems.push(e.message); } }
+  const opened = text.indexOf("\nsavepoint stage0_03_alone;\n"), closed = text.indexOf("\nrollback to savepoint stage0_03_alone;\n");
+  if (opened < 0 || closed < opened) problems.push("P1-4C has no savepoint around 03 alone");
+  let last = -1;
+  A.P1_4C_BOUNDARIES.forEach((name, i) => {
+    const call = `perform pg_temp.stage0_locks(${i + 1}, '${name}');`;
+    const at = text.indexOf(call);
+    if (at < 0 || text.split(call).length !== 2) problems.push(`P1-4C does not record the boundary ${name} exactly once`);
+    else {
+      if (at < last) problems.push(`P1-4C records the boundary ${name} out of order`);
+      if (at > opened && at < closed) problems.push(`P1-4C records the boundary ${name} inside the savepoint, whose rollback undoes its rows`);
+      last = at;
+    }
+  });
+  if ((text.match(/pg_temp\.stage0_locks\(/g) || []).length !== A.P1_4C_BOUNDARIES.length + 1) problems.push("P1-4C records a boundary that is not declared");
+  const cat = (t) => { const m = /^-- @@catalog-rows begin\n([\s\S]*?)^-- @@catalog-rows end$/m.exec(t); return m ? m[1] : null; };
+  if (!cat(text) || !out.P1 || cat(text) !== cat(out.P1)) problems.push("P1-4C's catalog query is not P1's, byte for byte");
+  return problems;
+}
+
+// M-6g's grammar of BUILD-01 (the outline's X3, a sibling of M-6e). Each form is
+// written out here rather than taken from the assembler, so a text the assembler
+// got wrong does not pass by construction.
+const B1_TAG = "stage0 BUILD-01";
+const B1_TAIL = ["exception when lock_not_available then raise", "when others then raise exception '%', sqlerrm using errcode = sqlstate", "end"];
+const B1_SETTINGS = "select set_config('application_name', 'release2-stage0-BUILD-01', true), set_config('lock_timeout', '3s', true), set_config('statement_timeout', '90s', true), set_config('idle_in_transaction_session_timeout', '10s', true), set_config('release2.stage0_mode', 'BUILD', true), set_config('release2.stage0_deadline_s', '100', true)";
+const B1_TIMER = "select set_config('transaction_timeout', '110s', true)";
+const B1_LEDGER_TABLE = "create table supabase_migrations.schema_migrations (version text not null primary key, statements text[], name text, created_by text, idempotency_key text unique, rollback text[])";
+const B1_ACL_WORDS = "(tables|sequences|functions|types|schemas)";
+const B1_PRIVS = "(delete|insert|maintain|references|select|trigger|truncate|update|usage|execute|create)(, (delete|insert|maintain|references|select|trigger|truncate|update|usage|execute|create))*";
+const B1_ALTER = new RegExp(`^alter default privileges for role [a-z_][a-z0-9_]*( in schema public)? (grant ${B1_PRIVS} on ${B1_ACL_WORDS} to (public|[a-z_][a-z0-9_]*)( with grant option)?|revoke( grant option for)? ${B1_PRIVS} on ${B1_ACL_WORDS} from (public|[a-z_][a-z0-9_]*))$`);
+const B1_DEFAULT_HAVE = "if (with have as ( select (case when d.defaclnamespace = 0 then '*' else d.defaclnamespace::regnamespace::text end) as scope, d.defaclobjtype::text as t, coalesce((select string_agg(coalesce(g.rolname, 'PUBLIC') || '=' || a.privilege_type || (case when a.is_grantable then '*' else '' end) || '/' || coalesce(o.rolname, '?'), ',' order by coalesce(g.rolname, 'PUBLIC') collate \"C\", a.privilege_type collate \"C\", coalesce(o.rolname, '?') collate \"C\", a.is_grantable) from aclexplode(d.defaclacl) a left join pg_roles g on g.oid = a.grantee left join pg_roles o on o.oid = a.grantor), '') as acl from pg_default_acl d where d.defaclrole = '";
+const B1_DEFAULT_MIDDLE = "'::regrole and d.defaclnamespace in (0, 'public'::regnamespace)), want as (";
+const B1_DEFAULT_WANT = /^(select \* from \(values \('[^']*', '[^']*', '[^']*'\)(, \('[^']*', '[^']*', '[^']*'\))*\) as w\(scope, t, acl\)|select null::text as scope, null::text as t, null::text as acl where false)$/;
+const B1_DEFAULT_TAIL = (label) => `) select count(*) from ((select * from have except select * from want) union all (select * from want except select * from have)) x) <> 0 then raise exception '${B1_TAG}: the default ACLs are not ${label}' using errcode = 'P0001'`;
+/** The preflight table's predicates (plan §2.1), written out, in the order BUILD-01's first step asks them. */
+const B1_PREDICATES = ["public-empty", "ledger", "buckets-present", "buckets-columns", "buckets-notnull", "buckets-generated", "buckets-arbiter", "buckets-authority", "buckets-rls", "buckets-rows",
+  "objects-table", "objects-policies", "objects-authority", "publication-present", "publication-member", "publication-authority",
+  "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "marker-absent", "database-create", "creator"];
+/** Every name BUILD-01's first step puts before "(" outside the two reads it embeds. */
+const B1_ASSERT_CALLS = ["all", "and", "array", "chr", "current_setting", "exists", "f", "bound", "bad", "from", "group", "in", "md5", "not", "or", "select", "split_part", "string_agg", "string_to_array", "union", "values", "where", "as", "p"];
+
+/** A DO body's normalized statements, its tail checked and removed. */
+function b1Body(body, label, say) {
+  let stmts;
+  try { stmts = i3Statements(body, label).map((s) => s.norm); } catch (e) { say(`${label} does not lex: ${e.message}`); return []; }
+  const tail = stmts.slice(-B1_TAIL.length);
+  if (JSON.stringify(tail) !== JSON.stringify(B1_TAIL)) say(`${label} does not end in the handler that re-raises`);
+  return stmts.slice(0, -B1_TAIL.length);
+}
+const b1Exact = (got, want, label, say) => {
+  if (got.length !== want.length) say(`${label} has ${got.length} statements, not ${want.length}: ${got.map((s) => s.slice(0, 60)).join(" | ")}`);
+  want.forEach((w, i) => { if (got[i] !== undefined && got[i] !== w) say(`${label} statement ${i + 1} is not its form: ${got[i].slice(0, 120)}`); });
+};
+function b1File(body, f, createdBy, say) {
+  const label = `BUILD-01's step for ${f.name}`;
+  const q = `'${f.version}'`, n = `'${f.name}'`;
+  const literal = `$stage0_file$${f.text}$stage0_file$`;
+  if (body.split(literal).length !== 2) say(`${label} does not hold its file's blob exactly once, byte for byte`);
+  b1Exact(b1Body(body.split(literal).join("$stage0_file$(the file)$stage0_file$"), label, say), [
+    "declare f constant text := $stage0_file$(the file)$stage0_file$",
+    `begin if md5(f) <> '${f.md5}' or octet_length(f) <> ${f.bytes} then raise exception '${B1_TAG}: the embedded bytes of ${f.name} differ from the manifest' using errcode = 'P0001'`,
+    "end if",
+    "execute f",
+    `insert into supabase_migrations.schema_migrations (version, name, statements, created_by) values (${q}, ${n}, array[f], '${createdBy}')`,
+    `if not exists (select 1 from supabase_migrations.schema_migrations m where m.version = ${q} and m.name = ${n} and cardinality(m.statements) = 1 and array_lower(m.statements, 1) = 1 and md5(m.statements[1]) = md5(f) and octet_length(m.statements[1]) = octet_length(f) and m.created_by = '${createdBy}' and m.idempotency_key is null and m.rollback is null) then raise exception '${B1_TAG}: the ledger row of ${f.name} does not have apply_migration''s shape' using errcode = 'P0001'`,
+    "end if",
+  ], label, say);
+}
+function b1Defaults(body, creator, label, say) {
+  const stmts = b1Body(body, `BUILD-01's default-ACL step (${label})`, say);
+  if (stmts.length) stmts[0] = stmts[0].replace(/^begin /, "");
+  if (stmts.pop() !== "end if") say(`BUILD-01's default-ACL step (${label}) does not end its assertion`);
+  const last = stmts.pop() ?? "";
+  for (const s of stmts) {
+    if (!B1_ALTER.test(s)) say(`BUILD-01's default-ACL step (${label}) holds a statement outside its grammar: ${s.slice(0, 120)}`);
+    else if (!s.startsWith(`alter default privileges for role ${creator} `) && !s.startsWith(`alter default privileges for role ${creator}\n`)) say(`BUILD-01's default-ACL step (${label}) changes another role's defaults: ${s.slice(0, 120)}`);
+  }
+  const head = `${B1_DEFAULT_HAVE}${creator}${B1_DEFAULT_MIDDLE}`, tail = B1_DEFAULT_TAIL(label);
+  if (!last.startsWith(head) || !last.endsWith(tail) || !B1_DEFAULT_WANT.test(last.slice(head.length, -tail.length))) say(`BUILD-01's default-ACL step (${label}) does not assert its rows: ${last.slice(0, 120)}`);
+}
+function b1Assert(body, reads, facts, say) {
+  const label = "BUILD-01's first step";
+  let rest = body;
+  for (const [name, read] of reads) {
+    if (rest.split(read).length !== 2) say(`${label} does not embed ${name} exactly once, byte for byte`);
+    rest = rest.split(read).join("\n(the read)\n");
+  }
+  let segs;
+  try { segs = lexSql(rest, { label }); } catch (e) { say(`${label} does not lex: ${e.message}`); return; }
+  if (segs.some((s) => s.kind === "dollar" || s.kind === "e-string")) say(`${label} holds a dollar body or an E-string beyond its two reads`);
+  const quoted = segs.filter((s) => s.kind === "quoted-ident").map((s) => rest.slice(s.start, s.end)).filter((x) => x !== "\"C\"");
+  if (quoted.length) say(`${label} holds the quoted identifier ${quoted[0]}`);
+  const b = sqlView(rest, label, "blank");
+  if (b.problem) { say(b.problem); return; }
+  const words = [...b.view.matchAll(I3_READ_WORDS)].map((m) => m[0].toLowerCase());
+  const into = words.filter((w) => w === "into").length;
+  const other = [...new Set(words.filter((w) => w !== "into"))];
+  if (into !== 1 || other.length) say(`${label} holds ${[...other, ...(into === 1 ? [] : ["INTO other than once"])].join(", ")}`);
+  const calls = [...new Set([...b.view.matchAll(/\b([a-z_][a-z0-9_$]*)\s*\(/gi)].map((m) => m[1].toLowerCase()))].filter((f) => !B1_ASSERT_CALLS.includes(f));
+  if (calls.length) say(`${label} calls ${calls.join(", ")}, outside its list`);
+  const want = Object.entries(facts.digests).flatMap(([s, parts]) => Object.entries(parts).map(([part, d]) => `('${s}', '${part}', '${d}')`)).join(", ");
+  if (!body.includes(`bound(src, part, digest) as (values ${want})`)) say(`${label} does not bind exactly the facts' part digests`);
+  const names = [...body.matchAll(/^ {6}\('([a-z-]+)', /gm)].map((m) => m[1]);
+  if (JSON.stringify(names) !== JSON.stringify(B1_PREDICATES)) say(`${label} does not ask exactly the preflight table's predicates: ${names.join(", ")}`);
+  if (!body.includes("the stage-0 timeouts (PG 17 transaction_timeout included) are not in force in this transaction")) say(`${label} does not check its timeouts`);
+  if (!/select string_agg\(distinct x\.name, ', ' order by x\.name\) into v_bad from bad x;\s+if v_bad is not null then\s+raise exception 'stage0 BUILD-01: the bound acceptance does not hold: %'/.test(body)) say(`${label} does not refuse when the bound acceptance fails`);
+}
+
+/**
+ * M-6g: BUILD-01's statements are exactly the migration files, the ledger rows,
+ * the synthetic rows, the default targets and the marker, in that plan's order,
+ * and nothing else (plan §2.1; the outline's X3). Read statement by statement with
+ * comments removed and code whitespace collapsed:
+ *   - begin, its settings, the DO steps in order, commit: nothing else at the top;
+ *   - the first step re-asserts before any file: it embeds BUILD-00 and BUILD-00W
+ *     byte for byte, binds exactly the facts' digests, and outside the two reads
+ *     holds no write word and no call off its list;
+ *   - a default step holds only ALTER DEFAULT PRIVILEGES for the creator and the
+ *     assertion of its rows;
+ *   - each file step is exactly its file's blob, its md5 and byte gate, EXECUTE, its
+ *     ledger row at production's version and that row's shape check.
+ * `files` is the caller's list from the manifest and the blobs: { version, name,
+ * md5, bytes, text }. A write assembled at run time inside a migration file is not
+ * seen: the blob pin and review are that control. It is a regression check of this
+ * fixed text, not a SQL sandbox.
+ */
+export function build01Problems(text, { files, facts, createdBy, build00, build00w }) {
+  const out = [];
+  const say = (s) => out.push(s);
+  let top;
+  try { top = i3Statements(text, "BUILD-01"); } catch (e) { return [`BUILD-01 does not lex: ${e.message}`]; }
+  const norms = top.map((s) => s.norm);
+  if (norms[0] !== "begin") say("BUILD-01 does not begin with begin");
+  if (norms[1] !== B1_SETTINGS) say("BUILD-01's settings are not its form");
+  if (norms[2] !== B1_TIMER) say("BUILD-01's transaction timer is not its form");
+  if (norms.at(-1) !== "commit") say("BUILD-01 does not end in commit");
+  const steps = top.slice(3, -1);
+  steps.forEach((s, i) => { if (s.body === null) say(`BUILD-01 statement ${i + 4} is not a DO step: ${s.norm.slice(0, 120)}`); });
+  const at = files.findIndex((f) => f.version === "20260722003606");
+  const hasLedger = facts.ledger !== "empty";
+  const want = ["assert", "defaults-old", ...(hasLedger ? ["ledger"] : []), "users", ...files.slice(0, at + 1).map((f) => f), "store", ...files.slice(at + 1).map((f) => f), "marker", "defaults-final", "deadline"];
+  if (steps.length !== want.length) say(`BUILD-01 has ${steps.length} DO steps, not ${want.length}`);
+  want.forEach((w, i) => {
+    const body = steps[i] && steps[i].body;
+    if (typeof body !== "string") return;
+    if (typeof w === "object") return b1File(body, w, createdBy, say);
+    if (w === "assert") return b1Assert(body, [["BUILD-00", build00], ["BUILD-00W", build00w]], facts, say);
+    if (w === "defaults-old") return b1Defaults(body, facts.creator, "the pre-30-October target", say);
+    if (w === "defaults-final") return b1Defaults(body, facts.creator, "the current production rows", say);
+    const stmts = b1Body(body, `BUILD-01's ${w} step`, say);
+    if (w === "ledger") return b1Exact(stmts, facts.ledger === "absent-schema" ? ["begin create schema supabase_migrations", B1_LEDGER_TABLE] : [`begin ${B1_LEDGER_TABLE}`], "BUILD-01's ledger step", say);
+    if (w === "users") return b1Exact(stmts, ["begin insert into auth.users (instance_id, id, aud, role, email) values ('00000000-0000-0000-0000-000000000000', '11111111-1111-4111-8111-111111111111', 'authenticated', 'authenticated', 'owner@example.invalid'), ('00000000-0000-0000-0000-000000000000', '22222222-2222-4222-8222-222222222222', 'authenticated', 'authenticated', 'store4979@theupsstore.com')"], "BUILD-01's users step", say);
+    if (w === "store") {
+      const [a, c, e, ...more] = stmts;
+      if (a !== "begin insert into public.stores (slug, name) values ('store4979', 'The UPS Store #4979')") say("BUILD-01's store step does not insert the one store");
+      if (c !== "insert into public.memberships (store_id, user_id, role) select s.id, '11111111-1111-4111-8111-111111111111', 'owner' from public.stores s where s.slug = 'store4979'") say("BUILD-01's store step does not insert the one membership");
+      if (!/^insert into public\.employees \(name, pin, active\) values \('Rehearsal Employee 1', '[0-9]{4}', true\)(, \('Rehearsal Employee [0-9]+', '[0-9]{4}', true\))+$/.test(e ?? "")) say("BUILD-01's store step does not insert only its synthetic employees");
+      if (more.length) say(`BUILD-01's store step holds more: ${more[0].slice(0, 120)}`);
+      return undefined;
+    }
+    if (w === "marker") {
+      const [a, c, e, ...more] = stmts;
+      if (a !== "begin create schema stage0_rehearsal") say("BUILD-01's marker step does not create its schema");
+      if (c !== "create table stage0_rehearsal.marker (ref text primary key, note text not null)") say("BUILD-01's marker step does not create its table");
+      if (e !== `insert into stage0_rehearsal.marker (ref, note) values ('${facts.ref}', 'reconstruction: these ledger rows record a rebuild, not production''s API history')`) say("BUILD-01's marker row is not the ref and its words");
+      if (more.length) say(`BUILD-01's marker step holds more: ${more[0].slice(0, 120)}`);
+      return undefined;
+    }
+    return b1Exact(stmts, [`begin if clock_timestamp() - transaction_timestamp() > make_interval(secs => current_setting('release2.stage0_deadline_s')::int) then raise exception '${B1_TAG}: the transaction deadline was exceeded' using errcode = 'P0001'`, "end if"], "BUILD-01's last step", say);
+  });
+  return out;
+}
+
 /** M-6c: the DDL/DML targets of a LOCKPROBE text outside its own stage0_lockprobe schema. */
 export function lockprobeOutside(text, label) {
   const r = sqlView(text, label, "keep");
@@ -638,9 +857,9 @@ export function checkManifest(repo, M) {
   for (const k of Object.keys(texts)) if (!outs.includes(k)) say("M-12", `the send policy names ${k}, which is not an output`);
   const READ_ONLY = ["P0", "STATE", "SIZE-PROBE", ...ENVELOPE_PROBES, ...Object.keys(I3_POLICY).filter((k) => I3_POLICY[k].readOnly),
     ...Object.keys(I4C_POLICY).filter((k) => I4C_POLICY[k].readOnly)];
-  for (const k of Object.keys(I4C_POLICY)) if (outs.includes(k) && texts[k] && canonicalJson(texts[k]) !== canonicalJson(I4C_POLICY[k])) say("M-12", `${k}: its policy is not exactly item 4(c)'s, ${JSON.stringify(I4C_POLICY[k])}`);
+  for (const [k, policy] of Object.entries({ ...I4C_POLICY, ...I4C_WRITE_POLICY })) if (outs.includes(k) && texts[k] && canonicalJson(texts[k]) !== canonicalJson(policy)) say("M-12", `${k}: its policy is not exactly item 4(c)'s, ${JSON.stringify(policy)}`);
   for (const [k, e] of Object.entries(texts)) {
-    const want = Object.hasOwn(I4C_POLICY, k) ? I4C_POLICY[k].targets : k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) || Object.hasOwn(I3_POLICY, k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
+    const want = Object.hasOwn(I4C_WRITE_POLICY, k) ? I4C_WRITE_POLICY[k].targets : Object.hasOwn(I4C_POLICY, k) ? I4C_POLICY[k].targets : k.startsWith("LOCKPROBE-") || ENVELOPE_PROBES.includes(k) || Object.hasOwn(I3_POLICY, k) ? ["staging"] : k === "SIZE-PROBE" ? null : ["production"];
     // The effect (Codex, item 3 plan review I3-1): declared by every text but
     // the ones before item 3; for an item 3 text, exactly its declared effect.
     // A text before item 3 declares one exactly when its pin or policy is no
@@ -785,9 +1004,21 @@ export function checkManifest(repo, M) {
     for (const k of i3) for (const p of item3Problems(out[k], k, Object.hasOwn(I3_POLICY, k) ? I3_POLICY[k].effect : null)) say("M-6", p);
     // M-6f item 4(c) (the outline's X2): exactly its read texts, each one
     // SELECT confined as item4cProblems says.
-    const i4c = Object.keys(out).filter((k) => Object.hasOwn(I4C_POLICY, k) || k.endsWith("-4C") || k.startsWith("BUILD-")).sort();
+    const i4c = Object.keys(out).filter((k) => (Object.hasOwn(I4C_POLICY, k) || k.endsWith("-4C") || k.startsWith("BUILD-")) && !Object.hasOwn(I4C_WRITE_POLICY, k) && k !== "BUILD-01").sort();
     if (M.item4c && JSON.stringify(i4c) !== JSON.stringify(Object.keys(I4C_POLICY).sort())) say("M-6", `the item 4(c) texts are ${i4c.join(", ") || "none"}, not ${Object.keys(I4C_POLICY).sort().join(", ")}`);
     for (const k of i4c) for (const p of item4cProblems(out[k], k)) say("M-6", p);
+    // P1-4C (the outline's X3): its shape and its wrapper bodies, verbatim.
+    if (M.item4c) for (const p of p1PrimeProblems(out["P1-4C"], out)) say("M-6", p);
+    // M-6g BUILD-01: no text and no policy until binding commit B1 binds its
+    // facts; then exactly its statements.
+    if (M.item4c && !M.item4c.build01 && (Object.hasOwn(out, "BUILD-01") || Object.hasOwn(M.outputs, "BUILD-01"))) say("M-6", "BUILD-01 has a text with no bound facts");
+    if (M.item4c && M.item4c.build01) {
+      const one = M.migrations.find((m) => m.n === "01");
+      const files = [...M.baselineLedger.map((r) => ({ version: r.version, name: r.name, md5: r.md5, blob: r.blob })), { version: one.productionVersion, name: one.name, md5: one.md5, blob: one.blob }]
+        .map((f) => { const t = g.blob(f.blob); return { ...f, bytes: t.length, text: t.toString("utf8") }; });
+      const read = (k) => g.blob(M.item4c.sources[k].blob).toString("utf8").slice(0, -2);
+      for (const p of build01Problems(out["BUILD-01"], { files, facts: M.item4c.build01, createdBy: M.ledgerRow.createdBy, build00: read("build00"), build00w: read("build00w") })) say("M-6", p);
+    }
     // M-6b SIZE-PROBE: one read-only SELECT, larger than P1, with its pinned answer.
     const probe = out["SIZE-PROBE"] || "";
     if (!(Buffer.byteLength(probe) > Buffer.byteLength(out.P1)) || Buffer.byteLength(probe) - Buffer.byteLength(out.P1) !== M.sizeProbe.exceedsP1By) say("M-6b", "SIZE-PROBE size");

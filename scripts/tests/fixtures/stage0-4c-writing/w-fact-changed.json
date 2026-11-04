@@ -1,0 +1,1 @@
+{"code":"P0001","message":"stage0 BUILD-01: the bound acceptance does not hold: digest build00.buckets","where":"PL/pgSQL function inline_code_block line 362 at RAISE","gone":{"ledger_absent":true,"marker_absent":true,"files_absent":true}}

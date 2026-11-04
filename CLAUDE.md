@@ -583,16 +583,51 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       - **`schema|…` rows omit the grantor:** owner and grantee, privilege and
         grant option are compared, not grant provenance or what a cascading
         REVOKE would remove (plan §2.2 part 2).
+    - ITEM 4(c)'s WRITING TEXTS (X3; the outline's X3, plan §0.5, §2.1, §6.1, §6.2).
+      No text names a rehearsal target, and no preserved text's policy changes
+      under C8, until the ref-binding commit (Ryan, 2026-11-04). Codex's X2c
+      boundaries stay narrow: `r|postgres|false|false` and the exact empty document
+      are never broadened to pass a receipt:
+      - **P1-4C** is P1′: the source release2_stage0_4c_p1prime_proofs.sql (P1's
+        proofs, each check in a top-level DO block that re-raises, S0.2 now the
+        state-01 check), the six P2 and RB wrapper bodies byte for byte
+        (p1PrimeProblems reads them from the pinned step texts), 11 lock boundaries
+        (never inside the savepoint: P1_4C_BOUNDARIES), and one result `n, kind, at,
+        fact` (SUCCESS: 45 proofs by md5, the boundaries exactly, at most 1809 rows).
+        Its proofs equal P1's production receipt but for S0.2 (4W-4). It runs under
+        P1's application name, so the preserved cancel template reaches it;
+      - **RERAISE** lets `lock_not_available` through as it is, so a lock timeout
+        stays R4 as the plan says; a plain `when others` would make it R3;
+      - **BUILD-01 has no text until B1:** build01Text(src, manifest, facts) is a
+        function of the facts build01Facts makes from the two accepted readings. No
+        output, policy or target; its SUCCESS entry is unreachable
+        (SUCCESS_BEFORE_BINDING). Its first step embeds BUILD-00 and BUILD-00W byte
+        for byte, requires each part's digest to equal the bound one and runs the
+        predicates, before any file. M-6g (build01Problems) reads it statement by
+        statement. The predicates are in the comparator AND in that SQL, under the
+        same names (BUILD_PREDICATE_NAMES); only the local run shows they agree;
+      - **PERFORM_DECLARED is not PERFORM_QUERIES:** its entries (RB-43's two, and
+        P1-4C's in stage0-4c-performs.mjs, data in the guard chain) have no receipt,
+        no profile names them, and an envelope quoting one stays R4;
+      - **the sender binds the text** (G-28, G-26's mutant): the workflow's declared
+        text for the step, go.text and plan.name must agree before any claim;
+      - **String.replace reads `$'` and `$&` in a replacement.** These texts hold
+        dollar quotes, so a test that edits one uses split and join. `node -e` and
+        heredocs lost backslashes here again: write such a patch with Edit;
+      - the harnesses share stage0-item4c-local-base.mjs. X3's is
+        stage0-item4c-writing-local-pglite.mjs, with its own fixtures
+        (fixtures/stage0-4c-writing/); X2's fixtures did not change. Tests:
+        stage0-4c-writing.test.js (4W-1…4W-14), its mutation companion (4W-M1…M3).
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
-    the 8 files stage0-send/-window/-go.mjs load (with the classifier, the
-    capture gate and the item 3 gate), plus the modules CHAIN_LISTED names
+    the 9 files stage0-send/-window/-go.mjs load (with the classifier and its
+    PERFORM data, the capture gate and the item 3 gate), plus the modules CHAIN_LISTED names
     (X2: stage0-4c-compare.mjs, pinned and audited although no entry loads
     it yet; guard.listed), are pinned in the manifest's `guard`.
     Each tool refuses unless its closure, read by stage0-guard.mjs
     importAudit, is pinned blob for blob; a listed module is held to that
     at a tool's start only once an entry loads it (X4's gate), and by M-13
     until then. That audit fails closed on the
-    RAW text: in those 9 files, never write the module keyword except as a
+    RAW text: in those 10 files, never write the module keyword except as a
     one-line `<keyword> … from "<spec>";` at column 0 or
     `<keyword>.meta.url`, and never the CommonJS loader word, its create-
     form or the eval word, even in a comment or a string (say "loads",

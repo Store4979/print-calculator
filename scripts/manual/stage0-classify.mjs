@@ -49,6 +49,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as A from "./assemble-stage0.mjs";
+import { P1_4C_PERFORMS } from "./stage0-4c-performs.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -458,7 +459,56 @@ export const SUCCESS = {
   "STATE-4C": { kind: "state", source: "STATE's SQL with the item 4(c) plan §3.2 mapping (assemble-stage0.mjs stateReadback, RECOVERY_4C)", check: (body) => stateShape(body) },
   "BUILD-00": { kind: "shape", source: "the BUILD-00 SQL (supabase/rehearsals/release2_stage0_4c_build00.sql): rows { part, key, value }", check: factRows(false) },
   "BUILD-00W": { kind: "shape", source: "the BUILD-00W SQL (supabase/rehearsals/release2_stage0_4c_build00w.sql): rows { part, key, value }", check: factRows(false) },
+  // Item 4(c)'s writing texts (the implementation outline's X3), declared before
+  // any send from their SQL and the local run. No receipt of theirs exists yet.
+  "P1-4C": { kind: "p1-4c", source: "the P1′ proofs' final select (supabase/rehearsals/release2_stage0_4c_p1prime_proofs.sql section 5), plan §6.1; the local run's proof rows", check: (body) => p1PrimeResult(body) },
+  // Unreachable until binding commit B1 gives BUILD-01 a text and a send policy:
+  // a receipt naming a text the policy lacks is R1 first (SUCCESS_BEFORE_BINDING).
+  "BUILD-01": { kind: "exact", source: "its last row-returning statement, set_config('transaction_timeout', '110s', true); the local run", check: exact('[{"set_config":"110s"}]') },
 };
+
+/** The SUCCESS entries with no send policy yet: their texts have none until binding commit B1. */
+export const SUCCESS_BEFORE_BINDING = Object.freeze(["BUILD-01"]);
+
+/**
+ * P1-4C's one result (plan §6.1): the proof rows, then each boundary's lock rows.
+ *   proofRows, proofMd5  the 45 proofs, sorted by id as at<TAB>fact<LF>. Equal to
+ *                        P1's reviewed receipt but for S0.2 (stage0-4c-writing.test.js);
+ *   maxRows              the cap: the local run's 1206 rows, with a 50% margin for
+ *                        what a Supabase project adds. The margin is a choice, not
+ *                        a measurement: a project over it stops for review.
+ * A larger or differently shaped result is not success: STOP-and-review.
+ */
+export const P1_4C_RESULT = Object.freeze({ proofRows: 45, proofMd5: "398cadcfa1a5c368c8370bd6ae93ac52", maxRows: 1809 });
+const P1_4C_LOCK_FACT = /^[a-z_]+\|[^|]+\|(true|false)\|[^\n]+$/;
+function p1PrimeResult(body) {
+  const no = (why) => ({ ok: false, why });
+  const p = parsed(body);
+  if (p.why) return no(p.why);
+  if (!Array.isArray(p.v)) return no("the body is not an array of rows");
+  if (p.v.length > P1_4C_RESULT.maxRows) return no(`${p.v.length} rows, over the cap of ${P1_4C_RESULT.maxRows}`);
+  for (const [i, r] of p.v.entries()) {
+    if (!sameKeys(r, ["n", "kind", "at", "fact"])) return no(`row ${i + 1} is not exactly { n, kind, at, fact }`);
+    if (r.n !== i + 1) return no(`row ${i + 1} has n ${JSON.stringify(r.n)}: the rows are not numbered 1 onward in order`);
+    if (!["proof", "lock"].includes(r.kind) || typeof r.at !== "string" || typeof r.fact !== "string") return no(`row ${i + 1} has a kind, at or fact of the wrong form`);
+  }
+  const proofs = p.v.filter((r) => r.kind === "proof");
+  const locks = p.v.filter((r) => r.kind === "lock");
+  if (p.v.slice(0, proofs.length).some((r) => r.kind !== "proof")) return no("a lock row comes before the last proof row");
+  if (proofs.length !== P1_4C_RESULT.proofRows) return no(`${proofs.length} proof rows, not ${P1_4C_RESULT.proofRows}`);
+  const lines = [...proofs].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).map((r) => `${r.at}\t${r.fact}\n`).join("");
+  if (A.md5(lines) !== P1_4C_RESULT.proofMd5) return no(`the proof rows, sorted by id as at<TAB>fact<LF>, do not have md5 ${P1_4C_RESULT.proofMd5}`);
+  const seen = [];
+  for (const r of locks) {
+    if (seen.at(-1) !== r.at) seen.push(r.at);
+    if (!P1_4C_LOCK_FACT.test(r.fact)) return no(`a lock row at ${r.at} is not locktype|mode|granted|target`);
+  }
+  if (!same(seen, A.P1_4C_BOUNDARIES)) {
+    const missing = A.P1_4C_BOUNDARIES.filter((b) => !seen.includes(b));
+    return no(`the lock boundaries are not exactly the declared ones, in order${missing.length ? `; missing ${missing.join(", ")}` : ""}: ${seen.join(", ")}`);
+  }
+  return { ok: true, values: { proofs: proofs.length, locks: locks.map((r) => ({ at: r.at, fact: r.fact })) } };
+}
 
 /** The 4(c) WHO row: its columns and their JSON types (null where a role or object is not found). */
 export const WHO_4C_COLUMNS = {
@@ -573,7 +623,27 @@ export const PERFORM_QUERIES = Object.freeze({
   "LOCKPROBE-B-TXTIMEOUT": Object.freeze([Object.freeze({ source: "perform pg_sleep(30);", query: "SELECT pg_sleep(30)", witness: T2 })]),
 });
 
-/** Each text's bound PERFORM queries, checked against the assembled texts. Throws on an unbound entry. */
+/**
+ * The PERFORMs item 4(c)'s plan binds per text (§6.2; the outline's X3), declared
+ * before any receipt shows them, so none is a witness. Each is a candidate for its
+ * own text only, written out, with SELECT for the keyword, as the local run's frame
+ * shows it (scripts/tests/fixtures/stage0-4c-writing/b-perform-frame.json). No
+ * PROFILE names one, so an envelope quoting one parses and stays R4: "no witnessed
+ * profile". What it adds is the reason, and that the same query under another text
+ * does not even parse. A profile for any of them needs its own receipt and review.
+ */
+const declaredPerforms = (exprs) => Object.freeze(exprs.map((e) => {
+  const [expr, times] = Array.isArray(e) ? e : [e, 1];
+  return Object.freeze({ source: `perform ${expr};`, query: `SELECT ${expr}`, times });
+}));
+const RB43_PERFORMS = ["set_config('release2.rollback_op', 'RB-43', true)", "set_config('release2.rollback_op', '', true)"];
+export const PERFORM_DECLARED = Object.freeze({ "RB-43": declaredPerforms(RB43_PERFORMS), "P1-4C": declaredPerforms(P1_4C_PERFORMS) });
+
+/**
+ * Each text's bound PERFORM queries, checked against the assembled texts. Throws on
+ * an unbound entry. A declared entry's text may not exist under an older manifest:
+ * a receipt from before it has no such text, so it binds nothing there.
+ */
 export function performQueries(texts) {
   const out = {};
   for (const [k, list] of Object.entries(PERFORM_QUERIES)) {
@@ -582,6 +652,13 @@ export function performQueries(texts) {
       if (texts[k].split(source).length !== 2) throw new Error(`${k}: the PERFORM source ${JSON.stringify(source)} is not in the pinned text exactly once`);
       return query;
     });
+  }
+  for (const [k, list] of Object.entries(PERFORM_DECLARED)) {
+    if (typeof texts[k] !== "string") continue;
+    out[k] = [...(out[k] || []), ...list.map(({ source, query, times }) => {
+      if (texts[k].split(source).length !== times + 1) throw new Error(`${k}: the PERFORM source ${JSON.stringify(source)} is not in the pinned text exactly ${times === 1 ? "once" : `${times} times`}`);
+      return query;
+    })];
   }
   return out;
 }

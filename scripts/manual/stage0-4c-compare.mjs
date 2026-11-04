@@ -25,7 +25,9 @@
 //   crossProject     the tier table (TIERS) between two projects' baselines;
 //   dataScope        §6.4's data facts around P1′ on production;
 //   build00LedgerFindings  what BUILD-00's guarded ledger read leaves for
-//                    BUILD-01 (§2.1).
+//                    BUILD-01 (§2.1);
+//   buildPredicateFindings  the preflight table's predicates (§2.1);
+//   build01Facts     what BUILD-01 binds, from the two accepted readings.
 // A finding is { verdict, part, key, reason }. STOP stops for review;
 // RESIDUAL is a named residual, accepted only with its record; RECORDED is
 // reported. An empty list of STOP and unrecorded RESIDUAL findings is
@@ -681,6 +683,127 @@ export function build00LedgerFindings(rows) {
     if (facts.status === "empty" && facts.rows !== LEDGER_EMPTY_DOCUMENT) out.push(stop("ledger", "rows", "not the reviewed empty document, byte for byte"));
   } else if (facts.rows !== LEDGER_NOT_READ) out.push(stop("ledger", "rows", `a result under the status ${facts.status}, which reads nothing`));
   return out;
+}
+
+// ── BUILD-00's and BUILD-00W's preflight, and the facts BUILD-01 binds ─────
+
+/** The rows of a reading by part and key, or null when one is not a row of text, or a key appears twice. */
+function factsByPart(rows) {
+  if (!Array.isArray(rows)) return null;
+  const out = Object.create(null);
+  for (const r of rows) {
+    if (!isObj(r) || typeof r.part !== "string" || typeof r.key !== "string" || typeof r.value !== "string") return null;
+    out[r.part] ??= Object.create(null);
+    if (Object.hasOwn(out[r.part], r.key)) return null;
+    out[r.part][r.key] = r.value;
+  }
+  return out;
+}
+const TEXT_LIKE = /^(text|character varying(\([0-9]+\))?)\|/;
+/**
+ * The preflight table's predicates (plan §2.1), each a name and what it asks of
+ * the two readings, b (BUILD-00) and w (BUILD-00W, read as the role BUILD-01 will
+ * run as). BUILD-01 asks the same again in SQL, under the same names
+ * (assemble-stage0.mjs); the local run shows the two agree on each shape it tries
+ * (stage0-4c-writing.test.js). A missing fact fails its predicate.
+ */
+const BUILD_PREDICATES = Object.freeze({
+  "public-empty": (b) => !b.public,
+  ledger: (b, w, f) => b.ledger?.status === f.ledger,
+  "buckets-present": (b) => b.buckets?.present === "true",
+  "buckets-columns": (b) => {
+    const c = (n) => b.buckets?.[`column|${n}`] ?? "";
+    return TEXT_LIKE.test(c("id")) && TEXT_LIKE.test(c("name")) && /^boolean\|/.test(c("public")) && /^(bigint|integer)\|/.test(c("file_size_limit")) && /^text\[\]\|/.test(c("allowed_mime_types")) && /^timestamp with time zone\|/.test(c("updated_at"));
+  },
+  "buckets-notnull": (b) => !Object.entries(b.buckets ?? {}).some(([k, v]) => k.startsWith("column|") && /^[^|]*\|true\|\|\|$/.test(v) && !["column|id", "column|name", "column|public"].includes(k)),
+  "buckets-generated": (b) => ["id", "name", "public", "file_size_limit", "allowed_mime_types", "updated_at"].every((n) => { const v = b.buckets?.[`column|${n}`]; return v === undefined || /\|d?\|$/.test(v); }),
+  "buckets-arbiter": (b) => Object.entries(b.buckets ?? {}).some(([k, v]) => k.startsWith("unique-index|") && / ON storage\.buckets USING btree \(id\)$/.test(v)),
+  "buckets-authority": (b, w) => ["schema_usage", "insert|id", "insert|name", "insert|public", "insert|file_size_limit", "insert|allowed_mime_types", "update|public", "update|file_size_limit", "update|allowed_mime_types", "update|updated_at", "select"].every((k) => w.buckets?.[k] === "true"),
+  "buckets-rls": (b, w) => w.buckets?.rls_applies === "false",
+  "buckets-rows": (b, w) => w.buckets?.["row|job-files"] === "false" && w.buckets?.["row|customer-uploads"] === "false",
+  "objects-table": (b) => (b.objects?.table ?? "").startsWith("r|") && b.objects?.["column|bucket_id"] === "text",
+  "objects-policies": (b) => !["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"].some((k) => Object.hasOwn(b.objects ?? {}, k)),
+  "objects-authority": (b, w) => w.objects?.owner_privileges === "true",
+  "publication-present": (b) => /^[^|]*\|false\|/.test(b.publication?.["pub|supabase_realtime"] ?? ""),
+  "publication-member": (b) => !Object.hasOwn(b.publication ?? {}, "member|public.pending_jobs"),
+  "publication-authority": (b, w) => w.publication?.owner_privileges === "true",
+  "authusers-columns": (b) => {
+    const c = (n) => b.authusers?.[`column|${n}`] ?? "";
+    return /^uuid\|/.test(c("instance_id")) && /^uuid\|/.test(c("id")) && TEXT_LIKE.test(c("aud")) && TEXT_LIKE.test(c("role")) && TEXT_LIKE.test(c("email"));
+  },
+  "authusers-notnull": (b) => {
+    const v = b.authusers?.["notnull-nodefault"];
+    return typeof v === "string" && (v === "" || v.split(",").every((c) => ["instance_id", "id", "aud", "role", "email"].includes(c)));
+  },
+  "authusers-authority": (b, w) => ["insert", "select", "references|id"].every((k) => w.authusers?.[k] === "true"),
+  "authusers-rls": (b, w) => w.authusers?.rls_applies === "false",
+  "authusers-triggers": (b) => b.authusers?.["user-triggers"] === "0",
+  "marker-absent": (b) => b.schemas?.["schema|stage0_rehearsal"] === "<absent>",
+  "database-create": (b, w) => w.database?.create === "true",
+  creator: (b, w, f) => w.role?.name === f.creator || Object.hasOwn(w.role ?? {}, `member|${f.creator}`) || (w.role?.attr ?? "").split("|")[0] === "true",
+});
+export const BUILD_PREDICATE_NAMES = Object.freeze(Object.keys(BUILD_PREDICATES));
+
+/**
+ * Each predicate that does not hold, as a STOP under its name. `ledger` is the
+ * status BUILD-00 reported, for the predicate of that name; `creator` is the
+ * object-creating role. A reading that is not rows of text is a STOP.
+ */
+export function buildPredicateFindings(build00, build00w, { creator, ledger } = {}) {
+  const b = factsByPart(build00), w = factsByPart(build00w);
+  if (!b || !w) return [stop("build", null, "BUILD-00's or BUILD-00W's reading is not rows of text, each key once")];
+  return Object.entries(BUILD_PREDICATES).filter(([, ok]) => ok(b, w, { creator, ledger }) !== true).map(([name]) => stop("build", name, "the preflight predicate does not hold"));
+}
+
+/** Each part's digest: md5 over key TAB value LF, keys in byte order, as BUILD-01 computes it in SQL. */
+export function partDigests(rows) {
+  const by = factsByPart(rows);
+  if (!by) throw new TypeError("not rows of text, each key once");
+  const cmp = (a, c) => Buffer.compare(Buffer.from(a), Buffer.from(c));
+  return Object.fromEntries(Object.keys(by).sort(cmp).map((part) => [part, md5(Object.keys(by[part]).sort(cmp).map((k) => `${k}\t${by[part][k]}\n`).join(""))]));
+}
+
+/**
+ * The default ACL rows of `reading`'s part for one role at the two scopes, as
+ * `<scope>|<type>` to ACL. `part` is "defaults" in BUILD-00 and 3 in the checked
+ * state. A global row, or else its implicit row, gives each type's set; the public
+ * scope has only its rows. A type with neither at the global scope is an error.
+ */
+export function defaultsOf(rows, part, role) {
+  const out = {};
+  const of = (key) => rows.find((r) => isObj(r) && r.part === part && r.key === key)?.value;
+  for (const t of ["r", "S", "f", "T", "n"]) {
+    const v = of(`row|${role}|*|${t}`) ?? of(`implicit|${role}|${t}`);
+    if (typeof v !== "string") throw new TypeError(`no default ACL for ${role} on ${t}`);
+    out[`*|${t}`] = v;
+  }
+  for (const t of ["r", "S", "f", "T"]) out[`public|${t}`] = of(`row|${role}|public|${t}`) ?? "";
+  return out;
+}
+
+/**
+ * What BUILD-01 binds, from BUILD-00's and BUILD-00W's accepted readings: a STOP
+ * from the ledger's rule or any predicate gives no facts. `creator` is the role
+ * BUILD-00W reports. `finalFrom` is production's bound checked state, whose part 3
+ * gives the target after the files. Review of the receipts is what accepts them;
+ * this only refuses what cannot be bound.
+ */
+export function build01Facts({ build00, build00w, ref, finalFrom, employees = 2 }) {
+  const ledgerRows = build00LedgerFindings(build00);
+  const b = factsByPart(build00), w = factsByPart(build00w);
+  const creator = w?.role?.name;
+  const ledger = b?.ledger?.status;
+  const findings = [...ledgerRows, ...buildPredicateFindings(build00, build00w, { creator, ledger })];
+  if (blocking(findings).length) return { findings, facts: null };
+  if (!Array.isArray(finalFrom)) return { findings: [...findings, stop("build", "finalFrom", "production's checked state is not given")], facts: null };
+  try {
+    return {
+      findings,
+      facts: { ref, creator, ledger, employees, digests: { build00: partDigests(build00), build00w: partDigests(build00w) }, defaultsNow: defaultsOf(build00, "defaults", creator), defaultsFinal: defaultsOf(finalFrom, 3, creator) },
+    };
+  } catch (e) {
+    return { findings: [...findings, stop("build", "defaults", e.message)], facts: null };
+  }
 }
 
 /** The findings that block: every STOP. */

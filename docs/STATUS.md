@@ -5,15 +5,16 @@
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
-## 2026-11-04 — Codex's review of X2b (R1 to R5 closed; AMEND on B1 and B2); X2c
-- Shipped: security/release-2-slice-2 5ae51c6..this commit local, for Codex's review; the branch on origin is still a5a05ec
-  - this commit (X2c): Codex's review of X2b: under `empty`, only the exact reviewed document, byte for byte (B1), and the one relation form; absent-schema and absent-table only with the matching schema and table facts, an empty relation and columns, no constraint or trigger fact, and <not read> (B2); an unknown fact and a non-object row stop; the schema-ACL comparison scope and X4's images obligation recorded (4(c) plan §0.4, §2.2); CLAUDE.md's to_regclass line narrowed; 4C-18, 4C-19, 4C-M1 at 52 mutants; the comparator re-pinned; no SQL text, send policy or fixture changed; this log
-  - Not commits: X2b's replay finished after Codex's inspection (14 × 577, exit 0, 00:17:54Z); a local check that BUILD-00's text reports `empty` for an RLS-exempt reader (.review/x2c-evidence)
+## 2026-11-04 — X2c accepted, and X2 to X2c pushed to staging; X3, item 4(c)'s writing texts
+- Shipped: security/release-2-slice-2 a5a05ec..47a0b69 pushed 19:12Z (X2, X2b, X2c, under Codex's review of 47a0b69; staging deploy 6aeb8393; production unchanged); 47a0b69..this commit local, for Codex's review
+  - 47a0b69 X2c: Codex's review of X2b: under `empty`, only the exact reviewed document, byte for byte (B1), and the one relation form; absent-schema and absent-table only with the matching schema and table facts, an empty relation and columns, no constraint or trigger fact, and <not read> (B2); an unknown fact and a non-object row stop; the schema-ACL comparison scope and X4's images obligation recorded (4(c) plan §0.4, §2.2); CLAUDE.md's to_regclass line narrowed; 4C-18, 4C-19, 4C-M1 at 52 mutants; the comparator re-pinned; no SQL text, send policy or fixture changed (Codex: ACCEPT, pushed)
+  - this commit (X3): P1-4C (P1′, its proofs source, 11 lock boundaries, its exact result and cap); BUILD-01 as a function of the facts B1 binds, with its re-assertion before the first file, and no text, policy or target until B1; M-6g; the preflight predicates in the comparator and in BUILD-01's SQL; the classifier's success entries and declared PERFORMs; the sender binds the step's declared text, go.text and the planned text (G-28, a G-26 mutant); the local run and its fixtures; 4W-1..4W-14, 4W-M1..M3; the guard chain re-pinned; no rehearsal target and no change to a preserved text's policy; this log
+  - Not commits: X2b's replay finished after Codex's inspection (14 × 577, exit 0, 00:17:54Z); a local check that BUILD-00's text reports `empty` for an RLS-exempt reader (.review/x2c-evidence); X2c's clean verification (579/579, build, M-13, harness 33 PASS, replay 14 × 579, exit 0, 18:48:54Z); the X2c push record (production plan §E13), written and uncommitted, waiting for Ryan's Netlify read
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward the X2c review request to Codex (reviews/requests/codex-review-request-X2c.md)
+- Needs from Ryan: the Netlify read after the X2c push; forward the X3 review request to Codex (reviews/requests/codex-review-request-X3.md)
 - Needs a ruling from Claude (chat): none
-- Next planned step: Codex's review of X2c, which asks a staging-only push clearance carrying X2 and X2b; then X3 (the writing texts and the sender's text-to-step binding)
+- Next planned step: Codex's review of X3, which asks a staging-only push clearance naming its hash; then X4 (the workflows, the production gate and both runbooks)
 
 ## 2026-11-03 — X0 to X1c pushed to staging; X2, item 4(c)'s read texts and comparator (Codex: AMEND); X2b
 - Shipped: security/release-2-slice-2 d8ec242..a5a05ec pushed 18:37Z (X0, X1, X1b, X1c, under Codex's review of a5a05ec after its replay condition, 14 × 559/559, exit 0; staging deploy 6aea29e4; production unchanged); a5a05ec..5ae51c6 local, for Codex's review

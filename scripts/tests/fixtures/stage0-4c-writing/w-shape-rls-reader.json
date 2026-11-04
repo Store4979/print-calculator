@@ -1,0 +1,1 @@
+{"js":["authusers-authority","buckets-authority","buckets-rls","creator","database-create","objects-authority","publication-authority"],"sql":["authusers-authority","buckets-authority","buckets-rls","creator","database-create","objects-authority","publication-authority"],"row":"false","rls":"true"}

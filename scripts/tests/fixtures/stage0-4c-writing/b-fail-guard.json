@@ -1,0 +1,1 @@
+{"ok":false,"code":"P0001","message":"stage0 P2-02: store4979 is absent — not production; refusing","where":"PL/pgSQL function inline_code_block line 169 at RAISE","severity":"ERROR"}

@@ -64,11 +64,14 @@ const rollbacks = A.MIGRATIONS.map((x) => {
   return { ...r, ...entry(companionPath(m, r), prev) };
 });
 const proofs = { path: A.PROOFS, ...entry(A.PROOFS, old.proofs) };
-// Item 4(c)'s read-text sources (the outline's X2), pinned like the proofs file.
+// Item 4(c)'s sources (the outline's X2 and X3), pinned like the proofs file.
+// `build01` holds the facts binding commit B1 binds, and is absent until then:
+// no BUILD-01 text exists without them.
 const oldSources = (old.item4c && old.item4c.sources) || {};
 const item4c = {
-  note: "Item 4(c) plan §6.1 (the implementation outline's X2): the sources of the read texts P0-4C, POST-4C, WHO-4C-*, BUILD-00 and BUILD-00W, read by blob. STATE-4C is STATE's generator with §3.2's mapping.",
+  note: "Item 4(c) plan §6.1 (the implementation outline's X2 and X3): the sources of the read texts P0-4C, POST-4C, WHO-4C-*, BUILD-00 and BUILD-00W and of P1-4C's proofs, read by blob. STATE-4C is STATE's generator with §3.2's mapping.",
   sources: Object.fromEntries(Object.entries(A.SOURCES_4C).map(([k, p]) => [k, { path: p, ...entry(p, oldSources[k]) }])),
+  ...(old.item4c && old.item4c.build01 ? { build01: old.item4c.build01 } : {}),
 };
 const assembler = { path: "scripts/manual/assemble-stage0.mjs", ...entry("scripts/manual/assemble-stage0.mjs", old.assembler) };
 const sender = { path: "scripts/manual/stage0-send.mjs", ...entry("scripts/manual/stage0-send.mjs", old.sender) };
