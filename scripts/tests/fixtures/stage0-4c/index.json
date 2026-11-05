@@ -1,7 +1,7 @@
 {
   "note": "Written by scripts/manual/stage0-item4c-local-pglite.mjs; each file's sha256. stage0-4c.test.js refuses a fixture that is not this.",
   "files": {
-    "a-build00.json": "8ca3d9c6a133d061315e514e734aaa73fa68fb85fb0675071f78e707ca90b519",
+    "a-build00.json": "8b14ea5217bfdf6ef74bba6cc08fafb21314df06abe6d372491710ac594cd276",
     "a-build00w.json": "b53c0be7eccb0c457776c43a8a0d66d68e783d8b06baa8f780a14b5a5650aa72",
     "c-01.json": "3a42c306cf5098b9ef19b0753b8da155003256dd0ad0c7e80d147f24b2254c77",
     "c-01-state.json": "29bfcb674bea40b3dd0bcb87d01bf12fbdf363dfaf7ea5ffca08254944d60953",

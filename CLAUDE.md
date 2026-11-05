@@ -583,7 +583,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
       - **`schema|…` rows omit the grantor:** owner and grantee, privilege and
         grant option are compared, not grant provenance or what a cascading
         REVOKE would remove (plan §2.2 part 2).
-    - ITEM 4(c)'s WRITING TEXTS (X3; the outline's X3, plan §0.5, §2.1, §6.1, §6.2).
+    - ITEM 4(c)'s WRITING TEXTS (X3, X3b; the outline's X3, plan §0.5, §0.6, §2.1,
+      §6.1, §6.2).
       No text names a rehearsal target, and no preserved text's policy changes
       under C8, until the ref-binding commit (Ryan, 2026-11-04). Codex's X2c
       boundaries stay narrow: `r|postgres|false|false` and the exact empty document
@@ -596,8 +597,26 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         fact` (SUCCESS: 45 proofs by md5, the boundaries exactly, at most 1809 rows).
         Its proofs equal P1's production receipt but for S0.2 (4W-4). It runs under
         P1's application name, so the preserved cancel template reaches it;
-      - **RERAISE** lets `lock_not_available` through as it is, so a lock timeout
-        stays R4 as the plan says; a plain `when others` would make it R3;
+      - **RERAISE and stage0_expect_error's inner handler let `lock_not_available`
+        through as it is** (X3-R1). PL/pgSQL can catch it: an outer pass-through
+        never sees what an inner `when others` already turned into P0001. A new
+        handler anywhere on the path needs the same first arm; p1PrimeProblems checks
+        it. Never recognize a timeout by its message;
+      - **a 55P03's class comes from its frames, and it is not always R4** (plan
+        §6.2): R4 through the helper or a check, but R3 from a wrapper's `execute f`
+        ("executed input") or a top-level statement ("field-less"), whose profiles
+        take any SQLSTATE. 4W-15 pins this for Codex's ruling. Don't write "a lock
+        timeout is R4" without saying where;
+      - **pg_get_indexdef does not show DEFERRABLE, and agreement is not
+        completeness** (X3-R2, X3-R3): a key with the accepted definition, and a
+        varchar too short for its literal, both passed the JS and the SQL predicate
+        and failed in a migration. `buckets-arbiter` reads catalog properties, and
+        the harness also runs each stopped shape with BUILD-01's first step taken
+        out, so a predicate is judged against what PostgreSQL does (w-stop-*). Every
+        unique index on exactly the inference columns is an arbiter, and the executor
+        refuses a deferrable one among them (55000). BUILD_LITERALS/
+        BUILD_LITERAL_LENGTHS are the literals this build gives each text column: a
+        new literal changes them, and 4W-17 reads them back from the files;
       - **BUILD-01 has no text until B1:** build01Text(src, manifest, facts) is a
         function of the facts build01Facts makes from the two accepted readings. No
         output, policy or target; its SUCCESS entry is unreachable
@@ -616,8 +635,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         heredocs lost backslashes here again: write such a patch with Edit;
       - the harnesses share stage0-item4c-local-base.mjs. X3's is
         stage0-item4c-writing-local-pglite.mjs, with its own fixtures
-        (fixtures/stage0-4c-writing/); X2's fixtures did not change. Tests:
-        stage0-4c-writing.test.js (4W-1…4W-14), its mutation companion (4W-M1…M3).
+        (fixtures/stage0-4c-writing/). In X2's fixtures X3b changed only
+        a-build00.json, for its new row: a whole X2 harness run also rewrites the data
+        digests (now(), random ids) of the others, so take only what the changed text
+        moved. Tests: stage0-4c-writing.test.js (4W-1…4W-17), its mutation companion
+        (4W-M1…M4). PGlite is not a dependency, so a database run in those tests is the
+        harness's, recorded: the suite runs the comparator and classifier on it;
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 9 files stage0-send/-window/-go.mjs load (with the classifier and its
     PERFORM data, the capture gate and the item 3 gate), plus the modules CHAIN_LISTED names

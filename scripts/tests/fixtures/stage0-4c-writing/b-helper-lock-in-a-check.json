@@ -1,0 +1,1 @@
+{"ok":false,"code":"55P03","message":"canceling statement due to lock timeout","where":"PL/pgSQL function pg_temp_0.x3_lock() line 1 at RAISE\nSQL statement \"SELECT pg_temp.x3_lock()\"\nPL/pgSQL function inline_code_block line 3 at PERFORM","severity":"ERROR"}

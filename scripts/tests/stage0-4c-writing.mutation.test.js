@@ -75,7 +75,7 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
     "buckets-columns": [set(b, "buckets", "column|id", "integer|true|||"), w],
     "buckets-notnull": [add(b, "buckets", "column|tenant", "text|true|||"), w],
     "buckets-generated": [set(b, "buckets", "column|updated_at", "timestamp with time zone|false||a|"), w],
-    "buckets-arbiter": [b.filter((r) => !r.key.startsWith("unique-index|")), w],
+    "buckets-arbiter": [b.filter((r) => !r.key.startsWith("arbiter|")), w],
     "buckets-authority": [b, set(w, "buckets", "update|updated_at", "false")],
     "buckets-rls": [b, set(w, "buckets", "rls_applies", "true")],
     "buckets-rows": [b, set(w, "buckets", "row|customer-uploads", "true")],
@@ -106,6 +106,27 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("4W-M4 X3-R2 and X3-R3: each part of the arbiter's and the text columns' rules, removed, turns its real shape's readings into exactly an acceptance", async () => {
+  const reads = (name) => { const r = json(`w-stop-${name}.json`); return [r.build00, r.build00w]; };
+  const opts = { creator: "postgres", ledger: "absent-table" };
+  const CASES = [
+    ["the arbiter's form: Codex's deferrable key", "return onId.length === 1 && onId[0] === BUILD_ARBITER;", "return onId.length === 1;", "deferrable-key", "buckets-arbiter"],
+    ["one index on id: a second, deferrable one", "return onId.length === 1 && onId[0] === BUILD_ARBITER;", "return onId.includes(BUILD_ARBITER);", "second-deferrable-unique", "buckets-arbiter"],
+    ["the declared length: Codex's varchar(1)", "return m !== null && Number(m[1]) >= longest;", "return m !== null;", "name-varchar-1", "buckets-columns"],
+    ["the declared length: a user column one short", "return m !== null && Number(m[1]) >= longest;", "return m !== null;", "email-one-short", "authusers-columns"],
+    ["a form the rule does not name", "return m !== null && Number(m[1]) >= longest;", "return true;", "name-char-20", "buckets-columns"],
+  ];
+  const dir = mkdtempSync(join(tmpdir(), "s0-4w-fit-"));
+  try {
+    for (const [n, [name, from, to, shape, want]] of CASES.entries()) {
+      const [x, y] = reads(shape);
+      assert.deepEqual(C.buildPredicateFindings(x, y, opts).map((f) => f.key), [want], `${name}: the original refuses`);
+      const K = await load(COMPARE, [from, to], dir, `fit${n}`);
+      assert.deepEqual(K.buildPredicateFindings(x, y, opts), [], `${name}: the mutant accepts`);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("4W-M3 each check of P1-4C's shape and of M-6g, removed, turns its negative into exactly no finding", async () => {
   const P1P = OUT["P1-4C"];
   const facts = json("w-old-facts.json").facts;
@@ -127,6 +148,8 @@ test("4W-M3 each check of P1-4C's shape and of M-6g, removed, turns its negative
     ["a wrapper's bytes", P1, swapIn(P1P, "stage0 P2-05: store4979 is absent", "stage0 P2-05: store4979 is gone"), "if (text.split(body).length !== 2) { problems.push(`P1-4C does not hold ${k}'s body exactly once, byte for byte`); continue; }", "if (text.split(body).length !== 2) { continue; }"],
     ["RB-1's body", P1, swapIn(P1P, "\n-- ===== proofs section 4 =====", `\n${MC.stepBody(OUT["RB-1"], "RB-1")}\n-- ===== proofs section 4 =====`), "if (text.includes(stepBody(out[k], k))) problems.push(", "if (false) problems.push("],
     ["the catalog query", P1, swapIn(P1P, "-- @@catalog-rows end", "union all select 'x', 'y', 'z'\n-- @@catalog-rows end"), "if (!cat(text) || !out.P1 || cat(text) !== cat(out.P1)) problems.push(", "if (false) problems.push("],
+    ["the helper's handler", P1, swapIn(P1P, "  exception\n    when lock_not_available then raise;\n    when others then\n", "  exception when others then\n"), "if (!/^exception\\s+when\\s+lock_not_available\\s+then\\s+raise\\s*;/i.test(view.slice(m.index, m.index + 120))) out.push(", "if (false) out.push("],
+    ["a proof expecting 55P03", P1, swapIn(P1P, "perform pg_temp.stage0_expect_error('E2', null,", "perform pg_temp.stage0_expect_error('E0', null, 'select 1', '55P03', 'x', 'select 1');\n  perform pg_temp.stage0_expect_error('E2', null,"), "if (/stage0_expect_error\\([^;]*'55P03'/.test(text)) out.push(", "if (false) out.push("],
     ["BUILD-01's read embedded", B1, swapIn(BUILD, reads.build00w, "select 'role' as part, 'name' as key, 'postgres' as value"), "if (rest.split(read).length !== 2) say(", "if (false) say("],
     ["a write in the re-assertion", B1, swapIn(BUILD, "  with f(src, part, key, value) as (", "  delete from public.stores;\n  with f(src, part, key, value) as ("), "if (into !== 1 || other.length) say(", "if (false) say("],
     ["a call off the list", B1, swapIn(BUILD, "  with f(src, part, key, value) as (", "  if pg_sleep(1) is null then null; end if;\n  with f(src, part, key, value) as ("), "if (calls.length) say(", "if (false) say("],

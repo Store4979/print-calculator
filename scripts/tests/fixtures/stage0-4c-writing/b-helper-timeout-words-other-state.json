@@ -1,0 +1,1 @@
+{"ok":false,"code":"P0001","message":"STAGE0 PROOF X3-LOCK FAILED: expected [42501] the expected refusal, got [42P01] canceling statement due to lock timeout","where":"PL/pgSQL function inline_code_block line 6 at RAISE","severity":"ERROR"}

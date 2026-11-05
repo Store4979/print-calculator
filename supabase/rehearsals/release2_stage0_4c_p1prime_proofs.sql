@@ -22,14 +22,19 @@
 -- WHAT A FAILURE LOOKS LIKE: every check raises P0001 with its id ("STAGE0 PROOF
 -- <id> FAILED: ..."), which aborts the whole transaction. Every check runs inside
 -- a top-level DO block whose handler raises the error again from that block, so
--- its envelope is one frame, at RAISE in inline_code_block (plan §6.2). The handler
--- does not cover everything:
---   - lock_not_available (55P03) is raised as it is, with its own frames;
---   - query_canceled (57014) is not matched by OTHERS and passes through it;
+-- its envelope is one frame, at RAISE in inline_code_block (plan §6.2). The handlers
+-- do not cover everything:
+--   - lock_not_available (55P03) is raised as it is, with its own frames, by every
+--     handler here: the DO blocks' and the inner one in stage0_expect_error. That is
+--     a choice these handlers make, on the SQLSTATE; PL/pgSQL can catch it;
+--   - query_canceled (57014) is not matched by OTHERS and passes through them;
 --   - a FATAL (25P04, transaction_timeout) cannot be caught.
--- Those keep their frames, and rule 3' classifies them R4 unless a reviewed
--- profile admits them. The wrapper bodies are P2's and RB's verbatim, with no
--- handler. The CREATE statements in section 0 are outside any DO block.
+-- Those keep their frames. Rule 3' classifies an envelope by its frames, so they are
+-- R4 unless a reviewed profile admits them. Two places give such frames, for any
+-- SQLSTATE: the wrapper bodies are P2's and RB's verbatim, with no handler, so an error inside
+-- their EXECUTE of a file carries the "executed input" frames; and the CREATE
+-- statements in section 0 are outside any DO block, so an error in one carries no
+-- frame ("field-less"). Plan §6.2 lists these routes.
 --
 -- PRINCIPALS ARE CREATED INSIDE THE TRANSACTION, as in P1's proofs: two synthetic
 -- organizations and stores (A, B) plus a store with no org (C, for 23502); three
@@ -76,7 +81,8 @@ $f$;
 -- message p_msg. The inner block always ends in an exception, so its
 -- subtransaction — the role switch and any effect of an unexpected success —
 -- is always rolled back. p_unchanged: the rows that must be identical before
--- and after.
+-- and after. A lock_not_available is not a refusal this helper judges: it is raised
+-- as it is, with its SQLSTATE and frames, and no proof here expects that state.
 create function pg_temp.stage0_expect_error(p_id text, p_role text, p_sql text,
                                             p_state text, p_msg text, p_unchanged text)
 returns void language plpgsql as $f$
@@ -91,11 +97,13 @@ begin
     v_state := 'NO ERROR';
     v_msg := '';
     raise exception 'stage0 sentinel' using errcode = 'P0002';
-  exception when others then
-    if v_state is null then
-      v_state := sqlstate;
-      v_msg := sqlerrm;
-    end if;
+  exception
+    when lock_not_available then raise;
+    when others then
+      if v_state is null then
+        v_state := sqlstate;
+        v_msg := sqlerrm;
+      end if;
   end;
   if v_state <> p_state or v_msg <> p_msg then
     raise exception 'STAGE0 PROOF % FAILED: expected [%] %, got [%] %', p_id, p_state, p_msg, v_state, v_msg

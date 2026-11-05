@@ -1248,6 +1248,18 @@ ${defaultAclStatements(creator, from, to).map((s) => `  ${s}\n`).join("")}  if (
 ${RERAISE}`);
 }
 
+/** The synthetic users the files need: an owner for the store, and the mailbox one file looks up by address. */
+export const BUILD_USERS = Object.freeze([["11111111-1111-4111-8111-111111111111", "owner@example.invalid"], ["22222222-2222-4222-8222-222222222222", LEDGER_CREATED_BY]]);
+/** The literals BUILD-01 and its files supply to each text column outside public. */
+export const BUILD_LITERALS = Object.freeze({
+  "buckets.id": Object.freeze(["job-files", "customer-uploads"]),
+  "buckets.name": Object.freeze(["job-files", "customer-uploads"]),
+  "authusers.aud": Object.freeze(["authenticated"]),
+  "authusers.role": Object.freeze(["authenticated"]),
+  "authusers.email": Object.freeze(BUILD_USERS.map(([, email]) => email)),
+});
+/** The one conflict arbiter supported for ON CONFLICT (id): the comparator's BUILD_ARBITER says what it is. */
+export const BUILD_ARBITER = "id|1|1|btree|true|true|true|true|true|false|false|p|false|false|true";
 /** The preflight table's predicates (plan §2.1), each a name and a SQL boolean over the CTE f(src, part, key, value). */
 function buildPredicates(facts) {
   const v = (src, part, key) => `(select f.value from f where f.src = ${q(src)} and f.part = ${q(part)} and f.key = ${q(key)})`;
@@ -1255,15 +1267,20 @@ function buildPredicates(facts) {
   const w = (part, key) => v("build00w", part, key);
   const trues = (keys) => keys.map(([part, key]) => `${w(part, key)} = 'true'`).join(" and ");
   const has = (src, part, keys) => `exists (select 1 from f where f.src = ${q(src)} and f.part = ${q(part)} and f.key in (${keys.map(q).join(", ")}))`;
-  const TEXTISH = "'^(text|character varying([(][0-9]+[)])?)[|]'";
+  // A text column holds the literals: text or unbounded varchar, or a declared length of at least the longest.
+  const fits = (fact, column) => {
+    const longest = Math.max(...BUILD_LITERALS[column].map((s) => s.length));
+    return `(${fact} ~ '^(text|character varying)[|]' or coalesce(substring(${fact} from '^character varying[(]([0-9]+)[)][|]')::int >= ${longest}, false))`;
+  };
+  const arbiterRow = "f.src = 'build00' and f.part = 'buckets' and f.key like 'arbiter|%'";
   return [
     ["public-empty", `not exists (select 1 from f where f.src = 'build00' and f.part = 'public')`],
     ["ledger", `${b("ledger", "status")} = ${q(facts.ledger)}`],
     ["buckets-present", `${b("buckets", "present")} = 'true'`],
-    ["buckets-columns", `${b("buckets", "column|id")} ~ ${TEXTISH} and ${b("buckets", "column|name")} ~ ${TEXTISH} and ${b("buckets", "column|public")} ~ '^boolean[|]' and ${b("buckets", "column|file_size_limit")} ~ '^(bigint|integer)[|]' and ${b("buckets", "column|allowed_mime_types")} ~ '^text\\[\\][|]' and ${b("buckets", "column|updated_at")} ~ '^timestamp with time zone[|]'`],
+    ["buckets-columns", `${fits(b("buckets", "column|id"), "buckets.id")} and ${fits(b("buckets", "column|name"), "buckets.name")} and ${b("buckets", "column|public")} ~ '^boolean[|]' and ${b("buckets", "column|file_size_limit")} ~ '^(bigint|integer)[|]' and ${b("buckets", "column|allowed_mime_types")} ~ '^text\\[\\][|]' and ${b("buckets", "column|updated_at")} ~ '^timestamp with time zone[|]'`],
     ["buckets-notnull", `not exists (select 1 from f where f.src = 'build00' and f.part = 'buckets' and f.key like 'column|%' and f.value ~ '^[^|]*[|]true[|][|][|]$' and f.key not in ('column|id', 'column|name', 'column|public'))`],
     ["buckets-generated", `not exists (select 1 from f where f.src = 'build00' and f.part = 'buckets' and f.key in ('column|id', 'column|name', 'column|public', 'column|file_size_limit', 'column|allowed_mime_types', 'column|updated_at') and f.value !~ '[|]d?[|]$')`],
-    ["buckets-arbiter", `exists (select 1 from f where f.src = 'build00' and f.part = 'buckets' and f.key like 'unique-index|%' and f.value ~ ' ON storage[.]buckets USING btree [(]id[)]$')`],
+    ["buckets-arbiter", `(select count(*) from f where ${arbiterRow} and f.value ~ '^([^|]*,)?id(,[^|]*)?[|]') = 1 and exists (select 1 from f where ${arbiterRow} and f.value = ${q(BUILD_ARBITER)})`],
     ["buckets-authority", trues([["buckets", "schema_usage"], ...["id", "name", "public", "file_size_limit", "allowed_mime_types"].map((c) => ["buckets", `insert|${c}`]), ...["public", "file_size_limit", "allowed_mime_types", "updated_at"].map((c) => ["buckets", `update|${c}`]), ["buckets", "select"]])],
     ["buckets-rls", `${w("buckets", "rls_applies")} = 'false'`],
     ["buckets-rows", `${w("buckets", "row|job-files")} = 'false' and ${w("buckets", "row|customer-uploads")} = 'false'`],
@@ -1273,7 +1290,7 @@ function buildPredicates(facts) {
     ["publication-present", `${b("publication", "pub|supabase_realtime")} ~ '^[^|]*[|]false[|]'`],
     ["publication-member", `not ${has("build00", "publication", ["member|public.pending_jobs"])}`],
     ["publication-authority", trues([["publication", "owner_privileges"]])],
-    ["authusers-columns", `${b("authusers", "column|instance_id")} ~ '^uuid[|]' and ${b("authusers", "column|id")} ~ '^uuid[|]' and ${b("authusers", "column|aud")} ~ ${TEXTISH} and ${b("authusers", "column|role")} ~ ${TEXTISH} and ${b("authusers", "column|email")} ~ ${TEXTISH}`],
+    ["authusers-columns", `${b("authusers", "column|instance_id")} ~ '^uuid[|]' and ${b("authusers", "column|id")} ~ '^uuid[|]' and ${fits(b("authusers", "column|aud"), "authusers.aud")} and ${fits(b("authusers", "column|role"), "authusers.role")} and ${fits(b("authusers", "column|email"), "authusers.email")}`],
     ["authusers-notnull", `string_to_array(${b("authusers", "notnull-nodefault")}, ',') <@ array['instance_id', 'id', 'aud', 'role', 'email']`],
     ["authusers-authority", trues([["authusers", "insert"], ["authusers", "select"], ["authusers", "references|id"]])],
     ["authusers-rls", `${w("authusers", "rls_applies")} = 'false'`],
@@ -1355,8 +1372,6 @@ begin
   end if;
 ${RERAISE}`);
 }
-/** The synthetic users the files need: an owner for the store, and the mailbox one file looks up by address. */
-export const BUILD_USERS = Object.freeze([["11111111-1111-4111-8111-111111111111", "owner@example.invalid"], ["22222222-2222-4222-8222-222222222222", LEDGER_CREATED_BY]]);
 /** The file the store's data predates the next one of (the harness's construction). */
 export const BUILD_STORE_AFTER = "20260722003606";
 const buildUsersStep = () => BUILD_DO(`begin

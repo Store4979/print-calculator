@@ -19,7 +19,14 @@
 --   events       every event trigger, with its function's md5(prosrc)
 --   buckets      storage.buckets: columns (type, NOT NULL, default, identity,
 --                generated), constraints, unique indexes, triggers (with each
---                function's owner), RLS and forced RLS, and its owner
+--                function's owner), RLS and forced RLS, and its owner. For each
+--                unique index, `arbiter|<name>` reports the catalog properties an
+--                ON CONFLICT arbiter depends on: key columns (<expression> for an
+--                expression), indnatts, indnkeyatts, access method, indisvalid,
+--                indisready, indislive, indimmediate, indisprimary, whether it has
+--                expressions, whether it has a predicate, and its constraint's
+--                contype, condeferrable, condeferred and convalidated, or <no
+--                constraint>
 --   objects      storage.objects: kind, owner, the bucket_id column, RLS, and
 --                every policy's name
 --   publication  supabase_realtime: owner, FOR ALL TABLES, the action flags,
@@ -183,6 +190,23 @@ obs(part, key, value) as (
   union all
   select 'buckets', 'unique-index|' || c.relname, pg_get_indexdef(c.oid)
     from pg_index i join pg_class c on c.oid = i.indexrelid
+   where i.indrelid = to_regclass('storage.buckets') and i.indisunique
+  union all
+  select 'buckets', 'arbiter|' || c.relname,
+         coalesce((select string_agg(coalesce(a.attname::text, '<expression>'), ',' order by x.ord)
+                     from unnest(i.indkey::int2[]) with ordinality as x(attnum, ord)
+                     left join pg_attribute a on a.attrelid = i.indrelid and a.attnum = x.attnum
+                    where x.ord <= i.indnkeyatts), '') || '|'
+           || i.indnatts::text || '|' || i.indnkeyatts::text || '|' || m.amname::text || '|'
+           || i.indisvalid::text || '|' || i.indisready::text || '|' || i.indislive::text || '|'
+           || i.indimmediate::text || '|' || i.indisprimary::text || '|'
+           || (i.indexprs is not null)::text || '|' || (i.indpred is not null)::text || '|'
+           || coalesce((select string_agg(k.contype::text || '|' || k.condeferrable::text || '|' || k.condeferred::text || '|' || k.convalidated::text, ',')
+                          from pg_constraint k
+                         where k.conindid = c.oid and k.conrelid = i.indrelid and k.contype in ('p', 'u', 'x')), '<no constraint>')
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+    join pg_am m on m.oid = c.relam
    where i.indrelid = to_regclass('storage.buckets') and i.indisunique
   union all
   select 'buckets', 'trigger|' || t.tgname, t.tgenabled::text || '|' || pg_get_triggerdef(t.oid) || '|' || pg_get_userbyid(p.proowner)::text

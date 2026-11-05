@@ -12,7 +12,7 @@
 //   4W-4  its proofs are P1's reviewed receipt, but for S0.2
 //   4W-5  its lock rows: every boundary, and no strong lock on an app table
 //   4W-6  a failure is re-raised, one frame, so rule 3′ resolves it as a witnessed
-//         profile; what the handler lets through stays R4
+//         profile; a check's own frames, with no handler in the way, are R4
 //   4W-7  the declared PERFORMs: exactly the text's, each for its own text only,
 //         and no new profile
 //   4W-8  neither writing text can be drafted, issued or sent before X4; BUILD-01
@@ -26,6 +26,17 @@
 //   4W-13 the default ACL targets and statements
 //   4W-14 the real builds: accepted at 01, the catalog and ledger the local 01's,
 //         the default rows exactly the target's
+//   4W-15 X3-R1, Codex's first probe: a lock_not_available through the real helper
+//         and the real outer handler keeps its state and frames, and its envelope is
+//         R4; the helper's controls; every catch point on the path; the routes that
+//         are not catch points
+//   4W-16 X3-R2, the second: the arbiter comes from catalog properties. Codex's
+//         deferrable key stops in both implementations before any file
+//   4W-17 X3-R3, the third: a bounded text column must hold the literals. The literal
+//         table is the files' and BUILD-01's own
+// Each database run in these three is the harness's, on PGlite, which is not a
+// dependency of this repository; the test runs the comparator and the classifier on
+// what that run recorded, and each 55P03 there was raised on purpose.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -38,7 +49,7 @@ import * as S from "../manual/stage0-send.mjs";
 import * as CL from "../manual/stage0-classify.mjs";
 import { P1_4C_PERFORMS } from "../manual/stage0-4c-performs.mjs";
 import { I4C_WRITE_POLICY, build01Problems, checkManifest, p1PrimeProblems, stepBody } from "./stage0-manifest-check.mjs";
-import { lexSql } from "./sql-lexer.mjs";
+import { lexSql, sqlCode } from "./sql-lexer.mjs";
 import { fixture, synthWorkflow, M, ROOT } from "./stage0-guard-fixture.mjs";
 
 const FIX = join(ROOT, "scripts", "tests", "fixtures", "stage0-4c-writing");
@@ -83,6 +94,9 @@ test("4W-1 P1-4C is pinned, its policy exact and production-only; it holds the s
     ["a boundary not declared", P1P.replace("\nrollback;\n", "\nselect pg_temp.stage0_locks(99, 'extra');\nrollback;\n"), /not declared/],
     ["another catalog query", P1P.replace("-- @@catalog-rows end", "union all select 'x', 'y', 'z'\n-- @@catalog-rows end"), /catalog query/],
     ["no savepoint", P1P.replace("\nsavepoint stage0_03_alone;\n", "\n"), /no savepoint/],
+    ["the helper's handler as X3 had it", swapIn(P1P, "  exception\n    when lock_not_available then raise;\n    when others then\n", "  exception when others then\n"), /a handler in P1-4C does not first let lock_not_available through/],
+    ["a boundary's handler without the pass-through", swapIn(P1P, noBoundary("after-RB-5"), noBoundary("after-RB-5").split("  when lock_not_available then raise;\n").join("")), /a handler in P1-4C does not first let lock_not_available through/],
+    ["a proof expecting 55P03", swapIn(P1P, "perform pg_temp.stage0_expect_error('E2', null,", "perform pg_temp.stage0_expect_error('E0', null, 'select 1', '55P03', 'x', 'select 1');\n  perform pg_temp.stage0_expect_error('E2', null,"), /a proof in P1-4C expects 55P03/],
   ]) {
     assert.notEqual(text, P1P, label);
     assert.match(p1PrimeProblems(text, OUT).join("; "), re, label);
@@ -175,7 +189,7 @@ function errorReceipt(text, target, code, message, where) {
   return JSON.stringify({ tool: M.sender.path, text, target, ref, readOnly: M.send.texts[text].readOnly === true, requestMd5: pin.md5, requestBytes: pin.bytes, endpoint: M.send.endpoint.replace("{ref}", ref), startedAt: "2026-11-04T12:00:00.000Z", finishedAt: "2026-11-04T12:00:01.000Z", httpStatus: 400, body, error: null, tokenRedactedFromResponse: false });
 }
 
-test("4W-6 a failing check and a wrapper's guard are re-raised with one frame, so rule 3′ resolves them as the witnessed profile; what the handler lets through stays R4", () => {
+test("4W-6 a failing check and a wrapper's guard are re-raised with one frame, so rule 3′ resolves them as the witnessed profile; a check's own frames, with no handler in the way, are R4", () => {
   for (const f of ["b-fail-s02.json", "b-fail-guard.json", "b-fail-after-02.json"]) {
     const e = json(f);
     assert.match(e.where, ONE_FRAME, f);
@@ -475,7 +489,7 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
     ["buckets-columns", set(b, "buckets", "column|id", "integer|true|||"), w],
     ["buckets-notnull", add(b, "buckets", "column|tenant", "text|true|||"), w],
     ["buckets-generated", set(b, "buckets", "column|updated_at", "timestamp with time zone|false||a|"), w],
-    ["buckets-arbiter", b.filter((r) => !r.key.startsWith("unique-index|")), w],
+    ["buckets-arbiter", b.filter((r) => !r.key.startsWith("arbiter|")), w],
     ["buckets-authority", b, set(w, "buckets", "update|updated_at", "false")],
     ["buckets-rls", b, set(w, "buckets", "rls_applies", "true")],
     ["buckets-rows", b, set(w, "buckets", "row|customer-uploads", "true")],
@@ -599,4 +613,178 @@ test("4W-14 the real builds: P0-4C accepts each at 01 on the rehearsal; the cata
     assert.equal(o.parts[1].head, M.migrations.find((m) => m.n === "01").productionVersion);
     assert.equal(C.blocking(C.p0Findings(M, o, { target: "production" })).some((x) => x.key === "rehearsal_marker"), true, `${f}: not production`);
   }
+});
+
+const LOCK_WORDS = "canceling statement due to lock timeout";
+const helperRun = (name) => {
+  const e = json(`b-helper-${name}.json`);
+  return { e, c: e.ok ? null : CL.classifyText(errorReceipt("P1-4C", "production", e.code, e.message, e.where), ctx) };
+};
+/** Every handler in a text: the word EXCEPTION where RAISE does not come before it. */
+const handlersIn = (view) => [...view.matchAll(/\bexception\b/gi)].filter((m) => !/\braise\s+$/i.test(view.slice(Math.max(0, m.index - 40), m.index)));
+
+test("4W-15 X3-R1: a lock_not_available through the real stage0_expect_error and the real outer handler keeps its state and frames, and its envelope is R4; the helper still judges every other refusal; every catch point on the path passes it; the routes that are not catch points are named", () => {
+  // Codex's probe, from the harness's run of section 0's real helper. The 55P03 is raised on purpose.
+  const lock = helperRun("lock-through-helper");
+  assert.equal(lock.e.code, "55P03");
+  assert.equal(lock.e.message, LOCK_WORDS);
+  assert.match(lock.e.where, /PL\/pgSQL function pg_temp_\d+\.stage0_expect_error\(text,text,text,text,text,text\) line \d+ at EXECUTE/);
+  assert.match(lock.e.where, /PL\/pgSQL function inline_code_block line \d+ at PERFORM$/);
+  assert.equal(lock.c.class, "R4", lock.c.reasons.join("; "));
+  // As X3 had it, the same call is what Codex found: P0001, one frame, R3. The fix is what changes this.
+  const old = helperRun("lock-helper-as-x3-had-it");
+  assert.equal(old.e.code, "P0001");
+  assert.match(old.e.message, /got \[55P03\] canceling statement due to lock timeout$/);
+  assert.match(old.e.where, ONE_FRAME);
+  assert.equal(old.c.class, "R3");
+  assert.equal(old.c.profile, "re-raised");
+  // The state and frames decide, never the words: other words stay 55P03 and R4; the words under another state stay a wrong refusal, R3.
+  const words = helperRun("lock-other-words");
+  assert.equal(words.e.code, "55P03");
+  assert.equal(words.e.message, "some other words");
+  assert.equal(words.c.class, "R4");
+  const notLock = helperRun("timeout-words-other-state");
+  assert.equal(notLock.e.code, "P0001");
+  assert.equal(notLock.e.message, `STAGE0 PROOF X3-LOCK FAILED: expected [42501] the expected refusal, got [42P01] ${LOCK_WORDS}`);
+  assert.equal(notLock.c.class, "R3");
+  // The helper's own controls: the expected refusal is a proof row, and a wrong one, a wrong message or no refusal are its failure.
+  const expected = helperRun("expected-refusal");
+  assert.equal(expected.e.ok, true);
+  assert.equal(expected.e.proof, "[42501] the expected refusal; rows unchanged");
+  for (const [name, re] of [["wrong-refusal", /got \[42P01\] another refusal$/], ["wrong-message", /got \[42501\] another message$/], ["no-refusal", /got \[NO ERROR\] $/]]) {
+    const r = helperRun(name);
+    assert.equal(r.e.code, "P0001", name);
+    assert.match(r.e.message, re, name);
+    assert.match(r.e.where, ONE_FRAME, name);
+    assert.equal(r.c.class, "R3", name);
+    assert.equal(r.c.profile, "re-raised", name);
+  }
+  // OTHERS does not match query_canceled, in either handler; and a lock wait elsewhere on this path keeps its state.
+  const stmt = helperRun("statement-timeout-state");
+  assert.equal(stmt.e.code, "57014");
+  assert.equal(stmt.c.class, "R4");
+  for (const [name, frame] of [["lock-in-the-digest", /pg_temp_\d+\.stage0_digest\(text\) line \d+ at EXECUTE/], ["lock-in-a-check", /SQL statement "SELECT pg_temp\.x3_lock\(\)"/]]) {
+    const r = helperRun(name);
+    assert.equal(r.e.code, "55P03", name);
+    assert.match(r.e.where, frame, name);
+    assert.equal(r.c.class, "R4", name);
+  }
+  // Every catch point in P1-4C's own code: the helper's, the seven sections' and the 11 boundaries'. p1PrimeProblems holds each to it (4W-1).
+  const view = sqlCode(P1P, { label: "P1-4C", strings: "blank", bodies: (s) => (s.tag === "stage0_file" ? "data" : "code") });
+  const handlers = handlersIn(view);
+  assert.equal(handlers.length, 19);
+  for (const m of handlers) assert.match(view.slice(m.index, m.index + 60), /^exception\s+when lock_not_available then raise;/);
+  // Nothing else on the path catches: no wrapper, and none of the 21 files, the forwards it runs or the rollbacks.
+  for (const k of ["P2-02", "P2-0304", "P2-05", "RB-5", "RB-43", "RB-2"]) assert.deepEqual(handlersIn(OUT[k]).map((m) => m.index), [], k);
+  const blobs = [...M.baselineLedger.map((r) => [r.name, r.blob]), ...M.migrations.map((m) => [m.name, m.blob]), ...M.rollbacks.map((r) => [`rollback ${r.n}`, r.blob])];
+  assert.equal(blobs.length, 30);
+  for (const [name, blob] of blobs) assert.deepEqual(handlersIn(A.gitBlob(blob, ROOT).toString("utf8")).map((m) => m.index), [], name);
+  // The old pinned P1 is unchanged, its helper as it was.
+  assert.deepEqual([M.outputs.P1.md5, M.outputs.P1.bytes], ["2546a4a45a79cb2ec8a986df84396a9c", 240125]);
+  assert.equal(A.md5(OUT.P1), M.outputs.P1.md5);
+  assert.ok(OUT.P1.includes("  exception when others then\n"));
+  // WHAT THE HANDLERS DO NOT REACH (plan §6.2). These are not catch points: the envelope has the frames of a profile that takes any SQLSTATE, so it is R3, under P1-4C as under P2-02. Synthetic envelopes; recorded for Codex's ruling.
+  const executed = `SQL statement "${src.migration(A.MIGRATIONS.find((x) => x.n === "02"))}"\nPL/pgSQL function inline_code_block line 7 at EXECUTE`;
+  for (const text of ["P1-4C", "P2-02"]) {
+    const a = CL.classifyText(errorReceipt(text, "production", "55P03", LOCK_WORDS, executed), ctx);
+    assert.deepEqual([a.class, a.profile], ["R3", "executed input"], text);
+    const b = CL.classifyText(errorReceipt(text, "production", "55P03", LOCK_WORDS, null), ctx);
+    assert.deepEqual([b.class, b.profile], ["R3", "field-less"], text);
+  }
+  // A statement of a check, with its own frame, is R4.
+  assert.equal(CL.classifyText(errorReceipt("P1-4C", "production", "55P03", LOCK_WORDS, "PL/pgSQL function inline_code_block line 9 at SQL statement"), ctx).class, "R4");
+});
+
+const FINAL = json("w-old-state.json");
+const REF = "abcdefghijklmnopqrst";
+const ARBITER_OF = (rows) => rows.filter((r) => r.part === "buckets" && r.key.startsWith("arbiter|")).map((r) => [r.key, r.value]);
+/** A stopped shape: both readings' predicates, on the live comparator and from BUILD-01's own run; before any file; and what PostgreSQL does with BUILD-01's first step taken out. */
+function assertStopped(name, want, real) {
+  const r = json(`w-stop-${name}.json`);
+  const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL });
+  assert.equal(bound.facts, null, `${name}: no facts`);
+  assert.deepEqual(C.blocking(bound.findings).map((f) => f.key), [want], `${name}: the comparator, here`);
+  assert.deepEqual(r.js, [want], `${name}: the comparator, in the run`);
+  assert.deepEqual(r.sql, [want], `${name}: BUILD-01's own read`);
+  assert.equal(r.message, `stage0 BUILD-01: the bound acceptance does not hold: ${want}`, name);
+  assert.equal(r.code, "P0001", name);
+  assert.match(r.where, ONE_FRAME, name);
+  assert.deepEqual(r.left, { ledger_absent: true, marker_absent: true, files_absent: true }, `${name}: before any file`);
+  if (real === null) assert.deepEqual(r.real, { committed: true }, `${name}: PostgreSQL would take it; the form is narrower`);
+  else {
+    assert.equal(r.real.committed, false, name);
+    assert.equal(r.real.code, real, `${name}: the failure the predicate prevents`);
+  }
+  return r;
+}
+function assertCommitted(name) {
+  const r = json(`w-commit-${name}.json`);
+  const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL });
+  assert.notEqual(bound.facts, null, `${name}: the facts bind, here: ${JSON.stringify(C.blocking(bound.findings))}`);
+  assert.deepEqual(C.blocking(bound.findings), [], name);
+  assert.deepEqual(r.stops, [], name);
+  assert.equal(r.committed, true, `${name}: BUILD-01 commits`);
+  assert.equal(r.success, true, `${name}: its contracted success`);
+  assert.equal(r.fingerprintEqual, true, `${name}: the catalog is the local 01's`);
+  return r;
+}
+
+test("4W-16 X3-R2: the arbiter comes from catalog properties, not an index definition's text. Codex's deferrable key has the accepted definition and stops in both implementations before any file; a nondeferrable key commits", () => {
+  assert.equal(A.BUILD_ARBITER, C.BUILD_ARBITER, "one form, in both places");
+  // Codex's probe. The definition's text is what X3 accepted; only the properties tell it apart.
+  const key = assertStopped("deferrable-key", "buckets-arbiter", "55000");
+  assert.match(key.real.message, /^ON CONFLICT does not support deferrable unique constraints\/exclusion constraints as arbiters$/);
+  const def = key.build00.find((r) => r.part === "buckets" && r.key === "unique-index|buckets_pkey").value;
+  assert.match(def, / ON storage\.buckets USING btree \(id\)$/);
+  assert.deepEqual(ARBITER_OF(key.build00), [["arbiter|buckets_pkey", "id|1|1|btree|true|true|true|false|true|false|false|p|true|false|true"]]);
+  // The positive: the same key, recreated without DEFERRABLE.
+  const plain = assertCommitted("key-recreated");
+  assert.deepEqual(ARBITER_OF(plain.build00), [["arbiter|buckets_pkey", C.BUILD_ARBITER]]);
+  // The shim's fresh shape is that form, and so is the platform's: another unique index, on name, is no arbiter here.
+  assert.deepEqual(ARBITER_OF(oldJson("a-build00.json")), [["arbiter|buckets_pkey", C.BUILD_ARBITER]]);
+  const named = assertCommitted("key-and-unique-name");
+  assert.deepEqual(ARBITER_OF(named.build00), [["arbiter|bname", "name|1|1|btree|true|true|true|true|false|false|false|<no constraint>"], ["arbiter|buckets_pkey", C.BUILD_ARBITER]]);
+  // Every other form, each with what PostgreSQL itself does to it.
+  for (const [name, real] of [["deferred-key", "55000"], ["second-deferrable-unique", "55000"], ["partial-key", "42P10"], ["invalid-key", "42P10"], ["composite-key", "42P10"], ["expression-key", "42P10"], ["unique-not-primary", null], ["index-no-constraint", null]]) assertStopped(name, "buckets-arbiter", real);
+  // Two arbiters, with one of them the supported form, stop: the executor refuses a deferrable one among them.
+  assert.ok(ARBITER_OF(json("w-stop-second-deferrable-unique.json").build00).some(([, v]) => v === C.BUILD_ARBITER));
+  // The real statements: the only ON CONFLICT on a platform table is on (id) of storage.buckets, in the two files.
+  const files = manifestFiles();
+  const conflicts = files.flatMap((f) => [...f.text.matchAll(/insert\s+into\s+(storage|auth)\.\w+[^;]*?on\s+conflict\s*([^;]*?)\s+do\s+/gis)].map((m) => [f.name, m[1].toLowerCase(), m[2]]));
+  assert.deepEqual(conflicts.map(([, , arbiter]) => arbiter), ["(id)", "(id)"]);
+});
+
+test("4W-17 X3-R3: a bounded text column must hold the literals this build supplies. Codex's varchar(1) stops in both implementations before any file; each column one short stops, exactly long enough commits, and the unbounded forms commit; the literal table is the files' and BUILD-01's own", () => {
+  // Codex's probe.
+  const short = assertStopped("name-varchar-1", "buckets-columns", "22001");
+  assert.equal(short.real.message, "value too long for type character varying(1)");
+  // Each column at the boundary, in both implementations, with PostgreSQL's own 22001.
+  for (const [name, want] of [["id-one-short", "buckets-columns"], ["name-one-short", "buckets-columns"], ["aud-one-short", "authusers-columns"], ["role-one-short", "authusers-columns"], ["email-one-short", "authusers-columns"]]) assertStopped(name, want, "22001");
+  // A form the rule does not name stops, though PostgreSQL would take it.
+  assertStopped("name-char-20", "buckets-columns", null);
+  // The supported forms commit.
+  const typeOf = (rows, part, column) => rows.find((r) => r.part === part && r.key === `column|${column}`).value.split("|")[0];
+  const exact = assertCommitted("fit-exact");
+  assert.deepEqual(["id", "name"].map((c) => typeOf(exact.build00, "buckets", c)), ["character varying(16)", "character varying(16)"]);
+  assert.deepEqual(["aud", "role", "email"].map((c) => typeOf(exact.build00, "authusers", c)), ["character varying(13)", "character varying(13)", "character varying(25)"]);
+  const unbounded = assertCommitted("fit-unbounded");
+  assert.deepEqual(["id", "name"].map((c) => typeOf(unbounded.build00, "buckets", c)), ["character varying", "character varying"]);
+  assert.deepEqual(["aud", "role", "email"].map((c) => typeOf(unbounded.build00, "authusers", c)), ["character varying", "character varying", "character varying"]);
+  const texts = assertCommitted("fit-text");
+  assert.deepEqual(["aud", "role", "email"].map((c) => typeOf(texts.build00, "authusers", c)), ["text", "text", "text"]);
+  // The shim's own varchar(255) is the real auth.users form, and it binds.
+  assert.equal(typeOf(oldJson("a-build00.json"), "authusers", "email"), "character varying(255)");
+  // The table: the comparator's numbers are the longest of the assembler's literals.
+  assert.deepEqual(C.BUILD_LITERAL_LENGTHS, Object.fromEntries(Object.entries(A.BUILD_LITERALS).map(([k, v]) => [k, Math.max(...v.map((s) => s.length))])));
+  // The literals are what the build supplies: the files' two INSERTs into storage.buckets, and BUILD-01's one INSERT into auth.users.
+  const files = manifestFiles();
+  const buckets = files.flatMap((f) => [...f.text.matchAll(/insert\s+into\s+storage\.buckets\s*\(id,\s*name[^)]*\)\s*values\s*\(\s*'([^']*)',\s*'([^']*)'/gi)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(buckets, [["job-files", "job-files"], ["customer-uploads", "customer-uploads"]]);
+  assert.equal(files.flatMap((f) => [...f.text.matchAll(/insert\s+into\s+storage\.buckets/gi)]).length, 2, "no other INSERT");
+  assert.deepEqual(buckets.map(([id]) => id), [...A.BUILD_LITERALS["buckets.id"]]);
+  assert.deepEqual(buckets.map(([, name]) => name), [...A.BUILD_LITERALS["buckets.name"]]);
+  assert.equal(files.flatMap((f) => [...f.text.matchAll(/insert\s+into\s+auth\.users/gi)]).length, 0, "no file writes auth.users");
+  assert.equal(BUILD.split("insert into auth.users (instance_id, id, aud, role, email) values").length - 1, 1);
+  for (const [, email] of A.BUILD_USERS) assert.ok(BUILD.includes(`'authenticated', 'authenticated', '${email}')`), email);
+  assert.deepEqual([...A.BUILD_LITERALS["authusers.email"]], A.BUILD_USERS.map(([, email]) => email));
 });

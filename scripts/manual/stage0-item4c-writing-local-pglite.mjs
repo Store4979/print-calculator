@@ -8,11 +8,15 @@
 //          variant: every proof passes; the result has exactly its schema,
 //          boundaries and cap; P0-4C after equals P0-4C before, data included;
 //          the savepoint-relocation mutant loses a boundary's rows; each kind of
-//          failure, with the frames PostgreSQL gives it
+//          failure, with the frames PostgreSQL gives it; the real stage0_expect_error
+//          inside the real outer handler, with a lock_not_available and its controls.
+//          Each 55P03 is RAISED, not a measured lock wait: PGlite has one session
 //   run W  BUILD-01 from the shim's fresh shape, under the same two variants: the
 //          21 files replay as written, with their ledger rows, the marker and the
 //          exact default rows; each mutated shape refused by the predicate named,
-//          and a fact changed between the reads and BUILD-01 refused
+//          and a fact changed between the reads and BUILD-01 refused; each arbiter
+//          and text-column shape refused or committed, with what PostgreSQL does to
+//          that shape when BUILD-01's first step is taken out
 // It writes each result to the fixtures directory, with an index of every file's
 // sha256. A FAIL line below names a case that did not give its expected value,
 // and the process exits 1.
@@ -130,6 +134,49 @@ $x$;`);
   save("b-perform-frame.json", r);
   say(!r.ok && String(r.where).includes("SQL statement \"SELECT pg_temp.boom('a',\n    'b')\"") && /at PERFORM$/.test(String(r.where)), `run B: PERFORM's frame quotes SELECT, then the call as written: ${JSON.stringify(r.where)}`);
 }
+{
+  // X3-R1 (Codex's review of 87b34fa): section 0's real helper, inside the real outer
+  // handler, at 01. Each error is raised on purpose: PGlite has one session, so no
+  // lock wait is measured here, and its envelope is rendered by the test, not a receipt.
+  const quote = (s) => `'${s.replaceAll("'", "''")}'`;
+  const raising = (state, message) => `do $inner$ begin raise exception ${quote(message)} using errcode = ${quote(state)}; end $inner$;`;
+  const helper = (sql, unchanged = "select 1 as v") => `do $probe$\nbegin\n  perform pg_temp.stage0_expect_error('X3-LOCK', null, ${quote(sql)}, '42501', 'the expected refusal', ${quote(unchanged)});\n${A.RERAISE}$probe$;`;
+  const LOCK = "canceling statement due to lock timeout";
+  const section0 = A.p1PrimeSections(src)["0"];
+  const OLD_HANDLER = ["    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception\n    when lock_not_available then raise;\n    when others then\n", "    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception when others then\n"];
+  if (section0.split(OLD_HANDLER[0]).length !== 2) throw new Error("the helper's handler is not where this run expects it");
+  const asX3Had = section0.split(OLD_HANDLER[0]).join(OLD_HANDLER[1]);
+  const LOCK_FN = "create function pg_temp.x3_lock() returns integer language plpgsql as $f$ begin raise exception 'canceling statement due to lock timeout' using errcode = '55P03'; end $f$;";
+  const db = await at01();
+  const FRAMES = /stage0_expect_error/;
+  for (const [name, head, text, check] of [
+    // Codex's probe: the state and its frames survive both handlers.
+    ["lock-through-helper", section0, helper(raising("55P03", LOCK)), (r) => r.code === "55P03" && r.message === LOCK && FRAMES.test(r.where)],
+    // The state decides, not the words: other words keep the state, and the words alone stay a wrong refusal.
+    ["lock-other-words", section0, helper(raising("55P03", "some other words")), (r) => r.code === "55P03" && r.message === "some other words"],
+    ["timeout-words-other-state", section0, helper(raising("42P01", LOCK)), (r) => r.code === "P0001" && r.message === `STAGE0 PROOF X3-LOCK FAILED: expected [42501] the expected refusal, got [42P01] ${LOCK}`],
+    // The helper's own controls.
+    ["expected-refusal", section0, helper(raising("42501", "the expected refusal")), (r) => r.ok && r.proof === "[42501] the expected refusal; rows unchanged"],
+    ["wrong-refusal", section0, helper(raising("42P01", "another refusal")), (r) => r.code === "P0001" && /got \[42P01\] another refusal$/.test(r.message)],
+    ["wrong-message", section0, helper(raising("42501", "another message")), (r) => r.code === "P0001" && /got \[42501\] another message$/.test(r.message)],
+    ["no-refusal", section0, helper("select 1"), (r) => r.code === "P0001" && /got \[NO ERROR\] $/.test(r.message)],
+    // OTHERS does not match query_canceled, in either handler.
+    ["statement-timeout-state", section0, helper(raising("57014", "canceling statement due to statement timeout")), (r) => r.code === "57014" && FRAMES.test(r.where)],
+    // The other places a lock wait can surface on this path: the digest, before the inner block, and a check.
+    ["lock-in-the-digest", `${section0}\n${LOCK_FN}`, helper("select 1", "select pg_temp.x3_lock() as v"), (r) => r.code === "55P03" && /stage0_digest/.test(r.where)],
+    ["lock-in-a-check", `${section0}\n${LOCK_FN}`, `do $probe$\nbegin\n  perform pg_temp.x3_lock();\n${A.RERAISE}$probe$;`, (r) => r.code === "55P03" && /at PERFORM$/.test(r.where)],
+    // The helper as X3 had it: this is the conversion Codex found, and the fix is what ends it.
+    ["lock-helper-as-x3-had-it", asX3Had, helper(raising("55P03", LOCK)), (r) => r.code === "P0001" && /got \[55P03\]/.test(r.message)],
+  ]) {
+    await db.exec("begin");
+    await db.exec(head);
+    const r = await runText(db, text);
+    if (r.ok) { r.proof = (await db.query("select what from stage0_proof where n = 'X3-LOCK'")).rows[0]?.what ?? null; await db.exec("rollback"); }
+    delete r.rows;
+    save(`b-helper-${name}.json`, r);
+    say(check({ where: "", ...r }), `run B: the helper, ${name}: ${r.ok ? r.proof : `${r.code} ${String(r.message).slice(0, 90)}`}`);
+  }
+}
 
 // ── run W: BUILD-01 ─────────────────────────────────────────────────────────
 const REF = "abcdefghijklmnopqrst";
@@ -207,6 +254,77 @@ for (const [name, setup, want] of SHAPES) {
   const sql = (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
   save(`w-shape-${name}.json`, { js, sql, code: r.code ?? null, where: r.where ?? null });
   say(same(js, want) && same(sql, want) && !r.ok && /^PL\/pgSQL function inline_code_block line \d+ at RAISE$/.test(String(r.where)), `run W: ${name}: the comparator and BUILD-01 both refuse: ${js.join(", ")} | ${sql.join(", ")}`);
+}
+// X3-R2 and X3-R3 (Codex's review of 87b34fa): the arbiter and the text columns. Each
+// shape's readings are saved whole, so the test runs the comparator on them, and the
+// refusal is BUILD-01's own read, before any file. `real` is what PostgreSQL does to the
+// shape with BUILD-01's first step taken out: the failure the predicate prevents, or,
+// for a shape that is only unsupported, a commit. So each expected outcome comes from
+// the database, not from either predicate.
+const NO_KEY = "alter table storage.objects drop constraint objects_bucket_id_fkey; alter table storage.buckets drop constraint buckets_pkey;";
+const withoutFirstStep = (text) => { const s = text.split(/(?=^do \$stage0_build\$$)/m); s.splice(1, 1); return s.join(""); };
+const noneLeft = async (db) => (await db.query("select to_regclass('supabase_migrations.schema_migrations') is null as ledger_absent, to_regnamespace('stage0_rehearsal') is null as marker_absent, to_regclass('public.print_jobs') is null as files_absent")).rows[0];
+const STOPPED = [
+  // Codex's two probes.
+  ["deferrable-key", `${NO_KEY} alter table storage.buckets add primary key (id) deferrable initially immediate;`, ["buckets-arbiter"], "55000"],
+  ["name-varchar-1", "alter table storage.buckets alter column name type varchar(1);", ["buckets-columns"], "22001"],
+  // The arbiter's other forms.
+  ["deferred-key", `${NO_KEY} alter table storage.buckets add primary key (id) deferrable initially deferred;`, ["buckets-arbiter"], "55000"],
+  ["second-deferrable-unique", "alter table storage.buckets add constraint buckets_id_deferrable unique (id) deferrable;", ["buckets-arbiter"], "55000"],
+  ["partial-key", `${NO_KEY} create unique index buckets_id_partial on storage.buckets (id) where public;`, ["buckets-arbiter"], "42P10"],
+  ["invalid-key", "update pg_index set indisvalid = false where indexrelid = 'storage.buckets_pkey'::regclass;", ["buckets-arbiter"], "42P10"],
+  ["composite-key", `${NO_KEY} alter table storage.buckets add primary key (id, name);`, ["buckets-arbiter"], "42P10"],
+  ["expression-key", `${NO_KEY} create unique index buckets_id_expr on storage.buckets (lower(id));`, ["buckets-arbiter"], "42P10"],
+  // Shapes PostgreSQL would take, which the narrow form stops for review.
+  ["unique-not-primary", `${NO_KEY} alter table storage.buckets add constraint buckets_id_unique unique (id);`, ["buckets-arbiter"], null],
+  ["index-no-constraint", `${NO_KEY} create unique index buckets_id_idx on storage.buckets (id);`, ["buckets-arbiter"], null],
+  // Each bounded column one short of the longest literal it is given.
+  ["id-one-short", "alter table storage.buckets alter column id type varchar(15);", ["buckets-columns"], "22001"],
+  ["name-one-short", "alter table storage.buckets alter column name type varchar(15);", ["buckets-columns"], "22001"],
+  ["aud-one-short", "alter table auth.users alter column aud type varchar(12);", ["authusers-columns"], "22001"],
+  ["role-one-short", "alter table auth.users alter column role type varchar(12);", ["authusers-columns"], "22001"],
+  ["email-one-short", "alter table auth.users alter column email type varchar(24);", ["authusers-columns"], "22001"],
+  // A form the rule does not name, long enough: unsupported, so it stops.
+  ["name-char-20", "alter table storage.buckets alter column name type char(20);", ["buckets-columns"], null],
+];
+for (const [name, setup, want, realCode] of STOPPED) {
+  const db = await fresh();
+  await db.exec(setup);
+  const rd = await reading(db);
+  const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value;
+  const ledger = rd.build00.find((r) => r.part === "ledger" && r.key === "status").value;
+  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger }).map((f) => f.key).sort();
+  const facts = { ref: REF, creator, ledger, employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, defaultsNow: C.defaultsOf(rd.build00, "defaults", creator), defaultsFinal: C.defaultsOf(refState, 3, creator) };
+  const text = A.build01Text(src, MANIFEST, facts);
+  const r = await runText(db, text);
+  const sql = (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
+  const left = await noneLeft(db);
+  const real = await runText(db, withoutFirstStep(text));
+  save(`w-stop-${name}.json`, { ...rd, js, sql, code: r.code ?? null, message: r.message ?? null, where: r.where ?? null, left, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: real.message } });
+  const realOk = realCode === null ? real.ok : !real.ok && real.code === realCode;
+  say(same(js, want) && same(sql, want) && !r.ok && left.ledger_absent && left.marker_absent && left.files_absent && realOk, `run W: ${name}: the comparator and BUILD-01's first step name ${js.join(", ")} | ${sql.join(", ")}; without that step: ${real.ok ? "it commits" : `${real.code} ${real.message}`}`);
+}
+const COMMITTED = [
+  ["key-recreated", `${NO_KEY} alter table storage.buckets add primary key (id);`],
+  // The platform's own shape: another unique index, on name, is no arbiter here.
+  ["key-and-unique-name", "create unique index bname on storage.buckets (name);"],
+  // Each bounded column exactly as long as the longest literal it is given.
+  ["fit-exact", "alter table storage.buckets alter column id type varchar(16), alter column name type varchar(16); alter table auth.users alter column aud type varchar(13), alter column role type varchar(13), alter column email type varchar(25);"],
+  ["fit-unbounded", "alter table storage.buckets alter column id type varchar, alter column name type varchar; alter table auth.users alter column aud type varchar, alter column role type varchar, alter column email type varchar;"],
+  ["fit-text", "alter table auth.users alter column aud type text, alter column role type text, alter column email type text;"],
+];
+for (const [name, setup] of COMMITTED) {
+  const db = await fresh();
+  await db.exec(setup);
+  const rd = await reading(db);
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
+  const stops = C.blocking(findings);
+  const r = facts ? await runText(db, A.build01Text(src, MANIFEST, facts)) : { ok: false, message: "no facts" };
+  const state = r.ok ? await read(db, "P0-4C") : [];
+  const fp = (rows) => rows.find((x) => x.part === 2 && x.key === "fingerprint")?.value;
+  const success = CL.SUCCESS["BUILD-01"].check(JSON.stringify(r.rows ?? [])).ok;
+  save(`w-commit-${name}.json`, { ...rd, stops, committed: r.ok, success, fingerprintEqual: fp(state) === fp(refState) });
+  say(!stops.length && r.ok && success && fp(state) === fp(refState), `run W: ${name}: the facts bind, BUILD-01 commits, and the catalog's fingerprint is the local 01's${r.ok ? "" : `: ${r.code} ${r.message}`}`);
 }
 {
   // A column one of the two INSERTs supplies is gone: BUILD-00 reports it, and

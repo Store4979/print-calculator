@@ -283,6 +283,7 @@ policy changes under C8, until the ref-binding commit.
 - **The preflight predicates** exist twice: in the comparator, for the first
   receipts (`buildPredicateFindings`), and in BUILD-01's first step, in SQL, under
   the same names. The local run compares the two on every real shape it tries.
+  That agreement does not establish completeness (§0.6, X3-R2 and X3-R3).
 - **The sender gap of §0.3 is closed:** before a claim or a request, the text the
   workflow declares for the step, `go.text` and the planned text must be one text.
 
@@ -291,11 +292,13 @@ policy changes under C8, until the ref-binding commit.
   settings, so the preserved CANCEL-STEP-TEMPLATE, which names P1, can reach it. No
   reviewed phase sends a cancel.
 - **The handler:** `when others` re-raises from the top-level DO block. **55P03 is
-  raised as it is,** so a lock timeout keeps its own frames and stays R4, as §2.5
-  and §6.2 say. A plain `when others` would have made it R3, which is more than the
-  plan claims. 57014 is not matched by OTHERS, and 25P04 cannot be caught.
+  raised as it is,** so a lock timeout keeps its own frames, and §6.2 says what class
+  they give. X3 did this in the outer handlers only, and the helper inside them still
+  converted it (X3-R1, §0.6). 57014 is not matched by OTHERS, and 25P04 cannot be
+  caught.
 - **The cap on P1-4C's result** is 1809 rows: the local run's 1206, plus 50%. The
-  margin is a choice, not a measurement. Over it is a STOP.
+  margin is a choice, not a measurement. Over it is a STOP. Codex's ruling makes it
+  provisional (§6.1).
 - **A fourth summary group:** this session's own temp relations are one row per
   boundary, like `pg_catalog` and `pg_toast`, because `pg_temp_N` differs per backend.
 - **The declared PERFORMs have no witness.** A new data module holds P1-4C's 70
@@ -320,6 +323,67 @@ policy changes under C8, until the ref-binding commit.
 
 **What stays for later:** the preserved texts' target and `effect` (the ref-binding
 commit); BUILD-01's facts, text and policy (B1); the workflows and gates (X4).
+
+### 0.6 Codex's review of X3 (`87b34fa`), and where X3b answers it
+
+**AMEND on three execution gaps; the sender's step and text binding accepted and
+closed; no push cleared at `87b34fa`,** 2026-11-04
+(`reviews/2026-11-04-87b34fa-review.md`, with Codex's probes in
+`reviews/release-87b34fa-probes.mjs` and `.json`). Accepted, and not redesigned: P1-4C's
+ordering and result contract, BUILD-01's architecture, M-6g, the PERFORM declarations,
+and deferring targets and C8 to the ref-binding commit.
+
+| item | Codex's finding | X3b's answer | where |
+|---|---|---|---|
+| X3-R1 | `stage0_expect_error`'s inner `when others` caught 55P03 and raised P0001, so the outer pass-through never saw it, and its envelope was R3 | the helper's handler now first lets `lock_not_available` through as it is. The audit found no other handler that converts it: of 19 in P1-4C's own code, 18 already passed it, and the wrappers and the 30 files have none. `p1PrimeProblems` holds every handler to it | §6.2 |
+| X3-R2 | a `DEFERRABLE` key has the accepted `pg_get_indexdef` text, and BUILD-01 then failed in a migration, 55000 | BUILD-00 reads an `arbiter\|` row of catalog properties for each unique index, and both predicates accept only the one supported form, and only one index on `id` | §2.1 |
+| X3-R3 | any declared varchar length passed, and BUILD-01 then failed in a migration, 22001 | each column takes `text`, unbounded varchar, or a declared length of at least the longest literal this build gives it: `id` and `name` 16, `aud` and `role` 13, `email` 25. Any other form stops for review | §2.1 |
+
+Each of Codex's three probe shapes is now a test (4W-15, 4W-16, 4W-17). The database
+runs are the harness's, on PGlite, which is not a dependency of this repository, so
+`yarn test` cannot run them. The suite runs the comparator and the classifier on what
+the harness recorded. Each 55P03 there is raised on purpose: PGlite has one session,
+so no lock wait is measured, and no envelope is a receipt. For each stopped shape the
+harness also runs BUILD-01 with its first step taken out, so that the outcome the
+predicate is judged against comes from PostgreSQL: 55000, 42P10 or 22001, or a commit
+for a shape that is only unsupported.
+
+**Codex's rulings on X3's open choices:**
+- **P1's application name and settings:** accepted, as a diagnostic and cancellation
+  label. Receipts and journal provenance stay distinct: the sender's `text`,
+  `requestMd5` and `requestBytes`, the claim's planned text and pin, and the classifier's
+  comparison with the manifest. P1 is `2546a4a4…`, 240 125 bytes. The application name
+  is not what tells the two apart.
+- **55P03:** the rule is accepted, and X3-R1 amends the implementation.
+- **The cap:** §6.1.
+- **The session-temp group:** accepted. It keeps count and modes per boundary and avoids
+  backend-specific names. App relations stay separately visible, and the transient,
+  subtransaction and row-lock limits stay (§6.1).
+- **The separate PERFORM data module:** accepted. Declarations stay separate from
+  receipt-backed profiles.
+- **Predicates in JS and SQL:** the two layers are accepted. Agreement on tested shapes
+  does not establish completeness: X3-R2 and X3-R3 passed both.
+- **Synthetic rows:** accepted. The fixed mailbox serves the pinned migration's lookup on
+  the throwaway; it is not a sign-in or email-delivery test. The sizing is reconciled in
+  §2.1.
+- **A missing bucket column makes BUILD-00W error:** accepted. An unreadable preflight
+  stops, and an older successful W receipt is never substituted to complete the pair.
+
+**What this adds for later commits:**
+- **B1** records the actual counts of all five digested tables, and that only
+  `employees` is sized (§2.1).
+- **The production timing commit** confirms the cap from the throwaway's receipt (§6.1),
+  and does not infer production's scan or digest time from an employee-sized fixture
+  (§2.1).
+- **X4, wiring P1-4C's path:**
+  - keeps a cross-text receipt-substitution refusal control: a receipt, journal claim or
+    success predicate of P1 is never taken for P1-4C's, or the reverse;
+  - keeps backend inspection and cancellation tied to the current attempt and backend
+    identity, never to the shared application name alone. That label cannot identify
+    which SQL ran. No cancellation is cleared by any of this.
+
+**For Codex's ruling, found in X3b's audit, and not changed:** two routes classify a real
+55P03 as R3 under profiles that take any SQLSTATE (§6.2).
 
 ## 1. What the remaining path touches
 
@@ -589,8 +653,15 @@ migration integration, and no branching.
      - **inserts synthetic rows** where production's data predates a
        migration, as the harness does:
        - the store `store4979`, an owner membership on a synthetic auth
-         user, and two employees on synthetic PINs;
-       - rows sized to the counts in production's baseline read (§2.2);
+         user, and two or more employees on synthetic PINs;
+       - **only `employees` is sized:** the facts' `employees` gives its count,
+         from production's baseline read (§2.2). `stores`, `organizations`,
+         `memberships` and `auth.users` hold what these rows and the files make,
+         whatever production's counts are (Codex's review of `87b34fa`);
+       - **B1 records the actual counts of all five digested tables, and this
+         limit.** Production's scan and digest time is not to be inferred from
+         an employee-sized fixture: the production timing review accounts for
+         the other populations;
        - **No production row is copied;**
      - creates a marker outside `public`: schema `stage0_rehearsal`, one
        row with the project's ref and the words "reconstruction: these
@@ -613,10 +684,10 @@ never one assumed from staging.
 
 | object | what writes it | what is read | the predicates (else STOP) |
 |---|---|---|---|
-| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes; its triggers (name, timing, events, enabled, function and the function's owner); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to; every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; a unique index or constraint is exactly on (`id`), so the conflict arbiter exists; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; the triggers are the reviewed set; **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
+| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); its triggers (name, timing, events, enabled, function and the function's owner); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; the triggers are the reviewed set; **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
 | `storage.objects` | `20260506182318`: `DROP POLICY IF EXISTS` and `CREATE POLICY` of `job_files_anon_insert`, `job_files_anon_select` and `job_files_anon_delete` | presence, kind and owner; every existing policy's name; the `bucket_id` column and its type; RLS | an ordinary table with a `bucket_id` text column; **none of the three policy names exists,** so each `DROP … IF EXISTS` removes nothing; the W role owns the table or holds its owner's privileges (`pg_has_role(…, 'USAGE')`; a superuser passes). Table DML privileges do not confer policy authority: PostgreSQL requires ownership for `CREATE POLICY` and `DROP POLICY` |
 | publication `supabase_realtime` | `20260629173251`: reads `pg_publication_tables`, then `ALTER PUBLICATION supabase_realtime ADD TABLE public.pending_jobs` | presence, owner, `puballtables`, the insert/update/delete/truncate flags, `pubviaroot`, every member table | it exists; it is not `FOR ALL TABLES`; `public.pending_jobs` is not a member; the W role owns the publication or holds its owner's privileges. Reading `pg_publication_tables` is not authority to alter it. The table's ownership, which `ADD TABLE` also requires, comes from the W role creating `pending_jobs` earlier in the same file |
-| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers; RLS | the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; the trigger set is the reviewed one (none is expected) |
+| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers; RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; the trigger set is the reviewed one (none is expected) |
 | schemas `supabase_migrations`, `stage0_rehearsal` | BUILD-01: the ledger schema and table where absent, and the marker | their presence and owners; the W role's CREATE on the database | the marker schema is absent; the ledger schema is absent, or exactly as BUILD-00 found it; CREATE on the database |
 | default privileges | BUILD-01's two exact targets (step 4) | every `pg_default_acl` row (§2.2 part 3) | the W role is the object-creating role, or holds its privileges |
 
@@ -1009,7 +1080,9 @@ accepted (§10).
 **What it does not exercise.** Each of these stays R4 or R1 on production,
 which means STOP-and-review under UO-1:
 - `lock_timeout` (55P03), and any lock wait. **A lock_timeout on
-  production is R4, STOP-and-review;**
+  production is R4, STOP-and-review,** but for the two routes §6.2 names,
+  where the classifier's profiles take any SQLSTATE and give R3 (for Codex's
+  ruling). R3 is no retry either;
 - `statement_timeout` (57014);
 - `transaction_timeout` (25P04, FATAL);
 - a cancel;
@@ -1504,15 +1577,31 @@ manifest. Its send policy fixes its targets, `read_only`, window and
     name, and `fact` is `locktype|mode|granted|target`. The target is the
     relation's schema-qualified name, or `pg_describe_object` for an
     object lock.
-- **Bounded size:**
-  - locks on `pg_catalog` and `pg_toast` relations are one summary row per
-    boundary, with their count and modes;
-  - so are the lock types other than relation and object, with a count per
-    type;
+- **Bounded size, in four groups of summary rows:**
+  - locks on `pg_catalog` relations, on `pg_toast` relations and on this
+    session's own temp relations are each one summary row per boundary, with
+    their count and modes. The temp group avoids `pg_temp_N`, which differs per
+    backend (Codex accepted it, review of `87b34fa`). App relations stay rows of
+    their own;
+  - each lock type other than relation and object is a fourth kind of summary
+    row, with its count;
   - the success predicate requires exactly the declared boundary names, and
     at most a fixed total row count. The implementation sets that count
     from the local run's, with a stated margin. A larger or differently
     shaped result is not success: STOP-and-review.
+- **That count is 1809, a provisional fail-closed limit** (Codex's ruling, review
+  of `87b34fa`). It is not a measured Supabase upper bound:
+  - **the production timing commit, after the rehearsal, confirms it** from the
+    throwaway's actual P1-4C receipt: total, proof and lock counts, per-boundary
+    counts, serialized response bytes, completeness, elapsed time and headroom. It
+    compares the relevant catalog differences with production, and states the
+    residual;
+  - **the older evidence does not establish it:** the historical production P1
+    receipt has 45 proof rows and no lock inventory, and the BUILD reads show
+    catalog shape, not P1-4C's per-boundary lock counts;
+  - **over the cap on production is R4, STOP-and-review.** There is no automatic
+    raise of the cap and no retry;
+  - this asks for later reviewed evidence, not a live probe now.
 - **Recorded outside the rolled-back subtransaction.** Every lock row is
   written at a boundary of the top-level transaction: after section 0′,
   after P2-02's body, after section 1 (just before `savepoint`), just after
@@ -1553,15 +1642,47 @@ together:
 failure and raises it again from its top-level DO block. The refusal is then
 one of the witnessed "re-raised" or "detail/hint re-raised" profiles, and no
 new profile is needed for a check that fails. P1's section 0 calls its
-checks from top-level SELECTs today, so P1′ wraps them. Some failures cannot
-be caught there:
-- 25P04 from `transaction_timeout`, which is FATAL;
-- a `statement_timeout` or `lock_timeout` raised inside a PERFORMed helper.
+checks from top-level SELECTs today, so P1′ wraps them. Some failures are not
+raised again that way:
+- 25P04 from `transaction_timeout` is FATAL, and cannot be caught;
+- 57014 from a `statement_timeout` or a cancel is not matched by `OTHERS`, so it
+  passes through unless a handler names it;
+- **55P03 from a `lock_timeout` can be caught.** An earlier version of this section
+  said it could not, and X3-R1 shows otherwise: `when others` catches it. **Keeping
+  it is a deliberate handler choice.** Every handler in P1-4C's code and BUILD-01's
+  steps first runs `when lock_not_available then raise;`, which keeps its SQLSTATE
+  and frames. That includes the inner handler of `stage0_expect_error`, which X3
+  missed. The old pinned P1 is unchanged, and its helper still converts it. The
+  handlers judge the SQLSTATE; none reads the message.
 
 **These stay residual R4, STOP-and-review,** unless a receipt shows them
-and Codex reviews that profile. So does any planned refusal of §2.5 that
-turns out not to be a witnessed profile: it is a hold, and its first
-receipt goes to Codex (U-1).
+and Codex reviews that profile, or an accepted profile already admits their frames
+(below). So does any planned refusal of §2.5 that turns out not to be a witnessed
+profile: it is a hold, and its first receipt goes to Codex (U-1).
+
+**Where a real lock timeout on P1-4C's path ends up** (X3b's audit; the envelopes are
+rendered, since no lock wait has been measured on it):
+
+| where it arises | its frames | class |
+|---|---|---|
+| a `stage0_expect_error` probe, or its digest | its own, through the helper's named frames | R4 |
+| a statement of a check, in a section's DO block | its own, at a statement or a PERFORM | R4 |
+| a wrapper's `execute f` (P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2) | `SQL statement "<the file>"`, then `inline_code_block` at EXECUTE | **R3, "executed input"** |
+| a top-level statement outside any DO block (section 0's CREATEs read `employees`, `stores`, `organizations`, `memberships`, `auth.users`) | none | **R3, "field-less"** |
+
+**The last two rows are not catch points,** and no handler reaches them. The wrappers
+are preserved byte for byte and have no handler. Both profiles take any SQLSTATE
+(`PROFILES` in `stage0-classify.mjs`, from item 2's reviewed capture commits), and the
+same holds for the preserved P2 and RB texts on production. The item 2 plan already
+expected the first: "A 55P03 on `employees` during P2-01 would look like this." So
+"a lock timeout is R4" holds only for the first two rows. An R3 here is still no retry,
+and no proof of an unchanged prefix. **X3b does not change the classifier:** 4W-15 pins
+this behaviour so that it is visible, and whether a timeout SQLSTATE should leave those
+profiles is for Codex's ruling.
+
+**Also not changed:** a deadlock (40P01) inside a probe is still judged by the helper, so
+it is P0001 with its state in the message, and R3. In a section's DO block it is
+re-raised with one frame, and R3. §2.5 does not name it, and X3-R1 is about 55P03.
 
 **Unchanged:**
 - the uncaptured STMTTIMEOUT PERFORM stays R4;

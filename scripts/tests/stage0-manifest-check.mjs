@@ -528,7 +528,10 @@ export function stepBody(stepText, label) {
  *     and neither P2-01's nor RB-1's;
  *   - each declared lock boundary is one DO block, in order, and none lies between
  *     the savepoint and its rollback;
- *   - its catalog query is P1's, byte for byte.
+ *   - its catalog query is P1's, byte for byte;
+ *   - every exception handler in its code, at any depth of dollar body but a file's
+ *     literal, first lets lock_not_available through as it is, and no proof expects
+ *     that state (X3-R1).
  * It is a regression check of this fixed text, not a SQL sandbox.
  */
 export function p1PrimeProblems(text, out) {
@@ -562,7 +565,27 @@ export function p1PrimeProblems(text, out) {
   if ((text.match(/pg_temp\.stage0_locks\(/g) || []).length !== A.P1_4C_BOUNDARIES.length + 1) problems.push("P1-4C records a boundary that is not declared");
   const cat = (t) => { const m = /^-- @@catalog-rows begin\n([\s\S]*?)^-- @@catalog-rows end$/m.exec(t); return m ? m[1] : null; };
   if (!cat(text) || !out.P1 || cat(text) !== cat(out.P1)) problems.push("P1-4C's catalog query is not P1's, byte for byte");
+  problems.push(...p1PrimeHandlerProblems(text));
   return problems;
+}
+
+/**
+ * X3-R1: each handler in P1-4C's code, its dollar bodies read as code at any depth
+ * but a migration file's literal, which is data and is scanned by its own test. A
+ * handler is the word EXCEPTION where RAISE does not come before it. Its first arm
+ * must be `when lock_not_available then raise;`, and no string of a stage0_expect_error
+ * call may name 55P03: that helper does not judge the state.
+ */
+function p1PrimeHandlerProblems(text) {
+  let view;
+  try { view = sqlCode(text, { label: "P1-4C", strings: "blank", bodies: (s) => (s.tag === "stage0_file" ? "data" : "code") }); } catch (e) { return [`P1-4C does not lex: ${e.message}`]; }
+  const out = [];
+  for (const m of view.matchAll(/\bexception\b/gi)) {
+    if (/\braise\s+$/i.test(view.slice(Math.max(0, m.index - 40), m.index))) continue;
+    if (!/^exception\s+when\s+lock_not_available\s+then\s+raise\s*;/i.test(view.slice(m.index, m.index + 120))) out.push(`a handler in P1-4C does not first let lock_not_available through, at offset ${m.index}`);
+  }
+  if (/stage0_expect_error\([^;]*'55P03'/.test(text)) out.push("a proof in P1-4C expects 55P03, which stage0_expect_error does not judge");
+  return out;
 }
 
 // M-6g's grammar of BUILD-01 (the outline's X3, a sibling of M-6e). Each form is
@@ -585,7 +608,7 @@ const B1_PREDICATES = ["public-empty", "ledger", "buckets-present", "buckets-col
   "objects-table", "objects-policies", "objects-authority", "publication-present", "publication-member", "publication-authority",
   "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "marker-absent", "database-create", "creator"];
 /** Every name BUILD-01's first step puts before "(" outside the two reads it embeds. */
-const B1_ASSERT_CALLS = ["all", "and", "array", "chr", "current_setting", "exists", "f", "bound", "bad", "from", "group", "in", "md5", "not", "or", "select", "split_part", "string_agg", "string_to_array", "union", "values", "where", "as", "p"];
+const B1_ASSERT_CALLS = ["all", "and", "array", "chr", "coalesce", "count", "current_setting", "exists", "f", "bound", "bad", "from", "group", "in", "md5", "not", "or", "select", "split_part", "string_agg", "string_to_array", "substring", "union", "values", "where", "as", "p"];
 
 /** A DO body's normalized statements, its tail checked and removed. */
 function b1Body(body, label, say) {

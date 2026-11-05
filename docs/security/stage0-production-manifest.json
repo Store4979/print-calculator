@@ -260,9 +260,9 @@
       },
       "build00": {
         "path": "supabase/rehearsals/release2_stage0_4c_build00.sql",
-        "blob": "7d7fd2bd0d3b4d708b0ab814451e74c2f82793f0",
-        "md5": "bc74f93a85cfc4d360f02924ad7816e9",
-        "bytes": 15369,
+        "blob": "d93ae4fe10556ce7a63997bf2aa5d8d0099d3795",
+        "md5": "5b48dd95d6b3fdb94b34a00b9fd78178",
+        "bytes": 17162,
         "pinnedAt": "manifest-commit"
       },
       "build00w": {
@@ -274,18 +274,18 @@
       },
       "p1prime": {
         "path": "supabase/rehearsals/release2_stage0_4c_p1prime_proofs.sql",
-        "blob": "558a7fbf3d2e4eb056bcaa9c1afa45417ea2fad0",
-        "md5": "59a833d7f9f6d65c76360493f5383b97",
-        "bytes": 43700,
+        "blob": "a50d20cc9dfafa8d2b48f1399960491e2a269778",
+        "md5": "42388ac4386614f0f0d6ed467256e5a7",
+        "bytes": 44330,
         "pinnedAt": "manifest-commit"
       }
     }
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "31224e23db538e7854d3892c760f58048d812d00",
-    "md5": "fe9b541c37cd9a2750eb8ecbeed1f30c",
-    "bytes": 93709,
+    "blob": "f7c791b6eb172413187467cedd30bfd47c1f39f7",
+    "md5": "4a96fc8ab4d52d2be105c9edb39c812b",
+    "bytes": 94845,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -308,16 +308,16 @@
     "files": [
       {
         "path": "scripts/manual/assemble-stage0.mjs",
-        "blob": "31224e23db538e7854d3892c760f58048d812d00",
-        "md5": "fe9b541c37cd9a2750eb8ecbeed1f30c",
-        "bytes": 93709,
+        "blob": "f7c791b6eb172413187467cedd30bfd47c1f39f7",
+        "md5": "4a96fc8ab4d52d2be105c9edb39c812b",
+        "bytes": 94845,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-4c-compare.mjs",
-        "blob": "898df4bf20ada81411e055c0da95c43e7e6fad49",
-        "md5": "c4baa67bb74326eddc9a23e6df5e1ea4",
-        "bytes": 53991,
+        "blob": "05f4505b7694f73c1112ab6b8a8117fbdb3efdf2",
+        "md5": "dc1e7e71ddf413d6ed217c9a5819bf71",
+        "bytes": 56081,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -817,16 +817,16 @@
       "bytes": 10759
     },
     "BUILD-00": {
-      "md5": "3e5b1be4729d83958370580d5dcf1d16",
-      "bytes": 15476
+      "md5": "2bb3a31c6a78837a504286817f8403b9",
+      "bytes": 17269
     },
     "BUILD-00W": {
       "md5": "7cb8e53d526bb2d2f6f9a4d24bd94a66",
       "bytes": 5245
     },
     "P1-4C": {
-      "md5": "8b52201d202a2e462ba57f3f0e338fcf",
-      "bytes": 206556
+      "md5": "d74be9524f1cd10a57289aa06da3c853",
+      "bytes": 206760
     }
   },
   "sizeProbe": {

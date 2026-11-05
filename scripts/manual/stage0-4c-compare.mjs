@@ -699,13 +699,44 @@ function factsByPart(rows) {
   }
   return out;
 }
-const TEXT_LIKE = /^(text|character varying(\([0-9]+\))?)\|/;
+/**
+ * The longest literal BUILD-01 and its files supply to each text column outside
+ * public: job-files and customer-uploads; authenticated; owner@example.invalid and
+ * store4979@theupsstore.com. Written out here, since this module reads nothing else;
+ * stage0-4c-writing.test.js compares it with the assembler's BUILD_LITERALS and with
+ * the files' own statements.
+ */
+export const BUILD_LITERAL_LENGTHS = Object.freeze({ "buckets.id": 16, "buckets.name": 16, "authusers.aud": 13, "authusers.role": 13, "authusers.email": 25 });
+/**
+ * A text column's fact, as format_type gives it, holds those literals: text or
+ * unbounded varchar, or a declared varchar length of at least the longest. Any other
+ * form is unsupported, and stops for review.
+ */
+const fitsLiterals = (fact, longest) => {
+  if (/^(text|character varying)\|/.test(fact)) return true;
+  const m = /^character varying\(([0-9]+)\)\|/.exec(fact);
+  return m !== null && Number(m[1]) >= longest;
+};
+/**
+ * The one conflict arbiter supported for ON CONFLICT (id), as BUILD-00's arbiter|
+ * row reports it: a valid, ready, live, immediate btree on the single key column
+ * id, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is
+ * not deferrable. PostgreSQL's executor refuses a deferrable arbiter (55000), and
+ * every unique index on exactly (id) is an arbiter, so a second one stops too. The
+ * form is narrower than what PostgreSQL would accept: another shape stops for
+ * review. It says nothing about any other unique index on the table (the platform's
+ * own on name, say), which is no arbiter here.
+ */
+export const BUILD_ARBITER = "id|1|1|btree|true|true|true|true|true|false|false|p|false|false|true";
+const NAMES_ID_AS_KEY = /^([^|]*,)?id(,[^|]*)?\|/;
 /**
  * The preflight table's predicates (plan §2.1), each a name and what it asks of
  * the two readings, b (BUILD-00) and w (BUILD-00W, read as the role BUILD-01 will
  * run as). BUILD-01 asks the same again in SQL, under the same names
  * (assemble-stage0.mjs); the local run shows the two agree on each shape it tries
- * (stage0-4c-writing.test.js). A missing fact fails its predicate.
+ * (stage0-4c-writing.test.js), which does not show that either is complete: a shape
+ * neither asks about still fails in BUILD-01's transaction, which rolls back. A
+ * missing fact fails its predicate.
  */
 const BUILD_PREDICATES = Object.freeze({
   "public-empty": (b) => !b.public,
@@ -713,11 +744,14 @@ const BUILD_PREDICATES = Object.freeze({
   "buckets-present": (b) => b.buckets?.present === "true",
   "buckets-columns": (b) => {
     const c = (n) => b.buckets?.[`column|${n}`] ?? "";
-    return TEXT_LIKE.test(c("id")) && TEXT_LIKE.test(c("name")) && /^boolean\|/.test(c("public")) && /^(bigint|integer)\|/.test(c("file_size_limit")) && /^text\[\]\|/.test(c("allowed_mime_types")) && /^timestamp with time zone\|/.test(c("updated_at"));
+    return fitsLiterals(c("id"), BUILD_LITERAL_LENGTHS["buckets.id"]) && fitsLiterals(c("name"), BUILD_LITERAL_LENGTHS["buckets.name"]) && /^boolean\|/.test(c("public")) && /^(bigint|integer)\|/.test(c("file_size_limit")) && /^text\[\]\|/.test(c("allowed_mime_types")) && /^timestamp with time zone\|/.test(c("updated_at"));
   },
   "buckets-notnull": (b) => !Object.entries(b.buckets ?? {}).some(([k, v]) => k.startsWith("column|") && /^[^|]*\|true\|\|\|$/.test(v) && !["column|id", "column|name", "column|public"].includes(k)),
   "buckets-generated": (b) => ["id", "name", "public", "file_size_limit", "allowed_mime_types", "updated_at"].every((n) => { const v = b.buckets?.[`column|${n}`]; return v === undefined || /\|d?\|$/.test(v); }),
-  "buckets-arbiter": (b) => Object.entries(b.buckets ?? {}).some(([k, v]) => k.startsWith("unique-index|") && / ON storage\.buckets USING btree \(id\)$/.test(v)),
+  "buckets-arbiter": (b) => {
+    const onId = Object.entries(b.buckets ?? {}).filter(([k, v]) => k.startsWith("arbiter|") && NAMES_ID_AS_KEY.test(v)).map(([, v]) => v);
+    return onId.length === 1 && onId[0] === BUILD_ARBITER;
+  },
   "buckets-authority": (b, w) => ["schema_usage", "insert|id", "insert|name", "insert|public", "insert|file_size_limit", "insert|allowed_mime_types", "update|public", "update|file_size_limit", "update|allowed_mime_types", "update|updated_at", "select"].every((k) => w.buckets?.[k] === "true"),
   "buckets-rls": (b, w) => w.buckets?.rls_applies === "false",
   "buckets-rows": (b, w) => w.buckets?.["row|job-files"] === "false" && w.buckets?.["row|customer-uploads"] === "false",
@@ -729,7 +763,7 @@ const BUILD_PREDICATES = Object.freeze({
   "publication-authority": (b, w) => w.publication?.owner_privileges === "true",
   "authusers-columns": (b) => {
     const c = (n) => b.authusers?.[`column|${n}`] ?? "";
-    return /^uuid\|/.test(c("instance_id")) && /^uuid\|/.test(c("id")) && TEXT_LIKE.test(c("aud")) && TEXT_LIKE.test(c("role")) && TEXT_LIKE.test(c("email"));
+    return /^uuid\|/.test(c("instance_id")) && /^uuid\|/.test(c("id")) && fitsLiterals(c("aud"), BUILD_LITERAL_LENGTHS["authusers.aud"]) && fitsLiterals(c("role"), BUILD_LITERAL_LENGTHS["authusers.role"]) && fitsLiterals(c("email"), BUILD_LITERAL_LENGTHS["authusers.email"]);
   },
   "authusers-notnull": (b) => {
     const v = b.authusers?.["notnull-nodefault"];
