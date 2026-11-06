@@ -530,8 +530,8 @@ export function stepBody(stepText, label) {
  *     the savepoint and its rollback;
  *   - its catalog query is P1's, byte for byte;
  *   - every exception handler in its code, at any depth of dollar body but a file's
- *     literal, first lets lock_not_available through as it is, and no proof expects
- *     that state (X3-R1).
+ *     literal, first lets lock_not_available and deadlock_detected through as they
+ *     are, and no proof expects either state (X3-R1, X3c).
  * It is a regression check of this fixed text, not a SQL sandbox.
  */
 export function p1PrimeProblems(text, out) {
@@ -573,8 +573,8 @@ export function p1PrimeProblems(text, out) {
  * X3-R1: each handler in P1-4C's code, its dollar bodies read as code at any depth
  * but a migration file's literal, which is data and is scanned by its own test. A
  * handler is the word EXCEPTION where RAISE does not come before it. Its first arm
- * must be `when lock_not_available then raise;`, and no string of a stage0_expect_error
- * call may name 55P03: that helper does not judge the state.
+ * must be `when lock_not_available or deadlock_detected then raise;`, and no string of
+ * a stage0_expect_error call may name 55P03 or 40P01: that helper judges neither state.
  */
 function p1PrimeHandlerProblems(text) {
   let view;
@@ -582,9 +582,9 @@ function p1PrimeHandlerProblems(text) {
   const out = [];
   for (const m of view.matchAll(/\bexception\b/gi)) {
     if (/\braise\s+$/i.test(view.slice(Math.max(0, m.index - 40), m.index))) continue;
-    if (!/^exception\s+when\s+lock_not_available\s+then\s+raise\s*;/i.test(view.slice(m.index, m.index + 120))) out.push(`a handler in P1-4C does not first let lock_not_available through, at offset ${m.index}`);
+    if (!/^exception\s+when\s+lock_not_available\s+or\s+deadlock_detected\s+then\s+raise\s*;/i.test(view.slice(m.index, m.index + 120))) out.push(`a handler in P1-4C does not first let lock_not_available and deadlock_detected through, at offset ${m.index}`);
   }
-  if (/stage0_expect_error\([^;]*'55P03'/.test(text)) out.push("a proof in P1-4C expects 55P03, which stage0_expect_error does not judge");
+  if (/stage0_expect_error\([^;]*'(55P03|40P01)'/.test(text)) out.push("a proof in P1-4C expects 55P03 or 40P01, which stage0_expect_error does not judge");
   return out;
 }
 
@@ -592,7 +592,7 @@ function p1PrimeHandlerProblems(text) {
 // written out here rather than taken from the assembler, so a text the assembler
 // got wrong does not pass by construction.
 const B1_TAG = "stage0 BUILD-01";
-const B1_TAIL = ["exception when lock_not_available then raise", "when others then raise exception '%', sqlerrm using errcode = sqlstate", "end"];
+const B1_TAIL = ["exception when lock_not_available or deadlock_detected then raise", "when others then raise exception '%', sqlerrm using errcode = sqlstate", "end"];
 const B1_SETTINGS = "select set_config('application_name', 'release2-stage0-BUILD-01', true), set_config('lock_timeout', '3s', true), set_config('statement_timeout', '90s', true), set_config('idle_in_transaction_session_timeout', '10s', true), set_config('release2.stage0_mode', 'BUILD', true), set_config('release2.stage0_deadline_s', '100', true)";
 const B1_TIMER = "select set_config('transaction_timeout', '110s', true)";
 const B1_LEDGER_TABLE = "create table supabase_migrations.schema_migrations (version text not null primary key, statements text[], name text, created_by text, idempotency_key text unique, rollback text[])";

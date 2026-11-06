@@ -9,8 +9,9 @@
 //          boundaries and cap; P0-4C after equals P0-4C before, data included;
 //          the savepoint-relocation mutant loses a boundary's rows; each kind of
 //          failure, with the frames PostgreSQL gives it; the real stage0_expect_error
-//          inside the real outer handler, with a lock_not_available and its controls.
-//          Each 55P03 is RAISED, not a measured lock wait: PGlite has one session
+//          inside the real outer handler, with a lock_not_available, a deadlock_detected
+//          and their controls. Each 55P03 and 40P01 is RAISED, not a measured lock wait
+//          or deadlock: PGlite has one session
 //   run W  BUILD-01 from the shim's fresh shape, under the same two variants: the
 //          21 files replay as written, with their ledger rows, the marker and the
 //          exact default rows; each mutated shape refused by the predicate named,
@@ -142,16 +143,34 @@ $x$;`);
   const raising = (state, message) => `do $inner$ begin raise exception ${quote(message)} using errcode = ${quote(state)}; end $inner$;`;
   const helper = (sql, unchanged = "select 1 as v") => `do $probe$\nbegin\n  perform pg_temp.stage0_expect_error('X3-LOCK', null, ${quote(sql)}, '42501', 'the expected refusal', ${quote(unchanged)});\n${A.RERAISE}$probe$;`;
   const LOCK = "canceling statement due to lock timeout";
+  const DEADLOCK = "deadlock detected";
   const section0 = A.p1PrimeSections(src)["0"];
-  const OLD_HANDLER = ["    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception\n    when lock_not_available then raise;\n    when others then\n", "    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception when others then\n"];
-  if (section0.split(OLD_HANDLER[0]).length !== 2) throw new Error("the helper's handler is not where this run expects it");
-  const asX3Had = section0.split(OLD_HANDLER[0]).join(OLD_HANDLER[1]);
-  const LOCK_FN = "create function pg_temp.x3_lock() returns integer language plpgsql as $f$ begin raise exception 'canceling statement due to lock timeout' using errcode = '55P03'; end $f$;";
+  const HANDLER = "    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception\n    when lock_not_available or deadlock_detected then raise;\n    when others then\n";
+  if (section0.split(HANDLER).length !== 2) throw new Error("the helper's handler is not where this run expects it");
+  const asX3Had = section0.split(HANDLER).join("    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception when others then\n");
+  const asX3bHad = section0.split(HANDLER).join("    raise exception 'stage0 sentinel' using errcode = 'P0002';\n  exception\n    when lock_not_available then raise;\n    when others then\n");
+  const raiser = (name, state, message) => `create function pg_temp.${name}() returns integer language plpgsql as $f$ begin raise exception ${quote(message)} using errcode = ${quote(state)}; end $f$;`;
+  const LOCK_FN = raiser("x3_lock", "55P03", LOCK);
+  const DEADLOCK_FN = raiser("x3_deadlock", "40P01", DEADLOCK);
+  const inCheck = (call) => `do $probe$\nbegin\n  perform ${call};\n${A.RERAISE}$probe$;`;
   const db = await at01();
   const FRAMES = /stage0_expect_error/;
   for (const [name, head, text, check] of [
     // Codex's probe: the state and its frames survive both handlers.
     ["lock-through-helper", section0, helper(raising("55P03", LOCK)), (r) => r.code === "55P03" && r.message === LOCK && FRAMES.test(r.where)],
+    // The same for a deadlock (X3c), which X3b's helper still converted.
+    ["deadlock-through-helper", section0, helper(raising("40P01", DEADLOCK)), (r) => r.code === "40P01" && r.message === DEADLOCK && FRAMES.test(r.where)],
+    ["deadlock-other-words", section0, helper(raising("40P01", "some other words")), (r) => r.code === "40P01" && r.message === "some other words"],
+    ["deadlock-words-other-state", section0, helper(raising("42P01", DEADLOCK)), (r) => r.code === "P0001" && r.message === `STAGE0 PROOF X3-LOCK FAILED: expected [42501] the expected refusal, got [42P01] ${DEADLOCK}`],
+    ["deadlock-in-the-digest", `${section0}\n${DEADLOCK_FN}`, helper("select 1", "select pg_temp.x3_deadlock() as v"), (r) => r.code === "40P01" && /stage0_digest/.test(r.where)],
+    ["deadlock-in-a-check", `${section0}\n${DEADLOCK_FN}`, inCheck("pg_temp.x3_deadlock()"), (r) => r.code === "40P01" && /at PERFORM$/.test(r.where)],
+    ["deadlock-helper-as-x3b-had-it", asX3bHad, helper(raising("40P01", DEADLOCK)), (r) => r.code === "P0001" && /got \[40P01\]/.test(r.message)],
+    // Unrelated states whose words say "deadlock" or "lock timeout", through the outer handler alone: they stay under the profiles.
+    ["unrelated-state-deadlock-words", section0, `do $probe$\nbegin\n  raise exception ${quote(DEADLOCK)} using errcode = '42P01';\n${A.RERAISE}$probe$;`, (r) => r.code === "42P01" && r.message === DEADLOCK],
+    ["unrelated-state-lock-words", section0, `do $probe$\nbegin\n  raise exception ${quote(LOCK)} using errcode = '42P01';\n${A.RERAISE}$probe$;`, (r) => r.code === "42P01" && r.message === LOCK],
+    // Each state raised directly in a DO block: the one frame a witnessed profile has, and still its state.
+    ["lock-one-frame", section0, `do $probe$\nbegin\n  raise exception ${quote(LOCK)} using errcode = '55P03';\n${A.RERAISE}$probe$;`, (r) => r.code === "55P03" && /^PL\/pgSQL function inline_code_block line \d+ at RAISE$/.test(r.where)],
+    ["deadlock-one-frame", section0, `do $probe$\nbegin\n  raise exception ${quote(DEADLOCK)} using errcode = '40P01';\n${A.RERAISE}$probe$;`, (r) => r.code === "40P01" && /^PL\/pgSQL function inline_code_block line \d+ at RAISE$/.test(r.where)],
     // The state decides, not the words: other words keep the state, and the words alone stay a wrong refusal.
     ["lock-other-words", section0, helper(raising("55P03", "some other words")), (r) => r.code === "55P03" && r.message === "some other words"],
     ["timeout-words-other-state", section0, helper(raising("42P01", LOCK)), (r) => r.code === "P0001" && r.message === `STAGE0 PROOF X3-LOCK FAILED: expected [42501] the expected refusal, got [42P01] ${LOCK}`],
@@ -164,7 +183,7 @@ $x$;`);
     ["statement-timeout-state", section0, helper(raising("57014", "canceling statement due to statement timeout")), (r) => r.code === "57014" && FRAMES.test(r.where)],
     // The other places a lock wait can surface on this path: the digest, before the inner block, and a check.
     ["lock-in-the-digest", `${section0}\n${LOCK_FN}`, helper("select 1", "select pg_temp.x3_lock() as v"), (r) => r.code === "55P03" && /stage0_digest/.test(r.where)],
-    ["lock-in-a-check", `${section0}\n${LOCK_FN}`, `do $probe$\nbegin\n  perform pg_temp.x3_lock();\n${A.RERAISE}$probe$;`, (r) => r.code === "55P03" && /at PERFORM$/.test(r.where)],
+    ["lock-in-a-check", `${section0}\n${LOCK_FN}`, inCheck("pg_temp.x3_lock()"), (r) => r.code === "55P03" && /at PERFORM$/.test(r.where)],
     // The helper as X3 had it: this is the conversion Codex found, and the fix is what ends it.
     ["lock-helper-as-x3-had-it", asX3Had, helper(raising("55P03", LOCK)), (r) => r.code === "P0001" && /got \[55P03\]/.test(r.message)],
   ]) {

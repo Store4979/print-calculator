@@ -1,0 +1,1 @@
+{"ok":false,"code":"40P01","message":"deadlock detected","where":"PL/pgSQL function pg_temp_0.x3_deadlock() line 1 at RAISE\nSQL statement \"SELECT pg_temp.x3_deadlock()\"\nPL/pgSQL function inline_code_block line 3 at PERFORM","severity":"ERROR"}

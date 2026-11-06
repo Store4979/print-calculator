@@ -382,8 +382,26 @@ for a shape that is only unsupported.
     identity, never to the shared application name alone. That label cannot identify
     which SQL ran. No cancellation is cleared by any of this.
 
-**For Codex's ruling, found in X3b's audit, and not changed:** two routes classify a real
-55P03 as R3 under profiles that take any SQLSTATE (§6.2).
+**For Codex's ruling, found in X3b's audit, and not changed in X3b:** two routes classified
+a real 55P03 as R3 under profiles that took any SQLSTATE. Ruled in §0.7, and closed by X3c.
+
+### 0.7 Codex's review of X3b (`1a7aff1`), and its follow-ups
+
+**X3-R1, R2 and R3 closed; the exact staging-only push cleared and made,** 2026-11-05
+(`reviews/2026-11-05-1a7aff1-review.md`; production plan §E13). The review sets three
+follow-ups, each with its own deadline:
+
+| follow-up | Codex's deadline | where |
+|---|---|---|
+| the verification driver: any required step's failure decides the exit | before its next use as a clearance signal, at the latest before X4 verification | below |
+| **X3c:** a reported 55P03 or 40P01 is R4 under every text and profile | before any production window, and before X4 relies on the policy in a live workflow | §6.2 |
+| **X3d:** unreviewed trigger or CHECK code is not executed by BUILD-01 | before B1. Its read fields are accepted before any R0a receipt is collected | §2.1 |
+
+**The driver** is a local script, so it has no commit. X3b's failed comparison stays as it was
+(`.review/verify-X3b-fixtures.txt`, `fixtures exit 1`), and that run's wrapper exit 0 cannot
+certify it as wholly green, as Codex ruled; comparing with the Git blobs resolved it for that
+commit. The repaired driver, its old versions and its demonstrations are in
+`.review/verify-driver/`.
 
 ## 1. What the remaining path touches
 
@@ -1079,10 +1097,9 @@ accepted (§10).
 
 **What it does not exercise.** Each of these stays R4 or R1 on production,
 which means STOP-and-review under UO-1:
-- `lock_timeout` (55P03), and any lock wait. **A lock_timeout on
-  production is R4, STOP-and-review,** but for the two routes §6.2 names,
-  where the classifier's profiles take any SQLSTATE and give R3 (for Codex's
-  ruling). R3 is no retry either;
+- `lock_timeout` (55P03), a deadlock (40P01), and any lock wait. **A reported
+  55P03 or 40P01 on production is R4, STOP-and-review,** on every route (§6.2,
+  X3c);
 - `statement_timeout` (57014);
 - `transaction_timeout` (25P04, FATAL);
 - a cancel;
@@ -1647,42 +1664,52 @@ raised again that way:
 - 25P04 from `transaction_timeout` is FATAL, and cannot be caught;
 - 57014 from a `statement_timeout` or a cancel is not matched by `OTHERS`, so it
   passes through unless a handler names it;
-- **55P03 from a `lock_timeout` can be caught.** An earlier version of this section
-  said it could not, and X3-R1 shows otherwise: `when others` catches it. **Keeping
-  it is a deliberate handler choice.** Every handler in P1-4C's code and BUILD-01's
-  steps first runs `when lock_not_available then raise;`, which keeps its SQLSTATE
-  and frames. That includes the inner handler of `stage0_expect_error`, which X3
-  missed. The old pinned P1 is unchanged, and its helper still converts it. The
+- **55P03 from a `lock_timeout` and 40P01 from a deadlock can be caught.** An earlier
+  version of this section said a lock timeout could not, and X3-R1 shows otherwise: `when
+  others` catches it. **Keeping them is a deliberate handler choice.** Every handler in
+  P1-4C's code and BUILD-01's steps first runs `when lock_not_available or
+  deadlock_detected then raise;`, which keeps the SQLSTATE and the frames. That includes the
+  inner handler of `stage0_expect_error`, which X3 missed for 55P03 and X3b for 40P01. The
   handlers judge the SQLSTATE; none reads the message.
 
 **These stay residual R4, STOP-and-review,** unless a receipt shows them
-and Codex reviews that profile, or an accepted profile already admits their frames
-(below). So does any planned refusal of §2.5 that turns out not to be a witnessed
+and Codex reviews that profile, or an accepted profile already admits their frames.
+So does any planned refusal of §2.5 that turns out not to be a witnessed
 profile: it is a hold, and its first receipt goes to Codex (U-1).
 
-**Where a real lock timeout on P1-4C's path ends up** (X3b's audit; the envelopes are
-rendered, since no lock wait has been measured on it):
+**The fail-closed policy (X3c; Ryan's, accepted in Codex's review of `1a7aff1`, §1).** After
+the receipt has bound and the envelope has parsed, a reported SQLSTATE of 55P03 or 40P01 is
+**R4 before any profile can return R3,** under every text and every profile. The receipt
+checks and R1 keep their precedence. Allowing fewer outcomes is the only change: no receipt
+is newly accepted, and 57014 stays under its existing rules. No preserved SQL text, output
+hash or byte count moved.
 
-| where it arises | its frames | class |
-|---|---|---|
-| a `stage0_expect_error` probe, or its digest | its own, through the helper's named frames | R4 |
-| a statement of a check, in a section's DO block | its own, at a statement or a PERFORM | R4 |
-| a wrapper's `execute f` (P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2) | `SQL statement "<the file>"`, then `inline_code_block` at EXECUTE | **R3, "executed input"** |
-| a top-level statement outside any DO block (section 0's CREATEs read `employees`, `stores`, `organizations`, `memberships`, `auth.users`) | none | **R3, "field-less"** |
+| where a lock timeout or deadlock arises | its frames | before X3c | now |
+|---|---|---|---|
+| a `stage0_expect_error` probe, or its digest | its own, through the helper's named frames | R4 for 55P03; P0001, R3 for a 40P01 in a probe | **R4** |
+| a statement of a check, in a section's DO block | its own, at a statement or a PERFORM | R4 | **R4** |
+| a wrapper's `execute f` (P2-02, P2-0304, P2-05, RB-5, RB-43, RB-2, and each preserved P2 and RB text on production) | `SQL statement "<the file>"`, then `inline_code_block` at EXECUTE | R3, "executed input" | **R4** |
+| a top-level statement outside any DO block (section 0's CREATEs read `employees`, `stores`, `organizations`, `memberships`, `auth.users`) | none | R3, "field-less" | **R4** |
+| a handler that re-raises it, as the lock probe's does | one frame, at RAISE | R3, "re-raised" | **R4** |
 
-**The last two rows are not catch points,** and no handler reaches them. The wrappers
-are preserved byte for byte and have no handler. Both profiles take any SQLSTATE
-(`PROFILES` in `stage0-classify.mjs`, from item 2's reviewed capture commits), and the
-same holds for the preserved P2 and RB texts on production. The item 2 plan already
-expected the first: "A 55P03 on `employees` during P2-01 would look like this." So
-"a lock timeout is R4" holds only for the first two rows. An R3 here is still no retry,
-and no proof of an unchanged prefix. **X3b does not change the classifier:** 4W-15 pins
-this behaviour so that it is visible, and whether a timeout SQLSTATE should leave those
-profiles is for Codex's ruling.
+**The guarantee's scope, as Codex wrote it: codes the supported dispatch paths preserve or the
+server reports.** Old P1's historical helper can replace an inner state with P0001, so it stays
+pinned and outside the new production workflow, and message matching cannot give a stronger
+guarantee for a receipt whose state was already transformed. No lock wait or deadlock has been
+measured on this path: each 55P03 and 40P01 in the local runs is raised on purpose, and each
+envelope is rendered.
 
-**Also not changed:** a deadlock (40P01) inside a probe is still judged by the helper, so
-it is P0001 with its state in the message, and R3. In a section's DO block it is
-re-raised with one frame, and R3. §2.5 does not name it, and X3-R1 is about 55P03.
+**Old evidence.** `holdsOf` classifies a journal's receipts with the running classifier and the
+claim head's context, so a policy change can reach old evidence even when the SQL pins agree. G-29
+exercises that on a synthetic store: a writing send reporting either state holds the project, a
+replay of the journal gives the same hold, and a disposition still releases it. No historical
+capture, receipt or disposition is changed. Reported separately
+(`.review/x3c-evidence/historical-classification.json`, from the repository's copies; the real
+guard store was not read): none of the 44 real sender receipts reports either state, and each
+classifies as before, the lock-probe witness A2 included (P0001 in its own words, R3). The one
+message that moves is N5 scenario 1, the real 55P03 the lock probe's handler re-raised on
+2026-09-29, seen through `execute_sql` and never a sender receipt: rendered as one, R3 before, R4
+now.
 
 **Unchanged:**
 - the uncaptured STMTTIMEOUT PERFORM stays R4;

@@ -1,0 +1,1 @@
+{"ok":false,"code":"42P01","message":"deadlock detected","where":"PL/pgSQL function inline_code_block line 6 at RAISE","severity":"ERROR"}

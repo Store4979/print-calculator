@@ -452,7 +452,7 @@ test("CL-13 the N5 execute_sql history fits the declared capture outcomes (A2, A
   // since the capture commit, is the FATAL (R4 at L).
   const as400 = (text, m) => cls(receiptFor(text, "staging", 400, env(m))).class;
   assert.equal(as400("LOCKPROBE-B-LOCKTIMEOUT", HIST["2026-09-29T16:30:37.252Z"].message), "R3");
-  assert.equal(as400("LOCKPROBE-B-LOCKTIMEOUT", HIST["2026-09-29T16:38:55.436Z"].message), "R3", "55P03, re-raised, is the same envelope shape");
+  assert.equal(as400("LOCKPROBE-B-LOCKTIMEOUT", HIST["2026-09-29T16:38:55.436Z"].message), "R4", "55P03, re-raised: the same envelope shape, and a state rule 3′ never resolves (X3c)");
   assert.equal(as400("LOCKPROBE-B-STMTTIMEOUT", HIST["2026-09-29T16:39:58.546Z"].message), "R3");
   assert.equal(as400("LOCKPROBE-B-TXTIMEOUT", HIST["2026-09-29T16:45:30.271Z"].message), "R3", "the FATAL with its bound PERFORM query");
   assert.equal(HIST["2026-09-29T16:45:30.271Z"].message, JSON.parse(rec(CAPTURE.T2[0]).body).message, "T2's receipt says exactly what N5 saw");
@@ -930,7 +930,7 @@ test("CL-27 C-COMB: an envelope is R3 only as one of the five witnessed profiles
     assert.match(c.reasons[0], name === UNBOUND ? /quotes no complete input of the bound text/ : /^supported elements in a combination no receipt shows: no witnessed profile is /, name);
   }
   // No normalization: inside an ERROR profile, the SQLSTATE, primary text and line number vary within the parser's bounds.
-  const a2 = msgOf("A2").replace("line 75", "line 999999").replace("ERROR:  P0001: lockprobe", "ERROR:  55P03: lockprobe");
+  const a2 = msgOf("A2").replace("line 75", "line 999999").replace("ERROR:  P0001: lockprobe", "ERROR:  57014: lockprobe");
   assert.equal(cls({ ...rec(CAPTURE.A2[0]), body: env(a2) }).class, "R3", "another SQLSTATE, text and line, still re-raised");
 });
 

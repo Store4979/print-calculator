@@ -598,15 +598,10 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         Its proofs equal P1's production receipt but for S0.2 (4W-4). It runs under
         P1's application name, so the preserved cancel template reaches it;
       - **RERAISE and stage0_expect_error's inner handler let `lock_not_available`
-        through as it is** (X3-R1). PL/pgSQL can catch it: an outer pass-through
-        never sees what an inner `when others` already turned into P0001. A new
-        handler anywhere on the path needs the same first arm; p1PrimeProblems checks
-        it. Never recognize a timeout by its message;
-      - **a 55P03's class comes from its frames, and it is not always R4** (plan
-        §6.2): R4 through the helper or a check, but R3 from a wrapper's `execute f`
-        ("executed input") or a top-level statement ("field-less"), whose profiles
-        take any SQLSTATE. 4W-15 pins this for Codex's ruling. Don't write "a lock
-        timeout is R4" without saying where;
+        and `deadlock_detected` through as they are** (X3-R1, X3c). PL/pgSQL can catch
+        them: an outer pass-through never sees what an inner `when others` already
+        turned into P0001. A new handler anywhere on the path needs the same first arm;
+        p1PrimeProblems checks it. Never recognize either by its message;
       - **pg_get_indexdef does not show DEFERRABLE, and agreement is not
         completeness** (X3-R2, X3-R3): a key with the accepted definition, and a
         varchar too short for its literal, both passed the JS and the SQL predicate
@@ -640,7 +635,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         digests (now(), random ids) of the others, so take only what the changed text
         moved. Tests: stage0-4c-writing.test.js (4W-1…4W-17), its mutation companion
         (4W-M1…M4). PGlite is not a dependency, so a database run in those tests is the
-        harness's, recorded: the suite runs the comparator and classifier on it;
+        harness's, recorded: the suite runs the comparator and classifier on it. The
+        lock states' are stage0-classify.lockstates.test.js (LS-1…LS-6) and G-29;
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):
     the 9 files stage0-send/-window/-go.mjs load (with the classifier and its
     PERFORM data, the capture gate and the item 3 gate), plus the modules CHAIN_LISTED names
@@ -780,7 +776,12 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
 
       A new profile needs its own receipt and review. A LINE position block,
       QUERY and other frame kinds stay R4. R3 is not a retry, and not proof
-      of an unchanged prefix;
+      of an unchanged prefix. **A reported 55P03 or 40P01 is R4 before any profile**
+      (NEVER_RESOLVED_SQLSTATES; X3c, plan §6.2), on the state and never the words.
+      57014 keeps its existing rules. The scope is what the dispatch paths preserve or
+      the server reports: old P1's helper can replace an inner state with P0001, so
+      it stays pinned and outside the new production workflow. holdsOf uses the running
+      classifier, so a policy change can reach an old journal (G-29);
     - R4 UNRESOLVED: everything else, gateway text quoting an error
       included.
     The sender's exit 0 on any 201 is a transport fact, not a class.

@@ -24,17 +24,16 @@
 -- a top-level DO block whose handler raises the error again from that block, so
 -- its envelope is one frame, at RAISE in inline_code_block (plan §6.2). The handlers
 -- do not cover everything:
---   - lock_not_available (55P03) is raised as it is, with its own frames, by every
---     handler here: the DO blocks' and the inner one in stage0_expect_error. That is
---     a choice these handlers make, on the SQLSTATE; PL/pgSQL can catch it;
+--   - lock_not_available (55P03) and deadlock_detected (40P01) are raised as they are,
+--     with their own SQLSTATE and frames, by every handler here: the DO blocks' and the
+--     inner one in stage0_expect_error. That is a choice these handlers make, on the
+--     SQLSTATE; PL/pgSQL can catch them;
 --   - query_canceled (57014) is not matched by OTHERS and passes through them;
 --   - a FATAL (25P04, transaction_timeout) cannot be caught.
--- Those keep their frames. Rule 3' classifies an envelope by its frames, so they are
--- R4 unless a reviewed profile admits them. Two places give such frames, for any
--- SQLSTATE: the wrapper bodies are P2's and RB's verbatim, with no handler, so an error inside
--- their EXECUTE of a file carries the "executed input" frames; and the CREATE
--- statements in section 0 are outside any DO block, so an error in one carries no
--- frame ("field-less"). Plan §6.2 lists these routes.
+-- Those keep their frames. Rule 3' classifies a reported 55P03 or 40P01 as R4 under any
+-- frames; the others are R4 unless a reviewed profile admits their frames. The wrapper
+-- bodies are P2's and RB's verbatim, with no handler, and the CREATE statements in
+-- section 0 are outside any DO block. Plan §6.2 lists these routes.
 --
 -- PRINCIPALS ARE CREATED INSIDE THE TRANSACTION, as in P1's proofs: two synthetic
 -- organizations and stores (A, B) plus a store with no org (C, for 23502); three
@@ -81,8 +80,9 @@ $f$;
 -- message p_msg. The inner block always ends in an exception, so its
 -- subtransaction — the role switch and any effect of an unexpected success —
 -- is always rolled back. p_unchanged: the rows that must be identical before
--- and after. A lock_not_available is not a refusal this helper judges: it is raised
--- as it is, with its SQLSTATE and frames, and no proof here expects that state.
+-- and after. A lock_not_available or a deadlock_detected is not a refusal this helper
+-- judges: each is raised as it is, with its SQLSTATE and frames, and no proof here
+-- expects either state.
 create function pg_temp.stage0_expect_error(p_id text, p_role text, p_sql text,
                                             p_state text, p_msg text, p_unchanged text)
 returns void language plpgsql as $f$
@@ -98,7 +98,7 @@ begin
     v_msg := '';
     raise exception 'stage0 sentinel' using errcode = 'P0002';
   exception
-    when lock_not_available then raise;
+    when lock_not_available or deadlock_detected then raise;
     when others then
       if v_state is null then
         v_state := sqlstate;
@@ -281,7 +281,7 @@ begin
                                          where t.tgrelid = 'auth.users'::regclass and not t.tgisinternal) = 0,
     'auth.users has no user-defined trigger (the fixtures insert there)');
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s0$;
@@ -336,7 +336,7 @@ begin
   perform pg_temp.stage0_check('S1.2', r.store_id = st_a, 'the 42702 probe''s enrollment is at store A');
   insert into stage0_fix values ('enr_42702', r.enrollment_id);
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s1$;
@@ -361,7 +361,7 @@ begin
     format('select s::text from public.staff_sessions s where s.enrollment_id = %L', enr)
       || format(' union all select de::text from public.device_enrollments de where de.id = %L', enr));
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s1b$;
@@ -445,7 +445,7 @@ perform pg_temp.stage0_check('S2.6', not exists (
   'every new public catalog row belongs to Release 2');
 
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s2a$;
@@ -654,7 +654,7 @@ begin
     and exists (select 1 from public.auth_attempts a where a.subject = subj),
     'prune: exactly the old unlocked row deleted; the live lock and the current row kept');
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s2$;
@@ -689,7 +689,7 @@ begin
       || coalesce((select string_agg(tbl, ', ') from (select * from stage0_realrows_before
                                                         except select * from stage0_realrows) d), 'none differ') || ')');
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s3$;
@@ -707,7 +707,7 @@ begin
                         union all (select * from stage0_catalog_rows except select * from stage0_catalog_before)) x
           limit 20) d), 'none') || ')');
 exception
-  when lock_not_available then raise;
+  when lock_not_available or deadlock_detected then raise;
   when others then raise exception '%', sqlerrm using errcode = sqlstate;
 end
 $s4$;

@@ -1084,7 +1084,7 @@ export function item4cTexts(src, rows) {
 export const P1_4C_BOUNDARIES = Object.freeze(["after-section-0", "after-P2-02", "before-savepoint", "after-savepoint-rollback", "after-P2-0304",
   "after-P2-05", "after-sections-2-3", "after-RB-5", "after-RB-43", "after-RB-2", "after-section-4"]);
 /** The handler every checking DO block ends with (plan §6.2): one frame, at RAISE, but for what it lets through. */
-export const RERAISE = "exception\n  when lock_not_available then raise;\n  when others then raise exception '%', sqlerrm using errcode = sqlstate;\nend\n";
+export const RERAISE = "exception\n  when lock_not_available or deadlock_detected then raise;\n  when others then raise exception '%', sqlerrm using errcode = sqlstate;\nend\n";
 const lockBoundary = (name) => {
   const i = P1_4C_BOUNDARIES.indexOf(name);
   if (i < 0) throw new Error(`no lock boundary ${name}`);

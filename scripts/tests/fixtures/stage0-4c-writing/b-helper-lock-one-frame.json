@@ -1,0 +1,1 @@
+{"ok":false,"code":"55P03","message":"canceling statement due to lock timeout","where":"PL/pgSQL function inline_code_block line 3 at RAISE","severity":"ERROR"}

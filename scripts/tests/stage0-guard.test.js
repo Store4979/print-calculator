@@ -1352,6 +1352,57 @@ test("G-28 X3: a go written consistently into the store for another text than it
   } finally { fx.cleanup(); }
 });
 
+/** A send whose response is a 400 with this SQL-error envelope; the receipt goes in the journal as it would. */
+const sqlErrorFetch = (fx, state, words) => async (url, init) => {
+  fx.calls.push({ url, init });
+  return new Response(JSON.stringify({ message: `Failed to run sql query: ERROR:  ${state}: ${words}\nCONTEXT:  PL/pgSQL function inline_code_block line 12 at RAISE\n` }), { status: 400 });
+};
+
+test("G-29 X3c: a writing send reporting 55P03 or 40P01 is held, in a frame the old policy resolved; replaying that journal gives the same hold, a disposition still releases it, and the control state holds nothing", async () => {
+  const review = (dir, id) => { const p = join(dir, `review-${id}.txt`); writeFileSync(p, `reviewed attempt ${id}\n`); return p; };
+  for (const state of ["55P03", "40P01"]) {
+    const { fx, ph, W } = setupP();
+    try {
+      const go = fx.issue(ph.phaseId, "A1");
+      const r = await fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId, over: { fetchImpl: sqlErrorFetch(fx, state, "any words at all") } });
+      assert.equal(r.record.httpStatus, 400, state);
+      const h = holds(fx);
+      assert.equal(h.length, 1, state);
+      assert.equal(h[0].kind, "HOLD", state);
+      assert.match(h[0].why, /A1 \(P2-01\) is a writing send that rule 3′ classifies R4 UNRESOLVED/, state);
+      // The same frame with no such state was R3, so this is a state's hold, not a frame's. Reading the journal again gives the same.
+      assert.deepEqual(holds(fx), h, "a replay of the journal");
+      assert.equal(fx.check().ok, true);
+      // It holds the project: no next step, until a reviewed disposition.
+      await refused(async () => fx.issue(ph.phaseId, "A2"), /hold|UNRESOLVED/i, "the next step's go");
+      const id = h[0].attemptId;
+      const outcomeBytes = readFileSync(join(fx.paths.journal(PROD), `${id}.outcome.json`));
+      fx.dispose(id, review(fx.dir, `${state}-${id}`));
+      assert.deepEqual(holds(fx), [], "a disposition releases it");
+      assert.deepEqual(readFileSync(join(fx.paths.journal(PROD), `${id}.outcome.json`)), outcomeBytes, "the journal's outcome is unchanged");
+      assert.deepEqual(holds(fx), [], "and a replay keeps the disposition");
+    } finally { fx.cleanup(); }
+  }
+  // The control: an unrelated state in the same frame, with words that say deadlock and lock timeout, holds nothing.
+  const { fx, ph, W } = setupP();
+  try {
+    const go = fx.issue(ph.phaseId, "A1");
+    await fx.send(G, { text: "P2-01", target: "production", win: W, goId: go.goId, over: { fetchImpl: sqlErrorFetch(fx, "42P01", "deadlock detected; canceling statement due to lock timeout") } });
+    assert.deepEqual(holds(fx), [], "R3 holds nothing");
+  } finally { fx.cleanup(); }
+  // A read send that reports the state is R4 and not writing: the classifier's rule, and no hold, as for any read.
+  const read = setupP({ phase: "Y" });
+  try {
+    const go = read.fx.issue(read.ph.phaseId, "Y1");
+    await read.fx.send(G, { text: "STATE", target: "production", win: read.R, goId: go.goId, over: { fetchImpl: sqlErrorFetch(read.fx, "55P03", "x") } });
+    assert.deepEqual(holds(read.fx), []);
+    const [e] = G.readJournal(read.fx.paths, PROD);
+    const b = G.boundReceipt(e);
+    const c = C.classifyText(b.text, read.fx.ctxAt(e.claim.head));
+    assert.deepEqual([c.class, c.writing], ["R4", false]);
+  } finally { read.fx.cleanup(); }
+});
+
 test("G-26 the mutation companion: each named check, removed, admits exactly one request in the scenario where the original allows none", async () => {
   const dir = mkdtempSync(join(tmpdir(), "s0-guard-mutants-"));
   try {

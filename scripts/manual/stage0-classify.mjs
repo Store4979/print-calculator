@@ -10,7 +10,9 @@
 //                   does not bind to the pinned text it names;
 //   R2 RESOLVED     success: HTTP 201 and the text's own success predicate;
 //   R3 RESOLVED     SQL error: an observed status, a body that is exactly
-//                   {"message": m}, and m inside the supported envelope grammar;
+//                   {"message": m}, m inside the supported envelope grammar, and a
+//                   reported SQLSTATE that is not a lock timeout's or a deadlock's
+//                   (NEVER_RESOLVED_SQLSTATES);
 //   R4 UNRESOLVED   anything else.
 //
 // What a class does NOT say:
@@ -673,7 +675,8 @@ export function performQueries(texts) {
  *   - The transaction-timeout profile also binds its SQLSTATE and its one
  *     PERFORM: that query, under that text.
  *   - The other profiles take any SQLSTATE, primary text and line number,
- *     each within the parser's bounds.
+ *     each within the parser's bounds. classifyChecked never brings them a
+ *     SQLSTATE in NEVER_RESOLVED_SQLSTATES.
  */
 export const PROFILES = Object.freeze([
   Object.freeze({ name: "field-less", severity: "ERROR", fields: Object.freeze([]), frames: Object.freeze([]), witness: B1 }),
@@ -686,6 +689,18 @@ export const PROFILES = Object.freeze([
     perform: Object.freeze({ text: "LOCKPROBE-B-TXTIMEOUT", query: "SELECT pg_sleep(30)" }), witness: T2,
   }),
 ]);
+
+/**
+ * The SQLSTATEs rule 3′ never resolves, under any text or profile: a lock timeout's
+ * and a deadlock's (the fail-closed policy; Codex's review of 1a7aff1, §1). This is the
+ * state the envelope REPORTS, compared after the receipt has bound and the envelope has
+ * parsed, and before any profile. The message is not read, so an unrelated SQLSTATE
+ * whose words say "deadlock" or "lock timeout" stays under the profiles, and an inner
+ * state another handler already replaced cannot be recovered here: old P1's helper can
+ * replace one with P0001, and that text stays pinned and outside the new production
+ * workflow. 57014 stays under its existing rules.
+ */
+export const NEVER_RESOLVED_SQLSTATES = Object.freeze(["55P03", "40P01"]);
 
 /** A parsed envelope's structure: its fields and its frames, in order. */
 export function structureOf(sqlError) {
@@ -937,6 +952,7 @@ function classifyChecked(fileText, ctx) {
     if (!sameKeys(p.v, ["message"]) || typeof p.v.message !== "string") return { class: "R4", outcome: "UNRESOLVED", reasons: ['the body is not exactly {"message": <string>}'], ...base };
     const env = parseEnvelope(p.v.message, { candidates: candidatesFor(ctx, rec.text) });
     if (!env.ok) return { class: "R4", outcome: "UNRESOLVED", reasons: [`not a supported SQL-error envelope: ${env.why}`], ...base };
+    if (NEVER_RESOLVED_SQLSTATES.includes(env.sqlError.sqlstate)) return { class: "R4", outcome: "UNRESOLVED", reasons: [`the envelope reports SQLSTATE ${env.sqlError.sqlstate}, which rule 3′ never resolves, under any text or profile`], ...base };
     const prof = matchProfile(env.sqlError, rec.text);
     if (!prof.ok) return { class: "R4", outcome: "UNRESOLVED", reasons: [`supported elements in a combination no receipt shows: ${prof.why}`], ...base };
     return { class: "R3", outcome: "RESOLVED SQL error", reasons: [], ...base, sqlError: env.sqlError, profile: prof.profile };

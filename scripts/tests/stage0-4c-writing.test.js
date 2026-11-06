@@ -26,17 +26,17 @@
 //   4W-13 the default ACL targets and statements
 //   4W-14 the real builds: accepted at 01, the catalog and ledger the local 01's,
 //         the default rows exactly the target's
-//   4W-15 X3-R1, Codex's first probe: a lock_not_available through the real helper
-//         and the real outer handler keeps its state and frames, and its envelope is
-//         R4; the helper's controls; every catch point on the path; the routes that
-//         are not catch points
+//   4W-15 X3-R1 and X3c, Codex's first probe: a lock_not_available and a
+//         deadlock_detected through the real helper and the real outer handler keep
+//         their state and frames, and their envelopes are R4; the helper's controls;
+//         every catch point on the path; every route, none of them R3
 //   4W-16 X3-R2, the second: the arbiter comes from catalog properties. Codex's
 //         deferrable key stops in both implementations before any file
 //   4W-17 X3-R3, the third: a bounded text column must hold the literals. The literal
 //         table is the files' and BUILD-01's own
 // Each database run in these three is the harness's, on PGlite, which is not a
 // dependency of this repository; the test runs the comparator and the classifier on
-// what that run recorded, and each 55P03 there was raised on purpose.
+// what that run recorded, and each 55P03 and 40P01 there was raised on purpose.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -65,6 +65,8 @@ const predicate = (rows) => CL.SUCCESS["P1-4C"].check(JSON.stringify(rows));
 /** The text with its one occurrence of `from` replaced. split and join: these texts hold dollar quotes, which String.replace would read as patterns. */
 const swapIn = (text, from, to) => { assert.equal(text.split(from).length, 2, `one occurrence: ${from.slice(0, 80)}`); return text.split(from).join(to); };
 const ONE_FRAME = /^PL\/pgSQL function inline_code_block line \d+ at RAISE$/;
+/** stage0_expect_error's handler, as P1-4C holds it. */
+const HELPER_ARM = "  exception\n    when lock_not_available or deadlock_detected then raise;\n    when others then\n";
 /** The 11 boundaries, written out from plan §6.1. */
 const BOUNDARIES = ["after-section-0", "after-P2-02", "before-savepoint", "after-savepoint-rollback", "after-P2-0304", "after-P2-05", "after-sections-2-3", "after-RB-5", "after-RB-43", "after-RB-2", "after-section-4"];
 
@@ -94,9 +96,12 @@ test("4W-1 P1-4C is pinned, its policy exact and production-only; it holds the s
     ["a boundary not declared", P1P.replace("\nrollback;\n", "\nselect pg_temp.stage0_locks(99, 'extra');\nrollback;\n"), /not declared/],
     ["another catalog query", P1P.replace("-- @@catalog-rows end", "union all select 'x', 'y', 'z'\n-- @@catalog-rows end"), /catalog query/],
     ["no savepoint", P1P.replace("\nsavepoint stage0_03_alone;\n", "\n"), /no savepoint/],
-    ["the helper's handler as X3 had it", swapIn(P1P, "  exception\n    when lock_not_available then raise;\n    when others then\n", "  exception when others then\n"), /a handler in P1-4C does not first let lock_not_available through/],
-    ["a boundary's handler without the pass-through", swapIn(P1P, noBoundary("after-RB-5"), noBoundary("after-RB-5").split("  when lock_not_available then raise;\n").join("")), /a handler in P1-4C does not first let lock_not_available through/],
-    ["a proof expecting 55P03", swapIn(P1P, "perform pg_temp.stage0_expect_error('E2', null,", "perform pg_temp.stage0_expect_error('E0', null, 'select 1', '55P03', 'x', 'select 1');\n  perform pg_temp.stage0_expect_error('E2', null,"), /a proof in P1-4C expects 55P03/],
+    ["the helper's handler as X3 had it", swapIn(P1P, HELPER_ARM, "  exception when others then\n"), /a handler in P1-4C does not first let lock_not_available and deadlock_detected through/],
+    ["the helper's handler as X3b had it", swapIn(P1P, HELPER_ARM, "  exception\n    when lock_not_available then raise;\n    when others then\n"), /a handler in P1-4C does not first let lock_not_available and deadlock_detected through/],
+    ["a boundary's handler without the pass-through", swapIn(P1P, noBoundary("after-RB-5"), noBoundary("after-RB-5").split("  when lock_not_available or deadlock_detected then raise;\n").join("")), /a handler in P1-4C does not first let lock_not_available and deadlock_detected through/],
+    ["a boundary's handler passing 55P03 alone", swapIn(P1P, noBoundary("after-RB-5"), noBoundary("after-RB-5").split("when lock_not_available or deadlock_detected then").join("when lock_not_available then")), /a handler in P1-4C does not first let lock_not_available and deadlock_detected through/],
+    ["a proof expecting 55P03", swapIn(P1P, "perform pg_temp.stage0_expect_error('E2', null,", "perform pg_temp.stage0_expect_error('E0', null, 'select 1', '55P03', 'x', 'select 1');\n  perform pg_temp.stage0_expect_error('E2', null,"), /a proof in P1-4C expects 55P03 or 40P01/],
+    ["a proof expecting 40P01", swapIn(P1P, "perform pg_temp.stage0_expect_error('E2', null,", "perform pg_temp.stage0_expect_error('E0', null, 'select 1', '40P01', 'x', 'select 1');\n  perform pg_temp.stage0_expect_error('E2', null,"), /a proof in P1-4C expects 55P03 or 40P01/],
   ]) {
     assert.notEqual(text, P1P, label);
     assert.match(p1PrimeProblems(text, OUT).join("; "), re, label);
@@ -202,12 +207,12 @@ test("4W-6 a failing check and a wrapper's guard are re-raised with one frame, s
   // A check's own frames, with no handler in the way, are R4: an unsupported function name.
   const raw2 = "PL/pgSQL function pg_temp_3.stage0_check(text,boolean,text) line 4 at RAISE\nSQL statement \"SELECT pg_temp.stage0_check('S0.1', false, 'x')\"\nPL/pgSQL function inline_code_block line 3 at PERFORM";
   assert.equal(CL.classifyText(errorReceipt("P1-4C", "production", "P0001", "x", raw2), ctx).class, "R4");
-  // The handler: every checking DO block in the proofs ends in it, and 55P03 is not re-raised as one frame.
+  // The handler: every checking DO block in the proofs ends in it, and 55P03 and 40P01 keep their frames.
   const proofsSource = src.item4c("p1prime");
   const blocks = [...proofsSource.matchAll(/^do \$(s[0-9a-z]+)\$\n[\s\S]*?^\$\1\$;$/gm)];
   assert.deepEqual(blocks.map((m) => m[1]), ["s0", "s1", "s1b", "s2a", "s2", "s3", "s4"]);
   for (const m of blocks) assert.ok(m[0].includes(A.RERAISE), m[1]);
-  assert.equal(A.RERAISE, "exception\n  when lock_not_available then raise;\n  when others then raise exception '%', sqlerrm using errcode = sqlstate;\nend\n");
+  assert.equal(A.RERAISE, "exception\n  when lock_not_available or deadlock_detected then raise;\n  when others then raise exception '%', sqlerrm using errcode = sqlstate;\nend\n");
   assert.equal(P1P.split("do $stage0_locks$").length - 1, 11);
   // A wrapper's EXECUTE keeps its witnessed profile, for the files P1-4C holds, and for no other.
   const executed = (sql) => `SQL statement "${sql}"\nPL/pgSQL function inline_code_block line 7 at EXECUTE`;
@@ -616,6 +621,7 @@ test("4W-14 the real builds: P0-4C accepts each at 01 on the rehearsal; the cata
 });
 
 const LOCK_WORDS = "canceling statement due to lock timeout";
+const DEADLOCK_WORDS = "deadlock detected";
 const helperRun = (name) => {
   const e = json(`b-helper-${name}.json`);
   return { e, c: e.ok ? null : CL.classifyText(errorReceipt("P1-4C", "production", e.code, e.message, e.where), ctx) };
@@ -623,7 +629,7 @@ const helperRun = (name) => {
 /** Every handler in a text: the word EXCEPTION where RAISE does not come before it. */
 const handlersIn = (view) => [...view.matchAll(/\bexception\b/gi)].filter((m) => !/\braise\s+$/i.test(view.slice(Math.max(0, m.index - 40), m.index)));
 
-test("4W-15 X3-R1: a lock_not_available through the real stage0_expect_error and the real outer handler keeps its state and frames, and its envelope is R4; the helper still judges every other refusal; every catch point on the path passes it; the routes that are not catch points are named", () => {
+test("4W-15 X3-R1 and X3c: a lock_not_available and a deadlock_detected through the real stage0_expect_error and the real outer handler keep their state and frames, and their envelopes are R4; the helper still judges every other refusal; every catch point on the path passes both; every route is R4", () => {
   // Codex's probe, from the harness's run of section 0's real helper. The 55P03 is raised on purpose.
   const lock = helperRun("lock-through-helper");
   assert.equal(lock.e.code, "55P03");
@@ -647,6 +653,39 @@ test("4W-15 X3-R1: a lock_not_available through the real stage0_expect_error and
   assert.equal(notLock.e.code, "P0001");
   assert.equal(notLock.e.message, `STAGE0 PROOF X3-LOCK FAILED: expected [42501] the expected refusal, got [42P01] ${LOCK_WORDS}`);
   assert.equal(notLock.c.class, "R3");
+  // X3c: the same for a deadlock, which X3b's helper still converted to P0001, R3 (Codex's probe of 1a7aff1).
+  const dead = helperRun("deadlock-through-helper");
+  assert.equal(dead.e.code, "40P01");
+  assert.equal(dead.e.message, DEADLOCK_WORDS);
+  assert.match(dead.e.where, /PL\/pgSQL function pg_temp_\d+\.stage0_expect_error\(text,text,text,text,text,text\) line \d+ at EXECUTE/);
+  assert.equal(dead.c.class, "R4", dead.c.reasons.join("; "));
+  const oldDead = helperRun("deadlock-helper-as-x3b-had-it");
+  assert.equal(oldDead.e.code, "P0001");
+  assert.match(oldDead.e.message, /got \[40P01\] deadlock detected$/);
+  assert.match(oldDead.e.where, ONE_FRAME);
+  assert.equal(oldDead.c.class, "R3");
+  assert.equal(oldDead.c.profile, "re-raised");
+  const deadWords = helperRun("deadlock-other-words");
+  assert.equal(deadWords.e.code, "40P01");
+  assert.equal(deadWords.e.message, "some other words");
+  assert.equal(deadWords.c.class, "R4");
+  const notDead = helperRun("deadlock-words-other-state");
+  assert.equal(notDead.e.code, "P0001");
+  assert.equal(notDead.c.class, "R3");
+  // Each state alone, in the one frame a witnessed profile has: the frames fit, and the state still decides.
+  for (const [name, state] of [["lock-one-frame", "55P03"], ["deadlock-one-frame", "40P01"]]) {
+    const r = helperRun(name);
+    assert.equal(r.e.code, state, name);
+    assert.match(r.e.where, ONE_FRAME, name);
+    assert.equal(r.c.class, "R4", name);
+    assert.match(r.c.reasons[0], /reports SQLSTATE/, name);
+  }
+  // An unrelated SQLSTATE whose words say "deadlock" or "lock timeout" stays under the profiles.
+  for (const [name, words] of [["unrelated-state-deadlock-words", DEADLOCK_WORDS], ["unrelated-state-lock-words", LOCK_WORDS]]) {
+    const r = helperRun(name);
+    assert.deepEqual([r.e.code, r.e.message], ["42P01", words], name);
+    assert.deepEqual([r.c.class, r.c.profile], ["R3", "re-raised"], name);
+  }
   // The helper's own controls: the expected refusal is a proof row, and a wrong one, a wrong message or no refusal are its failure.
   const expected = helperRun("expected-refusal");
   assert.equal(expected.e.ok, true);
@@ -663,9 +702,9 @@ test("4W-15 X3-R1: a lock_not_available through the real stage0_expect_error and
   const stmt = helperRun("statement-timeout-state");
   assert.equal(stmt.e.code, "57014");
   assert.equal(stmt.c.class, "R4");
-  for (const [name, frame] of [["lock-in-the-digest", /pg_temp_\d+\.stage0_digest\(text\) line \d+ at EXECUTE/], ["lock-in-a-check", /SQL statement "SELECT pg_temp\.x3_lock\(\)"/]]) {
+  for (const [name, state, frame] of [["lock-in-the-digest", "55P03", /pg_temp_\d+\.stage0_digest\(text\) line \d+ at EXECUTE/], ["lock-in-a-check", "55P03", /SQL statement "SELECT pg_temp\.x3_lock\(\)"/], ["deadlock-in-the-digest", "40P01", /pg_temp_\d+\.stage0_digest\(text\) line \d+ at EXECUTE/], ["deadlock-in-a-check", "40P01", /SQL statement "SELECT pg_temp\.x3_deadlock\(\)"/]]) {
     const r = helperRun(name);
-    assert.equal(r.e.code, "55P03", name);
+    assert.equal(r.e.code, state, name);
     assert.match(r.e.where, frame, name);
     assert.equal(r.c.class, "R4", name);
   }
@@ -673,7 +712,7 @@ test("4W-15 X3-R1: a lock_not_available through the real stage0_expect_error and
   const view = sqlCode(P1P, { label: "P1-4C", strings: "blank", bodies: (s) => (s.tag === "stage0_file" ? "data" : "code") });
   const handlers = handlersIn(view);
   assert.equal(handlers.length, 19);
-  for (const m of handlers) assert.match(view.slice(m.index, m.index + 60), /^exception\s+when lock_not_available then raise;/);
+  for (const m of handlers) assert.match(view.slice(m.index, m.index + 80), /^exception\s+when lock_not_available or deadlock_detected then raise;/);
   // Nothing else on the path catches: no wrapper, and none of the 21 files, the forwards it runs or the rollbacks.
   for (const k of ["P2-02", "P2-0304", "P2-05", "RB-5", "RB-43", "RB-2"]) assert.deepEqual(handlersIn(OUT[k]).map((m) => m.index), [], k);
   const blobs = [...M.baselineLedger.map((r) => [r.name, r.blob]), ...M.migrations.map((m) => [m.name, m.blob]), ...M.rollbacks.map((r) => [`rollback ${r.n}`, r.blob])];
@@ -683,16 +722,19 @@ test("4W-15 X3-R1: a lock_not_available through the real stage0_expect_error and
   assert.deepEqual([M.outputs.P1.md5, M.outputs.P1.bytes], ["2546a4a45a79cb2ec8a986df84396a9c", 240125]);
   assert.equal(A.md5(OUT.P1), M.outputs.P1.md5);
   assert.ok(OUT.P1.includes("  exception when others then\n"));
-  // WHAT THE HANDLERS DO NOT REACH (plan §6.2). These are not catch points: the envelope has the frames of a profile that takes any SQLSTATE, so it is R3, under P1-4C as under P2-02. Synthetic envelopes; recorded for Codex's ruling.
+  // WHAT THE HANDLERS DO NOT REACH (plan §6.2). These are not catch points, and the frames fit a profile, so the classifier's own rule is what makes them R4 (X3c), under P1-4C as under P2-02. Synthetic envelopes; stage0-classify.lockstates.test.js has the matrix.
   const executed = `SQL statement "${src.migration(A.MIGRATIONS.find((x) => x.n === "02"))}"\nPL/pgSQL function inline_code_block line 7 at EXECUTE`;
   for (const text of ["P1-4C", "P2-02"]) {
-    const a = CL.classifyText(errorReceipt(text, "production", "55P03", LOCK_WORDS, executed), ctx);
-    assert.deepEqual([a.class, a.profile], ["R3", "executed input"], text);
-    const b = CL.classifyText(errorReceipt(text, "production", "55P03", LOCK_WORDS, null), ctx);
-    assert.deepEqual([b.class, b.profile], ["R3", "field-less"], text);
+    for (const state of ["55P03", "40P01"]) {
+      for (const where of [executed, null]) {
+        const a = CL.classifyText(errorReceipt(text, "production", state, "any words", where), ctx);
+        assert.equal(a.class, "R4", `${text} ${state}`);
+        assert.match(a.reasons[0], /reports SQLSTATE/, `${text} ${state}`);
+      }
+      // A statement of a check, with its own frame: no profile either.
+      assert.equal(CL.classifyText(errorReceipt(text, "production", state, "any words", "PL/pgSQL function inline_code_block line 9 at SQL statement"), ctx).class, "R4", `${text} ${state}`);
+    }
   }
-  // A statement of a check, with its own frame, is R4.
-  assert.equal(CL.classifyText(errorReceipt("P1-4C", "production", "55P03", LOCK_WORDS, "PL/pgSQL function inline_code_block line 9 at SQL statement"), ctx).class, "R4");
 });
 
 const FINAL = json("w-old-state.json");
