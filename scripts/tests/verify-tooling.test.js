@@ -1,8 +1,10 @@
 // scripts/tests/verify-tooling.test.js — the verification tooling (scripts/verify), Codex's
 // review of 2d53bed §4 and §5.
-//   VT-1, VT-2   the pin set and its closure audit
+//   VT-1, VT-2   the pin set, its raw-text regression check, and a parse of each module
 //   VT-3 to VT-7 a child's failure reaches the caller through the driver and the launcher,
 //                and a run takes new names and leaves earlier evidence alone
+//   VT-17, VT-18 a refused isolation-before runs nothing after it; a passing one does, and an
+//                ordinary failure still reaches the result
 //   VT-8 to VT-13 compare-fixtures: DR-1's exact negative, the valid generated-timestamp
 //                control, and each way a ledger can move outside the named entries
 //   VT-14, VT-15 check-tap: a log's counts, and the reviewed replay-state set
@@ -17,6 +19,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse } from "acorn";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOOL = (f) => join(ROOT, "scripts", "verify", f);
@@ -59,7 +62,7 @@ function launch(repo, tooling, out, label, args, { launcher = TOOL("verify-launc
 }
 const summaryOf = (out, label) => readFileSync(join(out, `verify-${label}-summary.txt`), "utf8");
 
-test("VT-1 the pin set is current, its closure holds, and its required steps are the driver's", () => {
+test("VT-1 the pin set is current, its raw-text check finds nothing, and its required steps are the driver's", () => {
   assert.deepEqual(P.checkProblems(ROOT), []);
   const pins = P.readPins(ROOT);
   const driver = readFileSync(TOOL("verify-driver.sh"), "utf8");
@@ -67,7 +70,48 @@ test("VT-1 the pin set is current, its closure holds, and its required steps are
   assert.deepEqual([...verifyMode.matchAll(/^\s*step ([a-z0-9-]+) /gm)].map((m) => m[1]), pins.requiredSteps);
 });
 
-test("VT-2 the audit refuses a changed, missing or unpinned tool, and what reaches outside the set", (t) => {
+/** What a module's text loads, read from its syntax tree: every static form, and each dynamic form or loader call. */
+function loadsOf(text) {
+  const out = { fixed: [], dynamic: 0, loaderCalls: 0 };
+  const visit = (n) => {
+    if (n === null || typeof n !== "object") return;
+    if (Array.isArray(n)) { n.forEach(visit); return; }
+    if (typeof n.type === "string") {
+      if (["ImportDeclaration", "ExportAllDeclaration", "ExportNamedDeclaration"].includes(n.type) && n.source) out.fixed.push(n.source.value);
+      if (n.type === "ImportExpression") out.dynamic++;
+      if (n.type === "CallExpression" && n.callee.type === "Identifier" && ["require", "createRequire"].includes(n.callee.name)) out.loaderCalls++;
+    }
+    for (const k of Object.keys(n)) if (k !== "loc") visit(n[k]);
+  };
+  visit(parse(text, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true }));
+  return out;
+}
+
+test("VT-2b each module's loads, read from its syntax tree: only node: builtins, and check-isolation's one named exception. The forms the run-time regular expressions miss are seen here", () => {
+  // Codex's VT-N1 forms, each read as what it is.
+  for (const [text, want] of [
+    ["import '../untracked.mjs';\n", ["../untracked.mjs"]],
+    ["const a = 1; import b from \"../x.mjs\";\n", ["../x.mjs"]],
+    ["import {\n  a,\n  b,\n} from \"../y.mjs\";\n", ["../y.mjs"]],
+    ["export { a } from \"../z.mjs\";\n", ["../z.mjs"]],
+    ["export * from '../w.mjs';\n", ["../w.mjs"]],
+    ["import \"node:fs\";\n", ["node:fs"]],
+    ["const s = \"import q from 'not-this.mjs'\"; // import r from \"nor-this.mjs\"\n", []],
+  ]) assert.deepEqual(loadsOf(text).fixed, want, text);
+  assert.equal(loadsOf("const m = await import(\"./y.mjs\");\n").dynamic, 1);
+  assert.equal(loadsOf("const m = require(\"./y.cjs\");\n").loaderCalls, 1);
+  // Those same forms pass the run-time check, which says so: it is a regression check only.
+  const modules = toolNames().filter((f) => f.endsWith(".mjs"));
+  assert.ok(modules.length >= 4);
+  for (const f of modules) {
+    const l = loadsOf(readFileSync(TOOL(f), "utf8"));
+    assert.deepEqual(l.fixed.filter((s) => !s.startsWith("node:")), [], `${f}: a static load that is not a node: builtin`);
+    assert.equal(l.loaderCalls, 0, `${f}: a loader call`);
+    assert.equal(l.dynamic, f === "check-isolation.mjs" ? 1 : 0, `${f}: its dynamic loads`);
+  }
+});
+
+test("VT-2 the audit refuses a changed, missing or unpinned tool, and the forms its raw-text check reads", (t) => {
   const copy = () => { const { repo } = toolRepo(t); return repo; };
   const tool = (r, f) => join(r, "scripts", "verify", f);
   const a = copy();
@@ -81,16 +125,16 @@ test("VT-2 the audit refuses a changed, missing or unpinned tool, and what reach
   assert.match(P.checkProblems(c).join("\n"), /helper\.mjs is there and not pinned/);
   const d = copy();
   appendFileSync(tool(d, "compare-fixtures.mjs"), 'import { x } from "./helper.mjs";\n');
-  assert.match(P.closureProblems(d).join("\n"), /imports \.\/helper\.mjs, which is not a node: builtin/);
+  assert.match(P.rawTextProblems(d).join("\n"), /imports \.\/helper\.mjs, which is not a node: builtin/);
   const e = copy();
   appendFileSync(tool(e, "check-tap.mjs"), 'const y = await import("./helper.mjs");\n');
-  assert.match(P.closureProblems(e).join("\n"), /check-tap\.mjs has a dynamic import/);
+  assert.match(P.rawTextProblems(e).join("\n"), /check-tap\.mjs has a dynamic import/);
   const f = copy();
   appendFileSync(tool(f, "verify-driver.sh"), 'node "$TOOLS/helper.mjs"\n');
-  assert.match(P.closureProblems(f).join("\n"), /names helper\.mjs, which is not pinned/);
+  assert.match(P.rawTextProblems(f).join("\n"), /names helper\.mjs, which is not pinned/);
   const g = copy();
   appendFileSync(tool(g, "verify-driver.sh"), 'rm -rf "$OUT"\n');
-  assert.match(P.closureProblems(g).join("\n"), /deletes or moves files/);
+  assert.match(P.rawTextProblems(g).join("\n"), /deletes or moves files/);
 });
 
 test("VT-3 a failing middle step fails the run though the last step passes; a passing control exits 0", (t) => {
@@ -206,6 +250,67 @@ test("VT-7 the launcher passes on the driver's exit, a killed driver included; a
   assert.equal(cloneInUse.status, 2);
   assert.match(cloneInUse.stdout, /exists: every run gets a new directory/);
   assert.equal(summaryInUse.stdout.includes("RESULT"), false);
+});
+
+/**
+ * A synthetic tested repository for the driver's real verify mode: the tools, and a guard module
+ * whose default path `guardBody` decides. A stub yarn on PATH leaves a marker for each command it
+ * is asked to run, so the marker shows what the driver started. No node_modules, harness or replay
+ * exists there, so the steps that need them fail on their own.
+ */
+function verifyRig(t, guardBody) {
+  const { repo } = toolRepo(t);
+  mkdirSync(join(repo, "scripts", "manual"), { recursive: true });
+  writeFileSync(join(repo, "scripts", "manual", "stage0-guard.mjs"), guardBody);
+  git(repo, "add", "-A");
+  git(repo, "commit", "--quiet", "-m", "a guard module");
+  const stubs = newDir(t);
+  const marker = join(stubs, "yarn-called.txt");
+  writeFileSync(join(stubs, "yarn"), `#!/usr/bin/env bash\necho "yarn $*" >> "${marker}"\nexit 0\n`);
+  const out = newDir(t);
+  const pg = newDir(t);
+  const head = git(repo, "rev-parse", "HEAD");
+  const run = (label) => {
+    const env = childEnv(out);
+    env.PATH = `${stubs}${process.platform === "win32" ? ";" : ":"}${env.PATH}`;
+    return spawnSync(BASH, [slash(TOOL("verify-launch.sh")), "--repo", repo, "--tooling", head, "--out", out, "--label", label, "--", "verify", "--commit", head, "--pglite", pg, "--expect-tests", "1"], { encoding: "utf8", env, windowsHide: true });
+  };
+  return { out, marker, run };
+}
+const AFTER_ISOLATION = ["install", "test", "test-counts", "build", "manifest", "m13", "targeted", "targeted-counts", "harness", "writing", "fixtures", "replay", "replay-counts", "isolation-after"];
+
+test("VT-17 VT-R1: a refused isolation-before stops the run at once. No install, test, harness, build or replay command starts, and the summary names each as not run", (t) => {
+  // The guard's default store lies outside the synthetic home.
+  const { out, marker, run } = verifyRig(t, `export const DEFAULT_STATE = ${JSON.stringify(join(tmpdir(), "elsewhere", ".stage0-guard"))};\n`);
+  const r = run("refused");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const s = summaryOf(out, "refused");
+  assert.match(s, /^isolation-before exit 1 /m);
+  assert.match(s, new RegExp(`^RESULT FAILED: required steps failed: isolation-before; not run: ${AFTER_ISOLATION.join(" ")} `, "m"));
+  for (const step of AFTER_ISOLATION) {
+    assert.equal(existsSync(join(out, `verify-refused-${step}.txt`)), false, `${step} left a log`);
+    assert.equal(new RegExp(`^${step} exit `, "m").test(s), false, `${step} has an exit line`);
+  }
+  assert.equal(existsSync(marker), false, "yarn was never started");
+  assert.match(readFileSync(join(out, "verify-refused-isolation-before.txt"), "utf8"), /not under the synthetic home/, "the refusal's own evidence stays");
+  assert.ok(s.trimEnd().split("\n").at(-1).startsWith("RESULT FAILED"), "the failed summary is kept and final");
+});
+
+test("VT-18 a passing isolation-before goes on to every step, and an ordinary failure in them still reaches the result", (t) => {
+  const { out, marker, run } = verifyRig(t, `import { homedir } from "node:os";\nimport { join } from "node:path";\nexport const DEFAULT_STATE = join(homedir(), ".stage0-guard");\n`);
+  const r = run("control");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const s = summaryOf(out, "control");
+  assert.match(s, /^isolation-before exit 0 /m);
+  for (const step of AFTER_ISOLATION) assert.match(s, new RegExp(`^${step} exit [0-9]+ `, "m"), `${step} ran`);
+  const called = readFileSync(marker, "utf8");
+  for (const c of ["yarn install --frozen-lockfile", "yarn test", "yarn build"]) assert.ok(called.includes(c), c);
+  // The stubbed yarn exits 0, and test-counts fails on its empty log, so the failure is a later step's.
+  assert.match(s, /^install exit 0 /m);
+  assert.match(s, /^test exit 0 /m);
+  assert.match(s, /^test-counts exit 1 /m);
+  assert.match(s, /^isolation-after exit 0 /m);
+  assert.match(s, /^RESULT FAILED: required steps failed: test-counts .*; not run: none /m);
 });
 
 // ── compare-fixtures ─────────────────────────────────────────────────────────────────

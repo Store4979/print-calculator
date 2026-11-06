@@ -10,9 +10,11 @@
 //       commit's scripts/verify is the tooling commit's. It appends the tested commit and
 //       tree, the tooling commit and tree, and each tool's blob and sha256 to the record.
 //
-// The closure audit reads each tool's raw text: a module may import only node: builtins,
-// and the driver and launcher may name only pinned tools. check-isolation.mjs is the one
-// exception, and it imports exactly the file its --guard names, the tested commit's.
+// The pins are what this file enforces: the files are exactly the pinned ones, and each is
+// the tooling commit's blob. rawTextProblems is only a regression check of the forms it
+// reads, and it is NOT a language boundary: a single-quoted import, an import after another
+// statement, a multiline import and a re-export all pass it (Codex VT-N1). The dependency
+// closure is a source-review item (README.md); at commit time, VT-2b also parses each module.
 // Exit 0 when all of it holds, 1 when anything does not, 2 on bad usage.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -41,8 +43,13 @@ export function pinsOf(root) {
   return tools;
 }
 
-/** What a tool's raw text may reach outside the pin set. */
-export function closureProblems(root) {
+/**
+ * A regression check of a tool's raw text, for the forms the regular expressions below match:
+ * a line-start, double-quoted static import or export, a dynamic import, the CommonJS loader,
+ * a $TOOLS/<name> in a script, and a command that deletes or moves files. It says nothing about
+ * any other form.
+ */
+export function rawTextProblems(root) {
   const problems = [];
   const pinned = new Set(Object.keys(readPins(root).tools ?? {}));
   for (const name of toolNames(root)) {
@@ -76,7 +83,7 @@ export function checkProblems(root) {
     for (const k of ["blob", "sha256", "bytes"]) if (have[p][k] !== want[p][k]) problems.push(`${p}: its ${k} is ${have[p][k]}, pinned ${want[p][k]}`);
   }
   if (!Array.isArray(pins.requiredSteps) || !pins.requiredSteps.length || !pins.requiredSteps.every((s) => /^[a-z0-9-]+$/.test(s))) problems.push("the required step set is missing or malformed");
-  return [...problems, ...closureProblems(root)];
+  return [...problems, ...rawTextProblems(root)];
 }
 
 function verify({ repo, tooling, root, commit, record }) {

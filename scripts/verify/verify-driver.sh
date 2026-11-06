@@ -9,9 +9,11 @@
 #
 # THE RULE: a failure in ANY required step makes the whole run exit nonzero, even when
 # later steps, the replay included, pass. It keeps going, so one run reports everything;
-# only failed pins or a failed clone stop it early, since nothing after them can be
-# relied on. A required step that never ran fails the run too. Nothing after finish
-# decides the exit status. A summary with no RESULT line means the run did not finish.
+# only failed pins, a failed clone or a failed isolation-before stop it early, since nothing
+# after them can be relied on, and the steps after isolation-before run the tested commit's
+# code. A required step that never ran fails the run too, and the summary names it. Nothing
+# after finish decides the exit status. A summary with no RESULT line means the run did not
+# finish.
 #
 # It unsets the node options, the token and the stage-0 session, and runs under a new
 # synthetic home, so that the default guard store resolves there. check-isolation.mjs
@@ -115,6 +117,7 @@ case "$MODE" in
     if [ -n "$FAILED" ]; then finish; fi
     cd "$V" || exit 2
     step isolation-before node "$TOOLS/check-isolation.mjs" before --home "$SYNTHETIC_HOME" --guard "$V/scripts/manual/stage0-guard.mjs"
+    if [ -n "$FAILED" ]; then finish; fi
     step install yarn install --frozen-lockfile
     step test yarn test
     step test-counts node "$TOOLS/check-tap.mjs" --file "$LOGS-test.txt" --expect "$EXPECT"

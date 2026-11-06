@@ -1147,7 +1147,12 @@ abuse, does not guarantee a cap"), say so in the comment itself.
      driver's. Never wrap it in anything that ends on another command's status
      (old/run-X3b.sh's `cat` hid a failed step).
    - after changing a tool: `node scripts/verify/check-pins.mjs generate --root .`.
-     VT-1 fails until the pin set is current. A tool may import only node: builtins.
+     VT-1 fails until the pin set is current. A tool may load only node: builtins, by
+     source review and VT-2b's parse. check-pins' run-time raw-text check is a
+     regression check, not a language boundary: a single-quoted or multiline import
+     passes it (Codex VT-N1). Never call it a closure guarantee.
+   - failed pins, a failed clone or a failed isolation-before stop the run at once
+     (Codex VT-R1): the steps after isolation-before run the tested commit's code.
    - scripts/verify/* is `eol=lf` in .gitattributes: bash cannot run a CRLF script,
      and the pins are the checkout's bytes.
    - compare-fixtures takes the fixed ledger versions from the manifest (every

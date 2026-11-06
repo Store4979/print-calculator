@@ -50,9 +50,9 @@
   },
   "tools": {
     "scripts/verify/README.md": {
-      "blob": "8246d924acd7bbe68dc0dff7e73b79f0eb37e605",
-      "sha256": "b0ce30cbc0e9c9ec9bb76e8a5d8a5b4654913f5139d771ece5fff51f0a3e4ae6",
-      "bytes": 2930
+      "blob": "e8d75b2ed768c86b2c2f14e247c54c7894dd0b9f",
+      "sha256": "8048f20cb1cd2fcd79e5611feb806a01ba1492ce0f9e02cfea4f27e657602a64",
+      "bytes": 4201
     },
     "scripts/verify/check-isolation.mjs": {
       "blob": "46e435417c5b521876e45980e5b9b142180bfd59",
@@ -60,9 +60,9 @@
       "bytes": 2284
     },
     "scripts/verify/check-pins.mjs": {
-      "blob": "72e5696466ba5a3edc5c24befd043e66641e19cb",
-      "sha256": "52887519aea9d18318b05085af2363d7b17d87cd86c939b13e5d1bf21075147c",
-      "bytes": 8142
+      "blob": "05ac3eb1b584506b25f724bf9516375991cdebbc",
+      "sha256": "61314a75cc8a293c96bdb083e0ee638c540a41d412e67997c3b873b21ee46c5e",
+      "bytes": 8589
     },
     "scripts/verify/check-tap.mjs": {
       "blob": "923a5e991b35b7eb08bc55c55eab8f5292f942a9",
@@ -75,9 +75,9 @@
       "bytes": 19087
     },
     "scripts/verify/verify-driver.sh": {
-      "blob": "6a7123cd3365597a7b7d48a2d038c5d0f26d242b",
-      "sha256": "861d8552279995bd8b2104949385e27937595cb28478cab0dc7e7fe49410f9f2",
-      "bytes": 8033
+      "blob": "df63802779690497739f7ff0ae345cf8ca5371c2",
+      "sha256": "16f0a9c5e6e2780a118432b1065fe30e4ce741febf4be62b34da051ce8c7e892",
+      "bytes": 8198
     },
     "scripts/verify/verify-launch.sh": {
       "blob": "9b5a63c41e5ac5555cab71844884603b22c80e62",
