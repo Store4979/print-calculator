@@ -387,7 +387,7 @@ export const I4C_READ_CALLS = Object.freeze(["acldefault", "aclexplode", "and", 
   "count", "current_database", "current_setting", "exists", "format_type", "generate_series", "has_column_privilege", "has_database_privilege",
   "has_function_privilege", "has_schema_privilege", "has_table_privilege", "in", "json_agg", "json_build_object", "jsonb_typeof", "lateral", "lpad", "max",
   "md5", "not", "obj_description", "octet_length", "oidvectortypes", "or", "over", "pg_get_constraintdef", "pg_get_expr", "pg_get_function_result",
-  "pg_get_indexdef", "pg_get_triggerdef", "pg_get_userbyid", "pg_has_role", "right", "row_security_active", "select", "split_part", "string_agg", "strpos", "substr",
+  "pg_get_functiondef", "pg_get_indexdef", "pg_get_triggerdef", "pg_get_userbyid", "pg_has_role", "right", "row_security_active", "select", "split_part", "string_agg", "strpos", "substr",
   "to_jsonb", "to_regclass", "to_regnamespace", "to_regprocedure", "unnest", "values", "version", "when", "where", "with",
   "all", "as", "bool_and", "filter", "from", "join",
   // the texts' CTE names and column-alias lists
@@ -604,11 +604,11 @@ const B1_DEFAULT_MIDDLE = "'::regrole and d.defaclnamespace in (0, 'public'::reg
 const B1_DEFAULT_WANT = /^(select \* from \(values \('[^']*', '[^']*', '[^']*'\)(, \('[^']*', '[^']*', '[^']*'\))*\) as w\(scope, t, acl\)|select null::text as scope, null::text as t, null::text as acl where false)$/;
 const B1_DEFAULT_TAIL = (label) => `) select count(*) from ((select * from have except select * from want) union all (select * from want except select * from have)) x) <> 0 then raise exception '${B1_TAG}: the default ACLs are not ${label}' using errcode = 'P0001'`;
 /** The preflight table's predicates (plan §2.1), written out, in the order BUILD-01's first step asks them. */
-const B1_PREDICATES = ["public-empty", "ledger", "buckets-present", "buckets-columns", "buckets-notnull", "buckets-generated", "buckets-arbiter", "buckets-authority", "buckets-rls", "buckets-rows",
+const B1_PREDICATES = ["public-empty", "ledger", "buckets-present", "buckets-columns", "buckets-notnull", "buckets-generated", "buckets-arbiter", "buckets-authority", "buckets-rls", "buckets-rows", "buckets-reviewed",
   "objects-table", "objects-policies", "objects-authority", "publication-present", "publication-member", "publication-authority",
-  "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "marker-absent", "database-create", "creator"];
+  "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "authusers-reviewed", "marker-absent", "database-create", "creator"];
 /** Every name BUILD-01's first step puts before "(" outside the two reads it embeds. */
-const B1_ASSERT_CALLS = ["all", "and", "array", "chr", "coalesce", "count", "current_setting", "exists", "f", "bound", "bad", "from", "group", "in", "md5", "not", "or", "select", "split_part", "string_agg", "string_to_array", "substring", "union", "values", "where", "as", "p"];
+const B1_ASSERT_CALLS = ["all", "and", "array", "chr", "coalesce", "count", "current_setting", "except", "exists", "f", "bound", "bad", "from", "group", "in", "md5", "not", "or", "reviewed", "select", "split_part", "string_agg", "string_to_array", "substring", "union", "values", "where", "as", "p"];
 
 /** A DO body's normalized statements, its tail checked and removed. */
 function b1Body(body, label, say) {
@@ -671,6 +671,9 @@ function b1Assert(body, reads, facts, say) {
   if (calls.length) say(`${label} calls ${calls.join(", ")}, outside its list`);
   const want = Object.entries(facts.digests).flatMap(([s, parts]) => Object.entries(parts).map(([part, d]) => `('${s}', '${part}', '${d}')`)).join(", ");
   if (!body.includes(`bound(src, part, digest) as (values ${want})`)) say(`${label} does not bind exactly the facts' part digests`);
+  const lit = (s) => `'${String(s).replace(/'/g, "''")}'`;
+  const accepted = Object.entries(facts.reviewed ?? {}).flatMap(([part, rows]) => Object.entries(rows).map(([key, d]) => `(${lit(part)}, ${lit(key)}, ${lit(d)})`)).join(", ");
+  if (!body.includes(`reviewed(part, key, digest) as (${accepted ? `values ${accepted}` : "select null::text, null::text, null::text where false"})`)) say(`${label} does not bind exactly the facts' reviewed set`);
   const names = [...body.matchAll(/^ {6}\('([a-z-]+)', /gm)].map((m) => m[1]);
   if (JSON.stringify(names) !== JSON.stringify(B1_PREDICATES)) say(`${label} does not ask exactly the preflight table's predicates: ${names.join(", ")}`);
   if (!body.includes("the stage-0 timeouts (PG 17 transaction_timeout included) are not in force in this transaction")) say(`${label} does not check its timeouts`);
@@ -684,8 +687,8 @@ function b1Assert(body, reads, facts, say) {
  * comments removed and code whitespace collapsed:
  *   - begin, its settings, the DO steps in order, commit: nothing else at the top;
  *   - the first step re-asserts before any file: it embeds BUILD-00 and BUILD-00W
- *     byte for byte, binds exactly the facts' digests, and outside the two reads
- *     holds no write word and no call off its list;
+ *     byte for byte, binds exactly the facts' digests and reviewed set, and outside
+ *     the two reads holds no write word and no call off its list;
  *   - a default step holds only ALTER DEFAULT PRIVILEGES for the creator and the
  *     assertion of its rows;
  *   - each file step is exactly its file's blob, its md5 and byte gate, EXECUTE, its

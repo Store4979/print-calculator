@@ -612,6 +612,17 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         refuses a deferrable one among them (55000). BUILD_LITERALS/
         BUILD_LITERAL_LENGTHS are the literals this build gives each text column: a
         new literal changes them, and 4W-17 reads them back from the files;
+      - **What runs on BUILD-01's INSERTs is bound exactly** (X3d; plan §0.7, §2.1). A
+        rollback does not undo everything: a rolled-back build can still consume a
+        sequence value. BUILD-00 reports every trigger on storage.buckets and auth.users,
+        each function it runs, every CHECK and each function pg_depend records for one;
+        reviewedSetOf takes the set from the project's OWN reviewed reading, B1 binds it,
+        and `buckets-reviewed` and `authusers-reviewed` stop on anything added, removed or
+        changed, in the comparator and in BUILD-01's first step. Never write an approved
+        set in the code: a stock project has its own triggers, and rejecting them all
+        would stop it. It binds one level only: a helper called from inside a body, and
+        functions behind defaults, index expressions and domains, are not seen (for
+        Codex's ruling, §0.7). Its read fields are accepted before any R0a receipt;
       - **BUILD-01 has no text until B1:** build01Text(src, manifest, facts) is a
         function of the facts build01Facts makes from the two accepted readings. No
         output, policy or target; its SUCCESS entry is unreachable
@@ -633,8 +644,8 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         (fixtures/stage0-4c-writing/). In X2's fixtures X3b changed only
         a-build00.json, for its new row: a whole X2 harness run also rewrites the data
         digests (now(), random ids) of the others, so take only what the changed text
-        moved. Tests: stage0-4c-writing.test.js (4W-1…4W-17), its mutation companion
-        (4W-M1…M4). PGlite is not a dependency, so a database run in those tests is the
+        moved. Tests: stage0-4c-writing.test.js (4W-1…4W-19), its mutation companion
+        (4W-M1…M5). PGlite is not a dependency, so a database run in those tests is the
         harness's, recorded: the suite runs the comparator and classifier on it. The
         lock states' are stage0-classify.lockstates.test.js (LS-1…LS-6) and G-29;
   - THE GUARD CHAIN IS PINNED AND AUDITED WITHOUT A PARSER (SG-6, M-13):

@@ -27,6 +27,8 @@
 //   build00LedgerFindings  what BUILD-00's guarded ledger read leaves for
 //                    BUILD-01 (§2.1);
 //   buildPredicateFindings  the preflight table's predicates (§2.1);
+//   reviewedSetOf    the triggers, CHECKs and functions a reading holds, which B1
+//                    binds exactly once review has accepted that reading;
 //   build01Facts     what BUILD-01 binds, from the two accepted readings.
 // A finding is { verdict, part, key, reason }. STOP stops for review;
 // RESIDUAL is a named residual, accepted only with its record; RECORDED is
@@ -730,6 +732,31 @@ const fitsLiterals = (fact, longest) => {
 export const BUILD_ARBITER = "id|1|1|btree|true|true|true|true|true|false|false|p|false|false|true";
 const NAMES_ID_AS_KEY = /^([^|]*,)?id(,[^|]*)?\|/;
 /**
+ * What runs on BUILD-01's INSERTs, which B1 binds exactly (plan §2.1, X3d): for
+ * storage.buckets and auth.users, every row BUILD-00 reports for a trigger, a CHECK and
+ * the functions they run. `reviewed` is { buckets: { key: md5(value) }, authusers: { … } },
+ * made by reviewedSetOf from the project's own reading once review has accepted it. No
+ * approved set is written here: a stock project's triggers are its own, so the set comes
+ * from the reading that was reviewed, and anything added, removed or changed since stops.
+ * An md5 of a row binds that row only: a function called from inside a reported body, a
+ * rule, a column default or an index expression is not in the set (BUILD-00's header).
+ */
+export const REVIEWED_PARTS = Object.freeze(["buckets", "authusers"]);
+const REVIEWED_KEY = /^(trigger|trigger-function|check|check-function)\|/;
+const reviewedOfPart = (part) => Object.fromEntries(Object.entries(part ?? {}).filter(([k]) => REVIEWED_KEY.test(k)).map(([k, v]) => [k, md5(v)]));
+/** The exact set a reading holds, or null when it is not rows of text, each key once. */
+export function reviewedSetOf(build00) {
+  const b = factsByPart(build00);
+  return b ? Object.fromEntries(REVIEWED_PARTS.map((p) => [p, reviewedOfPart(b[p])])) : null;
+}
+const sameReviewed = (part, b, f) => {
+  const want = isObj(f.reviewed) && isObj(f.reviewed[part]) ? f.reviewed[part] : null;
+  if (!want) return false;
+  const have = reviewedOfPart(b[part]);
+  const keys = (o) => Object.keys(o).sort().join("\n");
+  return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);
+};
+/**
  * The preflight table's predicates (plan §2.1), each a name and what it asks of
  * the two readings, b (BUILD-00) and w (BUILD-00W, read as the role BUILD-01 will
  * run as). BUILD-01 asks the same again in SQL, under the same names
@@ -755,6 +782,7 @@ const BUILD_PREDICATES = Object.freeze({
   "buckets-authority": (b, w) => ["schema_usage", "insert|id", "insert|name", "insert|public", "insert|file_size_limit", "insert|allowed_mime_types", "update|public", "update|file_size_limit", "update|allowed_mime_types", "update|updated_at", "select"].every((k) => w.buckets?.[k] === "true"),
   "buckets-rls": (b, w) => w.buckets?.rls_applies === "false",
   "buckets-rows": (b, w) => w.buckets?.["row|job-files"] === "false" && w.buckets?.["row|customer-uploads"] === "false",
+  "buckets-reviewed": (b, w, f) => sameReviewed("buckets", b, f),
   "objects-table": (b) => (b.objects?.table ?? "").startsWith("r|") && b.objects?.["column|bucket_id"] === "text",
   "objects-policies": (b) => !["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"].some((k) => Object.hasOwn(b.objects ?? {}, k)),
   "objects-authority": (b, w) => w.objects?.owner_privileges === "true",
@@ -772,6 +800,7 @@ const BUILD_PREDICATES = Object.freeze({
   "authusers-authority": (b, w) => ["insert", "select", "references|id"].every((k) => w.authusers?.[k] === "true"),
   "authusers-rls": (b, w) => w.authusers?.rls_applies === "false",
   "authusers-triggers": (b) => b.authusers?.["user-triggers"] === "0",
+  "authusers-reviewed": (b, w, f) => sameReviewed("authusers", b, f),
   "marker-absent": (b) => b.schemas?.["schema|stage0_rehearsal"] === "<absent>",
   "database-create": (b, w) => w.database?.create === "true",
   creator: (b, w, f) => w.role?.name === f.creator || Object.hasOwn(w.role ?? {}, `member|${f.creator}`) || (w.role?.attr ?? "").split("|")[0] === "true",
@@ -781,12 +810,13 @@ export const BUILD_PREDICATE_NAMES = Object.freeze(Object.keys(BUILD_PREDICATES)
 /**
  * Each predicate that does not hold, as a STOP under its name. `ledger` is the
  * status BUILD-00 reported, for the predicate of that name; `creator` is the
- * object-creating role. A reading that is not rows of text is a STOP.
+ * object-creating role; `reviewed` is the set review accepted (reviewedSetOf), and no
+ * set at all fails its two predicates. A reading that is not rows of text is a STOP.
  */
-export function buildPredicateFindings(build00, build00w, { creator, ledger } = {}) {
+export function buildPredicateFindings(build00, build00w, { creator, ledger, reviewed } = {}) {
   const b = factsByPart(build00), w = factsByPart(build00w);
   if (!b || !w) return [stop("build", null, "BUILD-00's or BUILD-00W's reading is not rows of text, each key once")];
-  return Object.entries(BUILD_PREDICATES).filter(([, ok]) => ok(b, w, { creator, ledger }) !== true).map(([name]) => stop("build", name, "the preflight predicate does not hold"));
+  return Object.entries(BUILD_PREDICATES).filter(([, ok]) => ok(b, w, { creator, ledger, reviewed }) !== true).map(([name]) => stop("build", name, "the preflight predicate does not hold"));
 }
 
 /** Each part's digest: md5 over key TAB value LF, keys in byte order, as BUILD-01 computes it in SQL. */
@@ -819,21 +849,23 @@ export function defaultsOf(rows, part, role) {
  * What BUILD-01 binds, from BUILD-00's and BUILD-00W's accepted readings: a STOP
  * from the ledger's rule or any predicate gives no facts. `creator` is the role
  * BUILD-00W reports. `finalFrom` is production's bound checked state, whose part 3
- * gives the target after the files. Review of the receipts is what accepts them;
- * this only refuses what cannot be bound.
+ * gives the target after the files. `reviewed` is the set review accepted from the
+ * project's own reading (reviewedSetOf), given here rather than taken from `build00`,
+ * so a reading that moved since the review stops. Review of the receipts is what accepts
+ * them; this only refuses what cannot be bound.
  */
-export function build01Facts({ build00, build00w, ref, finalFrom, employees = 2 }) {
+export function build01Facts({ build00, build00w, ref, finalFrom, employees = 2, reviewed }) {
   const ledgerRows = build00LedgerFindings(build00);
   const b = factsByPart(build00), w = factsByPart(build00w);
   const creator = w?.role?.name;
   const ledger = b?.ledger?.status;
-  const findings = [...ledgerRows, ...buildPredicateFindings(build00, build00w, { creator, ledger })];
+  const findings = [...ledgerRows, ...buildPredicateFindings(build00, build00w, { creator, ledger, reviewed })];
   if (blocking(findings).length) return { findings, facts: null };
   if (!Array.isArray(finalFrom)) return { findings: [...findings, stop("build", "finalFrom", "production's checked state is not given")], facts: null };
   try {
     return {
       findings,
-      facts: { ref, creator, ledger, employees, digests: { build00: partDigests(build00), build00w: partDigests(build00w) }, defaultsNow: defaultsOf(build00, "defaults", creator), defaultsFinal: defaultsOf(finalFrom, 3, creator) },
+      facts: { ref, creator, ledger, employees, digests: { build00: partDigests(build00), build00w: partDigests(build00w) }, reviewed, defaultsNow: defaultsOf(build00, "defaults", creator), defaultsFinal: defaultsOf(finalFrom, 3, creator) },
     };
   } catch (e) {
     return { findings: [...findings, stop("build", "defaults", e.message)], facts: null };

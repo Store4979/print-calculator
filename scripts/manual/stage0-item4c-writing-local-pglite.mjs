@@ -17,7 +17,9 @@
 //          exact default rows; each mutated shape refused by the predicate named,
 //          and a fact changed between the reads and BUILD-01 refused; each arbiter
 //          and text-column shape refused or committed, with what PostgreSQL does to
-//          that shape when BUILD-01's first step is taken out
+//          that shape when BUILD-01's first step is taken out; a stock-like set of
+//          triggers and CHECKs bound exactly, and each change to it after the review
+//          refused before any file, with a sequence as the witness of what would run
 // It writes each result to the fixtures directory, with an index of every file's
 // sha256. A FAIL line below names a case that did not give its expected value,
 // and the process exits 1.
@@ -200,6 +202,8 @@ $x$;`);
 // ── run W: BUILD-01 ─────────────────────────────────────────────────────────
 const REF = "abcdefghijklmnopqrst";
 const reading = async (db) => ({ build00: await read(db, "BUILD-00"), build00w: await read(db, "BUILD-00W") });
+/** The set a review of this reading would accept: each shape here is its own review. */
+const own = (rd) => C.reviewedSetOf(rd.build00);
 /** Production's checked state, for the target after the files: at01's, on each variant. */
 const finalFor = async (setup) => { const db = await at01(); if (setup) await db.exec(setup); return read(db, "P0-4C"); };
 const reference = await at01();
@@ -211,7 +215,7 @@ for (const [label, setup, finalSetup] of [["w-old", "", ""], ["w-current", CURRE
   if (setup) await db.exec(setup);
   const rd = await reading(db);
   const finalFrom = await finalFor(finalSetup);
-  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom });
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom, reviewed: own(rd) });
   say(facts !== null, `run W: ${label}: the facts bind${facts ? "" : `: ${JSON.stringify(C.blocking(findings))}`}`);
   const text = A.build01Text(src, MANIFEST, facts);
   save(`${label}-facts.json`, { facts, md5: A.md5(text), bytes: Buffer.byteLength(text) });
@@ -235,7 +239,7 @@ for (const [label, setup, finalSetup] of [["w-old", "", ""], ["w-current", CURRE
     const db = await fresh();
     await db.exec(setup);
     const rd = await reading(db);
-    const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
+    const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
     say(facts?.ledger === status, `run W: ${label}: the facts bind ${status}`);
     const text = A.build01Text(src, MANIFEST, facts);
     const r = await runText(db, text);
@@ -267,8 +271,8 @@ for (const [name, setup, want] of SHAPES) {
   const rd = await reading(db);
   const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value;
   const ledger = rd.build00.find((r) => r.part === "ledger" && r.key === "status").value;
-  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger }).map((f) => f.key).sort();
-  const facts = { ref: REF, creator, ledger, employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, defaultsNow: C.defaultsOf(rd.build00, "defaults", creator), defaultsFinal: C.defaultsOf(refState, 3, creator) };
+  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger, reviewed: own(rd) }).map((f) => f.key).sort();
+  const facts = { ref: REF, creator, ledger, employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, reviewed: own(rd), defaultsNow: C.defaultsOf(rd.build00, "defaults", creator), defaultsFinal: C.defaultsOf(refState, 3, creator) };
   const r = await runText(db, A.build01Text(src, MANIFEST, facts));
   const sql = (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
   save(`w-shape-${name}.json`, { js, sql, code: r.code ?? null, where: r.where ?? null });
@@ -312,8 +316,8 @@ for (const [name, setup, want, realCode] of STOPPED) {
   const rd = await reading(db);
   const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value;
   const ledger = rd.build00.find((r) => r.part === "ledger" && r.key === "status").value;
-  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger }).map((f) => f.key).sort();
-  const facts = { ref: REF, creator, ledger, employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, defaultsNow: C.defaultsOf(rd.build00, "defaults", creator), defaultsFinal: C.defaultsOf(refState, 3, creator) };
+  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger, reviewed: own(rd) }).map((f) => f.key).sort();
+  const facts = { ref: REF, creator, ledger, employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, reviewed: own(rd), defaultsNow: C.defaultsOf(rd.build00, "defaults", creator), defaultsFinal: C.defaultsOf(refState, 3, creator) };
   const text = A.build01Text(src, MANIFEST, facts);
   const r = await runText(db, text);
   const sql = (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
@@ -336,7 +340,7 @@ for (const [name, setup] of COMMITTED) {
   const db = await fresh();
   await db.exec(setup);
   const rd = await reading(db);
-  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
   const stops = C.blocking(findings);
   const r = facts ? await runText(db, A.build01Text(src, MANIFEST, facts)) : { ok: false, message: "no facts" };
   const state = r.ok ? await read(db, "P0-4C") : [];
@@ -344,6 +348,146 @@ for (const [name, setup] of COMMITTED) {
   const success = CL.SUCCESS["BUILD-01"].check(JSON.stringify(r.rows ?? [])).ok;
   save(`w-commit-${name}.json`, { ...rd, stops, committed: r.ok, success, fingerprintEqual: fp(state) === fp(refState) });
   say(!stops.length && r.ok && success && fp(state) === fp(refState), `run W: ${name}: the facts bind, BUILD-01 commits, and the catalog's fingerprint is the local 01's${r.ok ? "" : `: ${r.code} ${r.message}`}`);
+}
+// X3d (Codex's review of 1a7aff1, §2): what runs on BUILD-01's INSERTs is bound exactly.
+// STOCK is a synthetic shape with a stock project's counts and the behaviours Ryan's
+// staging read describes: seven enabled triggers on storage.buckets, two of them on
+// INSERT, under another owner; five CHECKs using only built-ins; one on auth.users. Its
+// bodies and hashes are this run's own, and nothing here approves them: `reviewed` is
+// taken from the shape's own reading, as B1 takes it from the throwaway's reviewed R0a.
+const STOCK = `
+create role supabase_storage_admin nologin;
+alter table storage.buckets add column lifecycle_state text;
+create sequence storage.review_witness;
+create function storage.enforce_bucket_name_length() returns trigger language plpgsql as $f$
+begin
+  if length(new.name) > 100 then raise exception 'bucket name is too long'; end if;
+  return new;
+end $f$;
+create function storage.protect_bucket_control_columns() returns trigger language plpgsql as $f$
+begin
+  if new.lifecycle_state is not null and not pg_has_role(current_user, tg_argv[0], 'member') then
+    raise exception 'only that role may set a lifecycle column' using errcode = '42501';
+  end if;
+  return new;
+end $f$;
+create function storage.bucket_lifecycle() returns trigger language plpgsql as $f$ begin return coalesce(new, old); end $f$;
+alter function storage.enforce_bucket_name_length() owner to supabase_storage_admin;
+alter function storage.protect_bucket_control_columns() owner to supabase_storage_admin;
+alter function storage.bucket_lifecycle() owner to supabase_storage_admin;
+create trigger enforce_bucket_name_length_trigger before insert or update of name on storage.buckets for each row execute function storage.enforce_bucket_name_length();
+create trigger protect_bucket_control_insert before insert on storage.buckets for each row execute function storage.protect_bucket_control_columns('service_role');
+create trigger protect_bucket_control_update before update of lifecycle_state on storage.buckets for each row execute function storage.bucket_lifecycle();
+create trigger protect_bucket_control_delete before delete on storage.buckets for each row execute function storage.bucket_lifecycle();
+create trigger bucket_versioning_update after update of public on storage.buckets for each row execute function storage.bucket_lifecycle();
+create trigger bucket_versioning_delete after delete on storage.buckets for each row execute function storage.bucket_lifecycle();
+create trigger bucket_lifecycle_truncate before truncate on storage.buckets for each statement execute function storage.bucket_lifecycle();
+alter table storage.buckets
+  add constraint buckets_name_length check (length(name) <= 100),
+  add constraint buckets_id_length check (length(id) <= 100),
+  add constraint buckets_size_positive check (file_size_limit is null or file_size_limit >= 0),
+  add constraint buckets_lifecycle_form check (lifecycle_state is null or length(lifecycle_state) > 0),
+  add constraint buckets_name_form check (position('/' in name) = 0);
+alter table auth.users add constraint users_email_length check (email is null or length(email) <= 255);
+`;
+const NEXTVAL_BODY = "perform nextval('storage.review_witness');";
+const WHEN_FN = "create function storage.when_fn(text) returns boolean language plpgsql as $f$ begin return true; end $f$; create trigger with_when before insert on storage.buckets for each row when (storage.when_fn(new.name)) execute function storage.bucket_lifecycle();";
+const CHECK_FN = "create function storage.check_fn(text) returns boolean language plpgsql as $f$ begin return true; end $f$; alter table storage.buckets add constraint via_fn check (storage.check_fn(name));";
+const USERS_CHECK_FN = "create function auth.check_fn(text) returns boolean language plpgsql as $f$ begin return true; end $f$; alter table auth.users add constraint via_fn check (auth.check_fn(aud));";
+const facts0 = (rd, reviewed) => { const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value; return { ref: REF, creator, ledger: rd.build00.find((r) => r.part === "ledger" && r.key === "status").value, employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, reviewed, defaultsNow: C.defaultsOf(rd.build00, "defaults", creator), defaultsFinal: C.defaultsOf(refState, 3, creator) }; };
+const witness = async (db) => (await db.query("select is_called from storage.review_witness")).rows[0].is_called;
+const REVIEW_STOPS = [
+  // Name, what the reviewed reading already holds beyond STOCK, what moves after it, the predicates, and whether PostgreSQL's own run consumes the witness.
+  // Codex's probe: the same declaration, function name and owner, with only the body replaced.
+  ["function-body-replaced", "", `create or replace function storage.enforce_bucket_name_length() returns trigger language plpgsql as $f$ begin ${NEXTVAL_BODY} raise exception 'refused'; end $f$;`, ["buckets-reviewed"], true],
+  ["function-security-definer", "", "alter function storage.enforce_bucket_name_length() security definer;", ["buckets-reviewed"], false],
+  ["function-config", "", "alter function storage.enforce_bucket_name_length() set search_path = storage;", ["buckets-reviewed"], false],
+  ["function-volatility", "", "alter function storage.enforce_bucket_name_length() stable;", ["buckets-reviewed"], false],
+  ["function-owner", "", "alter function storage.enforce_bucket_name_length() owner to postgres;", ["buckets-reviewed"], false],
+  ["trigger-added", "", `create function storage.added() returns trigger language plpgsql as $f$ begin ${NEXTVAL_BODY} return new; end $f$; create trigger added before insert on storage.buckets for each row execute function storage.added();`, ["buckets-reviewed"], true],
+  ["trigger-removed", "", "drop trigger protect_bucket_control_update on storage.buckets;", ["buckets-reviewed"], false],
+  ["trigger-disabled", "", "alter table storage.buckets disable trigger protect_bucket_control_insert;", ["buckets-reviewed"], false],
+  ["trigger-definition-changed", "", "drop trigger enforce_bucket_name_length_trigger on storage.buckets; create trigger enforce_bucket_name_length_trigger before insert on storage.buckets for each row execute function storage.enforce_bucket_name_length();", ["buckets-reviewed"], false],
+  ["when-function-replaced", WHEN_FN, `create or replace function storage.when_fn(text) returns boolean language plpgsql as $f$ begin ${NEXTVAL_BODY} return true; end $f$;`, ["buckets-reviewed"], true],
+  ["check-added", "", "alter table storage.buckets add constraint extra check (length(name) > 0);", ["buckets-reviewed"], false],
+  ["check-changed", "", "alter table storage.buckets drop constraint buckets_name_length, add constraint buckets_name_length check (length(name) <= 99);", ["buckets-reviewed"], false],
+  ["check-removed", "", "alter table storage.buckets drop constraint buckets_id_length;", ["buckets-reviewed"], false],
+  ["check-function-replaced", CHECK_FN, `create or replace function storage.check_fn(text) returns boolean language plpgsql as $f$ begin ${NEXTVAL_BODY} return true; end $f$;`, ["buckets-reviewed"], true],
+  ["users-check-added", "", "alter table auth.users add constraint extra check (length(aud) > 0);", ["authusers-reviewed"], false],
+  ["users-check-changed", "", "alter table auth.users drop constraint users_email_length, add constraint users_email_length check (email is null or length(email) <= 254);", ["authusers-reviewed"], false],
+  ["users-check-removed", "", "alter table auth.users drop constraint users_email_length;", ["authusers-reviewed"], false],
+  ["users-check-function-replaced", USERS_CHECK_FN, `create or replace function auth.check_fn(text) returns boolean language plpgsql as $f$ begin ${NEXTVAL_BODY} return true; end $f$;`, ["authusers-reviewed"], true],
+  ["users-trigger-added", "", `create function auth.added() returns trigger language plpgsql as $f$ begin ${NEXTVAL_BODY} return new; end $f$; create trigger added before insert on auth.users for each row execute function auth.added();`, ["authusers-reviewed", "authusers-triggers"], true],
+];
+for (const [name, before, after, want, consumes] of REVIEW_STOPS) {
+  const db = await fresh();
+  await db.exec(STOCK);
+  if (before) await db.exec(before);
+  const atReview = await reading(db);
+  const reviewed = C.reviewedSetOf(atReview.build00);
+  const bound = C.build01Facts({ ...atReview, ref: REF, finalFrom: refState, reviewed });
+  if (!bound.facts) throw new Error(`${name}: the reviewed reading does not bind: ${JSON.stringify(C.blocking(bound.findings))}`);
+  await db.exec(after);
+  const rd = await reading(db);
+  const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value;
+  const ledger = rd.build00.find((r) => r.part === "ledger" && r.key === "status").value;
+  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger, reviewed }).map((f) => f.key).sort();
+  // As B1 would run it: the facts bound at review, so the part's digest refuses too.
+  const asBound = await runText(db, A.build01Text(src, MANIFEST, bound.facts));
+  // The predicate alone: the digests are the current reading's, and only the reviewed set is old.
+  const text = A.build01Text(src, MANIFEST, facts0(rd, reviewed));
+  const r = await runText(db, text);
+  const sql = (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
+  const left = await noneLeft(db);
+  const refused = await witness(db);
+  const real = await runText(db, withoutFirstStep(text));
+  const consumed = await witness(db);
+  save(`w-reviewed-stop-${name}.json`, { reviewed, ...rd, js, sql, asBound: { code: asBound.code ?? null, message: asBound.message ?? null, where: asBound.where ?? null }, code: r.code ?? null, where: r.where ?? null, left, witnessAfterRefusal: refused, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: real.message }, witnessWithoutTheStep: consumed });
+  const digest = want.some((p) => p.startsWith("buckets")) ? "digest build00.buckets" : "digest build00.authusers";
+  say(same(js, want) && same(sql, want) && !r.ok && String(asBound.message).includes(digest) && want.every((p) => String(asBound.message).includes(p)) && left.ledger_absent && left.marker_absent && left.files_absent && refused === false && consumed === consumes, `run W: ${name}: the comparator and BUILD-01's first step name ${js.join(", ")} | ${sql.join(", ")}; the witness is unconsumed after the refusal; without that step: ${real.ok ? "it commits" : `${real.code} ${String(real.message).slice(0, 60)}`}, witness consumed ${consumed}`);
+}
+for (const [name, extra] of [["stock-set", ""], ["stock-set-with-functions", `${WHEN_FN} ${CHECK_FN} ${USERS_CHECK_FN}`]]) {
+  const db = await fresh();
+  await db.exec(STOCK);
+  if (extra) await db.exec(extra);
+  const rd = await reading(db);
+  const reviewed = C.reviewedSetOf(rd.build00);
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed });
+  const stops = C.blocking(findings);
+  const text = facts ? A.build01Text(src, MANIFEST, facts) : "";
+  const r = facts ? await runText(db, text) : { ok: false, message: "no facts" };
+  const state = r.ok ? await read(db, "P0-4C") : [];
+  const fp = (rows) => rows.find((x) => x.part === 2 && x.key === "fingerprint")?.value;
+  save(`w-reviewed-commit-${name}.json`, { reviewed, ...rd, stops, facts, md5: facts ? A.md5(text) : null, committed: r.ok, success: CL.SUCCESS["BUILD-01"].check(JSON.stringify(r.rows ?? [])).ok, fingerprintEqual: fp(state) === fp(refState), witness: await witness(db) });
+  say(!stops.length && r.ok && fp(state) === fp(refState) && (await witness(db)) === false, `run W: ${name}: the reviewed set binds, ${Object.keys(reviewed.buckets).length} rows on buckets and ${Object.keys(reviewed.authusers).length} on auth.users; BUILD-01 commits, and the catalog's fingerprint is the local 01's${r.ok ? "" : `: ${r.code} ${r.message}`}`);
+}
+{
+  // Codex's probe of 1a7aff1, as it ran there: a fresh database, a bucket trigger that only
+  // raises, both reads bound, then only the function's body replaced. At X3b both reads
+  // compared equal after the replacement, and the sequence's value was consumed.
+  const db = await fresh();
+  await db.exec("create sequence storage.review_witness; create function storage.review_reject() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger review_reject before insert on storage.buckets for each row execute function storage.review_reject();");
+  const before = await reading(db);
+  const reviewed = C.reviewedSetOf(before.build00);
+  const bound = C.build01Facts({ ...before, ref: REF, finalFrom: refState, reviewed });
+  await db.exec("create or replace function storage.review_reject() returns trigger language plpgsql as $$ begin perform nextval('storage.review_witness'); raise exception 'refused'; end $$;");
+  const after = await reading(db);
+  const js = C.blocking(C.build01Facts({ ...after, ref: REF, finalFrom: refState, reviewed }).findings).map((f) => f.key);
+  const r = await runText(db, A.build01Text(src, MANIFEST, bound.facts));
+  const left = await noneLeft(db);
+  const refused = await witness(db);
+  const real = await runText(db, withoutFirstStep(A.build01Text(src, MANIFEST, bound.facts)));
+  const consumed = await witness(db);
+  save("w-reviewed-codex-probe.json", { readingsEqual: same(before, after), bound: bound.facts !== null, reviewed, ...after, js, code: r.code ?? null, message: r.message ?? null, where: r.where ?? null, left, witnessAfterRefusal: refused, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: real.message }, witnessWithoutTheStep: consumed });
+  say(bound.facts !== null && !same(before, after) && same(js, ["buckets-reviewed"]) && !r.ok && String(r.message).includes("buckets-reviewed") && left.ledger_absent && left.files_absent && refused === false && real.message === "refused" && consumed === true, `run W: Codex's probe: the reads now differ; refused before any file: ${String(r.message).slice(30, 120)}; the witness unconsumed, and consumed without that step`);
+}
+{
+  // A reading with no review at all: nothing binds, in the comparator, and build01Text refuses without a set.
+  const db = await fresh();
+  await db.exec(STOCK);
+  const rd = await reading(db);
+  const none = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
+  say(none.facts === null && same(C.blocking(none.findings).map((f) => f.key).sort(), ["authusers-reviewed", "buckets-reviewed"]), `run W: no reviewed set: no facts, naming ${C.blocking(none.findings).map((f) => f.key).sort().join(", ")}`);
 }
 {
   // A column one of the two INSERTs supplies is gone: BUILD-00 reports it, and
@@ -354,8 +498,8 @@ for (const [name, setup] of COMMITTED) {
   await db.exec("alter table storage.buckets drop column allowed_mime_types;");
   const b = await read(db, "BUILD-00");
   const w = await read(db, "BUILD-00W").then(() => null, (e) => e.code);
-  const js = C.buildPredicateFindings(b, baseW, { creator: "postgres", ledger: "absent-table" }).map((f) => f.key);
-  const facts = { ref: REF, creator: "postgres", ledger: "absent-table", employees: 2, digests: { build00: C.partDigests(b), build00w: C.partDigests(baseW) }, defaultsNow: C.defaultsOf(b, "defaults", "postgres"), defaultsFinal: C.defaultsOf(refState, 3, "postgres") };
+  const js = C.buildPredicateFindings(b, baseW, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(b) }).map((f) => f.key);
+  const facts = { ref: REF, creator: "postgres", ledger: "absent-table", employees: 2, digests: { build00: C.partDigests(b), build00w: C.partDigests(baseW) }, reviewed: C.reviewedSetOf(b), defaultsNow: C.defaultsOf(b, "defaults", "postgres"), defaultsFinal: C.defaultsOf(refState, 3, "postgres") };
   const r = await runText(db, A.build01Text(src, MANIFEST, facts));
   save("w-shape-missing-bucket-column.json", { js, build00wError: w, code: r.code ?? null, where: r.where ?? null });
   say(w === "42703" && same(js, ["buckets-columns"]) && r.code === "42703" && /^PL\/pgSQL function inline_code_block line \d+ at RAISE$/.test(String(r.where)), `run W: missing-bucket-column: BUILD-00W fails ${w}, the comparator names ${js.join(", ")}, and BUILD-01 re-raises ${r.code}`);
@@ -370,8 +514,8 @@ for (const [name, setup] of COMMITTED) {
   const baseline = C.defaultsOf(await read(db, "BUILD-00"), "defaults", "postgres");
   await db.exec("set role reader");
   const rd = await reading(db);
-  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator: "postgres", ledger: "absent-table" }).map((f) => f.key).sort();
-  const facts = { ref: REF, creator: "postgres", ledger: "absent-table", employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, defaultsNow: baseline, defaultsFinal: baseline };
+  const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator: "postgres", ledger: "absent-table", reviewed: own(rd) }).map((f) => f.key).sort();
+  const facts = { ref: REF, creator: "postgres", ledger: "absent-table", employees: 2, digests: { build00: C.partDigests(rd.build00), build00w: C.partDigests(rd.build00w) }, reviewed: own(rd), defaultsNow: baseline, defaultsFinal: baseline };
   const r = await runText(db, A.build01Text(src, MANIFEST, facts));
   await db.exec("reset role");
   const sql = (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
@@ -383,7 +527,7 @@ for (const [name, setup] of COMMITTED) {
   // A fact changed between the reads and BUILD-01: the digest refuses before any file.
   const db = await fresh();
   const rd = await reading(db);
-  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
+  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
   const text = A.build01Text(src, MANIFEST, facts);
   await db.exec("insert into auth.users (id, email) values ('33333333-3333-4333-8333-333333333333', 'x@example.invalid'); alter table storage.buckets add column later text;");
   const r = await runText(db, text);
@@ -395,7 +539,7 @@ for (const [name, setup] of COMMITTED) {
   // A later file's failure: re-raised, one frame, and nothing stays.
   const db = await fresh();
   const rd = await reading(db);
-  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
+  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
   const text = A.build01Text(src, MANIFEST, facts);
   await db.exec("create role probe nologin");
   const broken = text.replace("  execute f;\n", "  raise exception 'a planted failure' using errcode = '22012';\n");

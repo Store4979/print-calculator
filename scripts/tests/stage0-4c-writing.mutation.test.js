@@ -79,6 +79,8 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
     "buckets-authority": [b, set(w, "buckets", "update|updated_at", "false")],
     "buckets-rls": [b, set(w, "buckets", "rls_applies", "true")],
     "buckets-rows": [b, set(w, "buckets", "row|customer-uploads", "true")],
+    "buckets-reviewed": [add(b, "buckets", "trigger|x", "O|a definition|postgres"), w],
+    "authusers-reviewed": [add(b, "authusers", "check|x", "CHECK (true)"), w],
     "objects-table": [set(b, "objects", "table", "v|postgres|false|false"), w],
     "objects-policies": [add(b, "objects", "policy|job_files_anon_delete", "d"), w],
     "objects-authority": [b, set(w, "objects", "owner_privileges", "false")],
@@ -96,11 +98,11 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
   };
   assert.deepEqual(Object.keys(NEG).sort(), [...C.BUILD_PREDICATE_NAMES].sort());
   const dir = mkdtempSync(join(tmpdir(), "s0-4w-pred-"));
-  const opts = { creator: "postgres", ledger: "absent-table" };
+  const opts = { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(b) };
   try {
     for (const [n, [name, [x, y]]] of Object.entries(NEG).entries()) {
       assert.deepEqual(C.buildPredicateFindings(x, y, opts).map((f) => f.key), [name], `${name}: the original refuses`);
-      const K = await load(COMPARE, [".filter(([, ok]) => ok(b, w, { creator, ledger }) !== true)", `.filter(([name, ok]) => name !== ${JSON.stringify(name)} && ok(b, w, { creator, ledger }) !== true)`], dir, n);
+      const K = await load(COMPARE, [".filter(([, ok]) => ok(b, w, { creator, ledger, reviewed }) !== true)", `.filter(([name, ok]) => name !== ${JSON.stringify(name)} && ok(b, w, { creator, ledger, reviewed }) !== true)`], dir, n);
       assert.deepEqual(K.buildPredicateFindings(x, y, opts), [], `${name}: the mutant accepts`);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -108,7 +110,7 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
 
 test("4W-M4 X3-R2 and X3-R3: each part of the arbiter's and the text columns' rules, removed, turns its real shape's readings into exactly an acceptance", async () => {
   const reads = (name) => { const r = json(`w-stop-${name}.json`); return [r.build00, r.build00w]; };
-  const opts = { creator: "postgres", ledger: "absent-table" };
+  const optsOf = (x) => ({ creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(x) });
   const CASES = [
     ["the arbiter's form: Codex's deferrable key", "return onId.length === 1 && onId[0] === BUILD_ARBITER;", "return onId.length === 1;", "deferrable-key", "buckets-arbiter"],
     ["one index on id: a second, deferrable one", "return onId.length === 1 && onId[0] === BUILD_ARBITER;", "return onId.includes(BUILD_ARBITER);", "second-deferrable-unique", "buckets-arbiter"],
@@ -120,9 +122,32 @@ test("4W-M4 X3-R2 and X3-R3: each part of the arbiter's and the text columns' ru
   try {
     for (const [n, [name, from, to, shape, want]] of CASES.entries()) {
       const [x, y] = reads(shape);
-      assert.deepEqual(C.buildPredicateFindings(x, y, opts).map((f) => f.key), [want], `${name}: the original refuses`);
+      assert.deepEqual(C.buildPredicateFindings(x, y, optsOf(x)).map((f) => f.key), [want], `${name}: the original refuses`);
       const K = await load(COMPARE, [from, to], dir, `fit${n}`);
-      assert.deepEqual(K.buildPredicateFindings(x, y, opts), [], `${name}: the mutant accepts`);
+      assert.deepEqual(K.buildPredicateFindings(x, y, optsOf(x)), [], `${name}: the mutant accepts`);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("4W-M5 X3d: each part of the exact-set rule, removed, turns its real shape into exactly an acceptance", async () => {
+  const CASES = [
+    ["the digests: Codex's replaced body", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return keys(have) === keys(want);", "function-body-replaced", "buckets-reviewed"],
+    ["the digests: a CHECK changed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return keys(have) === keys(want);", "check-changed", "buckets-reviewed"],
+    ["the digests: a CHECK on auth.users changed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return keys(have) === keys(want);", "users-check-changed", "authusers-reviewed"],
+    ["the keys: a trigger removed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return Object.keys(have).every((k) => have[k] === want[k]);", "trigger-removed", "buckets-reviewed"],
+    ["the keys: a CHECK on auth.users removed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return Object.keys(have).every((k) => have[k] === want[k]);", "users-check-removed", "authusers-reviewed"],
+    ["which rows are in the set: a trigger added", "const REVIEWED_KEY = /^(trigger|trigger-function|check|check-function)\\|/;", "const REVIEWED_KEY = /^(check|check-function)\\|/;", "trigger-added", "buckets-reviewed"],
+    ["which rows are in the set: a CHECK added", "const REVIEWED_KEY = /^(trigger|trigger-function|check|check-function)\\|/;", "const REVIEWED_KEY = /^(trigger|trigger-function)\\|/;", "check-added", "buckets-reviewed"],
+  ];
+  const dir = mkdtempSync(join(tmpdir(), "s0-4w-rev-"));
+  try {
+    for (const [n, [name, from, to, shape, want]] of CASES.entries()) {
+      const r = json(`w-reviewed-stop-${shape}.json`);
+      const opts = { creator: "postgres", ledger: "absent-table", reviewed: r.reviewed };
+      assert.deepEqual(C.buildPredicateFindings(r.build00, r.build00w, opts).map((f) => f.key), [want], `${name}: the original refuses`);
+      const K = await load(COMPARE, [from, to], dir, `rev${n}`);
+      // A mutant that narrows the set reads the review's digests through its own filter, so it takes the review's rows as they were.
+      assert.deepEqual(K.buildPredicateFindings(r.build00, r.build00w, { ...opts, reviewed: /REVIEWED_KEY/.test(from) ? K.reviewedSetOf(r.build00) : r.reviewed }), [], `${name}: the mutant accepts`);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -154,6 +179,7 @@ test("4W-M3 each check of P1-4C's shape and of M-6g, removed, turns its negative
     ["a write in the re-assertion", B1, swapIn(BUILD, "  with f(src, part, key, value) as (", "  delete from public.stores;\n  with f(src, part, key, value) as ("), "if (into !== 1 || other.length) say(", "if (false) say("],
     ["a call off the list", B1, swapIn(BUILD, "  with f(src, part, key, value) as (", "  if pg_sleep(1) is null then null; end if;\n  with f(src, part, key, value) as ("), "if (calls.length) say(", "if (false) say("],
     ["the bound digests", B1, swapIn(BUILD, facts.digests.build00.buckets, "0".repeat(32)), "if (!body.includes(`bound(src, part, digest) as (values ${want})`)) say(", "if (false) say("],
+    ["the bound reviewed set", B1, swapIn(BUILD, "reviewed(part, key, digest) as (select null::text, null::text, null::text where false)", `reviewed(part, key, digest) as (values ('buckets', 'trigger|x', '${"0".repeat(32)}'))`), "if (!body.includes(`reviewed(part, key, digest) as (${accepted ? `values ${accepted}` : \"select null::text, null::text, null::text where false\"})`)) say(", "if (false) say("],
     ["the refusal of the bound acceptance", B1, swapIn(BUILD, "raise exception 'stage0 BUILD-01: the bound acceptance does not hold: %', v_bad using errcode = 'P0001';", "null;"), "if (!/select string_agg\\(distinct x\\.name, ', ' order by x\\.name\\) into v_bad from bad x;\\s+if v_bad is not null then\\s+raise exception 'stage0 BUILD-01: the bound acceptance does not hold: %'/.test(body)) say(", "if (false) say("],
     // The text has two default steps; String.replace takes the first, and these replacements hold no dollar.
     ["a form outside the default step's grammar", B1, BUILD.replace("  if (with have as (", "  alter default privileges for role postgres grant all on tables to anon;\n  if (with have as ("), "if (!B1_ALTER.test(s)) say(", "if (false) say("],

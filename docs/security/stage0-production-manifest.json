@@ -260,9 +260,9 @@
       },
       "build00": {
         "path": "supabase/rehearsals/release2_stage0_4c_build00.sql",
-        "blob": "d93ae4fe10556ce7a63997bf2aa5d8d0099d3795",
-        "md5": "5b48dd95d6b3fdb94b34a00b9fd78178",
-        "bytes": 17162,
+        "blob": "74e1a10319f897d4ef27d4ac925814d59536b095",
+        "md5": "5f3a409c629f8d73f6d8e824c3f64858",
+        "bytes": 19985,
         "pinnedAt": "manifest-commit"
       },
       "build00w": {
@@ -283,9 +283,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "5a1b45b2f4a6c5450731425448054b31c2eb3c18",
-    "md5": "c514997e21d254fcd0eee7a0f374848b",
-    "bytes": 94866,
+    "blob": "824814d97ea1f3bc0c3cfadab3494c88edf268db",
+    "md5": "ba00859c2fa6730451543e96245b0911",
+    "bytes": 96410,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -308,16 +308,16 @@
     "files": [
       {
         "path": "scripts/manual/assemble-stage0.mjs",
-        "blob": "5a1b45b2f4a6c5450731425448054b31c2eb3c18",
-        "md5": "c514997e21d254fcd0eee7a0f374848b",
-        "bytes": 94866,
+        "blob": "824814d97ea1f3bc0c3cfadab3494c88edf268db",
+        "md5": "ba00859c2fa6730451543e96245b0911",
+        "bytes": 96410,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-4c-compare.mjs",
-        "blob": "05f4505b7694f73c1112ab6b8a8117fbdb3efdf2",
-        "md5": "dc1e7e71ddf413d6ed217c9a5819bf71",
-        "bytes": 56081,
+        "blob": "e72f6c737c6654ca9742efb3c3b076ebd78fee98",
+        "md5": "1e00e3fd5f78725a1fd68ba0ba531eb4",
+        "bytes": 58330,
         "pinnedAt": "manifest-commit"
       },
       {
@@ -817,8 +817,8 @@
       "bytes": 10759
     },
     "BUILD-00": {
-      "md5": "2bb3a31c6a78837a504286817f8403b9",
-      "bytes": 17269
+      "md5": "1e9c9e1b2a02819689173f8cd494304c",
+      "bytes": 20092
     },
     "BUILD-00W": {
       "md5": "7cb8e53d526bb2d2f6f9a4d24bd94a66",

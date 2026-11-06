@@ -403,6 +403,51 @@ certify it as wholly green, as Codex ruled; comparing with the Git blobs resolve
 commit. The repaired driver, its old versions and its demonstrations are in
 `.review/verify-driver/`.
 
+**X3d: what runs on BUILD-01's INSERTs is bound exactly.** Codex reproduced the gap: a fresh local
+database, both BUILD reads bound with a bucket trigger that only raised, then only the function's body
+replaced, keeping the declaration, function name and owner. The new body called `nextval` and raised. Both
+reads compared equal, BUILD-01 reached the trigger and rolled back, and the sequence's value was consumed.
+
+- **Why not simply refuse every such trigger:** Claude read the staging catalog at 2026-11-05 14:20 EST,
+  read-only and not a guarded receipt. `storage.buckets` has seven enabled platform triggers, all owned by
+  `supabase_storage_admin`. Two fire on INSERT:
+  - `enforce_bucket_name_length_trigger`, `storage.enforce_bucket_name_length()`, prosrc md5
+    `bd3d77a2603f7f344035a81def5502fa`, which raises only for a name over 100 characters;
+  - `protect_bucket_control_insert`, `storage.protect_bucket_control_columns('service_role')`, prosrc md5
+    `7870415452678f5aa85f91dde952ef12`, which raises 42501 only for a non-null lifecycle column and a role
+    that is not a member.
+
+  Five more cover lifecycle and versioning updates and deletes. There are five CHECKs on the table using only
+  built-ins, and one simple CHECK on `auth.users`. So rejecting every enabled trigger would stop a stock project.
+  **This is evidence for the design, not an approved set:** those hashes are written nowhere in the code.
+- **The rule (Ryan's, 2026-11-05):** exact-set binding. BUILD-00 reports, for `storage.buckets` and `auth.users`,
+  every trigger that is not internal, each function it runs, every CHECK, and each function pg_depend records for
+  a CHECK (built-ins are pinned, so a CHECK using only built-ins has none). A function's row holds its language,
+  owner, security definer, volatility and config, md5 of prosrc and of the definition, and the definition, so that
+  review reads what it binds.
+- **The set comes from the project's own reading.** `reviewedSetOf` takes it from the throwaway's R0a reading once
+  review has accepted that reading, and B1 binds it. `build01Facts` is given the set separately from the reading, so a
+  reading that moved since the review stops: anything unreviewed, added, removed or changed. No review means no facts.
+- **Both predicates, `buckets-reviewed` and `authusers-reviewed`,** in the comparator and in BUILD-01's first step in
+  SQL, before the first file. `authusers-triggers` stays: no trigger on `auth.users` is expected, and one stops.
+- **The read fields are accepted before any R0a receipt is collected.**
+
+**Two corrections to what this plan and X3b's request said:**
+- **The rollback is not a general backstop.** A rolled-back BUILD-01 removes its rows and objects, and can still
+  consume a sequence value (§2.1). "No ledger and no file left" did not show that nothing happened.
+- **BUILD-00 did not read `auth.users`'s CHECKs before X3d,** or its triggers beyond a count. X3b's request said BUILD-00
+  reported "those constraints and triggers", which was true only of `storage.buckets`.
+
+**What the binding does not see, for Codex's ruling before R0a** (`.review/x3d-evidence/not-bound-shapes.json`, local PGlite):
+each of these, changed after the review, leaves both readings equal, and BUILD-01 commits with the witness sequence
+consumed:
+- a helper called from inside a reported function's body (the review reads the body, and the catalog does not record the call);
+- a function behind a column default, on `storage.buckets`, or on an `auth.users` column BUILD-00 does not list;
+- a function behind a unique index's expression;
+- a function behind a domain's CHECK on a bucket column.
+
+A rewrite rule added on INSERT is not reported either, and BUILD-01 fails on it, 0A000, with the witness unconsumed.
+
 ## 1. What the remaining path touches
 
 These facts shape the rest of the plan. They come from reading the
@@ -702,10 +747,10 @@ never one assumed from staging.
 
 | object | what writes it | what is read | the predicates (else STOP) |
 |---|---|---|---|
-| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); its triggers (name, timing, events, enabled, function and the function's owner); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; the triggers are the reviewed set; **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
+| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); every trigger (name, timing, events, enabled, function and the function's owner), each function it runs (language, owner, security definer, volatility, config, md5 of prosrc and of the definition, and the definition), every CHECK and each function pg_depend records for one (X3d); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; **the triggers, their functions and the CHECKs are exactly the set review accepted from this project's own R0a reading (§0.7);** **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
 | `storage.objects` | `20260506182318`: `DROP POLICY IF EXISTS` and `CREATE POLICY` of `job_files_anon_insert`, `job_files_anon_select` and `job_files_anon_delete` | presence, kind and owner; every existing policy's name; the `bucket_id` column and its type; RLS | an ordinary table with a `bucket_id` text column; **none of the three policy names exists,** so each `DROP … IF EXISTS` removes nothing; the W role owns the table or holds its owner's privileges (`pg_has_role(…, 'USAGE')`; a superuser passes). Table DML privileges do not confer policy authority: PostgreSQL requires ownership for `CREATE POLICY` and `DROP POLICY` |
 | publication `supabase_realtime` | `20260629173251`: reads `pg_publication_tables`, then `ALTER PUBLICATION supabase_realtime ADD TABLE public.pending_jobs` | presence, owner, `puballtables`, the insert/update/delete/truncate flags, `pubviaroot`, every member table | it exists; it is not `FOR ALL TABLES`; `public.pending_jobs` is not a member; the W role owns the publication or holds its owner's privileges. Reading `pg_publication_tables` is not authority to alter it. The table's ownership, which `ADD TABLE` also requires, comes from the W role creating `pending_jobs` earlier in the same file |
-| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers; RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; the trigger set is the reviewed one (none is expected) |
+| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers, each function they run, every CHECK and each function pg_depend records for one (X3d; before it, only a count of triggers and no CHECK); RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; no trigger is expected; **its triggers, their functions and its CHECKs are exactly the set review accepted (§0.7)** |
 | schemas `supabase_migrations`, `stage0_rehearsal` | BUILD-01: the ledger schema and table where absent, and the marker | their presence and owners; the W role's CREATE on the database | the marker schema is absent; the ledger schema is absent, or exactly as BUILD-00 found it; CREATE on the database |
 | default privileges | BUILD-01's two exact targets (step 4) | every `pg_default_acl` row (§2.2 part 3) | the W role is the object-creating role, or holds its privileges |
 
@@ -720,9 +765,12 @@ that can see them.
 **What the preflight shows, and what it does not:**
 - **BUILD's SQL compatibility is checked:** the pinned bytes can run as
   written, as the W role, on this project, without overwriting anything.
-  It is an extra bounded gate. The transaction's rollback on any SQL error
-  remains the backstop, and the preflight does not promise that every
-  runtime failure becomes impossible.
+  It is an extra bounded gate, and it does not promise that every runtime
+  failure becomes impossible. The transaction's rollback on an SQL error
+  removes the build's rows and objects. **That is all it undoes: a rolled-back
+  BUILD-01 can still consume a sequence value** (Codex reproduced it, review of
+  `1a7aff1`), which is why code it would run is bound before the first file
+  (§0.7).
 - **Storage service, real file operations, Realtime delivery and the
   production queue are tested only by the final production smoke**
   (§4.2). The rehearsal neither uploads nor downloads a file, and no

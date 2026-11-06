@@ -1273,6 +1273,12 @@ function buildPredicates(facts) {
     return `(${fact} ~ '^(text|character varying)[|]' or coalesce(substring(${fact} from '^character varying[(]([0-9]+)[)][|]')::int >= ${longest}, false))`;
   };
   const arbiterRow = "f.src = 'build00' and f.part = 'buckets' and f.key like 'arbiter|%'";
+  // The exact set review accepted (X3d): each row of the part in both directions against the CTE reviewed.
+  const reviewed = (part) => {
+    const row = `f.src = 'build00' and f.part = ${q(part)} and (f.key like 'trigger|%' or f.key like 'trigger-function|%' or f.key like 'check|%' or f.key like 'check-function|%')`;
+    const here = `select f.key, md5(f.value) from f where ${row}`, there = `select r.key, r.digest from reviewed r where r.part = ${q(part)}`;
+    return `not exists ((${here} except ${there}) union all (${there} except ${here}))`;
+  };
   return [
     ["public-empty", `not exists (select 1 from f where f.src = 'build00' and f.part = 'public')`],
     ["ledger", `${b("ledger", "status")} = ${q(facts.ledger)}`],
@@ -1284,6 +1290,7 @@ function buildPredicates(facts) {
     ["buckets-authority", trues([["buckets", "schema_usage"], ...["id", "name", "public", "file_size_limit", "allowed_mime_types"].map((c) => ["buckets", `insert|${c}`]), ...["public", "file_size_limit", "allowed_mime_types", "updated_at"].map((c) => ["buckets", `update|${c}`]), ["buckets", "select"]])],
     ["buckets-rls", `${w("buckets", "rls_applies")} = 'false'`],
     ["buckets-rows", `${w("buckets", "row|job-files")} = 'false' and ${w("buckets", "row|customer-uploads")} = 'false'`],
+    ["buckets-reviewed", reviewed("buckets")],
     ["objects-table", `${b("objects", "table")} like 'r|%' and ${b("objects", "column|bucket_id")} = 'text'`],
     ["objects-policies", `not ${has("build00", "objects", ["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"])}`],
     ["objects-authority", trues([["objects", "owner_privileges"]])],
@@ -1295,6 +1302,7 @@ function buildPredicates(facts) {
     ["authusers-authority", trues([["authusers", "insert"], ["authusers", "select"], ["authusers", "references|id"]])],
     ["authusers-rls", `${w("authusers", "rls_applies")} = 'false'`],
     ["authusers-triggers", `${b("authusers", "user-triggers")} = '0'`],
+    ["authusers-reviewed", reviewed("authusers")],
     ["marker-absent", `${b("schemas", "schema|stage0_rehearsal")} = '<absent>'`],
     ["database-create", trues([["database", "create"]])],
     ["creator", `${w("role", "name")} = ${q(facts.creator)} or ${has("build00w", "role", [`member|${facts.creator}`])} or split_part(${w("role", "attr")}, '|', 1) = 'true'`],
@@ -1310,6 +1318,7 @@ function buildAssertStep(src, facts) {
     return t.slice(0, -2);
   };
   const bound = Object.entries(facts.digests).flatMap(([s, parts]) => Object.entries(parts).map(([part, d]) => `(${q(s)}, ${q(part)}, ${q(d)})`));
+  const accepted = Object.entries(facts.reviewed).flatMap(([part, rows]) => Object.entries(rows).map(([key, d]) => `(${q(part)}, ${q(key)}, ${q(d)})`));
   return BUILD_DO(`declare
   v_bad text;
 begin
@@ -1326,6 +1335,7 @@ ${body("build00w")}
     select f.src, f.part, md5(string_agg(f.key || chr(9) || f.value || chr(10), '' order by f.key collate "C")) as digest from f group by f.src, f.part
   ),
   bound(src, part, digest) as (values ${bound.join(", ")}),
+  reviewed(part, key, digest) as (${accepted.length ? `values ${accepted.join(", ")}` : "select null::text, null::text, null::text where false"}),
   bad(name) as (
     select 'digest ' || d.src || '.' || d.part from ((select * from seen except select * from bound) union all (select * from bound except select * from seen)) d
     union all
@@ -1395,8 +1405,10 @@ ${RERAISE}`);
 /**
  * BUILD-01's text from the bound facts, with what they must hold checked first.
  * `facts`: ref, creator, ledger (absent-schema, absent-table or empty), digests
- * ({ build00: { part: md5 }, build00w: { part: md5 } }), defaultsNow and
- * defaultsFinal (`<scope>|<type>` to ACL), employees (two or more).
+ * ({ build00: { part: md5 }, build00w: { part: md5 } }), reviewed (the comparator's
+ * reviewedSetOf: { buckets: { key: md5 }, authusers: { key: md5 } }, from the project's
+ * own reviewed reading), defaultsNow and defaultsFinal (`<scope>|<type>` to ACL),
+ * employees (two or more).
  */
 export function build01Text(src, manifest, facts) {
   if (!/^[a-z]{20}$/.test(String(facts.ref)) || facts.ref === PRODUCTION_REF || facts.ref === STAGING_REF) throw new Error("BUILD-01's ref must be a rehearsal project's: not production's, not staging's");
@@ -1407,6 +1419,8 @@ export function build01Text(src, manifest, facts) {
     const parts = facts.digests && facts.digests[s];
     if (!parts || !Object.keys(parts).length || !Object.values(parts).every((d) => /^[0-9a-f]{32}$/.test(d))) throw new Error(`BUILD-01's bound digests of ${s} are missing or malformed`);
   }
+  const reviewedOk = (rows) => rows !== null && typeof rows === "object" && Object.entries(rows).every(([k, d]) => /^(trigger|trigger-function|check|check-function)\|/.test(k) && /^[0-9a-f]{32}$/.test(d));
+  if (!facts.reviewed || Object.keys(facts.reviewed).sort().join() !== "authusers,buckets" || !reviewedOk(facts.reviewed.buckets) || !reviewedOk(facts.reviewed.authusers)) throw new Error("BUILD-01's reviewed set is missing or malformed");
   const files = buildFiles(src, manifest);
   const at = files.findIndex((f) => f.version === BUILD_STORE_AFTER);
   if (at < 0) throw new Error(`no baseline file ${BUILD_STORE_AFTER}`);

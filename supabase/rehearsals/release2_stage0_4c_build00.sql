@@ -35,6 +35,21 @@
 --                column without a default, its user triggers
 --   schemas      whether supabase_migrations and stage0_rehearsal exist, and
 --                their owners
+-- What runs on BUILD-01's INSERTs, for storage.buckets (part buckets) and auth.users
+-- (part authusers). B1 binds these rows exactly (plan §2.1):
+--   trigger|<name>                    every trigger that is not internal, enabled or
+--                                     not: tgenabled, pg_get_triggerdef, its function's
+--                                     owner
+--   trigger-function|<name>|<fn>      each function it runs: its own, and any pg_depend
+--                                     records for its WHEN clause
+--   check|<name>                      every CHECK: pg_get_constraintdef
+--   check-function|<name>|<fn>        each function pg_depend records for it, which is
+--                                     every one that is not pinned: built-ins are, so
+--                                     a CHECK using only built-ins has none
+-- A function's value is language, owner, prosecdef, provolatile and proconfig, md5(prosrc)
+-- and md5(pg_get_functiondef), a line feed, and the definition itself, so that review
+-- reads what it binds. It sees no further: a function called from inside a body is not
+-- reported, and neither are rules, column defaults or index expressions.
 -- It returns (part, key, value) rows ordered by part and key in byte order.
 -- Facts that depend on the reader (rows under RLS, current_user's
 -- authority) are BUILD-00W's, except the ledger read's status. The ledger's
@@ -100,6 +115,30 @@ ledger_read as (
               then query_to_xml('select m.version, m.name, md5(m.statements[1]) as statements_md5, octet_length(m.statements[1]) as statements_bytes, cardinality(m.statements) as statements_count, m.created_by, m.idempotency_key is null as idempotency_key_null, m.rollback is null as rollback_null from supabase_migrations.schema_migrations m order by m.version', true, false, '')::text
          end as doc
     from ledger_guard g
+),
+reviewed_tables as (
+  select 'buckets' as part, to_regclass('storage.buckets') as rel
+  union all
+  select 'authusers', to_regclass('auth.users')
+),
+reviewed_triggers as (
+  select r.part, t.oid, t.tgname, t.tgfoid, t.tgenabled
+    from reviewed_tables r join pg_trigger t on t.tgrelid = r.rel
+   where not t.tgisinternal
+),
+reviewed_checks as (
+  select r.part, k.oid, k.conname
+    from reviewed_tables r join pg_constraint k on k.conrelid = r.rel
+   where k.contype = 'c'
+),
+reviewed_functions as (
+  select t.part, 'trigger-function|' || t.tgname as head, t.tgfoid as fn from reviewed_triggers t
+  union
+  select t.part, 'trigger-function|' || t.tgname, d.refobjid
+    from reviewed_triggers t join pg_depend d on d.classid = 'pg_trigger'::regclass and d.objid = t.oid and d.refclassid = 'pg_proc'::regclass
+  union
+  select c.part, 'check-function|' || c.conname, d.refobjid
+    from reviewed_checks c join pg_depend d on d.classid = 'pg_constraint'::regclass and d.objid = c.oid and d.refclassid = 'pg_proc'::regclass
 ),
 obs(part, key, value) as (
   select 'public', 'relation|' || c.relname, c.relkind::text || '|' || pg_get_userbyid(c.relowner)::text
@@ -209,9 +248,15 @@ obs(part, key, value) as (
     join pg_am m on m.oid = c.relam
    where i.indrelid = to_regclass('storage.buckets') and i.indisunique
   union all
-  select 'buckets', 'trigger|' || t.tgname, t.tgenabled::text || '|' || pg_get_triggerdef(t.oid) || '|' || pg_get_userbyid(p.proowner)::text
-    from pg_trigger t join pg_proc p on p.oid = t.tgfoid
-   where t.tgrelid = to_regclass('storage.buckets') and not t.tgisinternal
+  select t.part, 'trigger|' || t.tgname, t.tgenabled::text || '|' || pg_get_triggerdef(t.oid) || '|' || pg_get_userbyid(p.proowner)::text
+    from reviewed_triggers t join pg_proc p on p.oid = t.tgfoid
+  union all
+  select c.part, 'check|' || c.conname, pg_get_constraintdef(c.oid) from reviewed_checks c
+  union all
+  select f.part, f.head || '|' || n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')',
+         l.lanname::text || '|' || pg_get_userbyid(p.proowner)::text || '|' || p.prosecdef::text || '|' || p.provolatile::text || '|'
+           || coalesce(array_to_string(p.proconfig, ','), '') || '|' || md5(p.prosrc) || '|' || md5(pg_get_functiondef(p.oid)) || chr(10) || pg_get_functiondef(p.oid)
+    from reviewed_functions f join pg_proc p on p.oid = f.fn join pg_namespace n on n.oid = p.pronamespace join pg_language l on l.oid = p.prolang
   union all
   select 'buckets', 'table', c.relrowsecurity::text || '|' || c.relforcerowsecurity::text || '|' || pg_get_userbyid(c.relowner)::text
     from pg_class c where c.oid = to_regclass('storage.buckets')

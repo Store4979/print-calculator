@@ -1,21 +1,32 @@
-- Last updated: 2026-11-04
+- Last updated: 2026-11-05
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
+## 2026-11-05 — X3b accepted and pushed to staging; the verification driver repaired; X3c (the lock and deadlock policy) and X3d (the exact set of triggers and CHECKs)
+- Shipped: security/release-2-slice-2 47a0b69..1a7aff1 pushed 00:02Z on 11-06 (X3, X3b, under Codex's review of 1a7aff1; staging deploy 6aed190b; production unchanged); 1a7aff1..this commit local, for Codex's review
+  - 1bc21ba X3c: a reported 55P03 or 40P01 is R4 before any profile, under every text; P1-4C's helper and handlers preserve both; LS-1 to LS-6, G-29; every preserved text at its pin
+  - this commit X3d: BUILD-00 reports every trigger, its functions and every CHECK on storage.buckets and auth.users; B1 binds the project's own reviewed set; buckets-reviewed and authusers-reviewed in both implementations; Codex's replaced body refused before any file; 4W-18, 4W-19, 4W-M5; the plan's rollback and visibility claims corrected; this log
+  - Not commits: the verification driver repaired, a local script (.review/verify-driver/: old and new versions, demonstrations); X3b's failed comparison kept, exit 1; the historical report (.review/x3c-evidence/); what the binding does not see (.review/x3d-evidence/); the X3b push record (production plan §E13), written and uncommitted, waiting for Ryan's Netlify read; X3d's verification, whose results are in its review request, since this file cannot name its own commit's
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: the Netlify read after the X3b push; forward the review request to Codex (reviews/requests/codex-review-request-X3c-X3d.md)
+- Needs a ruling from Claude (chat): none. From Codex: whether the binding should reach defaults, index expressions and domains before R0a (plan §0.7)
+- Next planned step: Codex's review of the driver, X3c and X3d, which asks a staging-only push clearance naming X3d's hash; X4 waits for that verdict
+
 ## 2026-11-04 — X2c accepted, and X2 to X2c pushed to staging; X3, item 4(c)'s writing texts; Codex's AMEND of X3, and X3b
 - Shipped: security/release-2-slice-2 a5a05ec..47a0b69 pushed 19:12Z (X2, X2b, X2c, under Codex's review of 47a0b69; staging deploy 6aeb8393; production unchanged); 47a0b69..this commit local, for Codex's review
   - 47a0b69 X2c: Codex's review of X2b: under `empty`, only the exact reviewed document, byte for byte (B1), and the one relation form; absent-schema and absent-table only with the matching schema and table facts, an empty relation and columns, no constraint or trigger fact, and <not read> (B2); an unknown fact and a non-object row stop; the schema-ACL comparison scope and X4's images obligation recorded (4(c) plan §0.4, §2.2); CLAUDE.md's to_regclass line narrowed; 4C-18, 4C-19, 4C-M1 at 52 mutants; the comparator re-pinned; no SQL text, send policy or fixture changed (Codex: ACCEPT, pushed)
   - 87b34fa X3: P1-4C (P1′, its proofs source, 11 lock boundaries, its exact result and cap); BUILD-01 as a function of the facts B1 binds, with its re-assertion before the first file, and no text, policy or target until B1; M-6g; the preflight predicates in the comparator and in BUILD-01's SQL; the classifier's success entries and declared PERFORMs; the sender binds the step's declared text, go.text and the planned text (G-28, a G-26 mutant); the local run and its fixtures; 4W-1..4W-14, 4W-M1..M3; the guard chain re-pinned; no rehearsal target and no change to a preserved text's policy (Codex: AMEND, no push; the sender's binding accepted and closed)
-  - this commit X3b: Codex's review of X3: stage0_expect_error's inner handler lets 55P03 through (X3-R1), BUILD-00's arbiter| row and the one supported arbiter in both predicates (X3-R2), a bounded text column must hold its literals in both predicates (X3-R3); Codex's three probes as 4W-15 to 4W-17, 4W-M4; the plan's reconciliations, the cap ruling and the obligations for B1 and X4 (§0.6); the X2c push record (production plan §E13) and this log; BUILD-00 and P1-4C re-pinned, the comparator and assembler re-pinned; P1, the sender, the classifier and every other output unchanged
-  - Not commits: X2b's replay finished after Codex's inspection (14 × 577, exit 0, 00:17:54Z); a local check that BUILD-00's text reports `empty` for an RLS-exempt reader (.review/x2c-evidence); X2c's clean verification (579/579, build, M-13, harness 33 PASS, replay 14 × 579, exit 0, 18:48:54Z); Ryan's Netlify read after the X2c push (no new production deploy, Published still 6ab020c5 at main@7ec5af4); X3's clean verification (597/597, build, M-13, the two harnesses 33 and 49 PASS, replay 14 × 597, exit 0, 21:09:06Z), after a first precheck that failed on one of its own mutation negatives (kept, .review/precheck-X3-1); X3b's, whose results are in its review request, since this file cannot name its own commit's
+  - 1a7aff1 X3b: Codex's review of X3: stage0_expect_error's inner handler lets 55P03 through (X3-R1), BUILD-00's arbiter| row and the one supported arbiter in both predicates (X3-R2), a bounded text column must hold its literals in both predicates (X3-R3); Codex's three probes as 4W-15 to 4W-17, 4W-M4; the plan's reconciliations, the cap ruling and the obligations for B1 and X4 (§0.6); the X2c push record (production plan §E13) and this log; BUILD-00 and P1-4C re-pinned, the comparator and assembler re-pinned; P1, the sender, the classifier and every other output unchanged (Codex: ACCEPT, pushed)
+  - Not commits: X2b's replay finished after Codex's inspection (14 × 577, exit 0, 00:17:54Z); a local check that BUILD-00's text reports `empty` for an RLS-exempt reader (.review/x2c-evidence); X2c's clean verification (579/579, build, M-13, harness 33 PASS, replay 14 × 579, exit 0, 18:48:54Z); Ryan's Netlify read after the X2c push (no new production deploy, Published still 6ab020c5 at main@7ec5af4); X3's clean verification (597/597, build, M-13, the two harnesses 33 and 49 PASS, replay 14 × 597, exit 0, 21:09:06Z), after a first precheck that failed on one of its own mutation negatives (kept, .review/precheck-X3-1); X3b's (601/601, build, M-13, harnesses 33 and 81 PASS, replay 14 × 601; its own fixture comparison failed on CRLF, exit 1, kept, and the blobs matched)
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward the X3b review request to Codex (reviews/requests/codex-review-request-X3b.md)
-- Needs a ruling from Claude (chat): none. From Codex: whether a timeout SQLSTATE should leave the "executed input" and "field-less" profiles (plan §6.2)
-- Next planned step: Codex's review of X3b, which asks a staging-only push clearance naming its hash and carrying X3; then X4 (the workflows, the production gate and both runbooks)
+- Needs from Ryan: none (done)
+- Needs a ruling from Claude (chat): none
+- Next planned step: done: Codex accepted X3b
 
 ## 2026-11-03 — X0 to X1c pushed to staging; X2, item 4(c)'s read texts and comparator (Codex: AMEND); X2b
 - Shipped: security/release-2-slice-2 d8ec242..a5a05ec pushed 18:37Z (X0, X1, X1b, X1c, under Codex's review of a5a05ec after its replay condition, 14 × 559/559, exit 0; staging deploy 6aea29e4; production unchanged); a5a05ec..5ae51c6 local, for Codex's review
@@ -54,16 +65,3 @@
 - Needs from Ryan: forward T's and U's review requests; decide on the throwaway project and the window option (plan §12)
 - Needs a ruling from Claude (chat): none
 - Next planned step: Codex's reviews of T (with G-6) and U; then the 4(c) implementation commit
-
-## 2026-10-30 — Item 3 on staging: phase E COMPLETE-REFUSED, disposition approved, phase X cleanup; docs commit T
-- Shipped: security/release-2-slice-2 04b6520..c62644a (local, for Codex's review)
-  - c62644a T:
-    - the Q and R+S push records (§E13);
-    - the item 3 record (§E15) and its evidence in docs/security/evidence/stage0-item3/;
-    - the session-log and push-form rules
-  - Not commits: phase E (c862e1bc…) and phase X (9dee28cf…) ran on staging, 19 sends, all MATCH; production untouched
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: forward T's review request to Codex
-- Needs a ruling from Claude (chat): none
-- Next planned step: Codex's review of T; then the item 4(c) plan (the rehearsal from 01) for Codex

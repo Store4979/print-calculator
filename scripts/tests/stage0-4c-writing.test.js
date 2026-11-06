@@ -34,6 +34,11 @@
 //         deferrable key stops in both implementations before any file
 //   4W-17 X3-R3, the third: a bounded text column must hold the literals. The literal
 //         table is the files' and BUILD-01's own
+//   4W-18 X3d: every trigger, CHECK and function on the two tables is bound exactly.
+//         Codex's replaced body and each other change stop in both implementations,
+//         before any file, with a sequence as the witness of what would have run
+//   4W-19 X3d: a stock-like set binds and commits; no approved set is written anywhere;
+//         M-6g holds the bound set
 // Each database run in these three is the harness's, on PGlite, which is not a
 // dependency of this repository; the test runs the comparator and the classifier on
 // what that run recorded, and each 55P03 and 40P01 there was raised on purpose.
@@ -380,6 +385,10 @@ test("4W-9 BUILD-01's text is a function of the bound facts: the one the local r
     ["a creator out of form", { creator: "Robert'); drop" }, /not a role name/],
     ["no digests", { digests: { build00: {}, build00w: {} } }, /digests of build00/],
     ["a digest out of form", { digests: { build00: { x: "nope" }, build00w: facts.digests.build00w } }, /digests of build00/],
+    ["no reviewed set", { reviewed: undefined }, /reviewed set is missing or malformed/],
+    ["a reviewed set missing a table", { reviewed: { buckets: {} } }, /reviewed set is missing or malformed/],
+    ["a reviewed row of another kind", { reviewed: { buckets: { "column|id": "0".repeat(32) }, authusers: {} } }, /reviewed set is missing or malformed/],
+    ["a reviewed digest out of form", { reviewed: { buckets: { "trigger|x": "nope" }, authusers: {} } }, /reviewed set is missing or malformed/],
   ]) assert.throws(() => A.build01Text(src, M, { ...facts, ...change }), re, label);
   // The two reads, verbatim, inside the first step; and a changed fact, from the real run.
   assert.ok(BUILD.includes(reads().build00) && BUILD.includes(reads().build00w));
@@ -456,7 +465,7 @@ test("4W-10 M-6g admits BUILD-01 in each ledger form, and refuses every statemen
 
 test("4W-11 the preflight predicates: on every real shape the comparator and BUILD-01's own read name the same ones; each predicate fails on its own negative; a malformed reading stops", () => {
   assert.deepEqual([...C.BUILD_PREDICATE_NAMES], [...A.BUILD_PREDICATE_NAMES], "one table of names, in both places");
-  assert.equal(C.BUILD_PREDICATE_NAMES.length, 24);
+  assert.equal(C.BUILD_PREDICATE_NAMES.length, 26);
   const WANT = {
     "job-files-row": ["buckets-rows"], "customer-uploads-row": ["buckets-rows"], "extra-notnull-bucket-column": ["buckets-notnull"], "generated-bucket-column": ["buckets-generated"],
     "no-arbiter": ["buckets-arbiter"], "policy-present": ["objects-policies"], "publication-all-tables": ["publication-present"], "publication-absent": ["publication-authority", "publication-present"],
@@ -482,7 +491,7 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
   tried.add("buckets-columns");
   // Each predicate on its own negative, from the real fresh shape.
   const b = oldJson("a-build00.json"), w = oldJson("a-build00w.json");
-  const ask = (x, y) => C.buildPredicateFindings(x, y, { creator: "postgres", ledger: "absent-table" }).map((f) => f.key);
+  const ask = (x, y) => C.buildPredicateFindings(x, y, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(b) }).map((f) => f.key);
   assert.deepEqual(ask(b, w), [], "the shim's fresh shape passes them all");
   const set = (rows, part, key, value) => rows.map((r) => (r.part === part && r.key === key ? { ...r, value } : r));
   const drop = (rows, part, key) => rows.filter((r) => !(r.part === part && r.key === key));
@@ -498,6 +507,8 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
     ["buckets-authority", b, set(w, "buckets", "update|updated_at", "false")],
     ["buckets-rls", b, set(w, "buckets", "rls_applies", "true")],
     ["buckets-rows", b, set(w, "buckets", "row|customer-uploads", "true")],
+    ["buckets-reviewed", add(b, "buckets", "trigger|x", "O|a definition|postgres"), w],
+    ["authusers-reviewed", add(b, "authusers", "check|x", "CHECK (true)"), w],
     ["objects-table", set(b, "objects", "table", "v|postgres|false|false"), w],
     ["objects-policies", add(b, "objects", "policy|job_files_anon_delete", "d"), w],
     ["objects-authority", b, set(w, "objects", "owner_privileges", "false")],
@@ -526,7 +537,9 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
 test("4W-12 the facts bind only what the ledger rule and the predicates accept: Codex's X2c boundaries stay as narrow as ruled", () => {
   const b = oldJson("a-build00.json"), w = oldJson("a-build00w.json");
   const finalFrom = json("w-old-state.json");
-  const ok = C.build01Facts({ build00: b, build00w: w, ref: "abcdefghijklmnopqrst", finalFrom });
+  /** build01Facts with the reading's own set, as if review accepted it: these negatives are about the other predicates. */
+  const bind = (input) => C.build01Facts({ reviewed: C.reviewedSetOf(input.build00) ?? undefined, ...input });
+  const ok = bind({ build00: b, build00w: w, ref: "abcdefghijklmnopqrst", finalFrom });
   assert.equal(ok.facts.ledger, "absent-table");
   assert.equal(ok.facts.creator, "postgres");
   assert.deepEqual(ok.facts.digests.build00w, C.partDigests(w));
@@ -534,7 +547,7 @@ test("4W-12 the facts bind only what the ledger rule and the predicates accept: 
   assert.equal(emptyLedger.ledger, "empty");
   // What X2c accepted, and nothing wider: the owner, RLS off, the exact document.
   const asEmpty = (rows, over) => [...rows.filter((r) => r.part !== "ledger"), ...Object.entries({ schema: "true", table: "true", relation: "r|postgres|false|false", columns: C.LEDGER_COLUMNS, status: "empty", rows: "<table xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n\n</table>\n", ...over }).map(([key, value]) => ({ part: "ledger", key, value }))];
-  assert.notEqual(C.build01Facts({ build00: asEmpty(b, {}), build00w: w, ref: "abcdefghijklmnopqrst", finalFrom }).facts, null);
+  assert.notEqual(bind({ build00: asEmpty(b, {}), build00w: w, ref: "abcdefghijklmnopqrst", finalFrom }).facts, null);
   for (const [label, over, re] of [
     ["another owner", { relation: "r|supabase_admin|false|false" }, /not the one relation form/],
     ["RLS on", { relation: "r|postgres|true|false" }, /not the one relation form/],
@@ -542,7 +555,7 @@ test("4W-12 the facts bind only what the ledger rule and the predicates accept: 
     ["another empty serialization", { rows: "<table xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n</table>\n" }, /not the reviewed empty document/],
     ["a populated ledger", { status: "populated", rows: "<table x><row></row></table>" }, /already holds rows/],
   ]) {
-    const r = C.build01Facts({ build00: asEmpty(b, over), build00w: w, ref: "abcdefghijklmnopqrst", finalFrom });
+    const r = bind({ build00: asEmpty(b, over), build00w: w, ref: "abcdefghijklmnopqrst", finalFrom });
     assert.equal(r.facts, null, label);
     assert.match(C.blocking(r.findings).map((f) => f.reason).join(" | "), re, label);
   }
@@ -553,10 +566,10 @@ test("4W-12 the facts bind only what the ledger rule and the predicates accept: 
     ["a final state of junk", { build00: b, build00w: w, ref: "abcdefghijklmnopqrst", finalFrom: [null] }],
     ["BUILD-00 not rows", { build00: null, build00w: w, ref: "abcdefghijklmnopqrst", finalFrom }],
     ["BUILD-00W not rows", { build00: b, build00w: "rows", ref: "abcdefghijklmnopqrst", finalFrom }],
-  ]) assert.equal(C.build01Facts(input).facts, null, label);
+  ]) assert.equal(bind(input).facts, null, label);
   // A predicate that fails, and no production state, give no facts.
-  assert.equal(C.build01Facts({ build00: b, build00w: w.map((r) => (r.key === "row|job-files" ? { ...r, value: "true" } : r)), ref: "abcdefghijklmnopqrst", finalFrom }).facts, null);
-  assert.equal(C.build01Facts({ build00: b, build00w: w, ref: "abcdefghijklmnopqrst" }).facts, null);
+  assert.equal(bind({ build00: b, build00w: w.map((r) => (r.key === "row|job-files" ? { ...r, value: "true" } : r)), ref: "abcdefghijklmnopqrst", finalFrom }).facts, null);
+  assert.equal(bind({ build00: b, build00w: w, ref: "abcdefghijklmnopqrst" }).facts, null);
   // The digests are BUILD-01's: key TAB value LF, keys in byte order, written out here.
   assert.deepEqual(C.partDigests([{ part: "p", key: "b", value: "2" }, { part: "p", key: "a", value: "1" }]), { p: A.md5("a\t1\nb\t2\n") });
   assert.throws(() => C.partDigests([{ part: "p", key: "a", value: 1 }]), TypeError);
@@ -743,7 +756,7 @@ const ARBITER_OF = (rows) => rows.filter((r) => r.part === "buckets" && r.key.st
 /** A stopped shape: both readings' predicates, on the live comparator and from BUILD-01's own run; before any file; and what PostgreSQL does with BUILD-01's first step taken out. */
 function assertStopped(name, want, real) {
   const r = json(`w-stop-${name}.json`);
-  const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL });
+  const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL, reviewed: C.reviewedSetOf(r.build00) });
   assert.equal(bound.facts, null, `${name}: no facts`);
   assert.deepEqual(C.blocking(bound.findings).map((f) => f.key), [want], `${name}: the comparator, here`);
   assert.deepEqual(r.js, [want], `${name}: the comparator, in the run`);
@@ -761,7 +774,7 @@ function assertStopped(name, want, real) {
 }
 function assertCommitted(name) {
   const r = json(`w-commit-${name}.json`);
-  const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL });
+  const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL, reviewed: C.reviewedSetOf(r.build00) });
   assert.notEqual(bound.facts, null, `${name}: the facts bind, here: ${JSON.stringify(C.blocking(bound.findings))}`);
   assert.deepEqual(C.blocking(bound.findings), [], name);
   assert.deepEqual(r.stops, [], name);
@@ -829,4 +842,144 @@ test("4W-17 X3-R3: a bounded text column must hold the literals this build suppl
   assert.equal(BUILD.split("insert into auth.users (instance_id, id, aud, role, email) values").length - 1, 1);
   for (const [, email] of A.BUILD_USERS) assert.ok(BUILD.includes(`'authenticated', 'authenticated', '${email}')`), email);
   assert.deepEqual([...A.BUILD_LITERALS["authusers.email"]], A.BUILD_USERS.map(([, email]) => email));
+});
+
+const REVIEW_STOPS = {
+  "function-body-replaced": [["buckets-reviewed"], true],
+  "function-security-definer": [["buckets-reviewed"], false],
+  "function-config": [["buckets-reviewed"], false],
+  "function-volatility": [["buckets-reviewed"], false],
+  "function-owner": [["buckets-reviewed"], false],
+  "trigger-added": [["buckets-reviewed"], true],
+  "trigger-removed": [["buckets-reviewed"], false],
+  "trigger-disabled": [["buckets-reviewed"], false],
+  "trigger-definition-changed": [["buckets-reviewed"], false],
+  "when-function-replaced": [["buckets-reviewed"], true],
+  "check-added": [["buckets-reviewed"], false],
+  "check-changed": [["buckets-reviewed"], false],
+  "check-removed": [["buckets-reviewed"], false],
+  "check-function-replaced": [["buckets-reviewed"], true],
+  "users-check-added": [["authusers-reviewed"], false],
+  "users-check-changed": [["authusers-reviewed"], false],
+  "users-check-removed": [["authusers-reviewed"], false],
+  "users-check-function-replaced": [["authusers-reviewed"], true],
+  "users-trigger-added": [["authusers-reviewed", "authusers-triggers"], true],
+};
+
+test("4W-18 X3d: what runs on BUILD-01's INSERTs is bound exactly. Codex's replaced body and each other change after the review stop in both implementations before any file, with the witness sequence unconsumed; without the first step PostgreSQL consumes it", () => {
+  for (const [name, [want, consumes]] of Object.entries(REVIEW_STOPS)) {
+    const r = json(`w-reviewed-stop-${name}.json`);
+    // The comparator, here, on the reading after the change, against the set as reviewed.
+    const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL, reviewed: r.reviewed });
+    assert.equal(bound.facts, null, `${name}: no facts`);
+    assert.deepEqual(C.blocking(bound.findings).map((f) => f.key).sort(), want, `${name}: the comparator, here`);
+    assert.deepEqual(r.js, want, `${name}: the comparator, in the run`);
+    // BUILD-01's own read, the predicate alone: the digests are the current reading's.
+    assert.deepEqual(r.sql, want, `${name}: BUILD-01's first step`);
+    assert.equal(r.code, "P0001", name);
+    assert.match(r.where, ONE_FRAME, name);
+    // BUILD-01 as B1 would bind it: the part's digest and the predicate both refuse.
+    assert.match(r.asBound.message, /^stage0 BUILD-01: the bound acceptance does not hold: /, name);
+    for (const p of want) assert.ok(r.asBound.message.includes(p), `${name}: ${r.asBound.message}`);
+    assert.match(r.asBound.message, /digest build00\.(buckets|authusers)/, name);
+    // Before any file, and with nothing of the replaced code run.
+    assert.deepEqual(r.left, { ledger_absent: true, marker_absent: true, files_absent: true }, name);
+    assert.equal(r.witnessAfterRefusal, false, `${name}: the sequence is untouched after the refusal`);
+    assert.equal(r.witnessWithoutTheStep, consumes, `${name}: what PostgreSQL does with the first step taken out`);
+  }
+  // Codex's probe of 1a7aff1, on a fresh database as it ran there: at X3b the reads were equal after the replacement. Now they differ, and it is refused.
+  const probe = json("w-reviewed-codex-probe.json");
+  assert.equal(probe.bound, true, "the raise-only trigger binds, once reviewed");
+  assert.equal(probe.readingsEqual, false, "the replaced body moves the reading");
+  assert.deepEqual(probe.js, ["buckets-reviewed"]);
+  assert.deepEqual(C.blocking(C.build01Facts({ build00: probe.build00, build00w: probe.build00w, ref: REF, finalFrom: FINAL, reviewed: probe.reviewed }).findings).map((f) => f.key), ["buckets-reviewed"]);
+  assert.equal(probe.code, "P0001");
+  assert.match(probe.message, /^stage0 BUILD-01: the bound acceptance does not hold: .*buckets-reviewed/);
+  assert.match(probe.where, ONE_FRAME);
+  assert.deepEqual(probe.left, { ledger_absent: true, marker_absent: true, files_absent: true });
+  assert.equal(probe.witnessAfterRefusal, false, "the first value is not consumed");
+  assert.deepEqual(probe.real, { committed: false, code: "P0001", message: "refused" }, "without the step, what Codex saw");
+  assert.equal(probe.witnessWithoutTheStep, true, "a rollback does not give the value back");
+  // The same on a stock-like set: the same declaration, function name and owner; only the body differs, and a rolled-back build still consumed the value.
+  const body = json("w-reviewed-stop-function-body-replaced.json");
+  assert.deepEqual(body.real, { committed: false, code: "P0001", message: "refused" });
+  assert.equal(body.witnessWithoutTheStep, true);
+  const keyed = (rows) => Object.fromEntries(rows.filter((x) => x.part === "buckets").map((x) => [x.key, x.value]));
+  const after = keyed(body.build00);
+  const trigger = "trigger|enforce_bucket_name_length_trigger";
+  const fn = "trigger-function|enforce_bucket_name_length_trigger|storage.enforce_bucket_name_length()";
+  assert.match(after[trigger], /^O\|CREATE TRIGGER enforce_bucket_name_length_trigger BEFORE INSERT OR UPDATE OF name ON storage\.buckets .*\|supabase_storage_admin$/);
+  assert.ok(after[fn].includes("nextval('storage.review_witness')"), "the reading shows the body");
+  assert.equal(body.reviewed.buckets[trigger], A.md5(after[trigger]), "the declaration and owner are as reviewed");
+  assert.notEqual(body.reviewed.buckets[fn], A.md5(after[fn]), "the function's row is what moved");
+  // What each attribute change moves: the function's row, in its own field.
+  for (const [name, re] of [["function-security-definer", /^plpgsql\|supabase_storage_admin\|true\|v\|\|/], ["function-config", /^plpgsql\|supabase_storage_admin\|false\|v\|search_path=storage\|/], ["function-volatility", /^plpgsql\|supabase_storage_admin\|false\|s\|\|/], ["function-owner", /^plpgsql\|postgres\|false\|v\|\|/]]) {
+    assert.match(keyed(json(`w-reviewed-stop-${name}.json`).build00)[fn], re, name);
+  }
+  // A function a WHEN clause or a CHECK runs is a row of its own, which pg_depend gives.
+  assert.ok(Object.hasOwn(keyed(json("w-reviewed-stop-when-function-replaced.json").build00), "trigger-function|with_when|storage.when_fn(text)"));
+  assert.ok(Object.hasOwn(keyed(json("w-reviewed-stop-check-function-replaced.json").build00), "check-function|via_fn|storage.check_fn(text)"));
+  // auth.users's CHECKs and triggers, which BUILD-00 did not read before X3d.
+  const users = (name) => Object.fromEntries(json(`w-reviewed-stop-${name}.json`).build00.filter((x) => x.part === "authusers").map((x) => [x.key, x.value]));
+  assert.equal(users("users-check-added")["check|extra"], "CHECK ((length((aud)::text) > 0))");
+  assert.ok(Object.hasOwn(users("users-trigger-added"), "trigger|added"));
+  assert.ok(Object.hasOwn(users("users-check-function-replaced"), "check-function|via_fn|auth.check_fn(text)"));
+});
+
+test("4W-19 X3d: a stock-like set binds and commits with its own review; no review means no facts; no approved set is written in the code; M-6g holds the bound set; BUILD-00's new fields are the ones M-6f admits", () => {
+  const stock = json("w-reviewed-commit-stock-set.json");
+  assert.deepEqual(stock.stops, []);
+  assert.equal(stock.committed, true);
+  assert.equal(stock.success, true);
+  assert.equal(stock.fingerprintEqual, true);
+  assert.equal(stock.witness, false);
+  const keysOf = (rows, re) => Object.keys(rows).filter((k) => re.test(k));
+  assert.equal(keysOf(stock.reviewed.buckets, /^trigger\|/).length, 7);
+  assert.equal(keysOf(stock.reviewed.buckets, /^check\|/).length, 5);
+  assert.equal(keysOf(stock.reviewed.authusers, /^check\|/).length, 1);
+  assert.equal(keysOf(stock.reviewed.authusers, /^trigger\|/).length, 0);
+  assert.equal(keysOf(stock.reviewed.buckets, /^check-function\|/).length, 0, "CHECKs using only built-ins have no function row");
+  // The bound set, from the comparator here, is what the run bound.
+  assert.deepEqual(C.reviewedSetOf(stock.build00), stock.reviewed);
+  assert.deepEqual(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: stock.reviewed }).facts.reviewed, stock.reviewed);
+  // A reading whose values hold multi-line definitions is still BUILD-00's contracted success, and review can read a body in it.
+  assert.equal(CL.SUCCESS["BUILD-00"].check(JSON.stringify(stock.build00)).ok, true);
+  const fnRow = stock.build00.find((x) => x.key === "trigger-function|enforce_bucket_name_length_trigger|storage.enforce_bucket_name_length()").value;
+  assert.match(fnRow, /^plpgsql\|supabase_storage_admin\|false\|v\|\|[0-9a-f]{32}\|[0-9a-f]{32}\nCREATE OR REPLACE FUNCTION storage\.enforce_bucket_name_length\(\)/);
+  assert.ok(fnRow.includes("bucket name is too long"), "the definition itself");
+  const fns = json("w-reviewed-commit-stock-set-with-functions.json");
+  assert.equal(fns.committed, true);
+  assert.ok(Object.hasOwn(fns.reviewed.authusers, "check-function|via_fn|auth.check_fn(text)"));
+  assert.equal(fns.witness, false);
+  // No review at all: no facts, naming both.
+  const none = C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL });
+  assert.equal(none.facts, null);
+  assert.deepEqual(C.blocking(none.findings).map((f) => f.key).sort(), ["authusers-reviewed", "buckets-reviewed"]);
+  // Another project's set is not this one's.
+  const other = { ...stock.reviewed, buckets: { ...stock.reviewed.buckets, "trigger|enforce_bucket_name_length_trigger": "0".repeat(32) } };
+  assert.equal(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: other }).facts, null);
+  assert.equal(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: "not a set" }).facts, null);
+  // No approved set in the code: not the digests Ryan's staging read names, and not this run's.
+  for (const f of ["scripts/manual/stage0-4c-compare.mjs", "scripts/manual/assemble-stage0.mjs", "supabase/rehearsals/release2_stage0_4c_build00.sql"]) {
+    const t = readFileSync(join(ROOT, f), "utf8");
+    for (const hash of ["bd3d77a2603f7f344035a81def5502fa", "7870415452678f5aa85f91dde952ef12", ...Object.values(stock.reviewed.buckets)]) assert.ok(!t.includes(hash), `${f} holds ${hash}`);
+    for (const name of ["enforce_bucket_name_length", "protect_bucket_control"]) assert.ok(!t.includes(name), `${f} names ${name}`);
+  }
+  // M-6g on a text that binds a real set.
+  const text = A.build01Text(src, M, stock.facts);
+  assert.equal(A.md5(text), stock.md5);
+  assert.deepEqual(sibling(text, stock.facts), []);
+  const one = Object.values(stock.reviewed.buckets)[0];
+  for (const [label, t, re] of [
+    ["a reviewed digest changed", swapIn(text, `, '${one}')`, `, '${"0".repeat(32)}')`), /does not bind exactly the facts' reviewed set/],
+    ["a reviewed row dropped", text.replace(/\('buckets', 'check\|buckets_id_length', '[0-9a-f]{32}'\), /, ""), /does not bind exactly the facts' reviewed set/],
+    ["the predicate removed", text.replace(/^ {6}\('buckets-reviewed', .*\n/m, ""), /exactly the preflight table's predicates/],
+    ["the other predicate removed", text.replace(/^ {6}\('authusers-reviewed', .*\n/m, ""), /exactly the preflight table's predicates/],
+  ]) {
+    assert.notEqual(t, text, label);
+    assert.match(sibling(t, stock.facts).join("; "), re, label);
+  }
+  // M-6f admits BUILD-00 with its one new call, and the assembler emits it.
+  assert.ok(OUT["BUILD-00"].includes("pg_get_functiondef(p.oid)"));
+  assert.ok(OUT["BUILD-00"].includes("'authusers', to_regclass('auth.users')"));
 });
