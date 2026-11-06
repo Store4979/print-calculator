@@ -732,17 +732,17 @@ const fitsLiterals = (fact, longest) => {
 export const BUILD_ARBITER = "id|1|1|btree|true|true|true|true|true|false|false|p|false|false|true";
 const NAMES_ID_AS_KEY = /^([^|]*,)?id(,[^|]*)?\|/;
 /**
- * What runs on BUILD-01's INSERTs, which B1 binds exactly (plan §2.1, X3d): for
- * storage.buckets and auth.users, every row BUILD-00 reports for a trigger, a CHECK and
- * the functions they run. `reviewed` is { buckets: { key: md5(value) }, authusers: { … } },
- * made by reviewedSetOf from the project's own reading once review has accepted it. No
- * approved set is written here: a stock project's triggers are its own, so the set comes
- * from the reading that was reviewed, and anything added, removed or changed since stops.
- * An md5 of a row binds that row only: a function called from inside a reported body, a
- * rule, a column default or an index expression is not in the set (BUILD-00's header).
+ * What runs on BUILD-01's INSERTs, which B1 binds exactly (plan §2.1, §0.7; X3d, X3e): for
+ * storage.buckets and auth.users, every row BUILD-00 reports for a trigger, a CHECK, a
+ * default or generated expression, an index, a rule, a column's type, and what its walk
+ * reaches from them. `reviewed` is { buckets: { key: md5(value) }, authusers: { … } }, made
+ * by reviewedSetOf from the project's own reading once review has accepted it. No approved
+ * set is written here: a stock project's objects are its own, so the set comes from the
+ * reading that was reviewed, and anything added, removed or changed since stops. An md5 of
+ * a row binds that row only: what a reported body calls is B1's review item (bodyReviewItemsOf).
  */
 export const REVIEWED_PARTS = Object.freeze(["buckets", "authusers"]);
-const REVIEWED_KEY = /^(trigger|trigger-function|check|check-function)\|/;
+const REVIEWED_KEY = /^(?:(?:trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route)\||relation$)/;
 const reviewedOfPart = (part) => Object.fromEntries(Object.entries(part ?? {}).filter(([k]) => REVIEWED_KEY.test(k)).map(([k, v]) => [k, md5(v)]));
 /** The exact set a reading holds, or null when it is not rows of text, each key once. */
 export function reviewedSetOf(build00) {
@@ -756,6 +756,92 @@ const sameReviewed = (part, b, f) => {
   const keys = (o) => Object.keys(o).sort().join("\n");
   return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);
 };
+/**
+ * X3e (Codex's review of 2d53bed, §3): what a stored expression can run. PostgreSQL records
+ * no dependency on a pinned built-in, so an empty dependency result proves nothing about
+ * nextval or setval: `nextval(('s'::text)::regclass)` has no sequence dependency and no
+ * function dependency. So each stored expression's deparsed text is read as well, and never
+ * executed. pg_get_expr prints a string as '…' with its quotes doubled and never as E'…',
+ * and an identifier as "…" with its quotes doubled, so QUOTED_TEXT removes every literal and
+ * quoted name: a literal holding a function's name is no call. CALL_NAME then finds what is
+ * left of each call, and pg_get_expr prints a call with its parenthesis against the name.
+ *
+ * A call to nextval or setval stops under <part>-sequence-calls. Any other call must be on
+ * BUILD_EXPRESSION_CALLS, or the form is undetermined and stops under
+ * <part>-expression-calls: query_to_xml, for one, can run nextval from inside a literal. The
+ * one exception is X3d's reviewed coverage: a CHECK or a trigger's WHEN may call a function
+ * the walk reports for that same CHECK or trigger, whose definition review reads and binds.
+ * A pinned built-in is never reported, so it never takes this route. A
+ * quote left over, a quoted or schema-qualified name and a NULL text stop the same way. An
+ * operator's OPERATOR(…) is no call: the walk follows what implements it. The list is judged here and in BUILD-01, not in BUILD-00's text, so adding a built-in a
+ * stock project's reading shows needs review and no new reading.
+ *
+ * A trigger's text is its WHEN clause: what pg_get_triggerdef prints between " WHEN " and
+ * " EXECUTE FUNCTION ", once its literals, which can hold those words, are gone.
+ */
+export const SEQUENCE_CALLS = Object.freeze(["nextval", "setval"]);
+export const BUILD_EXPRESSION_CALLS = Object.freeze([
+  // What the deparser prints as SQL syntax, and a type's modifier in a cast.
+  "COALESCE", "NULLIF", "GREATEST", "LEAST", "EXTRACT", "SUBSTRING", "POSITION", "OVERLAY", "TRIM", "NORMALIZE", "ROW", "OPERATOR",
+  "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP", "varying", "character", "numeric", "timestamp", "time", "interval", "bit",
+  // Built-ins reviewed as reading their arguments and the clock, and changing nothing.
+  "now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timezone", "date_trunc", "date_part", "to_char", "to_timestamp",
+  "gen_random_uuid", "lower", "upper", "length", "char_length", "character_length", "octet_length", "btrim", "ltrim", "rtrim", "substr", "left", "right",
+  "replace", "regexp_replace", "split_part", "strpos", "starts_with", "concat", "concat_ws", "md5", "abs", "ceil", "floor", "round",
+  "array_length", "array_lower", "array_upper", "array_position", "array_to_string", "string_to_array", "cardinality", "jsonb_typeof", "jsonb_array_length",
+]);
+const EXPRESSION_KEY = /^(default|index-expr|index-pred|check|domain-check|domain-default)\|/;
+const QUOTED_TEXT = /'(?:[^']|'')*'|"(?:[^"]|"")*"/g;
+const CALL_NAME = /([A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*)\(/g;
+/** The source strings BUILD-01's SQL uses for the same two patterns. */
+export const EXPRESSION_PATTERNS = Object.freeze({ quoted: QUOTED_TEXT.source, call: CALL_NAME.source });
+/** The names a stored expression's text calls, a pg_catalog qualifier removed. */
+export const expressionCalls = (text) => [...String(text).replace(QUOTED_TEXT, "Q").matchAll(CALL_NAME)].map((m) => m[1].replace(/^pg_catalog\./, ""));
+const scannedOf = (part) => Object.entries(part ?? {}).flatMap(([key, raw]) => {
+  const stripped = raw.replace(QUOTED_TEXT, "Q");
+  if (EXPRESSION_KEY.test(key)) return [{ key, raw, s: stripped }];
+  if (!key.startsWith("trigger|")) return [];
+  const head = stripped.split(" EXECUTE FUNCTION ")[0];
+  const at = head.indexOf(" WHEN ");
+  return [{ key, raw, s: at < 0 ? "" : head.slice(at) }];
+});
+const callsOf = (s) => [...s.matchAll(CALL_NAME)].map((m) => m[1].replace(/^pg_catalog\./, ""));
+/** The names a CHECK's or a trigger's own reviewed functions go by in its text: qualified, and bare when visible. */
+const reportedCalls = (part, key) => {
+  const [kind, name] = key.split("|");
+  if (kind !== "check" && kind !== "trigger") return [];
+  return Object.keys(part).map((k) => k.split("|")).filter((f) => f[0] === `${kind}-function` && f[1] === name).flatMap((f) => {
+    const full = f[2].slice(0, f[2].indexOf("("));
+    return [full, full.slice(full.indexOf(".") + 1)];
+  });
+};
+const expressionCallsHold = (part) => scannedOf(part).every(({ key, raw, s }) => raw !== "<null>" && !/['"]/.test(s) && callsOf(s).every((c) => SEQUENCE_CALLS.includes(c) || BUILD_EXPRESSION_CALLS.includes(c) || reportedCalls(part, key).includes(c)));
+/** A reported function named nextval or setval, on any route: a custom operator's oprcode reaches one with no call in the text. */
+const NAMES_SEQUENCE_CALL = /^(?:route\|[^|]*\|[^|]*\|function|trigger-function\|[^|]*|check-function\|[^|]*)\|.*\.(?:nextval|setval)\(/;
+const sequenceFree = (part) => scannedOf(part).every(({ s }) => !callsOf(s).some((c) => SEQUENCE_CALLS.includes(c)))
+  && Object.entries(part ?? {}).every(([k, v]) => !(k.startsWith("column-type|") && v.split("|")[0] !== "") && !NAMES_SEQUENCE_CALL.test(k) && !/^route\|[^|]*\|[^|]*\|sequence\|/.test(k));
+/**
+ * What the walk may reach. A strict path reaches only functions of pg_catalog on
+ * BUILD_EXPRESSION_CALLS, and a function reported as trigger-function or check-function is
+ * reviewed, not judged here. An operator's own row passes because its oprcode has a row of
+ * its own, so a custom operator over an unlisted built-in stops there. A type is an enum,
+ * a domain or an array, whose elements are walked, or a base type of pg_catalog. Any other
+ * object stops as unsupported, so a composite, range or custom base type, a custom collation
+ * or operator class, or a relation other than the table itself never counts as built-in-only.
+ */
+const routeHolds = (key, value) => {
+  const kind = key.split("|")[3];
+  const [schema, detail = ""] = value.split("|");
+  if (kind === "function") return schema === "pg_catalog" && BUILD_EXPRESSION_CALLS.includes(/^pg_catalog\.([^(]*)\(/.exec(key.split("|")[4] ?? "")?.[1]);
+  if (kind === "collation") return schema === "pg_catalog";
+  if (kind === "operator" || kind === "table constraint" || kind === "domain constraint") return true;
+  if (kind === "type") return /^[ed]/.test(detail) || (detail.startsWith("b") && (schema === "pg_catalog" || detail[1] === "A"));
+  return false;
+};
+const routesHold = (part) => Object.entries(part ?? {}).every(([k, v]) => !k.startsWith("route|") || routeHolds(k, v));
+/** The only rewrite rule BUILD-01's INSERTs and UPDATEs cannot fire is a DELETE rule; it is inventoried and bound. */
+const rulesHold = (part) => Object.entries(part ?? {}).every(([k, v]) => !k.startsWith("rule|") || v.startsWith("4|"));
+const BUILD_RELATION = "r|false|false|0";
 /**
  * The preflight table's predicates (plan §2.1), each a name and what it asks of
  * the two readings, b (BUILD-00) and w (BUILD-00W, read as the role BUILD-01 will
@@ -783,6 +869,11 @@ const BUILD_PREDICATES = Object.freeze({
   "buckets-rls": (b, w) => w.buckets?.rls_applies === "false",
   "buckets-rows": (b, w) => w.buckets?.["row|job-files"] === "false" && w.buckets?.["row|customer-uploads"] === "false",
   "buckets-reviewed": (b, w, f) => sameReviewed("buckets", b, f),
+  "buckets-relation": (b) => b.buckets?.relation === BUILD_RELATION,
+  "buckets-expression-calls": (b) => expressionCallsHold(b.buckets),
+  "buckets-sequence-calls": (b) => sequenceFree(b.buckets),
+  "buckets-routes": (b) => routesHold(b.buckets),
+  "buckets-rules": (b) => rulesHold(b.buckets),
   "objects-table": (b) => (b.objects?.table ?? "").startsWith("r|") && b.objects?.["column|bucket_id"] === "text",
   "objects-policies": (b) => !["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"].some((k) => Object.hasOwn(b.objects ?? {}, k)),
   "objects-authority": (b, w) => w.objects?.owner_privileges === "true",
@@ -801,6 +892,11 @@ const BUILD_PREDICATES = Object.freeze({
   "authusers-rls": (b, w) => w.authusers?.rls_applies === "false",
   "authusers-triggers": (b) => b.authusers?.["user-triggers"] === "0",
   "authusers-reviewed": (b, w, f) => sameReviewed("authusers", b, f),
+  "authusers-relation": (b) => b.authusers?.relation === BUILD_RELATION,
+  "authusers-expression-calls": (b) => expressionCallsHold(b.authusers),
+  "authusers-sequence-calls": (b) => sequenceFree(b.authusers),
+  "authusers-routes": (b) => routesHold(b.authusers),
+  "authusers-rules": (b) => rulesHold(b.authusers),
   "marker-absent": (b) => b.schemas?.["schema|stage0_rehearsal"] === "<absent>",
   "database-create": (b, w) => w.database?.create === "true",
   creator: (b, w, f) => w.role?.name === f.creator || Object.hasOwn(w.role ?? {}, `member|${f.creator}`) || (w.role?.attr ?? "").split("|")[0] === "true",
@@ -817,6 +913,37 @@ export function buildPredicateFindings(build00, build00w, { creator, ledger, rev
   const b = factsByPart(build00), w = factsByPart(build00w);
   if (!b || !w) return [stop("build", null, "BUILD-00's or BUILD-00W's reading is not rows of text, each key once")];
   return Object.entries(BUILD_PREDICATES).filter(([, ok]) => ok(b, w, { creator, ledger, reviewed }) !== true).map(([name]) => stop("build", name, "the preflight predicate does not hold"));
+}
+
+/**
+ * B1's review item (plan §0.7): every function body the reading reports, as
+ * { "<part>|<key>": md5(value) }. String-defined bodies, including PL/pgSQL bodies, need
+ * not record what they call, whereas SQL-standard parsed bodies can, so BUILD-00's walk
+ * follows what is recorded and only a reader can review the remaining calls in a body.
+ */
+const REVIEWED_BODY = /^(?:trigger-function\||check-function\||route\|[^|]*\|[^|]*\|function\|)/;
+export function bodyReviewItemsOf(build00) {
+  const b = factsByPart(build00);
+  if (!b) return null;
+  return Object.fromEntries(REVIEWED_PARTS.flatMap((p) => Object.entries(b[p] ?? {}).filter(([k]) => REVIEWED_BODY.test(k)).map(([k, v]) => [`${p}|${k}`, md5(v)])));
+}
+/**
+ * The explicit disposition B1 needs for each item: `bodyReview` is
+ * { "<part>|<key>": { digest, disposition } }, exactly the reading's items, each with the
+ * digest reviewed and non-empty words. It records that a reader gave one. It cannot show
+ * that the reader was right: review is that control.
+ */
+function bodyReviewFindings(build00, bodyReview) {
+  const items = bodyReviewItemsOf(build00);
+  if (!items) return [stop("build", "body-review", "BUILD-00's reading is not rows of text, each key once")];
+  const given = isObj(bodyReview) ? bodyReview : {};
+  const out = [];
+  for (const [key, digest] of Object.entries(items)) {
+    const g = given[key];
+    if (!isObj(g) || g.digest !== digest || typeof g.disposition !== "string" || !g.disposition.trim()) out.push(stop("build", "body-review", `${key} has no explicit disposition for the body this reading reports`));
+  }
+  for (const key of Object.keys(given)) if (!Object.hasOwn(items, key)) out.push(stop("build", "body-review", `a disposition names ${key}, which this reading does not report`));
+  return out;
 }
 
 /** Each part's digest: md5 over key TAB value LF, keys in byte order, as BUILD-01 computes it in SQL. */
@@ -851,15 +978,16 @@ export function defaultsOf(rows, part, role) {
  * BUILD-00W reports. `finalFrom` is production's bound checked state, whose part 3
  * gives the target after the files. `reviewed` is the set review accepted from the
  * project's own reading (reviewedSetOf), given here rather than taken from `build00`,
- * so a reading that moved since the review stops. Review of the receipts is what accepts
- * them; this only refuses what cannot be bound.
+ * so a reading that moved since the review stops. `bodyReview` is the disposition of each
+ * reported body (bodyReviewItemsOf). Review of the receipts is what accepts them; this only
+ * refuses what cannot be bound.
  */
-export function build01Facts({ build00, build00w, ref, finalFrom, employees = 2, reviewed }) {
+export function build01Facts({ build00, build00w, ref, finalFrom, employees = 2, reviewed, bodyReview }) {
   const ledgerRows = build00LedgerFindings(build00);
   const b = factsByPart(build00), w = factsByPart(build00w);
   const creator = w?.role?.name;
   const ledger = b?.ledger?.status;
-  const findings = [...ledgerRows, ...buildPredicateFindings(build00, build00w, { creator, ledger, reviewed })];
+  const findings = [...ledgerRows, ...buildPredicateFindings(build00, build00w, { creator, ledger, reviewed }), ...bodyReviewFindings(build00, bodyReview)];
   if (blocking(findings).length) return { findings, facts: null };
   if (!Array.isArray(finalFrom)) return { findings: [...findings, stop("build", "finalFrom", "production's checked state is not given")], facts: null };
   try {

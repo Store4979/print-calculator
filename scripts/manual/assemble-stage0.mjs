@@ -1260,6 +1260,20 @@ export const BUILD_LITERALS = Object.freeze({
 });
 /** The one conflict arbiter supported for ON CONFLICT (id): the comparator's BUILD_ARBITER says what it is. */
 export const BUILD_ARBITER = "id|1|1|btree|true|true|true|true|true|false|false|p|false|false|true";
+/** The calls a stored expression may hold (X3e): the comparator's BUILD_EXPRESSION_CALLS says why, and 4W-20 compares them. */
+export const BUILD_EXPRESSION_CALLS = Object.freeze([
+  "COALESCE", "NULLIF", "GREATEST", "LEAST", "EXTRACT", "SUBSTRING", "POSITION", "OVERLAY", "TRIM", "NORMALIZE", "ROW", "OPERATOR",
+  "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP", "varying", "character", "numeric", "timestamp", "time", "interval", "bit",
+  "now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timezone", "date_trunc", "date_part", "to_char", "to_timestamp",
+  "gen_random_uuid", "lower", "upper", "length", "char_length", "character_length", "octet_length", "btrim", "ltrim", "rtrim", "substr", "left", "right",
+  "replace", "regexp_replace", "split_part", "strpos", "starts_with", "concat", "concat_ws", "md5", "abs", "ceil", "floor", "round",
+  "array_length", "array_lower", "array_upper", "array_position", "array_to_string", "string_to_array", "cardinality", "jsonb_typeof", "jsonb_array_length",
+]);
+export const BUILD_SEQUENCE_CALLS = Object.freeze(["nextval", "setval"]);
+const BUILD_QUOTED = `'(?:[^']|'')*'|"(?:[^"]|"")*"`;
+const BUILD_CALL = "([A-Za-z_][A-Za-z0-9_$]*(?:[.][A-Za-z_][A-Za-z0-9_$]*)*)[(]";
+const BUILD_EXPRESSION_KEY = "^(default|index-expr|index-pred|check|domain-check|domain-default)[|]";
+const BUILD_REVIEWED_KEY = "^((trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route)[|]|relation$)";
 /** The preflight table's predicates (plan §2.1), each a name and a SQL boolean over the CTE f(src, part, key, value). */
 function buildPredicates(facts) {
   const v = (src, part, key) => `(select f.value from f where f.src = ${q(src)} and f.part = ${q(part)} and f.key = ${q(key)})`;
@@ -1273,12 +1287,19 @@ function buildPredicates(facts) {
     return `(${fact} ~ '^(text|character varying)[|]' or coalesce(substring(${fact} from '^character varying[(]([0-9]+)[)][|]')::int >= ${longest}, false))`;
   };
   const arbiterRow = "f.src = 'build00' and f.part = 'buckets' and f.key like 'arbiter|%'";
-  // The exact set review accepted (X3d): each row of the part in both directions against the CTE reviewed.
+  // The exact set review accepted (X3d, X3e): each row of the part in both directions against the CTE reviewed.
   const reviewed = (part) => {
-    const row = `f.src = 'build00' and f.part = ${q(part)} and (f.key like 'trigger|%' or f.key like 'trigger-function|%' or f.key like 'check|%' or f.key like 'check-function|%')`;
+    const row = `f.src = 'build00' and f.part = ${q(part)} and f.key ~ ${q(BUILD_REVIEWED_KEY)}`;
     const here = `select f.key, md5(f.value) from f where ${row}`, there = `select r.key, r.digest from reviewed r where r.part = ${q(part)}`;
     return `not exists ((${here} except ${there}) union all (${there} except ${here}))`;
   };
+  // What a stored expression can run (X3e), over the CTEs scanned and calls.
+  const part01 = (part) => `f.src = 'build00' and f.part = ${q(part)}`;
+  const relation = (part) => `${b(part, "relation")} = 'r|false|false|0'`;
+  const expressionCalls = (part) => `not exists (select 1 from scanned x where x.part = ${q(part)} and (x.raw = '<null>' or x.s ~ '[''"]')) and not exists (select 1 from calls c where c.part = ${q(part)} and c.name <> all (array[${[...BUILD_SEQUENCE_CALLS, ...BUILD_EXPRESSION_CALLS].map(q).join(", ")}]) and not exists (select 1 from f r where r.src = 'build00' and r.part = c.part and split_part(c.key, '|', 1) in ('check', 'trigger') and split_part(r.key, '|', 1) = split_part(c.key, '|', 1) || '-function' and split_part(r.key, '|', 2) = split_part(c.key, '|', 2) and c.name in (substring(split_part(r.key, '|', 3) from '^[^(]*'), substring(split_part(r.key, '|', 3) from '^[^(.]*[.]([^(]*)'))))`;
+  const sequenceCalls = (part) => `not exists (select 1 from calls c where c.part = ${q(part)} and c.name in (${BUILD_SEQUENCE_CALLS.map(q).join(", ")})) and not exists (select 1 from f where ${part01(part)} and ((f.key like 'column-type|%' and split_part(f.value, '|', 1) <> '') or f.key ~ '^(route[|][^|]*[|][^|]*[|]function|trigger-function[|][^|]*|check-function[|][^|]*)[|].*[.](nextval|setval)[(]' or f.key ~ '^route[|][^|]*[|][^|]*[|]sequence[|]'))`;
+  const routes = (part) => `not exists (select 1 from f where ${part01(part)} and f.key like 'route|%' and (case split_part(f.key, '|', 4) when 'function' then f.value like 'pg_catalog|%' and substring(split_part(f.key, '|', 5) from '^pg_catalog[.]([^(]*)[(]') in (${BUILD_EXPRESSION_CALLS.map(q).join(", ")}) when 'collation' then f.value like 'pg_catalog|%' when 'operator' then true when 'table constraint' then true when 'domain constraint' then true when 'type' then split_part(f.value, '|', 2) ~ '^[ed]' or (split_part(f.value, '|', 2) ~ '^b' and (f.value like 'pg_catalog|%' or split_part(f.value, '|', 2) ~ '^.A')) else false end) is not true)`;
+  const rules = (part) => `not exists (select 1 from f where ${part01(part)} and f.key like 'rule|%' and f.value not like '4|%')`;
   return [
     ["public-empty", `not exists (select 1 from f where f.src = 'build00' and f.part = 'public')`],
     ["ledger", `${b("ledger", "status")} = ${q(facts.ledger)}`],
@@ -1291,6 +1312,11 @@ function buildPredicates(facts) {
     ["buckets-rls", `${w("buckets", "rls_applies")} = 'false'`],
     ["buckets-rows", `${w("buckets", "row|job-files")} = 'false' and ${w("buckets", "row|customer-uploads")} = 'false'`],
     ["buckets-reviewed", reviewed("buckets")],
+    ["buckets-relation", relation("buckets")],
+    ["buckets-expression-calls", expressionCalls("buckets")],
+    ["buckets-sequence-calls", sequenceCalls("buckets")],
+    ["buckets-routes", routes("buckets")],
+    ["buckets-rules", rules("buckets")],
     ["objects-table", `${b("objects", "table")} like 'r|%' and ${b("objects", "column|bucket_id")} = 'text'`],
     ["objects-policies", `not ${has("build00", "objects", ["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"])}`],
     ["objects-authority", trues([["objects", "owner_privileges"]])],
@@ -1303,6 +1329,11 @@ function buildPredicates(facts) {
     ["authusers-rls", `${w("authusers", "rls_applies")} = 'false'`],
     ["authusers-triggers", `${b("authusers", "user-triggers")} = '0'`],
     ["authusers-reviewed", reviewed("authusers")],
+    ["authusers-relation", relation("authusers")],
+    ["authusers-expression-calls", expressionCalls("authusers")],
+    ["authusers-sequence-calls", sequenceCalls("authusers")],
+    ["authusers-routes", routes("authusers")],
+    ["authusers-rules", rules("authusers")],
     ["marker-absent", `${b("schemas", "schema|stage0_rehearsal")} = '<absent>'`],
     ["database-create", trues([["database", "create"]])],
     ["creator", `${w("role", "name")} = ${q(facts.creator)} or ${has("build00w", "role", [`member|${facts.creator}`])} or split_part(${w("role", "attr")}, '|', 1) = 'true'`],
@@ -1336,6 +1367,17 @@ ${body("build00w")}
   ),
   bound(src, part, digest) as (values ${bound.join(", ")}),
   reviewed(part, key, digest) as (${accepted.length ? `values ${accepted.join(", ")}` : "select null::text, null::text, null::text where false"}),
+  scanned(part, key, raw, s) as (
+    select f.part, f.key, f.value, regexp_replace(f.value, ${q(BUILD_QUOTED)}, 'Q', 'g') from f
+     where f.src = 'build00' and f.part in ('buckets', 'authusers') and f.key ~ ${q(BUILD_EXPRESSION_KEY)}
+    union all
+    select t.part, t.key, t.value, (case when position(' WHEN ' in t.h) > 0 then substr(t.h, position(' WHEN ' in t.h)) else '' end)
+      from (select f.part, f.key, f.value, split_part(regexp_replace(f.value, ${q(BUILD_QUOTED)}, 'Q', 'g'), ' EXECUTE FUNCTION ', 1) as h
+              from f where f.src = 'build00' and f.part in ('buckets', 'authusers') and f.key like 'trigger|%') t
+  ),
+  calls(part, key, name) as (
+    select x.part, x.key, regexp_replace(m[1], '^pg_catalog[.]', '') from scanned x cross join lateral regexp_matches(x.s, ${q(BUILD_CALL)}, 'g') as m
+  ),
   bad(name) as (
     select 'digest ' || d.src || '.' || d.part from ((select * from seen except select * from bound) union all (select * from bound except select * from seen)) d
     union all
@@ -1419,7 +1461,7 @@ export function build01Text(src, manifest, facts) {
     const parts = facts.digests && facts.digests[s];
     if (!parts || !Object.keys(parts).length || !Object.values(parts).every((d) => /^[0-9a-f]{32}$/.test(d))) throw new Error(`BUILD-01's bound digests of ${s} are missing or malformed`);
   }
-  const reviewedOk = (rows) => rows !== null && typeof rows === "object" && Object.entries(rows).every(([k, d]) => /^(trigger|trigger-function|check|check-function)\|/.test(k) && /^[0-9a-f]{32}$/.test(d));
+  const reviewedOk = (rows) => rows !== null && typeof rows === "object" && Object.entries(rows).every(([k, d]) => /^(?:(?:trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route)\||relation$)/.test(k) && /^[0-9a-f]{32}$/.test(d));
   if (!facts.reviewed || Object.keys(facts.reviewed).sort().join() !== "authusers,buckets" || !reviewedOk(facts.reviewed.buckets) || !reviewedOk(facts.reviewed.authusers)) throw new Error("BUILD-01's reviewed set is missing or malformed");
   const files = buildFiles(src, manifest);
   const at = files.findIndex((f) => f.version === BUILD_STORE_AFTER);

@@ -36,20 +36,44 @@
 --   schemas      whether supabase_migrations and stage0_rehearsal exist, and
 --                their owners
 -- What runs on BUILD-01's INSERTs, for storage.buckets (part buckets) and auth.users
--- (part authusers). B1 binds these rows exactly (plan §2.1):
+-- (part authusers). B1 binds these rows exactly (plan §2.1, §0.7):
+--   relation                          relkind, relispartition, relhassubclass, its parents
+--   column-type|<column>              every column: attidentity, attgenerated, its type
+--   default|<column>                  every stored default or generated expression:
+--                                     pg_get_expr
+--   index|<name>                      every index: indisunique, indisvalid, pg_get_indexdef
+--   index-expr|<name>                 its expressions, pg_get_expr, where it has any
+--   index-pred|<name>                 its predicate, pg_get_expr, where it has one
 --   trigger|<name>                    every trigger that is not internal, enabled or
 --                                     not: tgenabled, pg_get_triggerdef, its function's
 --                                     owner
---   trigger-function|<name>|<fn>      each function it runs: its own, and any pg_depend
---                                     records for its WHEN clause
 --   check|<name>                      every CHECK: pg_get_constraintdef
---   check-function|<name>|<fn>        each function pg_depend records for it, which is
---                                     every one that is not pinned: built-ins are, so
---                                     a CHECK using only built-ins has none
--- A function's value is language, owner, prosecdef, provolatile and proconfig, md5(prosrc)
+--   rule|<name>                       every rewrite rule: ev_type, ev_enabled, is_instead,
+--                                     pg_get_ruledef
+--   domain-check|<domain>|<name>      each CHECK of a domain the walk below reaches
+--   domain-default|<domain>           each default of one: pg_get_expr
+--   trigger-function|<name>|<fn>      each function reached from a trigger on a path
+--   check-function|<name>|<fn>        with no type on it (below); the same from a CHECK
+--   route|<origin>|<name>|<kind>|<id> every other object the walk reaches
+-- THE WALK starts at each column's type and collation, each stored default or generated
+-- expression, each index, each exclusion constraint, each CHECK and each trigger. It
+-- follows every pg_depend row but those naming a schema, a language or an extension, and
+-- what pg_depend does not record: an operator's oprcode, an exclusion constraint's
+-- operators, a trigger's function, a domain's base type and CHECKs, an array's element. It
+-- takes the first two only for an operator created after initdb (oid 16384 or above), so a
+-- built-in operator ends the walk. PostgreSQL records no dependency on a pinned object, so a
+-- pinned built-in function shows here only through those edges. It stops at a relation.
+-- A path is STRICT from a column, default, index or exclusion, and from any type on it.
+-- <kind> is pg_identify_object's type. Each route row's value starts with the object's
+-- schema, then: a function's facts; an operator's oprcode; a type's typtype and typcategory.
+-- It leaves out the types and collations of pg_catalog that end a walk.
+-- A function's facts are language, owner, prosecdef, provolatile and proconfig, md5(prosrc)
 -- and md5(pg_get_functiondef), a line feed, and the definition itself, so that review
--- reads what it binds. It sees no further: a function called from inside a body is not
--- reported, and neither are rules, column defaults or index expressions.
+-- reads what it binds. String-defined bodies, including PL/pgSQL bodies, need not record
+-- what they call, and a parsed SQL-standard body can: the walk follows what is recorded,
+-- and review reads the rest (plan §0.7). This text judges nothing: the comparator and
+-- BUILD-01's first step judge these rows, so what they accept can change without a new
+-- reading. It executes no stored expression.
 -- It returns (part, key, value) rows ordered by part and key in byte order.
 -- Facts that depend on the reader (rows under RLS, current_user's
 -- authority) are BUILD-00W's, except the ledger read's status. The ledger's
@@ -72,7 +96,7 @@
 -- never a statement's text. Otherwise `rows` is <not read>. A read that fails
 -- for any other reason fails this whole statement: the query route returns an
 -- error, not a status.
-with
+with recursive
 named(rolname) as (
   select x.r from (values ('postgres'), ('anon'), ('authenticated'), ('service_role'),
                           ('authenticator'), ('supabase_read_only_user'), ('supabase_admin'),
@@ -122,23 +146,75 @@ reviewed_tables as (
   select 'authusers', to_regclass('auth.users')
 ),
 reviewed_triggers as (
-  select r.part, t.oid, t.tgname, t.tgfoid, t.tgenabled
+  select r.part, r.rel, t.oid, t.tgname, t.tgfoid, t.tgenabled
     from reviewed_tables r join pg_trigger t on t.tgrelid = r.rel
    where not t.tgisinternal
 ),
 reviewed_checks as (
-  select r.part, k.oid, k.conname
+  select r.part, r.rel, k.oid, k.conname
     from reviewed_tables r join pg_constraint k on k.conrelid = r.rel
    where k.contype = 'c'
 ),
-reviewed_functions as (
-  select t.part, 'trigger-function|' || t.tgname as head, t.tgfoid as fn from reviewed_triggers t
+reviewed_exclusions as (
+  select r.part, r.rel, k.oid, k.conname
+    from reviewed_tables r join pg_constraint k on k.conrelid = r.rel
+   where k.contype = 'x'
+),
+reviewed_columns as (
+  select r.part, r.rel, a.attname, a.attnum, a.atttypid, a.atttypmod, a.attcollation, a.attidentity, a.attgenerated
+    from reviewed_tables r join pg_attribute a on a.attrelid = r.rel
+   where a.attnum > 0 and not a.attisdropped
+),
+reviewed_defaults as (
+  select c.part, c.rel, c.attname, d.oid, d.adbin, d.adrelid
+    from reviewed_columns c join pg_attrdef d on d.adrelid = c.rel and d.adnum = c.attnum
+),
+reviewed_indexes as (
+  select r.part, r.rel, c.oid, c.relname, i.indisunique, i.indisvalid, i.indexprs, i.indpred, i.indrelid
+    from reviewed_tables r join pg_index i on i.indrelid = r.rel join pg_class c on c.oid = i.indexrelid
+),
+walk_edges(from_class, from_obj, to_class, to_obj) as (
+  select d.classid, d.objid, d.refclassid, d.refobjid
+    from pg_depend d
+   where d.refclassid not in ('pg_namespace'::regclass, 'pg_language'::regclass, 'pg_extension'::regclass)
   union
-  select t.part, 'trigger-function|' || t.tgname, d.refobjid
-    from reviewed_triggers t join pg_depend d on d.classid = 'pg_trigger'::regclass and d.objid = t.oid and d.refclassid = 'pg_proc'::regclass
+  select 'pg_operator'::regclass::oid, o.oid, 'pg_proc'::regclass::oid, o.oprcode::oid from pg_operator o where o.oprcode::oid <> 0 and o.oid >= 16384
   union
-  select c.part, 'check-function|' || c.conname, d.refobjid
-    from reviewed_checks c join pg_depend d on d.classid = 'pg_constraint'::regclass and d.objid = c.oid and d.refclassid = 'pg_proc'::regclass
+  select 'pg_constraint'::regclass::oid, k.oid, 'pg_operator'::regclass::oid, x.op from pg_constraint k cross join lateral unnest(k.conexclop) as x(op) where x.op >= 16384
+  union
+  select 'pg_trigger'::regclass::oid, t.oid, 'pg_proc'::regclass::oid, t.tgfoid from pg_trigger t
+  union
+  select 'pg_type'::regclass::oid, t.oid, 'pg_type'::regclass::oid, t.typbasetype from pg_type t where t.typtype = 'd'
+  union
+  select 'pg_type'::regclass::oid, t.oid, 'pg_type'::regclass::oid, t.typelem from pg_type t where t.typcategory = 'A' and t.typelem <> 0
+  union
+  select 'pg_type'::regclass::oid, k.contypid, 'pg_constraint'::regclass::oid, k.oid from pg_constraint k where k.contypid <> 0
+),
+walk(part, rel, origin, name, classid, objid, strict, is_root) as (
+  select c.part, c.rel, 'column'::text, c.attname::text, 'pg_type'::regclass::oid, c.atttypid, true, true from reviewed_columns c
+  union
+  select c.part, c.rel, 'column', c.attname::text, 'pg_collation'::regclass::oid, c.attcollation, true, true from reviewed_columns c where c.attcollation <> 0
+  union
+  select d.part, d.rel, 'default', d.attname::text, 'pg_attrdef'::regclass::oid, d.oid, true, true from reviewed_defaults d
+  union
+  select i.part, i.rel, 'index', i.relname::text, 'pg_class'::regclass::oid, i.oid, true, true from reviewed_indexes i
+  union
+  select x.part, x.rel, 'exclusion', x.conname::text, 'pg_constraint'::regclass::oid, x.oid, true, true from reviewed_exclusions x
+  union
+  select k.part, k.rel, 'check', k.conname::text, 'pg_constraint'::regclass::oid, k.oid, false, true from reviewed_checks k
+  union
+  select t.part, t.rel, 'trigger', t.tgname::text, 'pg_trigger'::regclass::oid, t.oid, false, true from reviewed_triggers t
+  union
+  select w.part, w.rel, w.origin, w.name, e.to_class, e.to_obj, w.strict or e.to_class = 'pg_type'::regclass::oid, false
+    from walk w join walk_edges e on e.from_class = w.classid and e.from_obj = w.objid
+   where w.is_root or w.classid <> 'pg_class'::regclass::oid
+),
+walked as (
+  select w.part, w.origin, w.name, w.classid, w.objid, bool_or(w.strict) as strict, i.type as kind, i.schema as schema_name, i.identity
+    from walk w cross join lateral pg_identify_object(w.classid, w.objid, 0) i
+   where not (w.is_root and w.origin <> 'column')
+     and not (w.classid = 'pg_class'::regclass::oid and w.objid = w.rel::oid)
+   group by w.part, w.origin, w.name, w.classid, w.objid, i.type, i.schema, i.identity
 ),
 obs(part, key, value) as (
   select 'public', 'relation|' || c.relname, c.relkind::text || '|' || pg_get_userbyid(c.relowner)::text
@@ -253,10 +329,53 @@ obs(part, key, value) as (
   union all
   select c.part, 'check|' || c.conname, pg_get_constraintdef(c.oid) from reviewed_checks c
   union all
-  select f.part, f.head || '|' || n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')',
-         l.lanname::text || '|' || pg_get_userbyid(p.proowner)::text || '|' || p.prosecdef::text || '|' || p.provolatile::text || '|'
+  select w.part,
+         (case when w.origin in ('check', 'trigger') and not w.strict then w.origin || '-function|' || w.name || '|' else 'route|' || w.origin || '|' || w.name || '|function|' end)
+           || n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')',
+         (case when w.origin in ('check', 'trigger') and not w.strict then '' else n.nspname::text || '|' end)
+           || l.lanname::text || '|' || pg_get_userbyid(p.proowner)::text || '|' || p.prosecdef::text || '|' || p.provolatile::text || '|'
            || coalesce(array_to_string(p.proconfig, ','), '') || '|' || md5(p.prosrc) || '|' || md5(pg_get_functiondef(p.oid)) || chr(10) || pg_get_functiondef(p.oid)
-    from reviewed_functions f join pg_proc p on p.oid = f.fn join pg_namespace n on n.oid = p.pronamespace join pg_language l on l.oid = p.prolang
+    from walked w join pg_proc p on w.classid = 'pg_proc'::regclass::oid and p.oid = w.objid join pg_namespace n on n.oid = p.pronamespace join pg_language l on l.oid = p.prolang
+  union all
+  select w.part, 'route|' || w.origin || '|' || w.name || '|' || w.kind || '|' || w.identity,
+         coalesce(w.schema_name, '') || '|'
+           || coalesce((select o.oprcode::regprocedure::text from pg_operator o where w.classid = 'pg_operator'::regclass::oid and o.oid = w.objid),
+                       (select t.typtype::text || t.typcategory::text from pg_type t where w.classid = 'pg_type'::regclass::oid and t.oid = w.objid), '')
+    from walked w
+   where w.classid <> 'pg_proc'::regclass::oid
+     and not (w.classid = 'pg_type'::regclass::oid and w.schema_name = 'pg_catalog' and exists (select 1 from pg_type t where t.oid = w.objid and t.typtype = 'b'))
+     and not (w.classid = 'pg_collation'::regclass::oid and w.schema_name = 'pg_catalog')
+  union all
+  select r.part, 'relation',
+         c.relkind::text || '|' || c.relispartition::text || '|' || c.relhassubclass::text || '|' || (select count(*)::text from pg_inherits h where h.inhrelid = c.oid)
+    from reviewed_tables r join pg_class c on c.oid = r.rel
+  union all
+  select c.part, 'column-type|' || c.attname, c.attidentity::text || '|' || c.attgenerated::text || '|' || format_type(c.atttypid, c.atttypmod) from reviewed_columns c
+  union all
+  select d.part, 'default|' || d.attname, pg_get_expr(d.adbin, d.adrelid) from reviewed_defaults d
+  union all
+  select i.part, 'index|' || i.relname, i.indisunique::text || '|' || i.indisvalid::text || '|' || pg_get_indexdef(i.oid) from reviewed_indexes i
+  union all
+  select i.part, 'index-expr|' || i.relname, pg_get_expr(i.indexprs, i.indrelid) from reviewed_indexes i where i.indexprs is not null
+  union all
+  select i.part, 'index-pred|' || i.relname, pg_get_expr(i.indpred, i.indrelid) from reviewed_indexes i where i.indpred is not null
+  union all
+  select r.part, 'rule|' || w.rulename, w.ev_type::text || '|' || w.ev_enabled::text || '|' || w.is_instead::text || '|' || pg_get_ruledef(w.oid)
+    from reviewed_tables r join pg_rewrite w on w.ev_class = r.rel
+  union all
+  select d.part, 'domain-check|' || d.contypid::regtype::text || '|' || k.conname, pg_get_constraintdef(k.oid)
+    from (select distinct w.part, c.oid, c.contypid
+            from walked w join pg_constraint c on w.classid = 'pg_constraint'::regclass::oid and c.oid = w.objid
+           where c.contypid <> 0) d
+    join pg_constraint k on k.oid = d.oid
+  union all
+  select d.part, 'domain-default|' || d.oid::regtype::text, pg_get_expr(t.typdefaultbin, 0)
+    from (select distinct w.part, w.objid as oid from walked w where w.classid = 'pg_type'::regclass::oid) d
+    join pg_type t on t.oid = d.oid
+   where t.typtype = 'd' and t.typdefaultbin is not null
+  union all
+  select 'authusers', 'constraint|' || k.conname, k.contype::text || '|' || pg_get_constraintdef(k.oid)
+    from pg_constraint k where k.conrelid = to_regclass('auth.users')
   union all
   select 'buckets', 'table', c.relrowsecurity::text || '|' || c.relforcerowsecurity::text || '|' || pg_get_userbyid(c.relowner)::text
     from pg_class c where c.oid = to_regclass('storage.buckets')

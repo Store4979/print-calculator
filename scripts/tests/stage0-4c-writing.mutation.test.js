@@ -96,11 +96,23 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
     "database-create": [b, set(w, "database", "create", "false")],
     creator: [b, set(set(w, "role", "name", "someone"), "role", "attr", "false|true|false|false|true|false|false")],
   };
+  // X3e's rows are in the reviewed set too: each of these asks with its own reading's set.
+  const OWN_SET = new Set();
+  for (const p of ["buckets", "authusers"]) {
+    const add = (part, key, value) => [...b, { part, key, value }];
+    for (const [name, x] of [
+      [`${p}-relation`, set(b, p, "relation", "r|false|true|0")],
+      [`${p}-expression-calls`, add(p, "default|x", "query_to_xml('select 1'::text, true, false, ''::text)")],
+      [`${p}-sequence-calls`, add(p, "default|x", "nextval(('s'::text)::regclass)")],
+      [`${p}-routes`, add(p, "route|default|x|function|storage.f()", "storage|plpgsql|postgres|false|v||a|b\ndefinition")],
+      [`${p}-rules`, add(p, "rule|x", "3|O|false|CREATE RULE x")],
+    ]) { NEG[name] = [x, w]; OWN_SET.add(name); }
+  }
   assert.deepEqual(Object.keys(NEG).sort(), [...C.BUILD_PREDICATE_NAMES].sort());
   const dir = mkdtempSync(join(tmpdir(), "s0-4w-pred-"));
-  const opts = { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(b) };
   try {
     for (const [n, [name, [x, y]]] of Object.entries(NEG).entries()) {
+      const opts = { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(OWN_SET.has(name) ? x : b) };
       assert.deepEqual(C.buildPredicateFindings(x, y, opts).map((f) => f.key), [name], `${name}: the original refuses`);
       const K = await load(COMPARE, [".filter(([, ok]) => ok(b, w, { creator, ledger, reviewed }) !== true)", `.filter(([name, ok]) => name !== ${JSON.stringify(name)} && ok(b, w, { creator, ledger, reviewed }) !== true)`], dir, n);
       assert.deepEqual(K.buildPredicateFindings(x, y, opts), [], `${name}: the mutant accepts`);
@@ -136,8 +148,8 @@ test("4W-M5 X3d: each part of the exact-set rule, removed, turns its real shape 
     ["the digests: a CHECK on auth.users changed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return keys(have) === keys(want);", "users-check-changed", "authusers-reviewed"],
     ["the keys: a trigger removed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return Object.keys(have).every((k) => have[k] === want[k]);", "trigger-removed", "buckets-reviewed"],
     ["the keys: a CHECK on auth.users removed", "return keys(have) === keys(want) && Object.keys(have).every((k) => have[k] === want[k]);", "return Object.keys(have).every((k) => have[k] === want[k]);", "users-check-removed", "authusers-reviewed"],
-    ["which rows are in the set: a trigger added", "const REVIEWED_KEY = /^(trigger|trigger-function|check|check-function)\\|/;", "const REVIEWED_KEY = /^(check|check-function)\\|/;", "trigger-added", "buckets-reviewed"],
-    ["which rows are in the set: a CHECK added", "const REVIEWED_KEY = /^(trigger|trigger-function|check|check-function)\\|/;", "const REVIEWED_KEY = /^(trigger|trigger-function)\\|/;", "check-added", "buckets-reviewed"],
+    ["which rows are in the set: a trigger added", "const REVIEWED_KEY = /^(?:(?:trigger|trigger-function|check|check-function|", "const REVIEWED_KEY = /^(?:(?:check|check-function|", "trigger-added", "buckets-reviewed"],
+    ["which rows are in the set: a CHECK added", "const REVIEWED_KEY = /^(?:(?:trigger|trigger-function|check|check-function|", "const REVIEWED_KEY = /^(?:(?:trigger|trigger-function|", "check-added", "buckets-reviewed"],
   ];
   const dir = mkdtempSync(join(tmpdir(), "s0-4w-rev-"));
   try {
@@ -149,6 +161,73 @@ test("4W-M5 X3d: each part of the exact-set rule, removed, turns its real shape 
       // A mutant that narrows the set reads the review's digests through its own filter, so it takes the review's rows as they were.
       assert.deepEqual(K.buildPredicateFindings(r.build00, r.build00w, { ...opts, reviewed: /REVIEWED_KEY/.test(from) ? K.reviewedSetOf(r.build00) : r.reviewed }), [], `${name}: the mutant accepts`);
     }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("4W-M6 X3e: each part of the stored-expression rules, removed, turns its real shape into exactly an acceptance", async () => {
+  const base = json("w-expr-base.json");
+  const applyDelta = (rows, { set, drop }) => {
+    const k = (r) => JSON.stringify([r.part, r.key]);
+    const m = new Map(rows.map((r) => [k(r), r]));
+    for (const [part, key] of drop) m.delete(k({ part, key }));
+    for (const r of set) m.set(k(r), r);
+    return [...m.values()];
+  };
+  const fixture = (f) => { const r = json(f); return { ...r, build00: applyDelta(base.build00, r.b00), build00w: applyDelta(base.build00w, r.b00w) }; };
+  const SEQ_TEXT = ["const sequenceFree = (part) => scannedOf(part).every(({ s }) => !callsOf(s).some((c) => SEQUENCE_CALLS.includes(c)))\n  && ", "const sequenceFree = (part) => "];
+  const CASES = [
+    ["a sequence call with no dependency: a default", ...SEQ_TEXT, "w-expr-stop-buckets-default-nextval-no-constant-dependency.json", "buckets-sequence-calls"],
+    ["a sequence call with no dependency: a CHECK on auth.users", ...SEQ_TEXT, "w-expr-stop-authusers-check-dynamic-nextval.json", "authusers-sequence-calls"],
+    ["a sequence call with no dependency: a trigger's WHEN", ...SEQ_TEXT, "w-expr-stop-buckets-trigger-when-dynamic-nextval.json", "buckets-sequence-calls"],
+    ["a sequence call with no dependency: a domain's CHECK", ...SEQ_TEXT, "w-expr-stop-authusers-domain-check-dynamic-nextval.json", "authusers-sequence-calls"],
+    ["an identity column", "!(k.startsWith(\"column-type|\") && v.split(\"|\")[0] !== \"\") && ", "", "w-expr-stop-buckets-identity-column.json", "buckets-sequence-calls"],
+    ["nextval reached through an operator from a CHECK", "!NAMES_SEQUENCE_CALL.test(k) && ", "", "w-expr-stop-buckets-check-custom-operator-over-nextval.json", "buckets-sequence-calls"],
+    ["a built-in off the list: one running a query", "callsOf(s).every((c) => SEQUENCE_CALLS.includes(c) || BUILD_EXPRESSION_CALLS.includes(c) || reportedCalls(part, key).includes(c))", "true", "w-expr-stop-buckets-builtin-running-a-query.json", "buckets-expression-calls"],
+    ["a built-in off the list: one with a side effect", "callsOf(s).every((c) => SEQUENCE_CALLS.includes(c) || BUILD_EXPRESSION_CALLS.includes(c) || reportedCalls(part, key).includes(c))", "true", "w-expr-stop-authusers-builtin-with-a-side-effect.json", "authusers-expression-calls"],
+    ["a function on a strict route: an operator over an unlisted built-in", "return schema === \"pg_catalog\" && BUILD_EXPRESSION_CALLS.includes(/^pg_catalog\\.([^(]*)\\(/.exec(key.split(\"|\")[4] ?? \"\")?.[1]);", "return schema === \"pg_catalog\";", "w-expr-stop-buckets-default-operator-over-unlisted-builtin.json", "buckets-routes"],
+    ["a function on a strict route: a custom operator's", "return schema === \"pg_catalog\" && BUILD_EXPRESSION_CALLS.includes(/^pg_catalog\\.([^(]*)\\(/.exec(key.split(\"|\")[4] ?? \"\")?.[1]);", "return true;", "w-expr-stop-authusers-default-custom-operator.json", "authusers-routes"],
+    ["a composite type", "if (kind === \"type\") return /^[ed]/.test(detail) || (detail.startsWith(\"b\") && (schema === \"pg_catalog\" || detail[1] === \"A\"));\n  return false;", "return true;", "w-expr-stop-buckets-composite-type.json", "buckets-routes"],
+    ["a custom collation", "if (kind === \"collation\") return schema === \"pg_catalog\";", "if (kind === \"collation\") return true;", "w-expr-stop-buckets-custom-collation.json", "buckets-routes"],
+    ["an operator class", "if (kind === \"type\") return /^[ed]/.test(detail) || (detail.startsWith(\"b\") && (schema === \"pg_catalog\" || detail[1] === \"A\"));\n  return false;", "return true;", "w-expr-stop-authusers-custom-operator-class.json", "authusers-routes"],
+    ["an INSERT rule", "!k.startsWith(\"rule|\") || v.startsWith(\"4|\")", "true", "w-expr-stop-authusers-rule-on-insert.json", "authusers-rules"],
+    ["an UPDATE rule", "!k.startsWith(\"rule|\") || v.startsWith(\"4|\")", "true", "w-expr-stop-buckets-rule-on-update.json", "buckets-rules"],
+    ["a child table", "\"buckets-relation\": (b) => b.buckets?.relation === BUILD_RELATION,", "\"buckets-relation\": () => true,", "w-expr-stop-buckets-inherited-by-a-child.json", "buckets-relation"],
+  ];
+  const dir = mkdtempSync(join(tmpdir(), "s0-4w-expr-"));
+  try {
+    for (const [n, [name, from, to, shape, want]] of CASES.entries()) {
+      const r = fixture(shape);
+      const opts = { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(r.build00) };
+      assert.deepEqual(C.buildPredicateFindings(r.build00, r.build00w, opts).map((f) => f.key), [want], `${name}: the original refuses`);
+      const K = await load(COMPARE, [from, to], dir, `expr${n}`);
+      assert.deepEqual(K.buildPredicateFindings(r.build00, r.build00w, opts), [], `${name}: the mutant accepts`);
+    }
+    // A custom base type's own row. In the real shape its input function stops too, so this reading holds the row alone.
+    {
+      const x = [...base.build00, { part: "buckets", key: "route|column|c|type|storage.t", value: "storage|bU" }];
+      const opts = { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(x) };
+      assert.deepEqual(C.buildPredicateFindings(x, base.build00w, opts).map((f) => f.key), ["buckets-routes"], "a custom base type: the original refuses");
+      const K = await load(COMPARE, ["(detail.startsWith(\"b\") && (schema === \"pg_catalog\" || detail[1] === \"A\"))", "detail.startsWith(\"b\")"], dir, "basetype");
+      assert.deepEqual(K.buildPredicateFindings(x, base.build00w, opts), [], "a custom base type: the mutant accepts");
+    }
+    // After the review: the rows X3e added to the set are what stops each of these.
+    for (const [m, [name, from, to, shape, want]] of [
+      ["a rule's row", "|index-pred|rule|domain-check|", "|index-pred|domain-check|", "w-expr-after-buckets-delete-rule-changed.json", "buckets-reviewed"],
+      ["a function reached through a CHECK's operator", "(?:trigger|trigger-function|check|check-function|", "(?:trigger|trigger-function|check|", "w-expr-after-authusers-check-operator-function-replaced.json", "authusers-reviewed"],
+    ].map((c, i) => [i, c])) {
+      const r = fixture(shape);
+      assert.deepEqual(C.buildPredicateFindings(r.build00, r.build00w, { creator: "postgres", ledger: "absent-table", reviewed: r.reviewed }).map((f) => f.key), [want], `${name}: the original refuses`);
+      const K = await load(COMPARE, [from, to], dir, `after${m}`);
+      // The mutant reads the review through its own filter, as the set it would have bound.
+      const narrowed = Object.fromEntries(Object.entries(r.reviewed).map(([p, rows]) => [p, Object.fromEntries(Object.entries(rows).filter(([k]) => Object.hasOwn(K.reviewedSetOf(r.build00)[p], k)))]));
+      assert.deepEqual(K.buildPredicateFindings(r.build00, r.build00w, { creator: "postgres", ledger: "absent-table", reviewed: narrowed }), [], `${name}: the mutant accepts`);
+    }
+    // B1's disposition.
+    const bodies = fixture("w-expr-commit-buckets-reviewed-helper-in-a-parsed-body.json");
+    const input = { build00: bodies.build00, build00w: bodies.build00w, ref: "abcdefghijklmnopqrst", finalFrom: json("w-old-state.json"), reviewed: bodies.reviewed };
+    assert.equal(C.build01Facts(input).facts, null, "the original refuses no disposition");
+    const K = await load(COMPARE, ["...bodyReviewFindings(build00, bodyReview)];", "];"], dir, "body");
+    assert.notEqual(K.build01Facts(input).facts, null, "the mutant binds");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -179,7 +258,7 @@ test("4W-M3 each check of P1-4C's shape and of M-6g, removed, turns its negative
     ["a write in the re-assertion", B1, swapIn(BUILD, "  with f(src, part, key, value) as (", "  delete from public.stores;\n  with f(src, part, key, value) as ("), "if (into !== 1 || other.length) say(", "if (false) say("],
     ["a call off the list", B1, swapIn(BUILD, "  with f(src, part, key, value) as (", "  if pg_sleep(1) is null then null; end if;\n  with f(src, part, key, value) as ("), "if (calls.length) say(", "if (false) say("],
     ["the bound digests", B1, swapIn(BUILD, facts.digests.build00.buckets, "0".repeat(32)), "if (!body.includes(`bound(src, part, digest) as (values ${want})`)) say(", "if (false) say("],
-    ["the bound reviewed set", B1, swapIn(BUILD, "reviewed(part, key, digest) as (select null::text, null::text, null::text where false)", `reviewed(part, key, digest) as (values ('buckets', 'trigger|x', '${"0".repeat(32)}'))`), "if (!body.includes(`reviewed(part, key, digest) as (${accepted ? `values ${accepted}` : \"select null::text, null::text, null::text where false\"})`)) say(", "if (false) say("],
+    ["the bound reviewed set", B1, swapIn(BUILD, "reviewed(part, key, digest) as (values ", `reviewed(part, key, digest) as (values ('buckets', 'trigger|x', '${"0".repeat(32)}'), `), "if (!body.includes(`reviewed(part, key, digest) as (${accepted ? `values ${accepted}` : \"select null::text, null::text, null::text where false\"})`)) say(", "if (false) say("],
     ["the refusal of the bound acceptance", B1, swapIn(BUILD, "raise exception 'stage0 BUILD-01: the bound acceptance does not hold: %', v_bad using errcode = 'P0001';", "null;"), "if (!/select string_agg\\(distinct x\\.name, ', ' order by x\\.name\\) into v_bad from bad x;\\s+if v_bad is not null then\\s+raise exception 'stage0 BUILD-01: the bound acceptance does not hold: %'/.test(body)) say(", "if (false) say("],
     // The text has two default steps; String.replace takes the first, and these replacements hold no dollar.
     ["a form outside the default step's grammar", B1, BUILD.replace("  if (with have as (", "  alter default privileges for role postgres grant all on tables to anon;\n  if (with have as ("), "if (!B1_ALTER.test(s)) say(", "if (false) say("],

@@ -39,7 +39,15 @@
 //         before any file, with a sequence as the witness of what would have run
 //   4W-19 X3d: a stock-like set binds and commits; no approved set is written anywhere;
 //         M-6g holds the bound set
-// Each database run in these three is the harness's, on PGlite, which is not a
+//   4W-20 X3e: a stored expression's text is read, never run: calls outside literals and
+//         quoted names, and one list in both implementations
+//   4W-21 X3e: each class of stored expression, on both tables, stops in both
+//         implementations before any file, with the witness unconsumed
+//   4W-22 X3e: addition and replacement after the review stop too. Codex's custom operator
+//         now moves the reading
+//   4W-23 X3e: ordinary built-in forms are kept; a string-defined body stays B1's review
+//         item, with an explicit disposition
+// Each database run in these is the harness's, on PGlite, which is not a
 // dependency of this repository; the test runs the comparator and the classifier on
 // what that run recorded, and each 55P03 and 40P01 there was raised on purpose.
 import test from "node:test";
@@ -53,7 +61,7 @@ import * as G from "../manual/stage0-guard.mjs";
 import * as S from "../manual/stage0-send.mjs";
 import * as CL from "../manual/stage0-classify.mjs";
 import { P1_4C_PERFORMS } from "../manual/stage0-4c-performs.mjs";
-import { I4C_WRITE_POLICY, build01Problems, checkManifest, p1PrimeProblems, stepBody } from "./stage0-manifest-check.mjs";
+import { I4C_WRITE_POLICY, build01Problems, checkManifest, item4cProblems, p1PrimeProblems, stepBody } from "./stage0-manifest-check.mjs";
 import { lexSql, sqlCode } from "./sql-lexer.mjs";
 import { fixture, synthWorkflow, M, ROOT } from "./stage0-guard-fixture.mjs";
 
@@ -393,7 +401,7 @@ test("4W-9 BUILD-01's text is a function of the bound facts: the one the local r
   // The two reads, verbatim, inside the first step; and a changed fact, from the real run.
   assert.ok(BUILD.includes(reads().build00) && BUILD.includes(reads().build00w));
   const changed = json("w-fact-changed.json");
-  assert.match(changed.message, /does not hold: digest build00\.buckets/);
+  assert.match(changed.message, /does not hold: buckets-reviewed, digest build00\.buckets/);
   assert.match(changed.where, ONE_FRAME);
   assert.deepEqual(changed.gone, { ledger_absent: true, marker_absent: true, files_absent: true });
   // A failure in a later step, from the real run: re-raised, one frame, and the whole transaction gone.
@@ -465,7 +473,7 @@ test("4W-10 M-6g admits BUILD-01 in each ledger form, and refuses every statemen
 
 test("4W-11 the preflight predicates: on every real shape the comparator and BUILD-01's own read name the same ones; each predicate fails on its own negative; a malformed reading stops", () => {
   assert.deepEqual([...C.BUILD_PREDICATE_NAMES], [...A.BUILD_PREDICATE_NAMES], "one table of names, in both places");
-  assert.equal(C.BUILD_PREDICATE_NAMES.length, 26);
+  assert.equal(C.BUILD_PREDICATE_NAMES.length, 36);
   const WANT = {
     "job-files-row": ["buckets-rows"], "customer-uploads-row": ["buckets-rows"], "extra-notnull-bucket-column": ["buckets-notnull"], "generated-bucket-column": ["buckets-generated"],
     "no-arbiter": ["buckets-arbiter"], "policy-present": ["objects-policies"], "publication-all-tables": ["publication-present"], "publication-absent": ["publication-authority", "publication-present"],
@@ -524,6 +532,19 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
     ["database-create", b, set(w, "database", "create", "false")],
     ["creator", b, set(set(w, "role", "name", "someone"), "role", "attr", "false|true|false|false|true|false|false")],
   ]) { assert.deepEqual(ask(x, y), [name], name); tried.add(name); }
+  // X3e's rows are in the reviewed set too, so each of these asks with its own reading's set, and names only its own rule.
+  for (const p of ["buckets", "authusers"]) {
+    for (const [name, x] of [
+      [`${p}-relation`, set(b, p, "relation", "r|false|true|0")],
+      [`${p}-expression-calls`, add(b, p, "default|x", "query_to_xml('select 1'::text, true, false, ''::text)")],
+      [`${p}-sequence-calls`, add(b, p, "default|x", "nextval(('s'::text)::regclass)")],
+      [`${p}-routes`, add(b, p, "route|default|x|function|storage.f()", "storage|plpgsql|postgres|false|v||a|b\ndefinition")],
+      [`${p}-rules`, add(b, p, "rule|x", "3|O|false|CREATE RULE x")],
+    ]) {
+      assert.deepEqual(C.buildPredicateFindings(x, w, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(x) }).map((f) => f.key), [name], name);
+      tried.add(name);
+    }
+  }
   assert.deepEqual([...tried].sort(), [...C.BUILD_PREDICATE_NAMES].sort(), "every predicate has a negative");
   // A missing fact fails its predicate; a malformed reading is a STOP, not an exception.
   for (const bad of [null, "rows", [null], [{ part: "x", key: "k" }], [{ part: "x", key: "k", value: "v" }, { part: "x", key: "k", value: "v" }]]) {
@@ -752,6 +773,8 @@ test("4W-15 X3-R1 and X3c: a lock_not_available and a deadlock_detected through 
 
 const FINAL = json("w-old-state.json");
 const REF = "abcdefghijklmnopqrst";
+/** B1's explicit disposition of each body a reading reports, as if a reader gave it. */
+const disposed = (rows) => Object.fromEntries(Object.entries(C.bodyReviewItemsOf(rows)).map(([k, digest]) => [k, { digest, disposition: "read" }]));
 const ARBITER_OF = (rows) => rows.filter((r) => r.part === "buckets" && r.key.startsWith("arbiter|")).map((r) => [r.key, r.value]);
 /** A stopped shape: both readings' predicates, on the live comparator and from BUILD-01's own run; before any file; and what PostgreSQL does with BUILD-01's first step taken out. */
 function assertStopped(name, want, real) {
@@ -870,7 +893,7 @@ test("4W-18 X3d: what runs on BUILD-01's INSERTs is bound exactly. Codex's repla
   for (const [name, [want, consumes]] of Object.entries(REVIEW_STOPS)) {
     const r = json(`w-reviewed-stop-${name}.json`);
     // The comparator, here, on the reading after the change, against the set as reviewed.
-    const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL, reviewed: r.reviewed });
+    const bound = C.build01Facts({ build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL, reviewed: r.reviewed, bodyReview: disposed(r.build00) });
     assert.equal(bound.facts, null, `${name}: no facts`);
     assert.deepEqual(C.blocking(bound.findings).map((f) => f.key).sort(), want, `${name}: the comparator, here`);
     assert.deepEqual(r.js, want, `${name}: the comparator, in the run`);
@@ -891,8 +914,8 @@ test("4W-18 X3d: what runs on BUILD-01's INSERTs is bound exactly. Codex's repla
   const probe = json("w-reviewed-codex-probe.json");
   assert.equal(probe.bound, true, "the raise-only trigger binds, once reviewed");
   assert.equal(probe.readingsEqual, false, "the replaced body moves the reading");
-  assert.deepEqual(probe.js, ["buckets-reviewed"]);
-  assert.deepEqual(C.blocking(C.build01Facts({ build00: probe.build00, build00w: probe.build00w, ref: REF, finalFrom: FINAL, reviewed: probe.reviewed }).findings).map((f) => f.key), ["buckets-reviewed"]);
+  assert.deepEqual(probe.js, ["buckets-reviewed", "body-review"], "B1's disposition was of the body as reviewed");
+  assert.deepEqual(C.blocking(C.build01Facts({ build00: probe.build00, build00w: probe.build00w, ref: REF, finalFrom: FINAL, reviewed: probe.reviewed, bodyReview: disposed(probe.build00) }).findings).map((f) => f.key), ["buckets-reviewed"]);
   assert.equal(probe.code, "P0001");
   assert.match(probe.message, /^stage0 BUILD-01: the bound acceptance does not hold: .*buckets-reviewed/);
   assert.match(probe.where, ONE_FRAME);
@@ -941,7 +964,7 @@ test("4W-19 X3d: a stock-like set binds and commits with its own review; no revi
   assert.equal(keysOf(stock.reviewed.buckets, /^check-function\|/).length, 0, "CHECKs using only built-ins have no function row");
   // The bound set, from the comparator here, is what the run bound.
   assert.deepEqual(C.reviewedSetOf(stock.build00), stock.reviewed);
-  assert.deepEqual(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: stock.reviewed }).facts.reviewed, stock.reviewed);
+  assert.deepEqual(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: stock.reviewed, bodyReview: disposed(stock.build00) }).facts.reviewed, stock.reviewed);
   // A reading whose values hold multi-line definitions is still BUILD-00's contracted success, and review can read a body in it.
   assert.equal(CL.SUCCESS["BUILD-00"].check(JSON.stringify(stock.build00)).ok, true);
   const fnRow = stock.build00.find((x) => x.key === "trigger-function|enforce_bucket_name_length_trigger|storage.enforce_bucket_name_length()").value;
@@ -951,14 +974,14 @@ test("4W-19 X3d: a stock-like set binds and commits with its own review; no revi
   assert.equal(fns.committed, true);
   assert.ok(Object.hasOwn(fns.reviewed.authusers, "check-function|via_fn|auth.check_fn(text)"));
   assert.equal(fns.witness, false);
-  // No review at all: no facts, naming both.
+  // No review at all: no facts, naming both sets and the bodies.
   const none = C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL });
   assert.equal(none.facts, null);
-  assert.deepEqual(C.blocking(none.findings).map((f) => f.key).sort(), ["authusers-reviewed", "buckets-reviewed"]);
+  assert.deepEqual([...new Set(C.blocking(none.findings).map((f) => f.key))].sort(), ["authusers-reviewed", "body-review", "buckets-reviewed"]);
   // Another project's set is not this one's.
   const other = { ...stock.reviewed, buckets: { ...stock.reviewed.buckets, "trigger|enforce_bucket_name_length_trigger": "0".repeat(32) } };
-  assert.equal(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: other }).facts, null);
-  assert.equal(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: "not a set" }).facts, null);
+  assert.equal(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: other, bodyReview: disposed(stock.build00) }).facts, null);
+  assert.equal(C.build01Facts({ build00: stock.build00, build00w: stock.build00w, ref: REF, finalFrom: FINAL, reviewed: "not a set", bodyReview: disposed(stock.build00) }).facts, null);
   // No approved set in the code: not the digests Ryan's staging read names, and not this run's.
   for (const f of ["scripts/manual/stage0-4c-compare.mjs", "scripts/manual/assemble-stage0.mjs", "supabase/rehearsals/release2_stage0_4c_build00.sql"]) {
     const t = readFileSync(join(ROOT, f), "utf8");
@@ -982,4 +1005,281 @@ test("4W-19 X3d: a stock-like set binds and commits with its own review; no revi
   // M-6f admits BUILD-00 with its one new call, and the assembler emits it.
   assert.ok(OUT["BUILD-00"].includes("pg_get_functiondef(p.oid)"));
   assert.ok(OUT["BUILD-00"].includes("'authusers', to_regclass('auth.users')"));
+});
+
+// X3e: what a stored expression can run. Each shape's expected predicates are written out
+// here, apart from the harness that recorded them; a part's name is prefixed in the check.
+const EXPR_STOPS = {
+  "default-nextval": ["routes", "sequence-calls"],
+  "default-nextval-no-constant-dependency": ["sequence-calls"],
+  "default-nextval-computed-name": ["sequence-calls"],
+  "default-setval": ["routes", "sequence-calls"],
+  "default-setval-no-constant-dependency": ["sequence-calls"],
+  "identity-column": ["sequence-calls"],
+  "default-function": ["expression-calls", "routes"],
+  "generated-function": ["expression-calls", "routes"],
+  "index-expression-function": ["expression-calls", "routes"],
+  "index-predicate-function": ["expression-calls", "routes"],
+  "domain-check-function": ["expression-calls", "routes"],
+  "domain-chain": ["expression-calls", "routes"],
+  "domain-check-nextval": ["routes", "sequence-calls"],
+  "domain-check-dynamic-nextval": ["sequence-calls"],
+  "domain-default-nextval": ["routes", "sequence-calls"],
+  "array-of-domain": ["expression-calls", "routes"],
+  "default-custom-operator": ["routes"],
+  "default-operator-over-unlisted-builtin": ["routes"],
+  "default-custom-cast": ["routes"],
+  "operator-implemented-by-nextval": ["routes", "sequence-calls"],
+  "operator-implemented-by-nextval-computed": ["routes", "sequence-calls"],
+  "check-custom-operator-over-nextval": ["sequence-calls"],
+  "check-nextval": ["routes", "sequence-calls"],
+  "check-dynamic-nextval": ["sequence-calls"],
+  "check-through-domain": ["expression-calls", "routes"],
+  "trigger-when-nextval": ["routes", "sequence-calls"],
+  "trigger-when-dynamic-nextval": ["sequence-calls"],
+  "rule-on-insert": ["rules"],
+  "rule-on-update": ["rules"],
+  "inherited-by-a-child": ["relation"],
+  "composite-type": ["routes"],
+  "range-type": ["routes"],
+  "custom-base-type": ["routes"],
+  "custom-collation": ["routes"],
+  "custom-operator-class": ["routes"],
+  "exclusion-custom-operator": ["routes"],
+  "builtin-running-a-query": ["expression-calls"],
+  "builtin-with-a-side-effect": ["expression-calls"],
+};
+const EXPR_AFTER = {
+  "default-added": ["reviewed", "routes", "sequence-calls"],
+  "default-replaced": ["reviewed", "sequence-calls"],
+  "generated-added": ["expression-calls", "reviewed", "routes"],
+  "index-expression-added": ["expression-calls", "reviewed", "routes"],
+  "index-predicate-replaced": ["expression-calls", "reviewed", "routes"],
+  "domain-check-added": ["expression-calls", "reviewed", "routes"],
+  "domain-default-added": ["reviewed", "routes", "sequence-calls"],
+  "rule-added": ["reviewed", "rules"],
+  "delete-rule-changed": ["reviewed"],
+  "check-operator-function-replaced": ["reviewed"],
+  "check-operator-swapped": ["reviewed"],
+  "check-custom-cast-function-replaced": ["reviewed"],
+  "helper-in-a-parsed-body-replaced": ["reviewed"],
+};
+const EXPR_BASE = json("w-expr-base.json");
+const applyDelta = (base, { set, drop }) => {
+  const k = (r) => JSON.stringify([r.part, r.key]);
+  const m = new Map(base.map((r) => [k(r), r]));
+  for (const [part, key] of drop) m.delete(k({ part, key }));
+  for (const r of set) m.set(k(r), r);
+  return [...m.values()];
+};
+const exprFixture = (f) => { const r = json(f); return { ...r, build00: applyDelta(EXPR_BASE.build00, r.b00), build00w: applyDelta(EXPR_BASE.build00w, r.b00w) }; };
+const PARTS = ["buckets", "authusers"];
+const asks = (r, reviewed) => C.buildPredicateFindings(r.build00, r.build00w, { creator: "postgres", ledger: "absent-table", reviewed }).map((f) => f.key).sort();
+
+test("4W-20 X3e: a stored expression's text is read, never run: calls are found outside literals and quoted names, and both implementations hold the same lists", () => {
+  assert.deepEqual([...A.BUILD_EXPRESSION_CALLS], [...C.BUILD_EXPRESSION_CALLS], "one list, in both places");
+  assert.deepEqual([...A.BUILD_SEQUENCE_CALLS], [...C.SEQUENCE_CALLS], "one list, in both places");
+  // The patterns are one pattern: BUILD-01's first step holds the same alternatives, with [.] and [(] for \\. and \\(.
+  const quoted = (s) => `'${s.replace(/'/g, "''")}'`;
+  assert.ok(BUILD.includes(`regexp_replace(f.value, ${quoted(C.EXPRESSION_PATTERNS.quoted)}, 'Q', 'g')`), "the literal pattern");
+  assert.ok(BUILD.includes(`regexp_matches(x.s, ${quoted(C.EXPRESSION_PATTERNS.call.replace(/\\\./g, "[.]").replace(/\\\(/g, "[(]"))}, 'g')`), "the call pattern");
+  for (const [text, want] of [
+    ["now()", ["now"]],
+    ["lower((email)::text)", ["lower"]],
+    ["pg_catalog.lower(x)", ["lower"]],
+    ["nextval('storage.w'::regclass)", ["nextval"]],
+    ["nextval(('storage.w'::text)::regclass)", ["nextval"]],
+    ["pg_catalog.setval(('w'::text)::regclass, 5)", ["setval"]],
+    ["storage.f(a, g(b))", ["storage.f", "g"]],
+    ["LEAST(a, b)", ["LEAST"]],
+    ["(a)::character varying(255)", ["varying"]],
+    ["0.5::numeric(10,2)", ["numeric"]],
+    // A literal or a quoted name holding a call is no call.
+    ["'nextval(x)'::text", []],
+    ["'it''s nextval(x)'::text", []],
+    ["'a'::text || 'setval(y)'::text", []],
+    ['"nextval(x)"', []],
+    ['"a""b(c)"', []],
+    ["'a\\'::text", []],
+    // A quoted function's name is a call to something unnamed, off every list.
+    ['"MyFunc"(a)', ["Q"]],
+    ['"My Schema".f(a)', ["Q.f"]],
+    // What the deparser prints with a space is no call.
+    ["x = ANY (ARRAY['a'::text])", []],
+    ["CHECK ((a > 0) AND (b < 1))", []],
+    // An operator's form names no function: the walk follows its oprcode.
+    ["(a OPERATOR(storage.===) 'x'::text)", ["OPERATOR"]],
+    // The literal is what would run, and only the call around it can be seen.
+    ["query_to_xml('select nextval(''s'')'::text, true, false, ''::text)", ["query_to_xml"]],
+  ]) assert.deepEqual(C.expressionCalls(text), want, text);
+  for (const c of ["nextval", "setval", "currval", "lastval", "query_to_xml", "cursor_to_xml", "table_to_xml", "ts_stat", "set_config", "pg_advisory_lock", "pg_sleep", "pg_notify", "lo_create", "Q", "dblink"]) assert.ok(!C.BUILD_EXPRESSION_CALLS.includes(c), `${c} is not on the list`);
+});
+
+test("4W-21 X3e: each class of stored expression, on both tables, stops in both implementations before any file, with the witness unconsumed", () => {
+  const files = readdirSync(FIX);
+  const wanted = [];
+  for (const [name, short] of Object.entries(EXPR_STOPS)) {
+    for (const part of PARTS) {
+      const f = `w-expr-stop-${part}-${name}.json`;
+      wanted.push(f);
+      const r = exprFixture(f);
+      const trigger = part === "authusers" && name.startsWith("trigger-when") ? ["authusers-triggers"] : [];
+      const want = [...short.map((n) => `${part}-${n}`), ...trigger].sort();
+      const label = `${part} ${name}`;
+      assert.deepEqual(r.want, want, `${label}: the run asked this`);
+      // The comparator here, with the reading's own set: review did not need to change for these to stop.
+      assert.deepEqual(asks(r, C.reviewedSetOf(r.build00)), want, `${label}: the comparator, here`);
+      assert.deepEqual(r.js, want, `${label}: the comparator, in the run`);
+      assert.deepEqual(r.sql, want, `${label}: BUILD-01's first step`);
+      assert.equal(r.noFacts, true, `${label}: no facts`);
+      assert.equal(r.code, "P0001", label);
+      assert.match(r.where, ONE_FRAME, label);
+      assert.deepEqual(r.left, { ledger_absent: true, marker_absent: true, files_absent: true }, `${label}: before the first write`);
+      assert.equal(r.witnessAfterRefusal, false, `${label}: nothing of it ran`);
+    }
+    // Other tables are not asked about: the other part passes its own rules.
+  }
+  assert.deepEqual(files.filter((f) => f.startsWith("w-expr-stop-")).sort(), wanted.sort(), "exactly these shapes");
+  // Where PostgreSQL's own run reaches the sequence, a rollback does not give the value back.
+  const without = (f) => json(f);
+  for (const name of ["default-nextval", "default-nextval-no-constant-dependency", "default-setval", "default-function", "domain-chain", "domain-default-nextval", "default-custom-operator", "operator-implemented-by-nextval", "check-dynamic-nextval", "check-through-domain", "trigger-when-dynamic-nextval", "builtin-running-a-query"]) {
+    for (const part of PARTS) assert.equal(without(`w-expr-stop-${part}-${name}.json`).consumed, true, `${part} ${name}: with the first step taken out, it runs`);
+  }
+  // A non-supplied auth column: the file's INSERT does not name it, and its default still runs.
+  const auth = exprFixture("w-expr-stop-authusers-default-nextval.json");
+  const facts = Object.fromEntries(auth.build00.filter((x) => x.part === "authusers").map((x) => [x.key, x.value]));
+  assert.equal(facts["default|x_c"], "nextval('storage.review_witness'::regclass)");
+  assert.equal(BUILD.split("insert into auth.users (instance_id, id, aud, role, email) values").length - 1, 1, "the one INSERT does not name it");
+  // The forms with no dependency to follow: only the text shows them.
+  for (const part of PARTS) {
+    const r = exprFixture(`w-expr-stop-${part}-default-nextval-no-constant-dependency.json`);
+    const rows = r.build00.filter((x) => x.part === part);
+    assert.equal(rows.find((x) => x.key === "default|x_c").value, "nextval(('storage.review_witness'::text)::regclass)");
+    assert.equal(rows.filter((x) => x.key.startsWith("route|default|x_c|")).length, 0, "no dependency names the sequence or the function");
+  }
+  // Each path of the walk, as a row.
+  const keysOf = (f, part) => exprFixture(f).build00.filter((x) => x.part === part).map((x) => x.key);
+  for (const [part, S] of [["buckets", "storage"], ["authusers", "auth"]]) {
+    const has = (name, key) => assert.ok(keysOf(`w-expr-stop-${part}-${name}.json`, part).includes(key), `${part} ${name}: ${key}`);
+    has("domain-chain", `route|column|x_c|type|${S}.x_out`);
+    has("domain-chain", `route|column|x_c|type|${S}.x_mid`);
+    has("domain-chain", `route|column|x_c|type|${S}.x_in`);
+    has("domain-chain", `route|column|x_c|function|${S}.vol_check(text)`);
+    has("domain-chain", `domain-check|${S}.x_in|x_in_check`);
+    has("array-of-domain", `route|column|x_c|type|${S}.x_d`);
+    has("default-custom-operator", `route|default|x_c|operator|${S}.===(pg_catalog.text,pg_catalog.text)`);
+    has("default-custom-operator", `route|default|x_c|function|${S}.op_fn(text, text)`);
+    has("operator-implemented-by-nextval", "route|default|x_c|function|pg_catalog.nextval(regclass)");
+    has("check-custom-operator-over-nextval", "check-function|x_k|pg_catalog.nextval(regclass)");
+    has("check-through-domain", `route|check|x_k|function|${S}.vol_check(text)`);
+    has("default-operator-over-unlisted-builtin", "route|default|x_c|function|pg_catalog.textcat(text, text)");
+    has("default-custom-cast", `route|default|x_c|function|${S}.x_cast(uuid)`);
+    has("custom-operator-class", `route|index|x_i|operator class|${S}.x_ops USING btree`);
+    has("exclusion-custom-operator", `route|exclusion|x_e|operator|${S}.=%=(pg_catalog.text,pg_catalog.text)`);
+    has("exclusion-custom-operator", `route|exclusion|x_e|function|${S}.ex_fn(text, text)`);
+    has("index-predicate-function", "index-pred|x_i");
+    has("index-expression-function", "index-expr|x_i");
+    has("rule-on-update", "rule|x_r");
+  }
+});
+
+test("4W-22 X3e: addition and replacement after the review stop in both implementations, the part's digest too, with the witness unconsumed; Codex's custom operator now moves the reading", () => {
+  const files = readdirSync(FIX);
+  const wanted = [];
+  for (const [name, short] of Object.entries(EXPR_AFTER)) {
+    for (const part of PARTS) {
+      const f = `w-expr-after-${part}-${name}.json`;
+      wanted.push(f);
+      const r = exprFixture(f);
+      const want = short.map((n) => `${part}-${n}`).sort();
+      const label = `${part} ${name}`;
+      assert.deepEqual(r.want, want, label);
+      assert.deepEqual(asks(r, r.reviewed), want, `${label}: the comparator, here`);
+      assert.deepEqual(r.js, want, `${label}: in the run`);
+      assert.deepEqual(r.sql, want, `${label}: BUILD-01's first step`);
+      assert.match(r.asBound.message, new RegExp(`digest build00\\.${part}`), `${label}: as bound`);
+      assert.deepEqual(r.left, { ledger_absent: true, marker_absent: true, files_absent: true }, label);
+      assert.equal(r.witnessAfterRefusal, false, `${label}: nothing of it ran`);
+    }
+  }
+  assert.deepEqual(files.filter((f) => f.startsWith("w-expr-after-")).sort(), wanted.sort(), "exactly these shapes");
+  // Codex's probe of 2d53bed: a CHECK on a custom operator, its implementation replaced. Both readings were identical at X3d.
+  for (const part of PARTS) {
+    const S = part === "buckets" ? "storage" : "auth";
+    const r = exprFixture(`w-expr-after-${part}-check-operator-function-replaced.json`);
+    const row = `check-function|x_op|${S}.safe_op(text, text)`;
+    const value = r.build00.find((x) => x.part === part && x.key === row).value;
+    assert.ok(value.includes("nextval('storage.review_witness')"), "the reading shows the replaced body");
+    assert.notEqual(A.md5(value), r.reviewed[part][row], "and it is what moved");
+    assert.equal(r.consumed, true, "with the first step taken out, the replaced body runs");
+  }
+  // A parsed SQL-standard body records what it calls, so the walk reports the helper, and replacing it stops.
+  for (const part of PARTS) {
+    const S = part === "buckets" ? "storage" : "auth";
+    const r = exprFixture(`w-expr-after-${part}-helper-in-a-parsed-body-replaced.json`);
+    assert.ok(r.build00.some((x) => x.part === part && x.key === `check-function|x_sb|${S}.helper(text)`), "the helper is reported");
+    assert.equal(r.consumed, true);
+  }
+});
+
+test("4W-23 X3e: ordinary built-in forms and reviewed routes are kept, a literal naming a function among them; what a string-defined body calls stays B1's review item, with an explicit disposition", () => {
+  const files = readdirSync(FIX);
+  const wanted = [];
+  for (const [name, parts] of [["builtins", PARTS], ["trigger-when-builtin", ["buckets"]], ["reviewed-operator-in-check", PARTS], ["reviewed-helper-in-a-parsed-body", PARTS]]) {
+    for (const part of parts) {
+      const f = `w-expr-commit-${part}-${name}.json`;
+      wanted.push(f);
+      const r = exprFixture(f);
+      assert.deepEqual(asks(r, r.reviewed), [], `${part} ${name}: the comparator, here`);
+      assert.deepEqual(r.stops, [], `${part} ${name}`);
+      assert.equal(r.committed, true, `${part} ${name}: BUILD-01 commits`);
+      assert.equal(r.success, true, `${part} ${name}`);
+      assert.equal(r.fingerprintEqual, true, `${part} ${name}`);
+      assert.equal(r.consumed, false, `${part} ${name}: the witness`);
+    }
+  }
+  assert.deepEqual(files.filter((f) => f.startsWith("w-expr-commit-")).sort(), wanted.sort(), "exactly these shapes");
+  for (const part of PARTS) {
+    const r = exprFixture(`w-expr-commit-${part}-builtins.json`);
+    const facts = Object.fromEntries(r.build00.filter((x) => x.part === part).map((x) => [x.key, x.value]));
+    assert.equal(facts["default|x_literal"], "'nextval(''x'') setval(y) query_to_xml(z) it''s'::text", "a literal naming functions it does not call");
+    assert.equal(facts["default|x_now"], "now()");
+    assert.equal(facts["default|x_least"], "LEAST(x_stamp1, x_stamp2)");
+    assert.ok(Object.hasOwn(facts, "default|x (quoted)"), "a quoted name");
+    assert.equal(facts["column-type|x_domain"].split("|")[0], "", "no identity");
+    assert.ok(Object.hasOwn(facts, "index-expr|x_lower_i"));
+    assert.ok(Object.hasOwn(facts, "index-pred|x_partial_i"));
+    assert.match(facts["rule|x_delete_r"], /^4\|O\|false\|CREATE RULE x_delete_r/, "a DELETE rule is inventoried and bound");
+    assert.ok(Object.keys(r.reviewed[part]).some((k) => k.startsWith("rule|")), "in the set");
+    assert.ok(Object.keys(r.reviewed[part]).includes("relation"), "and the table's own shape");
+  }
+  // The limit, with a PL/pgSQL helper: the readings do not move, and only a reader can see it.
+  const limit = json("w-expr-limit-string-body-helper.json");
+  assert.equal(limit.readingsEqual, true, "a string-defined body records no dependency on what it calls");
+  assert.equal(limit.committed, true);
+  assert.equal(limit.consumed, true);
+  assert.deepEqual(limit.items, ["buckets|trigger-function|x_string|storage.string_body()"], "the body is the item; the helper is not reported");
+  assert.deepEqual(limit.withoutDispositions, ["body-review"], "no disposition, no facts");
+  // The disposition must be exact: of this body, for every item, in words.
+  const r = exprFixture("w-expr-commit-buckets-reviewed-helper-in-a-parsed-body.json");
+  const ok = { build00: r.build00, build00w: r.build00w, ref: REF, finalFrom: FINAL, reviewed: r.reviewed };
+  const items = C.bodyReviewItemsOf(r.build00);
+  assert.deepEqual(Object.keys(items).sort(), ["buckets|check-function|x_sb|storage.checks(text)", "buckets|check-function|x_sb|storage.helper(text)"]);
+  const full = Object.fromEntries(Object.entries(items).map(([k, digest]) => [k, { digest, disposition: "read: it calls only what is listed" }]));
+  assert.notEqual(C.build01Facts({ ...ok, bodyReview: full }).facts, null);
+  const firstKey = Object.keys(items)[0];
+  for (const [label, bodyReview] of [
+    ["none", undefined],
+    ["one missing", Object.fromEntries(Object.entries(full).slice(1))],
+    ["a stale digest", { ...full, [firstKey]: { digest: "0".repeat(32), disposition: "read" } }],
+    ["no words", { ...full, [firstKey]: { digest: items[firstKey], disposition: "  " } }],
+    ["one this reading does not report", { ...full, "buckets|check-function|x|y()": { digest: "0".repeat(32), disposition: "read" } }],
+    ["not an object", "read"],
+  ]) {
+    const x = C.build01Facts({ ...ok, bodyReview });
+    assert.equal(x.facts, null, label);
+    assert.ok(C.blocking(x.findings).every((f) => f.key === "body-review"), label);
+  }
+  // M-6f holds the read with its new calls.
+  assert.deepEqual(item4cProblems(OUT["BUILD-00"], "BUILD-00"), []);
 });

@@ -631,6 +631,28 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
         predicates, before any file. M-6g (build01Problems) reads it statement by
         statement. The predicates are in the comparator AND in that SQL, under the
         same names (BUILD_PREDICATE_NAMES); only the local run shows they agree;
+      - **X3e: what a stored expression can run** (Codex's review of 2d53bed §3; plan §0.8).
+        BUILD-00 reports raw facts and judges nothing: every column's type, identity and generated
+        kind, every default, index expression and predicate, every rule, and a walk (`with recursive`)
+        along pg_depend plus what it does not record: `oprcode`, an exclusion constraint's `conexclop`, a
+        trigger's function, a domain's base type and CHECKs, an array's element. The comparator and
+        BUILD-01's first step judge the rows, as
+        `<part>-relation`, `-sequence-calls`, `-expression-calls`, `-routes` and `-rules`. So the call list
+        BUILD_EXPRESSION_CALLS can grow with review and no new R0a reading; a stock built-in off it stops
+        at B1. What this taught, each reproduced locally:
+        - **PostgreSQL records no dependency on a pinned object.** `nextval(('s'::text)::regclass)` has no
+          row at all, and a custom operator over `nextval` shows it only through `oprcode`. Empty proves
+          nothing, so the deparsed text is read too, and never executed. pg_get_expr prints `'…'` with
+          doubled quotes, never `E'…'`, and a call with its parenthesis against the name;
+        - **an identity column has no pg_attrdef row:** the rewriter builds its NextValueExpr, and the
+          dependency points from the sequence to the table. Only attidentity shows it;
+        - **a built-in can run SQL from inside a literal** (query_to_xml), so `<part>-expression-calls` is an
+          allowlist, not a list of what to refuse;
+        - **a NULL inside `not (case …)` passes a `not exists`:** a CASE that can be NULL is `is not true`;
+        - **a string-defined body records nothing about what it calls,** and a parsed SQL-standard body can.
+          So bodies stay B1's review item: bodyReviewItemsOf, with an explicit disposition per digest
+          (`body-review`). `w-expr-limit-string-body-helper.json` records what only a reader can catch.
+        Its fixtures are `w-expr-*`, each a stored difference from `w-expr-base.json`;
       - **PERFORM_DECLARED is not PERFORM_QUERIES:** its entries (RB-43's two, and
         P1-4C's in stage0-4c-performs.mjs, data in the guard chain) have no receipt,
         no profile names them, and an envelope quoting one stays R4;

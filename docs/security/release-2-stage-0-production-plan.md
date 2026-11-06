@@ -3077,6 +3077,98 @@ window.**
     - Netlify → `printcalculator2` shows no new production deploy;
     - the Published entry is still `6ab020c50a788b0008d430c9` at
       main@7ec5af4.
+- **Codex accepted X3b `1a7aff1`, 2026-11-05**
+  (`reviews/2026-11-05-1a7aff1-review.md`), with an exact staging-only push
+  clearance:
+  - **the push:** exactly `1a7aff13f7c072f35be4c9671635b210ab5c77da` to
+    `refs/heads/security/release-2-slice-2`, a normal fast-forward carrying X3
+    `87b34fa` and X3b, and the resulting staging build only;
+  - **what it clears nothing for:** production, target creation or binding, live
+    guard use and SQL sends, which keep their separate gates. The review's three
+    follow-ups (the lock and deadlock policy, the trigger and CHECK rule at B1, and
+    the verification driver) each have their own deadline.
+- **The push, Thu 2026-11-05, 00:02:12.287–00:02:14.781Z on 11-06 (19:02 EST on
+  11-05), under that clearance only:**
+  - **Before (00:02:11Z):**
+    - the remote is `github.com/Store4979/print-calculator`, and `push.default`
+      is `nothing`;
+    - X2c..X3b held exactly X3 `87b34fa` and X3b `1a7aff1`, with X2c an ancestor
+      of X3b (a fast-forward);
+    - `ls-remote` showed the branch at
+      `47a0b69e0762d8012fe5f8aec1a26d333eae4ccf`, `main` at
+      `7ec5af48666e3779266464f77cdbe4bdf851ae5a`, and no tags;
+    - the working tree held only the untracked `AGENTS.md`.
+  - **The command:**
+    `git push origin 1a7aff13f7c072f35be4c9671635b210ab5c77da:refs/heads/security/release-2-slice-2`
+    gave `47a0b69..1a7aff1`, exit 0, with no force and no tags. `AGENTS.md` is not
+    in it.
+  - **After:** the branch is at `1a7aff1` and `main` is still at `7ec5af4`
+    (00:02:14Z, and again 00:05:54Z). There are no tags (both times).
+  - **Staging,** at 00:02:23Z: deploy `6aeb8393…` at `47a0b69`. Polled every 15 s
+    from the push. First seen at 00:05:42Z: deploy
+    **`6aed190b4029a5562bd7c549`**, commitRef `1a7aff1…`, built
+    2026-11-06T00:05:25.760Z, context `production`, with `contextAllowed`,
+    `flagPresent` and `flagEnabled` all true. Its permalink reported the same deploy
+    at 00:05:54Z. A deploy is published only when its build command exits 0, and that
+    command runs `yarn test` before `yarn build`.
+  - **Production is unchanged** at 00:05:51Z, as it was before the push (00:02Z). The
+    live `index.html`, `main-DZt0oGiJ.js` and `index-ftBg9V1i.js` (md5 `d67e9e91…`,
+    `47ab9406…`, `57fb08e6…`, the same files as in the records above) are
+    byte-identical to deploy `6ab020c5`'s permalink.
+    `/.netlify/functions/deploy-context` on production returns the same bytes as
+    `index.html`. The checks are in this session's scratchpad, `x3b-push/pre` and
+    `x3b-push/post`.
+  - **Ryan's §12 dashboard read after the push,** read-only, nothing clicked, done
+    just before the message, which arrived by about 00:57Z on Fri 2026-11-06 (19:57
+    EST on Thu 11-05), about 55 min after the push and 52 min after staging published
+    X3b (the read's own time is not stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at main@7ec5af4.
+- **Codex accepted X3c and X3d (`2d53bed`), 2026-11-06**
+  (`reviews/2026-11-06-2d53bed-review.md`), with an exact staging-only push
+  clearance:
+  - **the push:** exactly `2d53bedf5232a7722799f0fbf6d82bdff90d17f4` to
+    `refs/heads/security/release-2-slice-2`, without force or tags, carrying X3c
+    `1bc21ba` and X3d;
+  - **what it clears nothing for:** a merge to main, project creation, target
+    binding, a real-store command, a database send or a production window. X3e and
+    the versioned tooling are its follow-ups.
+- **The push, Fri 2026-11-06, 17:21:29.206–17:21:31.586Z (12:21 EST), under that
+  clearance only:**
+  - **Before (17:21:28Z):**
+    - the remote is `github.com/Store4979/print-calculator`, and `push.default`
+      is `nothing`;
+    - X3b..2d53bed held exactly X3c `1bc21ba` and X3d `2d53bed`, with X3b an ancestor
+      of X3d (a fast-forward);
+    - `ls-remote` showed the branch at
+      `1a7aff13f7c072f35be4c9671635b210ab5c77da`, `main` at
+      `7ec5af48666e3779266464f77cdbe4bdf851ae5a`, and no tags;
+    - the working tree held the uncommitted records (`docs/STATUS.md`, this plan and
+      the 4(c) plan) and the untracked `AGENTS.md`.
+  - **The command:**
+    `git push origin 2d53bedf5232a7722799f0fbf6d82bdff90d17f4:refs/heads/security/release-2-slice-2`
+    gave `1a7aff1..2d53bed`, exit 0, with no force and no tags. None of the uncommitted
+    edits and not `AGENTS.md` are in it.
+  - **After:** the branch is at `2d53bed` and `main` is still at `7ec5af4`
+    (17:21:31Z, and again 17:27:46Z). There are no tags (both times).
+  - **Staging,** at 17:21:39Z: deploy `6aed190b…` at `1a7aff1`. Polled every 15 s
+    from the push. First seen at 17:25:14Z: deploy
+    **`6aee0c9dea7ebf31b912fe85`**, commitRef `2d53bed…`, built
+    2026-11-06T17:24:54.459Z, context `production`. A deploy is published only when its
+    build command exits 0, and that command runs `yarn test` before `yarn build`.
+  - **Production is unchanged** at 17:25:14Z, as it was before the push (17:21Z). The
+    live `index.html`, `main-DZt0oGiJ.js` and `index-ftBg9V1i.js` (md5 `d67e9e91…`,
+    `47ab9406…`, `57fb08e6…`, the same files as in the records above) are
+    byte-identical to deploy `6ab020c5`'s permalink.
+    `/.netlify/functions/deploy-context` on production returns the same bytes as
+    `index.html`. The checks are in this session's scratchpad, `x3d-push/pre` and
+    `x3d-push/post`.
+  - **Ryan's §12 dashboard read after the push,** read-only, nothing clicked, done
+    just before the message, which arrived by about 19:13Z on Fri 2026-11-06 (14:13
+    EST), about 1 h 52 min after the push and 1 h 48 min after staging published X3d
+    (the read's own time is not stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at main@7ec5af4.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 

@@ -389,7 +389,7 @@ export const I4C_READ_CALLS = Object.freeze(["acldefault", "aclexplode", "and", 
   "md5", "not", "obj_description", "octet_length", "oidvectortypes", "or", "over", "pg_get_constraintdef", "pg_get_expr", "pg_get_function_result",
   "pg_get_functiondef", "pg_get_indexdef", "pg_get_triggerdef", "pg_get_userbyid", "pg_has_role", "right", "row_security_active", "select", "split_part", "string_agg", "strpos", "substr",
   "to_jsonb", "to_regclass", "to_regnamespace", "to_regprocedure", "unnest", "values", "version", "when", "where", "with",
-  "all", "as", "bool_and", "filter", "from", "join",
+  "all", "as", "bool_and", "bool_or", "filter", "from", "join", "pg_get_ruledef", "pg_identify_object", "walk", "walk_edges",
   // the texts' CTE names and column-alias lists
   "allow", "creators", "named", "roles_here", "cat", "obs", "md5s", "me", "led", "eff", "cat_state", "recovery", "h",
   "c", "f", "g", "t", "u", "x", "v00", "v01", "v02", "v03", "v04", "v05", "w00", "w01", "w02", "w03", "w04", "w05"]);
@@ -605,10 +605,12 @@ const B1_DEFAULT_WANT = /^(select \* from \(values \('[^']*', '[^']*', '[^']*'\)
 const B1_DEFAULT_TAIL = (label) => `) select count(*) from ((select * from have except select * from want) union all (select * from want except select * from have)) x) <> 0 then raise exception '${B1_TAG}: the default ACLs are not ${label}' using errcode = 'P0001'`;
 /** The preflight table's predicates (plan §2.1), written out, in the order BUILD-01's first step asks them. */
 const B1_PREDICATES = ["public-empty", "ledger", "buckets-present", "buckets-columns", "buckets-notnull", "buckets-generated", "buckets-arbiter", "buckets-authority", "buckets-rls", "buckets-rows", "buckets-reviewed",
+  "buckets-relation", "buckets-expression-calls", "buckets-sequence-calls", "buckets-routes", "buckets-rules",
   "objects-table", "objects-policies", "objects-authority", "publication-present", "publication-member", "publication-authority",
-  "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "authusers-reviewed", "marker-absent", "database-create", "creator"];
+  "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "authusers-reviewed",
+  "authusers-relation", "authusers-expression-calls", "authusers-sequence-calls", "authusers-routes", "authusers-rules", "marker-absent", "database-create", "creator"];
 /** Every name BUILD-01's first step puts before "(" outside the two reads it embeds. */
-const B1_ASSERT_CALLS = ["all", "and", "array", "chr", "coalesce", "count", "current_setting", "except", "exists", "f", "bound", "bad", "from", "group", "in", "md5", "not", "or", "reviewed", "select", "split_part", "string_agg", "string_to_array", "substring", "union", "values", "where", "as", "p"];
+const B1_ASSERT_CALLS = ["all", "and", "array", "calls", "chr", "coalesce", "count", "current_setting", "except", "exists", "f", "bound", "bad", "from", "group", "in", "lateral", "md5", "not", "or", "position", "regexp_matches", "regexp_replace", "reviewed", "scanned", "select", "split_part", "string_agg", "string_to_array", "substr", "substring", "union", "values", "where", "as", "p"];
 
 /** A DO body's normalized statements, its tail checked and removed. */
 function b1Body(body, label, say) {

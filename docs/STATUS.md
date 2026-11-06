@@ -1,20 +1,31 @@
-- Last updated: 2026-11-05
+- Last updated: 2026-11-06
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
-## 2026-11-05 — X3b accepted and pushed to staging; the verification driver repaired; X3c (the lock and deadlock policy) and X3d (the exact set of triggers and CHECKs)
-- Shipped: security/release-2-slice-2 47a0b69..1a7aff1 pushed 00:02Z on 11-06 (X3, X3b, under Codex's review of 1a7aff1; staging deploy 6aed190b; production unchanged); 1a7aff1..this commit local, for Codex's review
-  - 1bc21ba X3c: a reported 55P03 or 40P01 is R4 before any profile, under every text; P1-4C's helper and handlers preserve both; LS-1 to LS-6, G-29; every preserved text at its pin
-  - this commit X3d: BUILD-00 reports every trigger, its functions and every CHECK on storage.buckets and auth.users; B1 binds the project's own reviewed set; buckets-reviewed and authusers-reviewed in both implementations; Codex's replaced body refused before any file; 4W-18, 4W-19, 4W-M5; the plan's rollback and visibility claims corrected; this log
-  - Not commits: the verification driver repaired, a local script (.review/verify-driver/: old and new versions, demonstrations); X3b's failed comparison kept, exit 1; the historical report (.review/x3c-evidence/); what the binding does not see (.review/x3d-evidence/); the X3b push record (production plan §E13), written and uncommitted, waiting for Ryan's Netlify read; X3d's verification, whose results are in its review request, since this file cannot name its own commit's
+## 2026-11-06 — X3c and X3d accepted and pushed to staging; the verification tooling committed, with DR-1 fixed; X3e, what a stored expression can run
+- Shipped: security/release-2-slice-2 1a7aff1..2d53bed pushed 17:21Z (X3c, X3d, under Codex's review of 2d53bed; staging deploy 6aee0c9d; production unchanged); 2d53bed..this commit local, for Codex's review
+  - a88df3f scripts/verify: the driver, the fixture comparator, the TAP checker, a launcher and their regression tests (VT-1 to VT-16), with their own pin set; DR-1: fixed ledger versions come from the manifest, and only named generated entries may carry another timestamp; the reviewed replay-state set; no SQL or manifest pin moved
+  - this commit X3e: BUILD-00 reports every column's type, every stored default, generated expression, index expression and predicate, every rule, and a walk along pg_depend plus oprcode, trigger functions, domains and array elements; <part>-relation, -sequence-calls, -expression-calls, -routes and -rules in both implementations; a body's helpers are B1's review item, with an explicit disposition; the X3b and 2d53bed push records, each with Ryan's read, the 44-to-43 correction and this log
+  - Not commits: X3e's clean verification, through the committed tooling (the review request has its result); a run of the same tooling on its own commit, RESULT PASSED, 655/655
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: the Netlify read after the X3b push; forward the review request to Codex (reviews/requests/codex-review-request-X3c-X3d.md)
-- Needs a ruling from Claude (chat): none. From Codex: whether the binding should reach defaults, index expressions and domains before R0a (plan §0.7)
-- Next planned step: Codex's review of the driver, X3c and X3d, which asks a staging-only push clearance naming X3d's hash; X4 waits for that verdict
+- Needs from Ryan: forward the review request to Codex (reviews/requests/codex-review-request-tooling-X3e.md)
+- Needs a ruling from Claude (chat): none. From Codex: whether the stored-expression rules, the call list and the disposition are enough before R0a (plan §0.8)
+- Next planned step: Codex's review of the tooling and X3e, which asks a staging-only push clearance naming X3e's hash. X3e must be accepted before any R0a receipt, and X4 waits for that verdict
+
+## 2026-11-05 — X3b accepted and pushed to staging; the verification driver repaired; X3c (the lock and deadlock policy) and X3d (the exact set of triggers and CHECKs)
+- Shipped: security/release-2-slice-2 47a0b69..1a7aff1 pushed 00:02Z on 11-06 (X3, X3b, under Codex's review of 1a7aff1; staging deploy 6aed190b; production unchanged); 1a7aff1..2d53bed local, for Codex's review
+  - 1bc21ba X3c: a reported 55P03 or 40P01 is R4 before any profile, under every text; P1-4C's helper and handlers preserve both; LS-1 to LS-6, G-29; every preserved text at its pin
+  - 2d53bed X3d: BUILD-00 reports every trigger, its functions and every CHECK on storage.buckets and auth.users; B1 binds the project's own reviewed set; buckets-reviewed and authusers-reviewed in both implementations; Codex's replaced body refused before any file; 4W-18, 4W-19, 4W-M5; the plan's rollback and visibility claims corrected; this log
+  - Not commits: the verification driver repaired, a local script (.review/verify-driver/: old and new versions, demonstrations); X3b's failed comparison kept, exit 1; the historical report (.review/x3c-evidence/); what the binding does not see (.review/x3d-evidence/); the X3b push record (production plan §E13), complete with Ryan's Netlify read (no new production deploy, Published still 6ab020c5 at main@7ec5af4), uncommitted; X3d's clean verification through the repaired driver (RESULT PASSED: 611/611, targeted 215/215, build, M-13, harnesses 33 and 114 PASS, fixtures 0 problems, replay 14 × 611, exit 0, 01:43:59Z)
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: none (done)
+- Needs a ruling from Claude (chat): none
+- Next planned step: done: Codex accepted X3c and X3d, and required X3e
 
 ## 2026-11-04 — X2c accepted, and X2 to X2c pushed to staging; X3, item 4(c)'s writing texts; Codex's AMEND of X3, and X3b
 - Shipped: security/release-2-slice-2 a5a05ec..47a0b69 pushed 19:12Z (X2, X2b, X2c, under Codex's review of 47a0b69; staging deploy 6aeb8393; production unchanged); 47a0b69..this commit local, for Codex's review
@@ -55,13 +66,3 @@
 - Needs from Ryan: the outline's decisions 1–4; the word to start X1 (both given 2026-11-03)
 - Needs a ruling from Claude (chat): none
 - Next planned step: X1 (the rehearsal target and M-12) under the outline, when Ryan says; the docs commit for these records when he asks
-
-## 2026-10-31 — T verified; the item 4(c) plan (docs commit U)
-- Shipped: security/release-2-slice-2 c62644a..this commit (local, for Codex's review)
-  - this commit (U): docs/security/stage0-item4c-plan.md, the rehearsal from 01, the recovery mapping and the window
-  - Not commits: T's review request finished (3 replays: 40 of 42 suites green, G-6 failed twice, assertion not captured)
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: forward T's and U's review requests; decide on the throwaway project and the window option (plan §12)
-- Needs a ruling from Claude (chat): none
-- Next planned step: Codex's reviews of T (with G-6) and U; then the 4(c) implementation commit

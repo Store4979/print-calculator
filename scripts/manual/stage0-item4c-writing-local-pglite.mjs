@@ -19,7 +19,10 @@
 //          and text-column shape refused or committed, with what PostgreSQL does to
 //          that shape when BUILD-01's first step is taken out; a stock-like set of
 //          triggers and CHECKs bound exactly, and each change to it after the review
-//          refused before any file, with a sequence as the witness of what would run
+//          refused before any file, with a sequence as the witness of what would run;
+//          X3e: each class of stored expression, on both tables, refused in both places
+//          before any file, each ordinary built-in form committed, and what the walk
+//          cannot see, recorded
 // It writes each result to the fixtures directory, with an index of every file's
 // sha256. A FAIL line below names a case that did not give its expected value,
 // and the process exits 1.
@@ -204,6 +207,8 @@ const REF = "abcdefghijklmnopqrst";
 const reading = async (db) => ({ build00: await read(db, "BUILD-00"), build00w: await read(db, "BUILD-00W") });
 /** The set a review of this reading would accept: each shape here is its own review. */
 const own = (rd) => C.reviewedSetOf(rd.build00);
+/** B1's explicit disposition of each reported body, as if a reader gave it: these runs are about the other rules. */
+const disposed = (rd) => Object.fromEntries(Object.entries(C.bodyReviewItemsOf(rd.build00)).map(([k, digest]) => [k, { digest, disposition: "this local run's own body" }]));
 /** Production's checked state, for the target after the files: at01's, on each variant. */
 const finalFor = async (setup) => { const db = await at01(); if (setup) await db.exec(setup); return read(db, "P0-4C"); };
 const reference = await at01();
@@ -215,7 +220,7 @@ for (const [label, setup, finalSetup] of [["w-old", "", ""], ["w-current", CURRE
   if (setup) await db.exec(setup);
   const rd = await reading(db);
   const finalFrom = await finalFor(finalSetup);
-  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom, reviewed: own(rd) });
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom, reviewed: own(rd), bodyReview: disposed(rd) });
   say(facts !== null, `run W: ${label}: the facts bind${facts ? "" : `: ${JSON.stringify(C.blocking(findings))}`}`);
   const text = A.build01Text(src, MANIFEST, facts);
   save(`${label}-facts.json`, { facts, md5: A.md5(text), bytes: Buffer.byteLength(text) });
@@ -239,7 +244,7 @@ for (const [label, setup, finalSetup] of [["w-old", "", ""], ["w-current", CURRE
     const db = await fresh();
     await db.exec(setup);
     const rd = await reading(db);
-    const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
+    const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd), bodyReview: disposed(rd) });
     say(facts?.ledger === status, `run W: ${label}: the facts bind ${status}`);
     const text = A.build01Text(src, MANIFEST, facts);
     const r = await runText(db, text);
@@ -340,7 +345,7 @@ for (const [name, setup] of COMMITTED) {
   const db = await fresh();
   await db.exec(setup);
   const rd = await reading(db);
-  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd), bodyReview: disposed(rd) });
   const stops = C.blocking(findings);
   const r = facts ? await runText(db, A.build01Text(src, MANIFEST, facts)) : { ok: false, message: "no facts" };
   const state = r.ok ? await read(db, "P0-4C") : [];
@@ -425,7 +430,7 @@ for (const [name, before, after, want, consumes] of REVIEW_STOPS) {
   if (before) await db.exec(before);
   const atReview = await reading(db);
   const reviewed = C.reviewedSetOf(atReview.build00);
-  const bound = C.build01Facts({ ...atReview, ref: REF, finalFrom: refState, reviewed });
+  const bound = C.build01Facts({ ...atReview, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(atReview) });
   if (!bound.facts) throw new Error(`${name}: the reviewed reading does not bind: ${JSON.stringify(C.blocking(bound.findings))}`);
   await db.exec(after);
   const rd = await reading(db);
@@ -452,7 +457,7 @@ for (const [name, extra] of [["stock-set", ""], ["stock-set-with-functions", `${
   if (extra) await db.exec(extra);
   const rd = await reading(db);
   const reviewed = C.reviewedSetOf(rd.build00);
-  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed });
+  const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(rd) });
   const stops = C.blocking(findings);
   const text = facts ? A.build01Text(src, MANIFEST, facts) : "";
   const r = facts ? await runText(db, text) : { ok: false, message: "no facts" };
@@ -469,17 +474,234 @@ for (const [name, extra] of [["stock-set", ""], ["stock-set-with-functions", `${
   await db.exec("create sequence storage.review_witness; create function storage.review_reject() returns trigger language plpgsql as $$ begin raise exception 'refused'; end $$; create trigger review_reject before insert on storage.buckets for each row execute function storage.review_reject();");
   const before = await reading(db);
   const reviewed = C.reviewedSetOf(before.build00);
-  const bound = C.build01Facts({ ...before, ref: REF, finalFrom: refState, reviewed });
+  const bound = C.build01Facts({ ...before, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(before) });
   await db.exec("create or replace function storage.review_reject() returns trigger language plpgsql as $$ begin perform nextval('storage.review_witness'); raise exception 'refused'; end $$;");
   const after = await reading(db);
-  const js = C.blocking(C.build01Facts({ ...after, ref: REF, finalFrom: refState, reviewed }).findings).map((f) => f.key);
+  const js = C.blocking(C.build01Facts({ ...after, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(before) }).findings).map((f) => f.key);
   const r = await runText(db, A.build01Text(src, MANIFEST, bound.facts));
   const left = await noneLeft(db);
   const refused = await witness(db);
   const real = await runText(db, withoutFirstStep(A.build01Text(src, MANIFEST, bound.facts)));
   const consumed = await witness(db);
   save("w-reviewed-codex-probe.json", { readingsEqual: same(before, after), bound: bound.facts !== null, reviewed, ...after, js, code: r.code ?? null, message: r.message ?? null, where: r.where ?? null, left, witnessAfterRefusal: refused, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: real.message }, witnessWithoutTheStep: consumed });
-  say(bound.facts !== null && !same(before, after) && same(js, ["buckets-reviewed"]) && !r.ok && String(r.message).includes("buckets-reviewed") && left.ledger_absent && left.files_absent && refused === false && real.message === "refused" && consumed === true, `run W: Codex's probe: the reads now differ; refused before any file: ${String(r.message).slice(30, 120)}; the witness unconsumed, and consumed without that step`);
+  say(bound.facts !== null && !same(before, after) && same(js, ["buckets-reviewed", "body-review"]) && !r.ok && String(r.message).includes("buckets-reviewed") && left.ledger_absent && left.files_absent && refused === false && real.message === "refused" && consumed === true, `run W: Codex's probe: the reads now differ; refused before any file: ${String(r.message).slice(30, 120)}; the witness unconsumed, and consumed without that step`);
+}
+// X3e (Codex's review of 2d53bed, §3): what a stored expression can run. Each shape is built
+// on the shim, on each table it applies to, and read. `want` is each predicate that must
+// refuse it, in the comparator and in BUILD-01's first step, before any file. `consumes` is
+// what PostgreSQL's own run does to the witness with that first step taken out, per table
+// where the two differ: an IMMUTABLE function cannot call nextval, and ON CONFLICT refuses a
+// table with an INSERT rule, so those never reach it.
+const TABLES = [
+  { part: "buckets", T: "storage.buckets", S: "storage", C: "name" },
+  { part: "authusers", T: "auth.users", S: "auth", C: "email::text" },
+];
+const EXPR_PRELUDE = ({ S }) => `
+create sequence if not exists storage.review_witness;
+create function ${S}.vol_fn() returns bigint language plpgsql as $f$ begin return nextval('storage.review_witness'); end $f$;
+create function ${S}.vol_check(text) returns boolean language plpgsql as $f$ begin perform nextval('storage.review_witness'); return true; end $f$;
+create function ${S}.imm_fn(text) returns boolean language plpgsql immutable as $f$ begin return true; end $f$;
+create function ${S}.pass_fn() returns trigger language plpgsql as $f$ begin return new; end $f$;
+create function ${S}.op_fn(text, text) returns boolean language plpgsql as $f$ begin perform nextval('storage.review_witness'); return true; end $f$;
+create operator ${S}.=== (function = ${S}.op_fn, leftarg = text, rightarg = text);
+`;
+const W = "storage.review_witness";
+const EXPR_STOPS = [
+  // Direct sequence calls, on a column BUILD-01 does not supply.
+  ["default-nextval", ({ T }) => `alter table ${T} add column x_c bigint default nextval('${W}');`, ["routes", "sequence-calls"], true],
+  ["default-nextval-no-constant-dependency", ({ T }) => `alter table ${T} add column x_c bigint default nextval(('${W}'::text)::regclass);`, ["sequence-calls"], true],
+  ["default-nextval-computed-name", ({ T }) => `alter table ${T} add column x_c bigint default nextval(concat('storage.', 'review_witness')::regclass);`, ["sequence-calls"], true],
+  ["default-setval", ({ T }) => `alter table ${T} add column x_c bigint default setval('${W}', 5);`, ["routes", "sequence-calls"], true],
+  ["default-setval-no-constant-dependency", ({ T }) => `alter table ${T} add column x_c bigint default setval(('${W}'::text)::regclass, 5);`, ["sequence-calls"], true],
+  ["identity-column", ({ T }) => `alter table ${T} add column x_c bigint generated by default as identity;`, ["sequence-calls"], false],
+  // A function outside pg_catalog, in each newly covered class.
+  ["default-function", ({ T, S }) => `alter table ${T} add column x_c bigint default ${S}.vol_fn();`, ["expression-calls", "routes"], true],
+  ["generated-function", ({ T, S, C }) => `alter table ${T} add column x_c boolean generated always as (${S}.imm_fn(${C})) stored;`, ["expression-calls", "routes"], false],
+  ["index-expression-function", ({ T, S, C }) => `create index x_i on ${T} (${S}.imm_fn(${C}));`, ["expression-calls", "routes"], false],
+  ["index-predicate-function", ({ T, S, C }) => `create index x_i on ${T} (id) where ${S}.imm_fn(${C});`, ["expression-calls", "routes"], false],
+  ["domain-check-function", ({ T, S }) => `create domain ${S}.x_d as text check (${S}.vol_check(value)); alter table ${T} add column x_c ${S}.x_d;`, ["expression-calls", "routes"], true],
+  ["domain-chain", ({ T, S }) => `create domain ${S}.x_in as text check (${S}.vol_check(value)); create domain ${S}.x_mid as ${S}.x_in; create domain ${S}.x_out as ${S}.x_mid; alter table ${T} add column x_c ${S}.x_out;`, ["expression-calls", "routes"], true],
+  ["domain-check-nextval", ({ T, S }) => `create domain ${S}.x_d as bigint check (nextval('${W}') > 0); alter table ${T} add column x_c ${S}.x_d;`, ["routes", "sequence-calls"], true],
+  ["domain-check-dynamic-nextval", ({ T, S }) => `create domain ${S}.x_d as bigint check (nextval(('${W}'::text)::regclass) > 0); alter table ${T} add column x_c ${S}.x_d;`, ["sequence-calls"], true],
+  ["domain-default-nextval", ({ T, S }) => `create domain ${S}.x_d as bigint default nextval('${W}'); alter table ${T} add column x_c ${S}.x_d;`, ["routes", "sequence-calls"], true],
+  ["array-of-domain", ({ T, S }) => `create domain ${S}.x_d as text check (${S}.imm_fn(value)); alter table ${T} add column x_c ${S}.x_d[];`, ["expression-calls", "routes"], false],
+  // An operator: its oprcode is what runs, and no dependency names a pinned one.
+  ["default-custom-operator", ({ T, S }) => `alter table ${T} add column x_c boolean default ('a'::text OPERATOR(${S}.===) 'b'::text);`, ["routes"], true],
+  ["default-operator-over-unlisted-builtin", ({ T, S }) => `create operator ${S}.@+@ (function = pg_catalog.textcat, leftarg = text, rightarg = text); alter table ${T} add column x_c text default ('a'::text OPERATOR(${S}.@+@) 'b'::text);`, ["routes"], false],
+  // A custom cast prints as ::integer, so only the walk can see the function behind it.
+  ["default-custom-cast", ({ T, S }) => `create function ${S}.x_cast(uuid) returns integer language plpgsql immutable as $f$ begin return 1; end $f$; create cast (uuid as integer) with function ${S}.x_cast(uuid); alter table ${T} add column x_c integer default ('00000000-0000-0000-0000-000000000000'::uuid)::integer;`, ["routes"], false],
+  ["operator-implemented-by-nextval", ({ T, S }) => `create operator ${S}.@@@ (function = pg_catalog.nextval, rightarg = regclass); alter table ${T} add column x_c bigint default (OPERATOR(${S}.@@@) '${W}'::regclass);`, ["routes", "sequence-calls"], true],
+  ["operator-implemented-by-nextval-computed", ({ T, S }) => `create operator ${S}.@@@ (function = pg_catalog.nextval, rightarg = regclass); alter table ${T} add column x_c bigint default (OPERATOR(${S}.@@@) ('${W}'::text)::regclass);`, ["routes", "sequence-calls"], true],
+  ["check-custom-operator-over-nextval", ({ T, S, C }) => `create operator ${S}.@@@ (function = pg_catalog.nextval, rightarg = regclass); alter table ${T} add constraint x_k check ((OPERATOR(${S}.@@@) ('${W}'::text)::regclass) > 0 or ${C} is null);`, ["sequence-calls"], true],
+  // The existing coverage: a sequence call has no dependency to follow, and a type on the path is strict.
+  ["check-nextval", ({ T }) => `alter table ${T} add constraint x_k check (nextval('${W}') > 0);`, ["routes", "sequence-calls"], true],
+  ["check-dynamic-nextval", ({ T }) => `alter table ${T} add constraint x_k check (nextval(('${W}'::text)::regclass) > 0);`, ["sequence-calls"], true],
+  ["check-through-domain", ({ T, S, C }) => `create domain ${S}.x_d as text check (${S}.vol_check(value)); alter table ${T} add constraint x_k check (((${C})::${S}.x_d) is not null);`, ["expression-calls", "routes"], true],
+  ["trigger-when-nextval", ({ T, S }) => `create trigger x_t before insert on ${T} for each row when (nextval('${W}') > 0) execute function ${S}.pass_fn();`, ["routes", "sequence-calls"], true, { authusers: ["authusers-triggers"] }],
+  ["trigger-when-dynamic-nextval", ({ T, S }) => `create trigger x_t before insert on ${T} for each row when (nextval(('${W}'::text)::regclass) > 0) execute function ${S}.pass_fn();`, ["sequence-calls"], true, { authusers: ["authusers-triggers"] }],
+  // Rewrite rules, and the table's own shape.
+  ["rule-on-insert", ({ T }) => `create rule x_r as on insert to ${T} do also select nextval('${W}');`, ["rules"], { buckets: false, authusers: true }],
+  ["rule-on-update", ({ T }) => `create rule x_r as on update to ${T} do also select nextval('${W}');`, ["rules"], { buckets: false, authusers: false }],
+  ["inherited-by-a-child", ({ T, S }) => `create table ${S}.x_child () inherits (${T});`, ["relation"], false],
+  // Types and other routes nothing here handles.
+  ["composite-type", ({ T, S }) => `create type ${S}.x_t as (a int); alter table ${T} add column x_c ${S}.x_t;`, ["routes"], false],
+  ["range-type", ({ T, S }) => `create type ${S}.x_t as range (subtype = int4); alter table ${T} add column x_c ${S}.x_t;`, ["routes"], false],
+  ["custom-base-type", ({ T, S }) => `create type ${S}.x_t; create function ${S}.x_t_in(cstring) returns ${S}.x_t language internal immutable as 'int4in'; create function ${S}.x_t_out(${S}.x_t) returns cstring language internal immutable as 'int4out'; create type ${S}.x_t (input = ${S}.x_t_in, output = ${S}.x_t_out, like = int4); alter table ${T} add column x_c ${S}.x_t;`, ["routes"], false],
+  ["custom-collation", ({ T, S }) => `create collation ${S}.x_coll from "C"; alter table ${T} add column x_c text collate ${S}.x_coll;`, ["routes"], false],
+  ["custom-operator-class", ({ T, S, C }) => `create operator class ${S}.x_ops for type text using btree as operator 1 <, operator 2 <=, operator 3 =, operator 4 >=, operator 5 >, function 1 bttextcmp(text, text); create index x_i on ${T} ((${C}) ${S}.x_ops);`, ["routes"], false],
+  ["exclusion-custom-operator", ({ T, S, C }) => `create function ${S}.ex_fn(text, text) returns boolean language plpgsql immutable as $f$ begin return false; end $f$; create operator ${S}.=%= (function = ${S}.ex_fn, leftarg = text, rightarg = text, commutator = OPERATOR(${S}.=%=)); create operator class ${S}.x_ops for type text using btree as operator 1 <, operator 2 <=, operator 3 ${S}.=%=, operator 4 >=, operator 5 >, function 1 bttextcmp(text, text); alter table ${T} add constraint x_e exclude using btree ((${C}) ${S}.x_ops with OPERATOR(${S}.=%=));`, ["routes"], false],
+  // Built-ins that cannot be read as changing nothing: the literal holds what would run.
+  ["builtin-running-a-query", ({ T }) => `alter table ${T} add column x_c text default query_to_xml('select nextval(''${W}'')', true, false, '')::text;`, ["expression-calls"], true],
+  ["builtin-with-a-side-effect", ({ T }) => `alter table ${T} add column x_c text default set_config('x.y', '1', true);`, ["expression-calls"], false],
+];
+const facts0Reviewed = (rd) => facts0(rd, own(rd));
+// A stored difference from the shim's fresh reading, so each case's fixture holds only what its shape added.
+const EXPR_BASE = await (async () => { const db = await fresh(); await db.exec(EXPR_PRELUDE(TABLES[0]) + EXPR_PRELUDE(TABLES[1])); return reading(db); })();
+save("w-expr-base.json", EXPR_BASE);
+const deltaOf = (base, rows) => {
+  const k = (r) => JSON.stringify([r.part, r.key]);
+  const have = new Map(base.map((r) => [k(r), r.value])), now = new Set(rows.map(k));
+  return { set: rows.filter((r) => have.get(k(r)) !== r.value), drop: base.filter((r) => !now.has(k(r))).map((r) => [r.part, r.key]) };
+};
+const namesOf = (r) => (/does not hold: (.*)$/.exec(String(r.message)) || [, ""])[1].split(", ").filter(Boolean).sort();
+for (const [name, sql, wantShort, consumesAny, extra] of EXPR_STOPS) {
+  for (const t of TABLES) {
+    const db = await fresh();
+    await db.exec(EXPR_PRELUDE(TABLES[0]) + EXPR_PRELUDE(TABLES[1]));
+    await db.exec(sql(t));
+    const rd = await reading(db);
+    const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value;
+    const ledger = rd.build00.find((r) => r.part === "ledger" && r.key === "status").value;
+    const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger, reviewed: own(rd) }).map((f) => f.key).sort();
+    const noFacts = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd), bodyReview: disposed(rd) }).facts === null;
+    const text = A.build01Text(src, MANIFEST, facts0Reviewed(rd));
+    const r = await runText(db, text);
+    const sqlNames = namesOf(r);
+    const left = await noneLeft(db);
+    const refused = await witness(db);
+    const real = await runText(db, withoutFirstStep(text));
+    const consumed = await witness(db);
+    const consumes = typeof consumesAny === "object" ? consumesAny[t.part] : consumesAny;
+    const want = [...wantShort.map((n) => `${t.part}-${n}`), ...((extra && extra[t.part]) || [])].sort();
+    save(`w-expr-stop-${t.part}-${name}.json`, { part: t.part, want, b00: deltaOf(EXPR_BASE.build00, rd.build00), b00w: deltaOf(EXPR_BASE.build00w, rd.build00w), js, sql: sqlNames, noFacts, code: r.code ?? null, where: r.where ?? null, left, witnessAfterRefusal: refused, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: String(real.message).slice(0, 200) }, consumed });
+    say(same(js, want) && same(sqlNames, want) && noFacts && !r.ok && left.ledger_absent && left.marker_absent && left.files_absent && refused === false && consumed === consumes, `run W: ${t.part} ${name}: both refuse ${want.join(", ")} before any file (js ${js.join(", ")} | sql ${sqlNames.join(", ")}), witness unconsumed; PostgreSQL's own run ${consumed ? "consumes" : "does not consume"} it (wanted ${consumes}): ${real.ok ? "commits" : `${real.code} ${String(real.message).slice(0, 60)}`}`);
+  }
+}
+// Addition and replacement after the review, from shapes the rules accept.
+const REVIEWED_OPERATOR = ({ T, S, C }) => `create function ${S}.safe_op(text, text) returns boolean language plpgsql as $f$ begin return true; end $f$; create operator ${S}.=#= (function = ${S}.safe_op, leftarg = text, rightarg = text); alter table ${T} add constraint x_op check ((${C}) OPERATOR(${S}.=#=) 'x'::text);`;
+const REVIEWED_HELPER = ({ T, S, C }) => `create function ${S}.helper(text) returns boolean language plpgsql as $f$ begin return true; end $f$; create function ${S}.checks(a text) returns boolean language sql begin atomic select ${S}.helper(a); end; alter table ${T} add constraint x_sb check (${S}.checks(${C}));`;
+const EXPR_AFTER_REVIEW = [
+  ["default-added", () => "", ({ T }) => `alter table ${T} add column x_c bigint default nextval('${W}');`, ["reviewed", "routes", "sequence-calls"], true],
+  ["default-replaced", ({ T }) => `alter table ${T} add column x_c bigint default 1;`, ({ T }) => `alter table ${T} alter column x_c set default nextval(('${W}'::text)::regclass);`, ["reviewed", "sequence-calls"], true],
+  ["generated-added", () => "", ({ T, S, C }) => `alter table ${T} add column x_c boolean generated always as (${S}.imm_fn(${C})) stored;`, ["expression-calls", "reviewed", "routes"], false],
+  ["index-expression-added", () => "", ({ T, S, C }) => `create index x_i on ${T} (${S}.imm_fn(${C}));`, ["expression-calls", "reviewed", "routes"], false],
+  ["index-predicate-replaced", ({ T }) => `create index x_i on ${T} (id) where id is not null;`, ({ T, S, C }) => `drop index ${T.split(".")[0]}.x_i; create index x_i on ${T} (id) where ${S}.imm_fn(${C});`, ["expression-calls", "reviewed", "routes"], false],
+  ["domain-check-added", ({ T, S }) => `create domain ${S}.x_d as text; alter table ${T} add column x_c ${S}.x_d;`, ({ S }) => `alter domain ${S}.x_d add constraint x_dk check (${S}.vol_check(value));`, ["expression-calls", "reviewed", "routes"], true],
+  ["domain-default-added", ({ T, S }) => `create domain ${S}.x_d as bigint; alter table ${T} add column x_c ${S}.x_d;`, ({ S }) => `alter domain ${S}.x_d set default nextval('${W}');`, ["reviewed", "routes", "sequence-calls"], true],
+  ["rule-added", () => "", ({ T }) => `create rule x_r as on insert to ${T} do also select nextval('${W}');`, ["reviewed", "rules"], { buckets: false, authusers: true }],
+  ["delete-rule-changed", ({ T }) => `create rule x_r as on delete to ${T} do also select 1;`, ({ T }) => `create or replace rule x_r as on delete to ${T} do also select 2;`, ["reviewed"], false],
+  ["check-operator-function-replaced", REVIEWED_OPERATOR, ({ S }) => `create or replace function ${S}.safe_op(text, text) returns boolean language plpgsql as $f$ begin perform nextval('${W}'); return true; end $f$;`, ["reviewed"], true],
+  ["check-operator-swapped", REVIEWED_OPERATOR, ({ T, S, C }) => `alter table ${T} drop constraint x_op; alter table ${T} add constraint x_op check ((${C}) OPERATOR(${S}.===) 'x'::text);`, ["reviewed"], true],
+  ["check-custom-cast-function-replaced", ({ T, S }) => `create function ${S}.x_cast(uuid) returns integer language plpgsql immutable as $f$ begin return 1; end $f$; create cast (uuid as integer) with function ${S}.x_cast(uuid); alter table ${T} add column x_u uuid, add constraint x_kc check (((x_u)::integer > 0) or (x_u is null));`, ({ S }) => `create or replace function ${S}.x_cast(uuid) returns integer language plpgsql immutable as $f$ begin return 2; end $f$;`, ["reviewed"], false],
+  ["helper-in-a-parsed-body-replaced", REVIEWED_HELPER, ({ S }) => `create or replace function ${S}.helper(text) returns boolean language plpgsql as $f$ begin perform nextval('${W}'); return true; end $f$;`, ["reviewed"], true],
+];
+for (const [name, before, after, wantShort, consumesAny] of EXPR_AFTER_REVIEW) {
+  for (const t of TABLES) {
+    const db = await fresh();
+    await db.exec(EXPR_PRELUDE(TABLES[0]) + EXPR_PRELUDE(TABLES[1]));
+    if (before(t)) await db.exec(before(t));
+    const atReview = await reading(db);
+    const reviewed = own(atReview);
+    const bound = C.build01Facts({ ...atReview, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(atReview) });
+    if (!bound.facts) throw new Error(`${name}: the reviewed reading does not bind: ${JSON.stringify(C.blocking(bound.findings))}`);
+    await db.exec(after(t));
+    const rd = await reading(db);
+    const creator = rd.build00w.find((r) => r.part === "role" && r.key === "name").value;
+    const ledger = rd.build00.find((r) => r.part === "ledger" && r.key === "status").value;
+    const js = C.buildPredicateFindings(rd.build00, rd.build00w, { creator, ledger, reviewed }).map((f) => f.key).sort();
+    const asBound = await runText(db, A.build01Text(src, MANIFEST, bound.facts));
+    const text = A.build01Text(src, MANIFEST, facts0(rd, reviewed));
+    const r = await runText(db, text);
+    const sqlNames = namesOf(r);
+    const left = await noneLeft(db);
+    const refused = await witness(db);
+    const real = await runText(db, withoutFirstStep(text));
+    const consumed = await witness(db);
+    const consumes = typeof consumesAny === "object" ? consumesAny[t.part] : consumesAny;
+    const want = wantShort.map((n) => `${t.part}-${n}`).sort();
+    const digest = `digest build00.${t.part}`;
+    save(`w-expr-after-${t.part}-${name}.json`, { part: t.part, want, reviewed, b00: deltaOf(EXPR_BASE.build00, rd.build00), b00w: deltaOf(EXPR_BASE.build00w, rd.build00w), js, sql: sqlNames, asBound: { code: asBound.code ?? null, message: asBound.message ?? null }, code: r.code ?? null, left, witnessAfterRefusal: refused, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: String(real.message).slice(0, 200) }, consumed });
+    say(same(js, want) && same(sqlNames, want) && String(asBound.message).includes(digest) && want.every((p) => String(asBound.message).includes(p)) && left.ledger_absent && left.files_absent && refused === false && consumed === consumes, `run W: after review, ${t.part} ${name}: both refuse ${want.join(", ")}, as bound the digest too (js ${js.join(", ")} | sql ${sqlNames.join(", ")}), witness unconsumed, PostgreSQL's own run ${consumed ? "consumes" : "does not consume"} it (wanted ${consumes})`);
+  }
+}
+// Ordinary built-in forms the rules keep, including a literal that names a function it does not call.
+const BUILTIN_CONTROLS = ({ T, S, C }) => `
+create type ${S}.x_enum as enum ('A', 'B');
+create domain ${S}.x_short as text check (length(value) < 1000);
+create domain ${S}.x_shorter as ${S}.x_short default 'x' check (char_length(value) < 500);
+alter table ${T}
+  add column x_now timestamptz default now(),
+  add column x_uuid uuid default gen_random_uuid(),
+  add column x_lower text default lower('ABC'),
+  add column x_literal text default 'nextval(''x'') setval(y) query_to_xml(z) it''s',
+  add column x_varchar varchar(10) default ''::character varying,
+  add column x_numeric numeric(10,2) default 0.5::numeric(10,2),
+  add column "x (quoted)" text default 'a',
+  add column x_enum ${S}.x_enum default 'A',
+  add column x_enums ${S}.x_enum[],
+  add column x_domain ${S}.x_shorter,
+  add column x_stamp1 timestamptz,
+  add column x_stamp2 timestamptz,
+  add column x_least timestamptz generated always as (LEAST(x_stamp1, x_stamp2)) stored,
+  add column x_coalesce text generated always as (COALESCE(x_literal, 'nextval(q)')) stored,
+  add constraint x_status check ((x_numeric >= (0)::numeric) and (x_numeric <= (2)::numeric)),
+  add constraint x_form check (x_literal <> 'setval(z)');
+create index x_lower_i on ${T} (lower(${C}));
+create index x_partial_i on ${T} (id) where (${C}) !~ '^[0-9 ]*$'::text;
+create rule x_delete_r as on delete to ${T} do also select 1;
+alter table ${T} add constraint x_ex exclude using btree (id with =);
+`;
+for (const [name, setup] of [
+  ["builtins", (t) => BUILTIN_CONTROLS(t)],
+  ["trigger-when-builtin", () => "create function storage.pass2() returns trigger language plpgsql as $f$ begin return new; end $f$; create trigger x_when before update on storage.buckets for each row when (old.name is distinct from new.name) execute function storage.pass2();"],
+  ["reviewed-operator-in-check", REVIEWED_OPERATOR],
+  ["reviewed-helper-in-a-parsed-body", REVIEWED_HELPER],
+]) {
+  for (const t of TABLES) {
+    if (name === "trigger-when-builtin" && t.part !== "buckets") continue;
+    const db = await fresh();
+    await db.exec(EXPR_PRELUDE(TABLES[0]) + EXPR_PRELUDE(TABLES[1]));
+    await db.exec(setup(t));
+    const rd = await reading(db);
+    const reviewed = own(rd);
+    const { facts, findings } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(rd) });
+    const stops = C.blocking(findings);
+    const text = facts ? A.build01Text(src, MANIFEST, facts) : "";
+    const r = facts ? await runText(db, text) : { ok: false, message: "no facts" };
+    const state = r.ok ? await read(db, "P0-4C") : [];
+    const fp = (rows) => rows.find((x) => x.part === 2 && x.key === "fingerprint")?.value;
+    const consumed = await witness(db);
+    save(`w-expr-commit-${t.part}-${name}.json`, { part: t.part, reviewed, b00: deltaOf(EXPR_BASE.build00, rd.build00), b00w: deltaOf(EXPR_BASE.build00w, rd.build00w), stops, committed: r.ok, success: CL.SUCCESS["BUILD-01"].check(JSON.stringify(r.rows ?? [])).ok, fingerprintEqual: fp(state) === fp(refState), consumed });
+    say(!stops.length && r.ok && fp(state) === fp(refState) && consumed === false, `run W: control ${t.part} ${name}: the rules keep it, BUILD-01 commits, the witness is unconsumed${stops.length ? `: ${JSON.stringify(stops)}` : ""}${r.ok ? "" : `: ${r.code} ${String(r.message).slice(0, 120)}`}`);
+  }
+}
+{
+  // What the walk cannot see, and B1's review item: a PL/pgSQL body records no dependency on
+  // what it calls, so replacing its helper leaves both readings equal. A parsed SQL-standard
+  // body does record it (reviewed-helper-in-a-parsed-body above). Empty dependencies prove nothing here.
+  const db = await fresh();
+  await db.exec(EXPR_PRELUDE(TABLES[0]) + EXPR_PRELUDE(TABLES[1]));
+  await db.exec("create function storage.string_helper() returns boolean language plpgsql as $f$ begin return true; end $f$; create function storage.string_body() returns trigger language plpgsql as $f$ begin perform storage.string_helper(); return new; end $f$; create trigger x_string before insert on storage.buckets for each row execute function storage.string_body();");
+  const before = await reading(db);
+  const items = Object.keys(C.bodyReviewItemsOf(before.build00));
+  const bound = C.build01Facts({ ...before, ref: REF, finalFrom: refState, reviewed: own(before), bodyReview: disposed(before) });
+  const noDisposition = C.build01Facts({ ...before, ref: REF, finalFrom: refState, reviewed: own(before) });
+  await db.exec("create or replace function storage.string_helper() returns boolean language plpgsql as $f$ begin perform nextval('storage.review_witness'); return true; end $f$;");
+  const after = await reading(db);
+  const r = await runText(db, A.build01Text(src, MANIFEST, bound.facts));
+  const consumed = await witness(db);
+  save("w-expr-limit-string-body-helper.json", { readingsEqual: same(before, after), items, boundWithDispositions: bound.facts !== null, withoutDispositions: C.blocking(noDisposition.findings).map((f) => f.key), committed: r.ok, consumed });
+  say(same(before, after) && bound.facts !== null && noDisposition.facts === null && r.ok && consumed === true && items.includes("buckets|trigger-function|x_string|storage.string_body()") && !items.some((k) => k.includes("string_helper")), `run W: the limit: a PL/pgSQL helper replaced leaves the readings equal and BUILD-01 consumes the witness; the walk reports the body and not the helper, so B1 must read it, and no disposition means no facts`);
 }
 {
   // A reading with no review at all: nothing binds, in the comparator, and build01Text refuses without a set.
@@ -487,7 +709,8 @@ for (const [name, extra] of [["stock-set", ""], ["stock-set-with-functions", `${
   await db.exec(STOCK);
   const rd = await reading(db);
   const none = C.build01Facts({ ...rd, ref: REF, finalFrom: refState });
-  say(none.facts === null && same(C.blocking(none.findings).map((f) => f.key).sort(), ["authusers-reviewed", "buckets-reviewed"]), `run W: no reviewed set: no facts, naming ${C.blocking(none.findings).map((f) => f.key).sort().join(", ")}`);
+  const noneNames = [...new Set(C.blocking(none.findings).map((f) => f.key))].sort();
+  say(none.facts === null && same(noneNames, ["authusers-reviewed", "body-review", "buckets-reviewed"]), `run W: no reviewed set and no dispositions: no facts, naming ${noneNames.join(", ")}`);
 }
 {
   // A column one of the two INSERTs supplies is gone: BUILD-00 reports it, and
@@ -527,19 +750,19 @@ for (const [name, extra] of [["stock-set", ""], ["stock-set-with-functions", `${
   // A fact changed between the reads and BUILD-01: the digest refuses before any file.
   const db = await fresh();
   const rd = await reading(db);
-  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
+  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd), bodyReview: disposed(rd) });
   const text = A.build01Text(src, MANIFEST, facts);
   await db.exec("insert into auth.users (id, email) values ('33333333-3333-4333-8333-333333333333', 'x@example.invalid'); alter table storage.buckets add column later text;");
   const r = await runText(db, text);
   const gone = (await db.query("select to_regclass('supabase_migrations.schema_migrations') is null as ledger_absent, to_regnamespace('stage0_rehearsal') is null as marker_absent, to_regclass('public.print_jobs') is null as files_absent")).rows[0];
   save("w-fact-changed.json", { code: r.code ?? null, message: r.message ?? null, where: r.where ?? null, gone });
-  say(!r.ok && /does not hold: digest build00\.buckets/.test(String(r.message)) && gone.ledger_absent && gone.marker_absent && gone.files_absent, `run W: a fact changed after the reads: ${String(r.message).slice(0, 100)}`);
+  say(!r.ok && /does not hold: buckets-reviewed, digest build00\.buckets/.test(String(r.message)) && gone.ledger_absent && gone.marker_absent && gone.files_absent, `run W: a fact changed after the reads: ${String(r.message).slice(0, 100)}`);
 }
 {
   // A later file's failure: re-raised, one frame, and nothing stays.
   const db = await fresh();
   const rd = await reading(db);
-  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd) });
+  const { facts } = C.build01Facts({ ...rd, ref: REF, finalFrom: refState, reviewed: own(rd), bodyReview: disposed(rd) });
   const text = A.build01Text(src, MANIFEST, facts);
   await db.exec("create role probe nologin");
   const broken = text.replace("  execute f;\n", "  raise exception 'a planted failure' using errcode = '22012';\n");

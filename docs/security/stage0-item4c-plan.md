@@ -448,6 +448,80 @@ consumed:
 
 A rewrite rule added on INSERT is not reported either, and BUILD-01 fails on it, 0A000, with the witness unconsumed.
 
+### 0.8 Codex's review of X3c, X3d and the driver (`2d53bed`), and X3e
+
+Codex, 2026-11-06 (`reviews/2026-11-06-2d53bed-review.md`). The exact staging-only push of `2d53bed` was cleared, and it
+cleared no merge to main, project creation, target binding, real-store command, database send or production window.
+
+| Item | Verdict | Where it goes |
+|---|---|---|
+| The driver's aggregation of required-step exits | ACCEPT | kept, in the tooling commit |
+| The driver's generated-fixture exceptions, DR-1 | AMEND | fixed in the tooling commit |
+| X3c | ACCEPT | closed |
+| X3d, the exact binding of the rows it reports | ACCEPT within its stated coverage | does not close the requirement below |
+| Reaching defaults, index expressions and domains | REQUIRED before R0a, because the R0a receipt holds what B1 binds | **X3e, below** |
+| Versioning and pinning the tooling | REQUIRED | the tooling commit, `scripts/verify/` |
+
+**The tooling commit.** The driver, the fixture comparator, the TAP checker, a launcher and their regression tests
+(`scripts/tests/verify-tooling.test.js`), with a pin set of their own (`scripts/verify/verification-pins.json`) that is
+separate from the sender's guard chain. Its README says how to run it. DR-1: the comparator takes the fixed ledger versions
+from the commit's manifest, and only the entries `LEDGER_PATHS` names for a fixture may carry another timestamp.
+
+**X3e: what a stored expression can run.** Codex's two findings set the design:
+- **A direct `pg_depend` to `pg_proc` query is insufficient.** With a bucket CHECK on a custom operator, replacing the
+  operator's implementing function left both readings identical, and no `check-function` row named it.
+- **Pinned built-ins may have no dependency edge.** A default of `nextval('s')` has dependency rows on the table and the
+  sequence and none on `pg_proc`, and `nextval(('s'::text)::regclass)` has no dependency on the sequence either. So an empty
+  function-dependency result cannot prove the absence of `nextval` or `setval`.
+
+BUILD-00 now reports the raw facts, and it judges nothing:
+- every column's type, identity and generated kind, every stored default and generated expression, every index with its
+  expressions and predicate, every rewrite rule, and the table's relkind and inheritance, on both tables;
+- **a walk** from each column's type and collation, each stored expression's owner, each index, exclusion constraint, CHECK
+  and trigger. It follows every `pg_depend` row but those naming a schema, a language or an extension, and what `pg_depend`
+  does not record: an operator's `oprcode`, an exclusion constraint's operators (PostgreSQL leaves those to the operator
+  class), a trigger's function, a domain's base type and CHECKs, an array's element. Each domain it reaches gives its CHECK
+  and default expressions.
+
+The comparator and BUILD-01's first step judge those rows under the same names, for each table, before the first file:
+
+| Predicate | It stops on |
+|---|---|
+| `<part>-relation` | anything but an ordinary table with no parent and no child |
+| `<part>-sequence-calls` | `nextval` or `setval` in any stored expression's text, a CHECK and a trigger's WHEN included; a function of that name reached on any route, such as a custom operator's `oprcode`; a sequence reached by the walk; an identity column |
+| `<part>-expression-calls` | a call that is not on the reviewed list `BUILD_EXPRESSION_CALLS`, a quote left over after literals and quoted names are removed, and a NULL text: the forms it cannot determine. A CHECK or a WHEN may also call a function the walk reports for that same CHECK or trigger, whose definition B1 binds |
+| `<part>-routes` | on a path from a column, default, generated expression, index or exclusion, or through any type: a function outside `pg_catalog`, or one in `pg_catalog` off the list. On any path: a composite, range, multirange or custom base type, a custom collation or operator class, a relation other than the table, and any other object the walk reaches |
+| `<part>-rules` | any rewrite rule but a DELETE rule, which is inventoried and bound |
+
+All these rows join the reviewed set, so anything added, removed or changed after the review stops under `<part>-reviewed`.
+
+- **It reads the text and never executes an expression.** `pg_get_expr` prints a string as `'…'` with its quotes doubled and
+  never as `E'…'`, and a quoted name as `"…"`, so removing those leaves only code: `'nextval(x)'::text` is no call.
+  `query_to_xml('select nextval(…)', …)` shows only the call around the literal, and it is off the list, so it stops.
+- **The list is judged outside BUILD-00's text.** If the throwaway's own reading shows a stock built-in that is off the list,
+  B1 stops, and adding it needs review and no new reading. That is the expected way this fails on a stock project. The list
+  was written without a reading of a stock project's expressions from this session, so it may need that.
+- **Row security is not walked.** `<part>-rls` already requires that RLS does not apply to the W role, so no policy runs.
+
+**The staging read of 2026-11-06 07:45 EST is provenance, not a receipt.** Codex's review calls Claude's observation at that
+time useful design evidence. It was an unguarded read. It neither replaces the throwaway project's own receipts nor proves
+equality across images. This session did not make that read and has not seen its rows; none of its values is in the code or
+the fixtures. The read of 2026-11-05 14:20 EST in §0.7 has the same standing: design evidence, not a receipt.
+
+**B1's review item: the helpers inside reported function bodies.** Empty catalog dependencies do not establish their safety.
+String-defined bodies, including PL/pgSQL bodies, need not have body dependencies recorded, whereas SQL-standard parsed bodies
+can have them. So BUILD-00's walk follows the available catalog dependencies, and the remaining body calls are reviewed.
+- **The disposition is explicit:** `bodyReviewItemsOf` lists every reported body with its digest, and `build01Facts` gives no
+  facts until each has a disposition, for that digest, in words (`body-review`). It records that a reader gave one. It cannot
+  show the reader was right.
+- **The local limit is recorded** (`w-expr-limit-string-body-helper.json`): a PL/pgSQL helper replaced after the review leaves
+  both readings equal, BUILD-01 commits, and the witness is consumed. Only the reader of the body can catch that.
+
+**What X3e does not show:** that the list is right for every image; that no other route runs code on these INSERTs; anything
+about Supabase's real roles, platform hooks or image, since PGlite's shim is minimal. It does not read a built-in's own definition,
+or an operator family changed underneath a built-in operator class, both of which take a superuser. X3e must be accepted before any
+R0a receipt.
+
 ## 1. What the remaining path touches
 
 These facts shape the rest of the plan. They come from reading the
@@ -747,10 +821,10 @@ never one assumed from staging.
 
 | object | what writes it | what is read | the predicates (else STOP) |
 |---|---|---|---|
-| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); every trigger (name, timing, events, enabled, function and the function's owner), each function it runs (language, owner, security definer, volatility, config, md5 of prosrc and of the definition, and the definition), every CHECK and each function pg_depend records for one (X3d); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; **the triggers, their functions and the CHECKs are exactly the set review accepted from this project's own R0a reading (§0.7);** **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
+| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); every trigger (name, timing, events, enabled, function and the function's owner), each function it runs (language, owner, security definer, volatility, config, md5 of prosrc and of the definition, and the definition), every CHECK and each function pg_depend records for one (X3d); its relkind and inheritance, every column's type, identity and generated kind, every stored default and generated expression, every index with its expressions and predicate, every rewrite rule, and what the walk reaches from them (X3e, §0.8); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; **the triggers, their functions and the CHECKs, with the defaults, generated expressions, indexes, rules, column types and everything the walk reaches from them, are exactly the set review accepted from this project's own R0a reading, and each passes the stored-expression rules (§0.7, §0.8);** **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
 | `storage.objects` | `20260506182318`: `DROP POLICY IF EXISTS` and `CREATE POLICY` of `job_files_anon_insert`, `job_files_anon_select` and `job_files_anon_delete` | presence, kind and owner; every existing policy's name; the `bucket_id` column and its type; RLS | an ordinary table with a `bucket_id` text column; **none of the three policy names exists,** so each `DROP … IF EXISTS` removes nothing; the W role owns the table or holds its owner's privileges (`pg_has_role(…, 'USAGE')`; a superuser passes). Table DML privileges do not confer policy authority: PostgreSQL requires ownership for `CREATE POLICY` and `DROP POLICY` |
 | publication `supabase_realtime` | `20260629173251`: reads `pg_publication_tables`, then `ALTER PUBLICATION supabase_realtime ADD TABLE public.pending_jobs` | presence, owner, `puballtables`, the insert/update/delete/truncate flags, `pubviaroot`, every member table | it exists; it is not `FOR ALL TABLES`; `public.pending_jobs` is not a member; the W role owns the publication or holds its owner's privileges. Reading `pg_publication_tables` is not authority to alter it. The table's ownership, which `ADD TABLE` also requires, comes from the W role creating `pending_jobs` earlier in the same file |
-| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers, each function they run, every CHECK and each function pg_depend records for one (X3d; before it, only a count of triggers and no CHECK); RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; no trigger is expected; **its triggers, their functions and its CHECKs are exactly the set review accepted (§0.7)** |
+| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers, each function they run, every CHECK and each function pg_depend records for one (X3d; before it, only a count of triggers and no CHECK); the same stored-expression facts as `storage.buckets`, on every column, whether or not BUILD-01 supplies it (X3e, §0.8); RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; no trigger is expected; **its triggers, their functions, its CHECKs and its stored expressions are exactly the set review accepted, and each passes the stored-expression rules (§0.7, §0.8)** |
 | schemas `supabase_migrations`, `stage0_rehearsal` | BUILD-01: the ledger schema and table where absent, and the marker | their presence and owners; the W role's CREATE on the database | the marker schema is absent; the ledger schema is absent, or exactly as BUILD-00 found it; CREATE on the database |
 | default privileges | BUILD-01's two exact targets (step 4) | every `pg_default_acl` row (§2.2 part 3) | the W role is the object-creating role, or holds its privileges |
 
@@ -1753,7 +1827,7 @@ exercises that on a synthetic store: a writing send reporting either state holds
 replay of the journal gives the same hold, and a disposition still releases it. No historical
 capture, receipt or disposition is changed. Reported separately
 (`.review/x3c-evidence/historical-classification.json`, from the repository's copies; the real
-guard store was not read): none of the 44 real sender receipts reports either state, and each
+guard store was not read): none of the 43 real sender receipts reports either state, and each
 classifies as before, the lock-probe witness A2 included (P0001 in its own words, R3). The one
 message that moves is N5 scenario 1, the real 55P03 the lock probe's handler re-raised on
 2026-09-29, seen through `execute_sql` and never a sender receipt: rendered as one, R3 before, R4
