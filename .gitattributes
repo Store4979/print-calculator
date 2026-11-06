@@ -1,6 +1,9 @@
 # Real stage-0 sender receipts, kept byte for byte as the sender wrote them
 # (item 2 classifier plan §5: receipts are exact files, never normalized).
 scripts/tests/fixtures/stage0-classify/real/*.json -text
+# The verification tooling runs from its blobs and pins them, and bash cannot run a CRLF
+# script: LF in every checkout, so a checkout's bytes are the blob's.
+scripts/verify/* text eol=lf
 # Item 3's staging evidence (production plan §E15), kept byte for byte: the
 # sender's receipts as written, and the disposition whose sha256 §E15 states.
 docs/security/evidence/stage0-item3/** -text

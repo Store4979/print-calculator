@@ -1,0 +1,88 @@
+{
+  "schema": "verification-pins/1",
+  "note": "The verification tooling's own pins, checked by check-pins.mjs before each run. This set gives no operational authority and is not the sender's guard chain. tools is generated; requiredSteps and replay.sets are reviewed by hand.",
+  "requiredSteps": [
+    "pins",
+    "clone",
+    "isolation-before",
+    "install",
+    "test",
+    "test-counts",
+    "build",
+    "manifest",
+    "m13",
+    "targeted",
+    "targeted-counts",
+    "harness",
+    "writing",
+    "fixtures",
+    "replay",
+    "replay-counts",
+    "isolation-after"
+  ],
+  "replay": {
+    "sets": [
+      {
+        "recorded": {
+          "applied": [
+            "01"
+          ],
+          "rollbackRecords": 0
+        },
+        "states": [
+          "HEAD (as recorded)",
+          "P2-02",
+          "P2-0304",
+          "P2-05 (fully applied)",
+          "after RB-5",
+          "after RB-43",
+          "after RB-2",
+          "RB-1 (committed rollback)",
+          "prefix 01 → RB-1",
+          "prefix 01,02 → RB-2",
+          "prefix 01,02 → RB-1",
+          "prefix 01,02,03,04 → RB-43",
+          "prefix 01,02,03,04 → RB-2",
+          "prefix 01,02,03,04 → RB-1"
+        ]
+      }
+    ]
+  },
+  "tools": {
+    "scripts/verify/README.md": {
+      "blob": "8246d924acd7bbe68dc0dff7e73b79f0eb37e605",
+      "sha256": "b0ce30cbc0e9c9ec9bb76e8a5d8a5b4654913f5139d771ece5fff51f0a3e4ae6",
+      "bytes": 2930
+    },
+    "scripts/verify/check-isolation.mjs": {
+      "blob": "46e435417c5b521876e45980e5b9b142180bfd59",
+      "sha256": "a7e0907378201a73fc7bd9b930e0713edcf01512b62b3d74a067b9cf3699bdb2",
+      "bytes": 2284
+    },
+    "scripts/verify/check-pins.mjs": {
+      "blob": "72e5696466ba5a3edc5c24befd043e66641e19cb",
+      "sha256": "52887519aea9d18318b05085af2363d7b17d87cd86c939b13e5d1bf21075147c",
+      "bytes": 8142
+    },
+    "scripts/verify/check-tap.mjs": {
+      "blob": "923a5e991b35b7eb08bc55c55eab8f5292f942a9",
+      "sha256": "4ff3e993fce509f145f32bb696a8ea54ad33d1b12ab91def3b5e7de097964e9c",
+      "bytes": 5267
+    },
+    "scripts/verify/compare-fixtures.mjs": {
+      "blob": "e7bab563fe381e1f220baa24572daddd632412f4",
+      "sha256": "a84c9d69d4085ead25af125c16c3eccbd13b7d935b5859208731fe5610c428a7",
+      "bytes": 19087
+    },
+    "scripts/verify/verify-driver.sh": {
+      "blob": "6a7123cd3365597a7b7d48a2d038c5d0f26d242b",
+      "sha256": "861d8552279995bd8b2104949385e27937595cb28478cab0dc7e7fe49410f9f2",
+      "bytes": 8033
+    },
+    "scripts/verify/verify-launch.sh": {
+      "blob": "9b5a63c41e5ac5555cab71844884603b22c80e62",
+      "sha256": "ad127e1cf7a9a933810ee17ba48da25dd5bfc8c6e49edbe9421debeeac189f38",
+      "bytes": 2361
+    }
+  }
+}

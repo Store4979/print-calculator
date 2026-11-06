@@ -1115,6 +1115,29 @@ abuse, does not guarantee a cap"), say so in the comment itself.
      the commit it verified;
    - stopping a superseded run's own processes is allowed; deleting or
      changing its files is not.
+8. **A clean verification goes through the committed tooling** in scripts/verify/
+   (its README; Codex's review of 2d53bed §4, §5). It is not the sender's guard
+   chain and gives no operational authority:
+   - `bash scripts/verify/verify-launch.sh --repo <repo> --tooling <full hash> --out
+     <dir> --label <label> -- verify --commit <full hash> --pglite <dir>
+     --expect-tests <n>`. The launcher writes the tools from the tooling commit's
+     blobs into a new directory and runs the driver from there. Its exit is the
+     driver's. Never wrap it in anything that ends on another command's status
+     (old/run-X3b.sh's `cat` hid a failed step).
+   - after changing a tool: `node scripts/verify/check-pins.mjs generate --root .`.
+     VT-1 fails until the pin set is current. A tool may import only node: builtins.
+   - scripts/verify/* is `eol=lf` in .gitattributes: bash cannot run a CRLF script,
+     and the pins are the checkout's bytes.
+   - compare-fixtures takes the fixed ledger versions from the manifest (every
+     baselineLedger row and recorded 01). Only LEDGER_PATHS' named entries may have
+     another timestamp (DR-1). A new generated fixture needs its entry there.
+   - a record commit that changes the recorded state fails `replay-counts` until the
+     pin set brings a reviewed `replay.sets` entry for that state. So the suite must
+     never assert the pin set against HEAD's manifest: the replay's own states record
+     more, and it would fail there.
+   - Git for Windows' bash gives node a `/c/…` path it cannot read when the path holds
+     a quote (this home has one): the driver asks `pwd -W`, and the tests name Git's
+     own bash from `git --exec-path`, since `bash` from PowerShell can be WSL's.
 
 ## Session log (standing rule, 2026-10-29; rewritten 2026-10-30)
 At the end of every session, before the final report, update docs/STATUS.md
