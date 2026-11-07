@@ -520,7 +520,82 @@ can have them. So BUILD-00's walk follows the available catalog dependencies, an
 **What X3e does not show:** that the list is right for every image; that no other route runs code on these INSERTs; anything
 about Supabase's real roles, platform hooks or image, since PGlite's shim is minimal. It does not read a built-in's own definition,
 or an operator family changed underneath a built-in operator class, both of which take a superuser. X3e must be accepted before any
-R0a receipt.
+R0a receipt. §0.9 revises this read.
+
+### 0.9 Codex's review of the tooling and X3e (`c940f0f`), VT2 and X3f
+
+Codex, 2026-11-06 (`reviews/2026-11-06-c940f0f-review.md`): **AMEND. The combined push was held and R0a is not cleared.** It accepts, not
+to be redesigned: DR-1's fix, the tooling pins, the blob launcher, the step set, the replay labels and the provenance records; and X3e's
+explicit calls, its identity refusal and its directly walked dependencies, as tested. Two fix-forward commits answer it, leaving
+`a88df3f` and `c940f0f` as they are.
+
+**VT2, the tooling.**
+- **VT-R1:** a refused `isolation-before` now stops the run at once, like failed pins and a failed clone, and the summary names every
+  later step as not run. VT-17 shows that no install, test, harness, build or replay command starts.
+- **VT-N1:** the run-time raw-text check is narrowed to what it is, a regression check and not a language boundary. The exact dependency
+  closure is a source-review item (`scripts/verify/README.md`). VT-2b parses each module with acorn at commit time, in the suite.
+
+**XE-R1: the counterexample.** Codex built a custom enum with its own default B-tree class and comparator, gave an unsupplied bucket
+column the default `LEAST('b'::e, 'a'::e)`, bound both readings, and replaced only the comparator's body. **The readings were identical,
+BUILD-01 committed, and the witness was consumed.** MINMAX selects the type's default comparison through the type cache, so no
+dependency row and no call name shows it. X3e's claim that it refused implicit calls over unsupported types was false.
+
+**X3f reads the stored node trees** (`adbin`, `conbin`, `indexprs`, `indpred`, `tgqual`, `typdefaultbin`), as text, and never executes one.
+BUILD-00 still judges nothing. It reports each tree as `node|<origin>|<name>`, and the catalog row for each OID it names:
+`node-function|`, `node-operator|` (with its `oprcode`) and `node-type|`. `<part>-expression-nodes`, in the comparator and in BUILD-01's
+first step, requires of each tree:
+
+| Rule | What it stops |
+|---|---|
+| only `BUILD_NODE_TAGS` | `ROWCOMPAREEXPR`, `SUBSCRIPTINGREF`, `ROWEXPR`, `FIELDSELECT`, `SUBLINK`, `XMLEXPR` and every other node this rule cannot resolve |
+| each `FUNCEXPR` has a `:funcid`, each operator node an `:opno` and its `:opfuncid`, and no planner-only hash or negator function | a node that does not name what it runs |
+| each `:funcid` is a built-in on `BUILD_NODE_FUNCTIONS`, made at initdb and in `pg_catalog`, or a function the walk reports for this same CHECK or trigger | a function outside the list, including one no text shows, such as the cast in `(1)::money` |
+| each `:opno` is a built-in operator with a non-volatile built-in `oprcode`, or one whose `oprcode` the walk reports for this same CHECK or trigger. `:opfuncid` is that `oprcode` | a custom operator on a strict path |
+| each type it names has a catalog row | an unresolved type |
+| where what runs depends on the type (`MINMAXEXPR`, `COERCEVIAIO`, `ARRAYCOERCEEXPR`, or a function or `oprcode` with a pseudo-type argument), every type in the tree is on `BUILD_NODE_TYPES` | MINMAX, CoerceViaIO and ArrayCoerce over an enum, a domain, an array of either, or an unreviewed built-in such as `inet` |
+
+- **Functions use a reviewed list. Operators use a rule:** made at initdb, in `pg_catalog`, with a non-volatile built-in implementation, and
+  the implementation's name and signature are reported and bound. **For Codex's ruling:** a list of every operator implementation would run
+  to well over a hundred names, and I know of no built-in non-volatile `oprcode` that changes state, though that is my reading and nothing here proves it.
+  A list is a small change if preferred, and needs no new reading.
+- **`nextval` and `setval` are read from the tree as well as the text,** so `<part>-sequence-calls` no longer depends on deparsed text.
+- **Enum equality stops too:** `enum_eq` has pseudo-type arguments, so `x_e = 'a'` in a CHECK stops, though `enum_eq` compares OIDs and dispatches
+  nothing. That is conservative on purpose, and a stock CHECK of that form would stop at B1. Allowing it would take review and no new reading.
+- **An enum `Const` alone passes:** the stock default `'STANDARD'::storage.buckettype` runs nothing.
+- **Codex's negative is a fixture** (`w-expr-codex-enum-least.json`, `-greatest.json`): the same sequence, identical readings after the body is
+  replaced, and both implementations refuse before any write, with the witness unconsumed. With BUILD-01's first step taken out, PostgreSQL
+  still consumes it.
+- **Codex's stock-like expressions are kept:** the varchar length coercion, integer to smallint, timestamp `LEAST`, the JSON CHECK, and `lower(email)`
+  with its regex predicate (`w-expr-commit-codex-stock-controls.json`).
+
+**XE-R2: the RLS evidence.** BUILD-00 reports `policies`, a count from `pg_policy` for each table, and it is in the reviewed set. A count is
+evidence only. RLS enabled with no policy is default-deny, and a BYPASSRLS role bypasses existing policies, so `<part>-rls`, BUILD-00W's no-active-RLS
+preflight and its SQL recheck stay as they were. `facts.writer` (`writerOf`) and `writer-identity` take the writing role's identity and BYPASSRLS from
+BUILD-00W's own `role` rows, never from BUILD-00's reader, and BUILD-01 re-binds them through `digest build00w.role`.
+
+**5b: foreign keys.** X3e's request exempted foreign keys because RI triggers are internal. Codex: that does not establish that every selected
+comparison is a supported built-in. BUILD-00 now reports each foreign key on either side of each table from its own rows (`fk|`, `fk-column|`,
+`fk-index|`): the referencing and referenced types, the pf, pp and ff operators, and the operator classes of the index it depends on.
+`<part>-foreign-keys` requires reviewed built-in types, built-in operators with monomorphic implementations, and `pg_catalog` classes. The foreign keys the
+migration files themselves create are in their pinned blobs.
+
+**Records Codex asked for:**
+- **A correction:** X3e's request said an IMMUTABLE function cannot call `nextval`. That is false. Codex's comparator was declared IMMUTABLE and consumed the
+  sequence. Volatility is a promise to the optimizer, not proof of no side effects, and no rule here relies on it for a function's body.
+  `generated-immutable-body-calling-nextval` shows it.
+- **B1 keeps the digest-keyed body dispositions in its reviewed artifact or binding commit.** `build01Facts` requires them, and generated facts alone do not prove
+  that review took place. SQL need not interpret the prose, and it goes on rechecking the bound definitions.
+- **B1 separately assesses any reported security-definer body that changes the execution context.** `<part>-rls` covers the W role; a body running as its
+  definer is not that role. The function's row reports `prosecdef`.
+- **The platform-trust residual, narrowly (5c):** a built-in's own definition, and changes beneath a built-in operator class or family, which take a superuser, are
+  not read. This does not extend to custom type dispatch, which the node rule refuses.
+- **The staging observations:** Codex's qualification stands. X3e scanned deparsed text, so Claude's staging observation neither proved complete identity
+  coverage nor certified the throwaway's receipt. The 15:35 EST observation, associated with staging image 17.6.1.166, remains an unguarded read. It neither replaces
+  the throwaway's receipts nor proves image equality. This session did not make those reads and has not seen their rows.
+
+**What X3f does not show:** that the lists are right for every image, since a stock project's own reading decides that, and a stop there needs review and no new
+reading; that the tags and fields stay the same in another PostgreSQL major version, though a different version number between the two projects already stops (§2.2);
+anything about Supabase's real roles or platform hooks. **This read revision must be accepted before any R0a receipt.**
 
 ## 1. What the remaining path touches
 
@@ -821,10 +896,10 @@ never one assumed from staging.
 
 | object | what writes it | what is read | the predicates (else STOP) |
 |---|---|---|---|
-| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); every trigger (name, timing, events, enabled, function and the function's owner), each function it runs (language, owner, security definer, volatility, config, md5 of prosrc and of the definition, and the definition), every CHECK and each function pg_depend records for one (X3d); its relkind and inheritance, every column's type, identity and generated kind, every stored default and generated expression, every index with its expressions and predicate, every rewrite rule, and what the walk reaches from them (X3e, §0.8); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; **the triggers, their functions and the CHECKs, with the defaults, generated expressions, indexes, rules, column types and everything the walk reaches from them, are exactly the set review accepted from this project's own R0a reading, and each passes the stored-expression rules (§0.7, §0.8);** **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
+| `storage.buckets` | `20260506182304`: `INSERT (id, name, public, file_size_limit, allowed_mime_types)` … `ON CONFLICT (id) DO UPDATE SET public, file_size_limit, allowed_mime_types, updated_at = now()`. `20260629173251`: `INSERT (id, name, public)` … `ON CONFLICT (id) DO NOTHING` | every column (name, type, NOT NULL, default, identity and generated kind); its constraints and unique indexes, each with an `arbiter\|` row of the catalog properties a conflict arbiter depends on (X3-R2); every trigger (name, timing, events, enabled, function and the function's owner), each function it runs (language, owner, security definer, volatility, config, md5 of prosrc and of the definition, and the definition), every CHECK and each function pg_depend records for one (X3d); its relkind and inheritance, every column's type, identity and generated kind, every stored default and generated expression, every index with its expressions and predicate, every rewrite rule, and what the walk reaches from them (X3e, §0.8); each stored expression's node tree with the catalog identity of what it names, its policy count, and every foreign key on either side (X3f, §0.9); RLS and forced RLS; its owner; the W role's schema USAGE and its INSERT, UPDATE and SELECT privileges; any row whose `id` is `job-files` or `customer-uploads`, read in BUILD-00W | the six named columns exist, with types the literals assign to: `id` and `name` are `text`, unbounded varchar, or a declared length of at least 16, the longest literal, `customer-uploads`; another form stops for review (X3-R3); every NOT NULL column without a default is among the columns each INSERT supplies; none of the supplied or updated columns is generated, or an identity `GENERATED ALWAYS`; **the one supported conflict arbiter:** exactly one unique index names `id` as a key, and it is a valid, ready, live, immediate btree on the single key column `id`, with no INCLUDE column, expression or predicate, behind a PRIMARY KEY that is not deferrable, as the catalog properties say, never from `pg_get_indexdef`'s text. PostgreSQL's executor refuses a deferrable arbiter (55000), and every unique index on exactly (`id`) is an arbiter. This is narrower than what PostgreSQL would accept, so a plain `UNIQUE (id)` also stops for review; another unique index, such as one on `name`, is no arbiter here; the W role holds INSERT on the supplied columns, UPDATE on the four updated ones, and SELECT where `ON CONFLICT … DO UPDATE` needs it; RLS does not apply to the W role (it owns the table or has BYPASSRLS, and RLS is not forced), since no policy is evaluated to argue that a write would pass; **the triggers, their functions and the CHECKs, with the defaults, generated expressions, indexes, rules, column types and everything the walk reaches from them, are exactly the set review accepted from this project's own R0a reading, and each passes the stored-expression rules (§0.7, §0.8);** **neither target row exists.** A pre-existing `job-files` row would be overwritten by the first file's `DO UPDATE`, so it is a STOP, never something to fit |
 | `storage.objects` | `20260506182318`: `DROP POLICY IF EXISTS` and `CREATE POLICY` of `job_files_anon_insert`, `job_files_anon_select` and `job_files_anon_delete` | presence, kind and owner; every existing policy's name; the `bucket_id` column and its type; RLS | an ordinary table with a `bucket_id` text column; **none of the three policy names exists,** so each `DROP … IF EXISTS` removes nothing; the W role owns the table or holds its owner's privileges (`pg_has_role(…, 'USAGE')`; a superuser passes). Table DML privileges do not confer policy authority: PostgreSQL requires ownership for `CREATE POLICY` and `DROP POLICY` |
 | publication `supabase_realtime` | `20260629173251`: reads `pg_publication_tables`, then `ALTER PUBLICATION supabase_realtime ADD TABLE public.pending_jobs` | presence, owner, `puballtables`, the insert/update/delete/truncate flags, `pubviaroot`, every member table | it exists; it is not `FOR ALL TABLES`; `public.pending_jobs` is not a member; the W role owns the publication or holds its owner's privileges. Reading `pg_publication_tables` is not authority to alter it. The table's ownership, which `ADD TABLE` also requires, comes from the W role creating `pending_jobs` earlier in the same file |
-| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers, each function they run, every CHECK and each function pg_depend records for one (X3d; before it, only a count of triggers and no CHECK); the same stored-expression facts as `storage.buckets`, on every column, whether or not BUILD-01 supplies it (X3e, §0.8); RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; no trigger is expected; **its triggers, their functions, its CHECKs and its stored expressions are exactly the set review accepted, and each passes the stored-expression rules (§0.7, §0.8)** |
+| `auth.users` | BUILD-01's synthetic rows (`instance_id`, `id`, `aud`, `role`, `email`, as the PGlite harness writes them); the foreign keys of `20260722003606` and 01; the read in `20260909160312` | P0′ part 6's facts; the W role's INSERT, SELECT and REFERENCES; its triggers, each function they run, every CHECK and each function pg_depend records for one (X3d; before it, only a count of triggers and no CHECK); the same stored-expression facts as `storage.buckets`, on every column, whether or not BUILD-01 supplies it (X3e, §0.8); the same node trees, policy count and foreign keys (X3f, §0.9); RLS | `aud` and `role` are `text`, unbounded varchar, or a declared length of at least 13 (`authenticated`), and `email` the same, of at least 25 (`store4979@theupsstore.com`); another form stops for review (X3-R3); the W role holds INSERT, SELECT, and REFERENCES on `id`; every NOT NULL column without a default is supplied; RLS does not apply to the W role; no trigger is expected; **its triggers, their functions, its CHECKs and its stored expressions are exactly the set review accepted, and each passes the stored-expression rules (§0.7, §0.8)** |
 | schemas `supabase_migrations`, `stage0_rehearsal` | BUILD-01: the ledger schema and table where absent, and the marker | their presence and owners; the W role's CREATE on the database | the marker schema is absent; the ledger schema is absent, or exactly as BUILD-00 found it; CREATE on the database |
 | default privileges | BUILD-01's two exact targets (step 4) | every `pg_default_acl` row (§2.2 part 3) | the W role is the object-creating role, or holds its privileges |
 

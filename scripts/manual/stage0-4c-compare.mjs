@@ -742,7 +742,7 @@ const NAMES_ID_AS_KEY = /^([^|]*,)?id(,[^|]*)?\|/;
  * a row binds that row only: what a reported body calls is B1's review item (bodyReviewItemsOf).
  */
 export const REVIEWED_PARTS = Object.freeze(["buckets", "authusers"]);
-const REVIEWED_KEY = /^(?:(?:trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route)\||relation$)/;
+const REVIEWED_KEY = /^(?:(?:trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route|node|node-function|node-operator|node-type|fk|fk-column|fk-index)\||relation$|policies$)/;
 const reviewedOfPart = (part) => Object.fromEntries(Object.entries(part ?? {}).filter(([k]) => REVIEWED_KEY.test(k)).map(([k, v]) => [k, md5(v)]));
 /** The exact set a reading holds, or null when it is not rows of text, each key once. */
 export function reviewedSetOf(build00) {
@@ -819,7 +819,7 @@ const expressionCallsHold = (part) => scannedOf(part).every(({ key, raw, s }) =>
 /** A reported function named nextval or setval, on any route: a custom operator's oprcode reaches one with no call in the text. */
 const NAMES_SEQUENCE_CALL = /^(?:route\|[^|]*\|[^|]*\|function|trigger-function\|[^|]*|check-function\|[^|]*)\|.*\.(?:nextval|setval)\(/;
 const sequenceFree = (part) => scannedOf(part).every(({ s }) => !callsOf(s).some((c) => SEQUENCE_CALLS.includes(c)))
-  && Object.entries(part ?? {}).every(([k, v]) => !(k.startsWith("column-type|") && v.split("|")[0] !== "") && !NAMES_SEQUENCE_CALL.test(k) && !/^route\|[^|]*\|[^|]*\|sequence\|/.test(k));
+  && Object.entries(part ?? {}).every(([k, v]) => !(k.startsWith("column-type|") && v.split("|")[0] !== "") && !NAMES_SEQUENCE_CALL.test(k) && !/^route\|[^|]*\|[^|]*\|sequence\|/.test(k) && !(k.startsWith("node-function|") && SEQUENCE_CALLS.includes(v.split("|")[4])));
 /**
  * What the walk may reach. A strict path reaches only functions of pg_catalog on
  * BUILD_EXPRESSION_CALLS, and a function reported as trigger-function or check-function is
@@ -842,6 +842,126 @@ const routesHold = (part) => Object.entries(part ?? {}).every(([k, v]) => !k.sta
 /** The only rewrite rule BUILD-01's INSERTs and UPDATEs cannot fire is a DELETE rule; it is inventoried and bound. */
 const rulesHold = (part) => Object.entries(part ?? {}).every(([k, v]) => !k.startsWith("rule|") || v.startsWith("4|"));
 const BUILD_RELATION = "r|false|false|0";
+const relationHolds = (part) => part?.relation === BUILD_RELATION && /^[0-9]+$/.test(part?.policies ?? "");
+/**
+ * X3f (Codex XE-R1, review of c940f0f): the stored node trees, read as text and never executed.
+ * Deparsed text cannot show what a node runs: LEAST over an enum printed as a call on the list,
+ * and ran a comparison function nothing reported, through that type's default operator class.
+ * Each tree must hold:
+ *   - only BUILD_NODE_TAGS. Any other node, ROWCOMPAREEXPR, SUBSCRIPTINGREF and FIELDSELECT among
+ *     them, is a form this rule cannot resolve, and stops;
+ *   - a :funcid for each FUNCEXPR, and an :opno with its :opfuncid for each operator node, with no
+ *     planner-only hash or negator function. A node without a funcid may still run code, so the
+ *     rest of this rule is about those;
+ *   - for each :funcid, a built-in on BUILD_NODE_FUNCTIONS (made at initdb, in pg_catalog), or one
+ *     the walk reports for this same CHECK or trigger. nextval and setval are the sequence rule's;
+ *   - for each :opno, a built-in operator with a non-volatile built-in oprcode, or one whose oprcode
+ *     the walk reports for this same CHECK or trigger. :opfuncid must be that oprcode;
+ *   - a catalog row for each type it names;
+ *   - and, where what runs depends on the type (TYPE_DEPENDENT_TAGS, or a function or oprcode with a
+ *     pseudo-type argument), only types on BUILD_NODE_TYPES. So MINMAX, CoerceViaIO and ArrayCoerce
+ *     over an enum, a domain or an array of either stop, though the walk's kind rule accepts those
+ *     types. An enum Const alone runs nothing.
+ * The tags and fields are PostgreSQL 17's. A string inside a tree could add a tag to what this reads,
+ * never remove one, and every string-bearing node is off the list. The lists are judged here and in
+ * BUILD-01, not in BUILD-00's text, so adding to them takes review and no new reading.
+ */
+export const BUILD_NODE_TAGS = Object.freeze([
+  "ARRAYCOERCEEXPR", "ARRAYEXPR", "BOOLEANTEST", "BOOLEXPR", "CASEEXPR", "CASETESTEXPR", "CASEWHEN", "COALESCEEXPR", "COERCETODOMAIN", "COERCETODOMAINVALUE", "COERCEVIAIO", "COLLATEEXPR",
+  "CONST", "DISTINCTEXPR", "FUNCEXPR", "MINMAXEXPR", "NULLIFEXPR", "NULLTEST", "OPEXPR", "RELABELTYPE", "SCALARARRAYOPEXPR", "SQLVALUEFUNCTION", "VAR",
+]);
+export const BUILD_NODE_FUNCTIONS = Object.freeze([
+  "now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timezone", "date_trunc", "date_part", "extract", "to_char", "to_timestamp",
+  "gen_random_uuid", "lower", "upper", "length", "char_length", "character_length", "octet_length", "btrim", "ltrim", "rtrim", "substr", "substring", "left", "right",
+  "replace", "regexp_replace", "split_part", "strpos", "position", "overlay", "normalize", "starts_with", "concat", "concat_ws", "md5", "abs", "ceil", "floor", "round",
+  "array_length", "array_lower", "array_upper", "array_position", "array_to_string", "string_to_array", "cardinality", "jsonb_typeof", "jsonb_array_length",
+  // Casts: the varchar length coercion, integer to smallint and their kind.
+  "int2", "int4", "int8", "float4", "float8", "numeric", "text", "varchar", "bpchar", "name", "bool", "date", "timestamp", "timestamptz", "time", "timetz", "interval", "regclass",
+]);
+export const BUILD_NODE_TYPES = Object.freeze([
+  "text", "varchar", "bpchar", "name", "unknown", "bool", "int2", "int4", "int8", "numeric", "float4", "float8", "timestamptz", "timestamp", "date", "time", "timetz", "interval", "uuid", "json", "jsonb", "bytea", "oid", "regclass",
+  "_text", "_varchar", "_bpchar", "_name", "_bool", "_int2", "_int4", "_int8", "_numeric", "_float4", "_float8", "_timestamptz", "_timestamp", "_date", "_uuid", "_json", "_jsonb",
+]);
+const TYPE_DEPENDENT_TAGS = Object.freeze(["ARRAYCOERCEEXPR", "COERCEVIAIO", "MINMAXEXPR"]);
+const OPERATOR_TAGS = Object.freeze(["DISTINCTEXPR", "NULLIFEXPR", "OPEXPR", "SCALARARRAYOPEXPR"]);
+const NODE_TAG = /[{]([A-Z_]+)/g;
+const NODE_REF = /:(funcid|opno|consttype|vartype|resulttype|funcresulttype|opresulttype|minmaxtype|coalescetype|casetype|array_typeid|element_typeid|typeId|type) ([0-9]+)/g;
+const NODE_OP_PAIR = /:opno ([0-9]+) :opfuncid ([0-9]+)/g;
+const NODE_PLANNER_FUNCTION = /:(?:hashfuncid|negfuncid) [1-9]/;
+const BUILTIN_OPERATOR = /^pg_catalog\|true\|pg_catalog\|true\|[is]\|/;
+const typeFactReviewed = (fact) => {
+  const [schema, initdb, , , name] = String(fact).split("|");
+  return schema === "pg_catalog" && initdb === "true" && BUILD_NODE_TYPES.includes(name);
+};
+/** One tree against the rule above. `part` is its table's rows; `origin` and `name` come from its key. */
+function treeHolds(part, origin, name, tree) {
+  if (tree === "<null>") return false;
+  const tags = [...tree.matchAll(NODE_TAG)].map((m) => m[1]);
+  if (!tags.every((t) => BUILD_NODE_TAGS.includes(t))) return false;
+  const refs = [...tree.matchAll(NODE_REF)].map((m) => [m[1], m[2]]);
+  const functions = refs.filter(([f]) => f === "funcid").map(([, o]) => o);
+  const pairs = [...tree.matchAll(NODE_OP_PAIR)].map((m) => [m[1], m[2]]);
+  const operatorRefs = refs.filter(([f]) => f === "opno");
+  if (tags.filter((t) => t === "FUNCEXPR").length !== functions.length) return false;
+  if (tags.filter((t) => OPERATOR_TAGS.includes(t)).length !== operatorRefs.length || pairs.length !== operatorRefs.length) return false;
+  if (NODE_PLANNER_FUNCTION.test(tree)) return false;
+  const reviewedHere = (sig) => (origin === "check" || origin === "trigger") && Object.hasOwn(part, `${origin}-function|${name}|${sig}`);
+  let dependent = tags.some((t) => TYPE_DEPENDENT_TAGS.includes(t));
+  for (const oid of functions) {
+    const fact = part[`node-function|${oid}`];
+    if (typeof fact !== "string") return false;
+    const [schema, initdb, , pseudo, fname, sig] = fact.split("|");
+    const builtin = schema === "pg_catalog" && initdb === "true" && (BUILD_NODE_FUNCTIONS.includes(fname) || SEQUENCE_CALLS.includes(fname));
+    if (!builtin && !reviewedHere(sig)) return false;
+    if (pseudo === "true") dependent = true;
+  }
+  for (const [oid, implementation] of pairs) {
+    const fact = part[`node-operator|${oid}`];
+    if (typeof fact !== "string") return false;
+    const f = fact.split("|");
+    if (!BUILTIN_OPERATOR.test(fact) && !reviewedHere(f[8])) return false;
+    if (implementation !== "0" && implementation !== f[6]) return false;
+    if (f[5] === "true") dependent = true;
+  }
+  for (const [field, oid] of refs) {
+    if (field === "funcid" || field === "opno") continue;
+    const fact = part[`node-type|${oid}`];
+    if (typeof fact !== "string" || fact === "<absent>") return false;
+    if (dependent && !typeFactReviewed(fact)) return false;
+  }
+  return true;
+}
+const nodesHold = (part) => Object.entries(part ?? {}).every(([key, tree]) => {
+  if (!key.startsWith("node|")) return true;
+  const origin = key.split("|")[1];
+  return treeHolds(part, origin, key.slice(`node|${origin}|`.length), tree);
+});
+/**
+ * X3f (Codex 5b): each foreign key on either side of the table. Every key column's two types are on
+ * BUILD_NODE_TYPES, its three equality operators are built-ins with monomorphic oprcodes, and the
+ * index it depends on uses only pg_catalog's operator classes. The referenced side comes from the
+ * key's own rows, never from this table's columns. Any other shape stops.
+ */
+const OPERATOR_CLASSES = /^pg_catalog\.[^,]*(?:,pg_catalog\.[^,]*)*$/;
+const foreignKeyOperator = (part, oid) => {
+  const fact = part[`node-operator|${oid}`];
+  return typeof fact === "string" && BUILTIN_OPERATOR.test(fact) && fact.split("|")[5] === "false";
+};
+const foreignKeysHold = (part) => Object.entries(part ?? {}).every(([k, v]) => {
+  if (k.startsWith("fk|")) return Object.keys(part).some((c) => c.startsWith(`fk-column|${k.slice(3)}|`));
+  if (k.startsWith("fk-index|")) return OPERATOR_CLASSES.test(v);
+  if (!k.startsWith("fk-column|")) return true;
+  const [fkType, pkType, pf, pp, ff] = v.split("|");
+  return typeFactReviewed(part[`node-type|${fkType}`]) && typeFactReviewed(part[`node-type|${pkType}`]) && [pf, pp, ff].every((o) => foreignKeyOperator(part, o));
+});
+/** The writing role as BUILD-00W reports it about itself (Codex XE-R2): never BUILD-00's reader. */
+const WRITER_ATTRIBUTES = /^(?:true|false)(?:\|(?:true|false)){6}$/;
+export function writerOf(w) {
+  const name = w?.role?.name, attr = w?.role?.attr;
+  if (typeof name !== "string" || !name || !WRITER_ATTRIBUTES.test(attr ?? "")) return null;
+  const a = attr.split("|");
+  return { role: name, session: w.role.session ?? null, superuser: a[0] === "true", bypassrls: a[6] === "true" };
+}
 /**
  * The preflight table's predicates (plan §2.1), each a name and what it asks of
  * the two readings, b (BUILD-00) and w (BUILD-00W, read as the role BUILD-01 will
@@ -869,11 +989,13 @@ const BUILD_PREDICATES = Object.freeze({
   "buckets-rls": (b, w) => w.buckets?.rls_applies === "false",
   "buckets-rows": (b, w) => w.buckets?.["row|job-files"] === "false" && w.buckets?.["row|customer-uploads"] === "false",
   "buckets-reviewed": (b, w, f) => sameReviewed("buckets", b, f),
-  "buckets-relation": (b) => b.buckets?.relation === BUILD_RELATION,
+  "buckets-relation": (b) => relationHolds(b.buckets),
   "buckets-expression-calls": (b) => expressionCallsHold(b.buckets),
   "buckets-sequence-calls": (b) => sequenceFree(b.buckets),
   "buckets-routes": (b) => routesHold(b.buckets),
   "buckets-rules": (b) => rulesHold(b.buckets),
+  "buckets-expression-nodes": (b) => nodesHold(b.buckets),
+  "buckets-foreign-keys": (b) => foreignKeysHold(b.buckets),
   "objects-table": (b) => (b.objects?.table ?? "").startsWith("r|") && b.objects?.["column|bucket_id"] === "text",
   "objects-policies": (b) => !["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"].some((k) => Object.hasOwn(b.objects ?? {}, k)),
   "objects-authority": (b, w) => w.objects?.owner_privileges === "true",
@@ -892,14 +1014,17 @@ const BUILD_PREDICATES = Object.freeze({
   "authusers-rls": (b, w) => w.authusers?.rls_applies === "false",
   "authusers-triggers": (b) => b.authusers?.["user-triggers"] === "0",
   "authusers-reviewed": (b, w, f) => sameReviewed("authusers", b, f),
-  "authusers-relation": (b) => b.authusers?.relation === BUILD_RELATION,
+  "authusers-relation": (b) => relationHolds(b.authusers),
   "authusers-expression-calls": (b) => expressionCallsHold(b.authusers),
   "authusers-sequence-calls": (b) => sequenceFree(b.authusers),
   "authusers-routes": (b) => routesHold(b.authusers),
   "authusers-rules": (b) => rulesHold(b.authusers),
+  "authusers-expression-nodes": (b) => nodesHold(b.authusers),
+  "authusers-foreign-keys": (b) => foreignKeysHold(b.authusers),
   "marker-absent": (b) => b.schemas?.["schema|stage0_rehearsal"] === "<absent>",
   "database-create": (b, w) => w.database?.create === "true",
   creator: (b, w, f) => w.role?.name === f.creator || Object.hasOwn(w.role ?? {}, `member|${f.creator}`) || (w.role?.attr ?? "").split("|")[0] === "true",
+  "writer-identity": (b, w) => writerOf(w) !== null,
 });
 export const BUILD_PREDICATE_NAMES = Object.freeze(Object.keys(BUILD_PREDICATES));
 
@@ -993,7 +1118,7 @@ export function build01Facts({ build00, build00w, ref, finalFrom, employees = 2,
   try {
     return {
       findings,
-      facts: { ref, creator, ledger, employees, digests: { build00: partDigests(build00), build00w: partDigests(build00w) }, reviewed, defaultsNow: defaultsOf(build00, "defaults", creator), defaultsFinal: defaultsOf(finalFrom, 3, creator) },
+      facts: { ref, creator, writer: writerOf(w), ledger, employees, digests: { build00: partDigests(build00), build00w: partDigests(build00w) }, reviewed, defaultsNow: defaultsOf(build00, "defaults", creator), defaultsFinal: defaultsOf(finalFrom, 3, creator) },
     };
   } catch (e) {
     return { findings: [...findings, stop("build", "defaults", e.message)], facts: null };

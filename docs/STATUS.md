@@ -6,15 +6,17 @@
 - Board: Print Calculator
 
 ## 2026-11-06 — X3c and X3d accepted and pushed to staging; the verification tooling committed, with DR-1 fixed; X3e, what a stored expression can run
-- Shipped: security/release-2-slice-2 1a7aff1..2d53bed pushed 17:21Z (X3c, X3d, under Codex's review of 2d53bed; staging deploy 6aee0c9d; production unchanged); 2d53bed..this commit local, for Codex's review
+- Shipped: security/release-2-slice-2 1a7aff1..2d53bed pushed 17:21Z (X3c, X3d, under Codex's review of 2d53bed; staging deploy 6aee0c9d; production unchanged); 2d53bed..this commit local, for Codex's review; Codex AMENDED a88df3f and c940f0f (review of c940f0f) and held the push
   - a88df3f scripts/verify: the driver, the fixture comparator, the TAP checker, a launcher and their regression tests (VT-1 to VT-16), with their own pin set; DR-1: fixed ledger versions come from the manifest, and only named generated entries may carry another timestamp; the reviewed replay-state set; no SQL or manifest pin moved
-  - this commit X3e: BUILD-00 reports every column's type, every stored default, generated expression, index expression and predicate, every rule, and a walk along pg_depend plus oprcode, trigger functions, domains and array elements; <part>-relation, -sequence-calls, -expression-calls, -routes and -rules in both implementations; a body's helpers are B1's review item, with an explicit disposition; the X3b and 2d53bed push records, each with Ryan's read, the 44-to-43 correction and this log
-  - Not commits: X3e's clean verification, through the committed tooling (the review request has its result); a run of the same tooling on its own commit, RESULT PASSED, 655/655
+  - c940f0f X3e: BUILD-00 reports every column's type, every stored default, generated expression, index expression and predicate, every rule, and a walk along pg_depend plus oprcode, trigger functions, domains and array elements; <part>-relation, -sequence-calls, -expression-calls, -routes and -rules in both implementations; a body's helpers are B1's review item, with an explicit disposition; the X3b and 2d53bed push records, each with Ryan's read, the 44-to-43 correction and this log
+  - 04a0380 VT2: a refused isolation-before stops the run (VT-R1, VT-17, VT-18); the raw-text audit's claim narrowed, the closure a source-review item, and a parse of each module in the suite (VT-N1, VT-2b)
+  - this commit X3f: BUILD-00 reports each stored node tree and the catalog identity of what it names, policy counts and foreign keys on both sides; <part>-expression-nodes, <part>-foreign-keys and writer-identity in both implementations; Codex's enum comparator refused before any write though the readings do not move; the records of plan §0.9
+  - Not commits: X3e's clean verification, through the committed tooling: .review/verify-c940f0f, logs verify-X3e-*, RESULT PASSED, launcher exit 0, suite 660/660, targeted 264/264, build, manifest, M-13 2/2, harnesses 33 and 224 PASS, fixtures 0 problems, replay 14 × 660; a run of the same tooling on its own commit, RESULT PASSED, 655/655
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward the review request to Codex (reviews/requests/codex-review-request-tooling-X3e.md)
-- Needs a ruling from Claude (chat): none. From Codex: whether the stored-expression rules, the call list and the disposition are enough before R0a (plan §0.8)
-- Next planned step: Codex's review of the tooling and X3e, which asks a staging-only push clearance naming X3e's hash. X3e must be accepted before any R0a receipt, and X4 waits for that verdict
+- Needs from Ryan: forward the review request to Codex (reviews/requests/codex-review-request-VT2-X3f.md)
+- Needs a ruling from Claude (chat): none. From Codex: operators by rule rather than by list, and whether enum equality should stay stopped (plan §0.9)
+- Next planned step: Codex's review of VT2 and X3f, which asks a staging-only push clearance naming X3f's hash, carrying a88df3f, c940f0f, VT2 and X3f. R0a waits for this read revision's acceptance, and X4 waits for that verdict
 
 ## 2026-11-05 — X3b accepted and pushed to staging; the verification driver repaired; X3c (the lock and deadlock policy) and X3d (the exact set of triggers and CHECKs)
 - Shipped: security/release-2-slice-2 47a0b69..1a7aff1 pushed 00:02Z on 11-06 (X3, X3b, under Codex's review of 1a7aff1; staging deploy 6aed190b; production unchanged); 1a7aff1..2d53bed local, for Codex's review

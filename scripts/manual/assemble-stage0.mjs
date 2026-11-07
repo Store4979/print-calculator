@@ -1270,10 +1270,28 @@ export const BUILD_EXPRESSION_CALLS = Object.freeze([
   "array_length", "array_lower", "array_upper", "array_position", "array_to_string", "string_to_array", "cardinality", "jsonb_typeof", "jsonb_array_length",
 ]);
 export const BUILD_SEQUENCE_CALLS = Object.freeze(["nextval", "setval"]);
+/** The node rule's lists (X3f): the comparator's say why, and 4W-24 compares them. */
+export const BUILD_NODE_TAGS = Object.freeze([
+  "ARRAYCOERCEEXPR", "ARRAYEXPR", "BOOLEANTEST", "BOOLEXPR", "CASEEXPR", "CASETESTEXPR", "CASEWHEN", "COALESCEEXPR", "COERCETODOMAIN", "COERCETODOMAINVALUE", "COERCEVIAIO", "COLLATEEXPR",
+  "CONST", "DISTINCTEXPR", "FUNCEXPR", "MINMAXEXPR", "NULLIFEXPR", "NULLTEST", "OPEXPR", "RELABELTYPE", "SCALARARRAYOPEXPR", "SQLVALUEFUNCTION", "VAR",
+]);
+export const BUILD_NODE_FUNCTIONS = Object.freeze([
+  "now", "clock_timestamp", "statement_timestamp", "transaction_timestamp", "timezone", "date_trunc", "date_part", "extract", "to_char", "to_timestamp",
+  "gen_random_uuid", "lower", "upper", "length", "char_length", "character_length", "octet_length", "btrim", "ltrim", "rtrim", "substr", "substring", "left", "right",
+  "replace", "regexp_replace", "split_part", "strpos", "position", "overlay", "normalize", "starts_with", "concat", "concat_ws", "md5", "abs", "ceil", "floor", "round",
+  "array_length", "array_lower", "array_upper", "array_position", "array_to_string", "string_to_array", "cardinality", "jsonb_typeof", "jsonb_array_length",
+  "int2", "int4", "int8", "float4", "float8", "numeric", "text", "varchar", "bpchar", "name", "bool", "date", "timestamp", "timestamptz", "time", "timetz", "interval", "regclass",
+]);
+export const BUILD_NODE_TYPES = Object.freeze([
+  "text", "varchar", "bpchar", "name", "unknown", "bool", "int2", "int4", "int8", "numeric", "float4", "float8", "timestamptz", "timestamp", "date", "time", "timetz", "interval", "uuid", "json", "jsonb", "bytea", "oid", "regclass",
+  "_text", "_varchar", "_bpchar", "_name", "_bool", "_int2", "_int4", "_int8", "_numeric", "_float4", "_float8", "_timestamptz", "_timestamp", "_date", "_uuid", "_json", "_jsonb",
+]);
+const BUILD_NODE_REF = ":(funcid|opno|consttype|vartype|resulttype|funcresulttype|opresulttype|minmaxtype|coalescetype|casetype|array_typeid|element_typeid|typeId|type) ([0-9]+)";
+const BUILD_BUILTIN_OPERATOR = "^pg_catalog[|]true[|]pg_catalog[|]true[|][is][|]";
 const BUILD_QUOTED = `'(?:[^']|'')*'|"(?:[^"]|"")*"`;
 const BUILD_CALL = "([A-Za-z_][A-Za-z0-9_$]*(?:[.][A-Za-z_][A-Za-z0-9_$]*)*)[(]";
 const BUILD_EXPRESSION_KEY = "^(default|index-expr|index-pred|check|domain-check|domain-default)[|]";
-const BUILD_REVIEWED_KEY = "^((trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route)[|]|relation$)";
+const BUILD_REVIEWED_KEY = "^((trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route|node|node-function|node-operator|node-type|fk|fk-column|fk-index)[|]|relation$|policies$)";
 /** The preflight table's predicates (plan §2.1), each a name and a SQL boolean over the CTE f(src, part, key, value). */
 function buildPredicates(facts) {
   const v = (src, part, key) => `(select f.value from f where f.src = ${q(src)} and f.part = ${q(part)} and f.key = ${q(key)})`;
@@ -1295,11 +1313,18 @@ function buildPredicates(facts) {
   };
   // What a stored expression can run (X3e), over the CTEs scanned and calls.
   const part01 = (part) => `f.src = 'build00' and f.part = ${q(part)}`;
-  const relation = (part) => `${b(part, "relation")} = 'r|false|false|0'`;
+  const relation = (part) => `${b(part, "relation")} = 'r|false|false|0' and ${b(part, "policies")} ~ '^[0-9]+$'`;
   const expressionCalls = (part) => `not exists (select 1 from scanned x where x.part = ${q(part)} and (x.raw = '<null>' or x.s ~ '[''"]')) and not exists (select 1 from calls c where c.part = ${q(part)} and c.name <> all (array[${[...BUILD_SEQUENCE_CALLS, ...BUILD_EXPRESSION_CALLS].map(q).join(", ")}]) and not exists (select 1 from f r where r.src = 'build00' and r.part = c.part and split_part(c.key, '|', 1) in ('check', 'trigger') and split_part(r.key, '|', 1) = split_part(c.key, '|', 1) || '-function' and split_part(r.key, '|', 2) = split_part(c.key, '|', 2) and c.name in (substring(split_part(r.key, '|', 3) from '^[^(]*'), substring(split_part(r.key, '|', 3) from '^[^(.]*[.]([^(]*)'))))`;
-  const sequenceCalls = (part) => `not exists (select 1 from calls c where c.part = ${q(part)} and c.name in (${BUILD_SEQUENCE_CALLS.map(q).join(", ")})) and not exists (select 1 from f where ${part01(part)} and ((f.key like 'column-type|%' and split_part(f.value, '|', 1) <> '') or f.key ~ '^(route[|][^|]*[|][^|]*[|]function|trigger-function[|][^|]*|check-function[|][^|]*)[|].*[.](nextval|setval)[(]' or f.key ~ '^route[|][^|]*[|][^|]*[|]sequence[|]'))`;
+  const sequenceCalls = (part) => `not exists (select 1 from calls c where c.part = ${q(part)} and c.name in (${BUILD_SEQUENCE_CALLS.map(q).join(", ")})) and not exists (select 1 from f where ${part01(part)} and ((f.key like 'column-type|%' and split_part(f.value, '|', 1) <> '') or f.key ~ '^(route[|][^|]*[|][^|]*[|]function|trigger-function[|][^|]*|check-function[|][^|]*)[|].*[.](nextval|setval)[(]' or f.key ~ '^route[|][^|]*[|][^|]*[|]sequence[|]' or (f.key like 'node-function|%' and split_part(f.value, '|', 5) in (${BUILD_SEQUENCE_CALLS.map(q).join(", ")}))))`;
   const routes = (part) => `not exists (select 1 from f where ${part01(part)} and f.key like 'route|%' and (case split_part(f.key, '|', 4) when 'function' then f.value like 'pg_catalog|%' and substring(split_part(f.key, '|', 5) from '^pg_catalog[.]([^(]*)[(]') in (${BUILD_EXPRESSION_CALLS.map(q).join(", ")}) when 'collation' then f.value like 'pg_catalog|%' when 'operator' then true when 'table constraint' then true when 'domain constraint' then true when 'type' then split_part(f.value, '|', 2) ~ '^[ed]' or (split_part(f.value, '|', 2) ~ '^b' and (f.value like 'pg_catalog|%' or split_part(f.value, '|', 2) ~ '^.A')) else false end) is not true)`;
   const rules = (part) => `not exists (select 1 from f where ${part01(part)} and f.key like 'rule|%' and f.value not like '4|%')`;
+  // The stored node trees (X3f), over the CTE node_bad.
+  const expressionNodes = (part) => `not exists (select 1 from node_bad n where n.part = ${q(part)})`;
+  // Each foreign key on either side (X3f): the key's own rows, never this table's columns.
+  const typeReviewed = (ref) => `coalesce((select v.value ~ '^pg_catalog[|]true[|]' and split_part(v.value, '|', 5) in (${BUILD_NODE_TYPES.map(q).join(", ")}) from f v where v.src = 'build00' and v.part = c.part and v.key = 'node-type|' || ${ref}), false)`;
+  const operatorBuiltin = (ref) => `coalesce((select v.value ~ ${q(BUILD_BUILTIN_OPERATOR)} and split_part(v.value, '|', 6) = 'false' from f v where v.src = 'build00' and v.part = c.part and v.key = 'node-operator|' || ${ref}), false)`;
+  const field = (n) => `split_part(c.value, '|', ${n})`;
+  const foreignKeys = (part) => `not exists (select 1 from f c where ${part01(part).replace(/\bf\./g, "c.")} and c.key like 'fk|%' and not exists (select 1 from f d where d.src = 'build00' and d.part = c.part and starts_with(d.key, 'fk-column|' || substr(c.key, 4) || '|'))) and not exists (select 1 from f c where ${part01(part).replace(/\bf\./g, "c.")} and c.key like 'fk-index|%' and c.value !~ '^pg_catalog[.][^,]*(,pg_catalog[.][^,]*)*$') and not exists (select 1 from f c where ${part01(part).replace(/\bf\./g, "c.")} and c.key like 'fk-column|%' and not (${typeReviewed(field(1))} and ${typeReviewed(field(2))} and ${operatorBuiltin(field(3))} and ${operatorBuiltin(field(4))} and ${operatorBuiltin(field(5))}))`;
   return [
     ["public-empty", `not exists (select 1 from f where f.src = 'build00' and f.part = 'public')`],
     ["ledger", `${b("ledger", "status")} = ${q(facts.ledger)}`],
@@ -1317,6 +1342,8 @@ function buildPredicates(facts) {
     ["buckets-sequence-calls", sequenceCalls("buckets")],
     ["buckets-routes", routes("buckets")],
     ["buckets-rules", rules("buckets")],
+    ["buckets-expression-nodes", expressionNodes("buckets")],
+    ["buckets-foreign-keys", foreignKeys("buckets")],
     ["objects-table", `${b("objects", "table")} like 'r|%' and ${b("objects", "column|bucket_id")} = 'text'`],
     ["objects-policies", `not ${has("build00", "objects", ["policy|job_files_anon_insert", "policy|job_files_anon_select", "policy|job_files_anon_delete"])}`],
     ["objects-authority", trues([["objects", "owner_privileges"]])],
@@ -1334,9 +1361,12 @@ function buildPredicates(facts) {
     ["authusers-sequence-calls", sequenceCalls("authusers")],
     ["authusers-routes", routes("authusers")],
     ["authusers-rules", rules("authusers")],
+    ["authusers-expression-nodes", expressionNodes("authusers")],
+    ["authusers-foreign-keys", foreignKeys("authusers")],
     ["marker-absent", `${b("schemas", "schema|stage0_rehearsal")} = '<absent>'`],
     ["database-create", trues([["database", "create"]])],
     ["creator", `${w("role", "name")} = ${q(facts.creator)} or ${has("build00w", "role", [`member|${facts.creator}`])} or split_part(${w("role", "attr")}, '|', 1) = 'true'`],
+    ["writer-identity", `${w("role", "name")} <> '' and ${w("role", "attr")} ~ '^(true|false)([|](true|false)){6}$'`],
   ];
 }
 /** The predicates' names, in order, for the comparator's own table to agree with. */
@@ -1377,6 +1407,58 @@ ${body("build00w")}
   ),
   calls(part, key, name) as (
     select x.part, x.key, regexp_replace(m[1], '^pg_catalog[.]', '') from scanned x cross join lateral regexp_matches(x.s, ${q(BUILD_CALL)}, 'g') as m
+  ),
+  node_trees(part, key, origin, name, tree) as (
+    select f.part, f.key, split_part(f.key, '|', 2), substr(f.key, length(split_part(f.key, '|', 2)) + 7), f.value from f
+     where f.src = 'build00' and f.part in ('buckets', 'authusers') and f.key like 'node|%'
+  ),
+  node_tags(part, key, tag) as (
+    select t.part, t.key, m[1] from node_trees t cross join lateral regexp_matches(t.tree, '[{]([A-Z_]+)', 'g') as m
+  ),
+  node_refs(part, key, field, ref) as (
+    select t.part, t.key, m[1], m[2] from node_trees t cross join lateral regexp_matches(t.tree, ${q(BUILD_NODE_REF)}, 'g') as m
+  ),
+  node_pairs(part, key, opno, implementation) as (
+    select t.part, t.key, m[1], m[2] from node_trees t cross join lateral regexp_matches(t.tree, ':opno ([0-9]+) :opfuncid ([0-9]+)', 'g') as m
+  ),
+  node_facts(part, key, field, ref, fact) as (
+    select r.part, r.key, r.field, r.ref, v.value from node_refs r
+      left join f v on v.src = 'build00' and v.part = r.part
+       and v.key = (case r.field when 'funcid' then 'node-function|' when 'opno' then 'node-operator|' else 'node-type|' end) || r.ref
+  ),
+  node_dependent(part, key) as (
+    select g.part, g.key from node_tags g where g.tag in ('ARRAYCOERCEEXPR', 'COERCEVIAIO', 'MINMAXEXPR')
+    union
+    select x.part, x.key from node_facts x where (x.field = 'funcid' and split_part(x.fact, '|', 4) = 'true') or (x.field = 'opno' and split_part(x.fact, '|', 6) = 'true')
+  ),
+  node_bad(part) as (
+    select t.part from node_trees t where t.tree = '<null>' or t.tree ~ ':(hashfuncid|negfuncid) [1-9]'
+    union all
+    select g.part from node_tags g where g.tag <> all (array[${BUILD_NODE_TAGS.map(q).join(", ")}])
+    union all
+    select t.part from node_trees t
+     where (select count(*) from node_tags g where g.part = t.part and g.key = t.key and g.tag = 'FUNCEXPR') <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'funcid')
+        or (select count(*) from node_tags g where g.part = t.part and g.key = t.key and g.tag in ('DISTINCTEXPR', 'NULLIFEXPR', 'OPEXPR', 'SCALARARRAYOPEXPR')) <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'opno')
+        or (select count(*) from node_pairs p where p.part = t.part and p.key = t.key) <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'opno')
+    union all
+    select x.part from node_facts x join node_trees t on t.part = x.part and t.key = x.key
+     where x.field = 'funcid'
+       and not coalesce(x.fact ~ '^pg_catalog[|]true[|]' and split_part(x.fact, '|', 5) in (${[...BUILD_SEQUENCE_CALLS, ...BUILD_NODE_FUNCTIONS].map(q).join(", ")}), false)
+       and not (t.origin in ('check', 'trigger') and exists (select 1 from f r where r.src = 'build00' and r.part = x.part and r.key = t.origin || '-function|' || t.name || '|' || split_part(x.fact, '|', 6)))
+    union all
+    select x.part from node_facts x join node_trees t on t.part = x.part and t.key = x.key
+     where x.field = 'opno'
+       and not coalesce(x.fact ~ ${q(BUILD_BUILTIN_OPERATOR)}, false)
+       and not (t.origin in ('check', 'trigger') and exists (select 1 from f r where r.src = 'build00' and r.part = x.part and r.key = t.origin || '-function|' || t.name || '|' || split_part(x.fact, '|', 9)))
+    union all
+    select p.part from node_pairs p left join f v on v.src = 'build00' and v.part = p.part and v.key = 'node-operator|' || p.opno
+     where p.implementation <> '0' and p.implementation is distinct from split_part(v.value, '|', 7)
+    union all
+    select x.part from node_facts x
+     where x.field not in ('funcid', 'opno')
+       and (x.fact is null or x.fact = '<absent>'
+            or (exists (select 1 from node_dependent d where d.part = x.part and d.key = x.key)
+                and not (x.fact ~ '^pg_catalog[|]true[|]' and split_part(x.fact, '|', 5) in (${BUILD_NODE_TYPES.map(q).join(", ")}))))
   ),
   bad(name) as (
     select 'digest ' || d.src || '.' || d.part from ((select * from seen except select * from bound) union all (select * from bound except select * from seen)) d
@@ -1461,7 +1543,7 @@ export function build01Text(src, manifest, facts) {
     const parts = facts.digests && facts.digests[s];
     if (!parts || !Object.keys(parts).length || !Object.values(parts).every((d) => /^[0-9a-f]{32}$/.test(d))) throw new Error(`BUILD-01's bound digests of ${s} are missing or malformed`);
   }
-  const reviewedOk = (rows) => rows !== null && typeof rows === "object" && Object.entries(rows).every(([k, d]) => /^(?:(?:trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route)\||relation$)/.test(k) && /^[0-9a-f]{32}$/.test(d));
+  const reviewedOk = (rows) => rows !== null && typeof rows === "object" && Object.entries(rows).every(([k, d]) => /^(?:(?:trigger|trigger-function|check|check-function|default|column-type|index|index-expr|index-pred|rule|domain-check|domain-default|route|node|node-function|node-operator|node-type|fk|fk-column|fk-index)\||relation$|policies$)/.test(k) && /^[0-9a-f]{32}$/.test(d));
   if (!facts.reviewed || Object.keys(facts.reviewed).sort().join() !== "authusers,buckets" || !reviewedOk(facts.reviewed.buckets) || !reviewedOk(facts.reviewed.authusers)) throw new Error("BUILD-01's reviewed set is missing or malformed");
   const files = buildFiles(src, manifest);
   const at = files.findIndex((f) => f.version === BUILD_STORE_AFTER);

@@ -95,6 +95,7 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
     "marker-absent": [set(b, "schemas", "schema|stage0_rehearsal", "postgres"), w],
     "database-create": [b, set(w, "database", "create", "false")],
     creator: [b, set(set(w, "role", "name", "someone"), "role", "attr", "false|true|false|false|true|false|false")],
+    "writer-identity": [b, set(w, "role", "attr", "true|true")],
   };
   // X3e's rows are in the reviewed set too: each of these asks with its own reading's set.
   const OWN_SET = new Set();
@@ -106,6 +107,8 @@ test("4W-M2 each preflight predicate, removed, turns its own negative into exact
       [`${p}-sequence-calls`, add(p, "default|x", "nextval(('s'::text)::regclass)")],
       [`${p}-routes`, add(p, "route|default|x|function|storage.f()", "storage|plpgsql|postgres|false|v||a|b\ndefinition")],
       [`${p}-rules`, add(p, "rule|x", "3|O|false|CREATE RULE x")],
+      [`${p}-expression-nodes`, add(p, "node|default|x", "{ROWCOMPAREEXPR :rctype 1 }")],
+      [`${p}-foreign-keys`, add(p, "fk|out|t|x", "o|s|true|false|FOREIGN KEY (a) REFERENCES o(b)")],
     ]) { NEG[name] = [x, w]; OWN_SET.add(name); }
   }
   assert.deepEqual(Object.keys(NEG).sort(), [...C.BUILD_PREDICATE_NAMES].sort());
@@ -164,7 +167,7 @@ test("4W-M5 X3d: each part of the exact-set rule, removed, turns its real shape 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("4W-M6 X3e: each part of the stored-expression rules, removed, turns its real shape into exactly an acceptance", async () => {
+test("4W-M6 X3e and X3f: each part of the stored-expression rules, removed, takes exactly its own stop off its real shape", async () => {
   const base = json("w-expr-base.json");
   const applyDelta = (rows, { set, drop }) => {
     const k = (r) => JSON.stringify([r.part, r.key]);
@@ -174,7 +177,11 @@ test("4W-M6 X3e: each part of the stored-expression rules, removed, turns its re
     return [...m.values()];
   };
   const fixture = (f) => { const r = json(f); return { ...r, build00: applyDelta(base.build00, r.b00), build00w: applyDelta(base.build00w, r.b00w) }; };
-  const SEQ_TEXT = ["const sequenceFree = (part) => scannedOf(part).every(({ s }) => !callsOf(s).some((c) => SEQUENCE_CALLS.includes(c)))\n  && ", "const sequenceFree = (part) => "];
+  // Both of the layers that read a sequence call: its text, and its resolved identity. 4W-11 and 4W-24 show each catching it alone.
+  const SEQ_TEXT = [
+    "const sequenceFree = (part) => scannedOf(part).every(({ s }) => !callsOf(s).some((c) => SEQUENCE_CALLS.includes(c)))\n  && Object.entries(part ?? {}).every(([k, v]) => !(k.startsWith(\"column-type|\") && v.split(\"|\")[0] !== \"\") && !NAMES_SEQUENCE_CALL.test(k) && !/^route\\|[^|]*\\|[^|]*\\|sequence\\|/.test(k) && !(k.startsWith(\"node-function|\") && SEQUENCE_CALLS.includes(v.split(\"|\")[4])));",
+    "const sequenceFree = (part) => Object.entries(part ?? {}).every(([k, v]) => !(k.startsWith(\"column-type|\") && v.split(\"|\")[0] !== \"\") && !NAMES_SEQUENCE_CALL.test(k) && !/^route\\|[^|]*\\|[^|]*\\|sequence\\|/.test(k));",
+  ];
   const CASES = [
     ["a sequence call with no dependency: a default", ...SEQ_TEXT, "w-expr-stop-buckets-default-nextval-no-constant-dependency.json", "buckets-sequence-calls"],
     ["a sequence call with no dependency: a CHECK on auth.users", ...SEQ_TEXT, "w-expr-stop-authusers-check-dynamic-nextval.json", "authusers-sequence-calls"],
@@ -191,16 +198,32 @@ test("4W-M6 X3e: each part of the stored-expression rules, removed, turns its re
     ["an operator class", "if (kind === \"type\") return /^[ed]/.test(detail) || (detail.startsWith(\"b\") && (schema === \"pg_catalog\" || detail[1] === \"A\"));\n  return false;", "return true;", "w-expr-stop-authusers-custom-operator-class.json", "authusers-routes"],
     ["an INSERT rule", "!k.startsWith(\"rule|\") || v.startsWith(\"4|\")", "true", "w-expr-stop-authusers-rule-on-insert.json", "authusers-rules"],
     ["an UPDATE rule", "!k.startsWith(\"rule|\") || v.startsWith(\"4|\")", "true", "w-expr-stop-buckets-rule-on-update.json", "buckets-rules"],
-    ["a child table", "\"buckets-relation\": (b) => b.buckets?.relation === BUILD_RELATION,", "\"buckets-relation\": () => true,", "w-expr-stop-buckets-inherited-by-a-child.json", "buckets-relation"],
+    ["a child table", "\"buckets-relation\": (b) => relationHolds(b.buckets),", "\"buckets-relation\": () => true,", "w-expr-stop-buckets-inherited-by-a-child.json", "buckets-relation"],
+    // X3f.
+    ["a type-dependent node over an enum", "if (dependent && !typeFactReviewed(fact)) return false;", "", "w-expr-stop-buckets-least-enum.json", "buckets-expression-nodes"],
+    ["the same, over a domain", "if (dependent && !typeFactReviewed(fact)) return false;", "", "w-expr-stop-authusers-least-domain.json", "authusers-expression-nodes"],
+    ["the same, CoerceViaIO to an unreviewed built-in", "if (dependent && !typeFactReviewed(fact)) return false;", "", "w-expr-stop-buckets-coerceviaio-unreviewed-builtin.json", "buckets-expression-nodes"],
+    ["a tag that is type-dependent", "let dependent = tags.some((t) => TYPE_DEPENDENT_TAGS.includes(t));", "let dependent = false;", "w-expr-stop-authusers-greatest-enum.json", "authusers-expression-nodes"],
+    ["a pseudo-type function", "if (pseudo === \"true\") dependent = true;", "", "w-expr-stop-buckets-pseudo-type-function-over-enum.json", "buckets-expression-nodes"],
+    ["a pseudo-type operator", "if (f[5] === \"true\") dependent = true;", "", "w-expr-stop-authusers-enum-equality-in-check.json", "authusers-expression-nodes"],
+    ["a node off the list", "if (!tags.every((t) => BUILD_NODE_TAGS.includes(t))) return false;", "", "w-expr-stop-buckets-row-comparison.json", "buckets-expression-nodes"],
+    ["another node off the list", "if (!tags.every((t) => BUILD_NODE_TAGS.includes(t))) return false;", "", "w-expr-stop-authusers-subscripting.json", "authusers-expression-nodes"],
+    ["a function off the list, which only its identity shows", "(BUILD_NODE_FUNCTIONS.includes(fname) || SEQUENCE_CALLS.includes(fname))", "true", "w-expr-stop-buckets-unlisted-cast-function.json", "buckets-expression-nodes"],
+    // An enum key is refused twice over, by its types and by enum_eq's pseudo-type arguments.
+    ["a foreign key's custom type", "return typeFactReviewed(part[`node-type|${fkType}`]) && typeFactReviewed(part[`node-type|${pkType}`]) && [pf, pp, ff].every((o) => foreignKeyOperator(part, o));", "return true;", "w-expr-stop-buckets-fk-out-custom-type.json", "buckets-foreign-keys"],
+    ["a foreign key's custom operator and class", "if (k.startsWith(\"fk-index|\")) return OPERATOR_CLASSES.test(v);\n  if (!k.startsWith(\"fk-column|\")) return true;", "if (k.startsWith(\"fk-index|\")) return true;\n  if (k.startsWith(\"fk-column|\")) return true;\n  if (!k.startsWith(\"fk-column|\")) return true;", "w-expr-stop-authusers-fk-out-custom-opclass.json", "authusers-foreign-keys"],
+    ["a referencing domain", "return typeFactReviewed(part[`node-type|${fkType}`]) && typeFactReviewed(part[`node-type|${pkType}`]) && ", "return ", "w-expr-stop-authusers-fk-in-domain.json", "authusers-foreign-keys"],
   ];
   const dir = mkdtempSync(join(tmpdir(), "s0-4w-expr-"));
   try {
     for (const [n, [name, from, to, shape, want]] of CASES.entries()) {
       const r = fixture(shape);
       const opts = { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(r.build00) };
-      assert.deepEqual(C.buildPredicateFindings(r.build00, r.build00w, opts).map((f) => f.key), [want], `${name}: the original refuses`);
+      // A shape can stop under two rules, by its text and by its node tree. Removing one removes exactly that stop.
+      const names = C.buildPredicateFindings(r.build00, r.build00w, opts).map((f) => f.key);
+      assert.ok(names.includes(want), `${name}: the original refuses: ${names.join(", ")}`);
       const K = await load(COMPARE, [from, to], dir, `expr${n}`);
-      assert.deepEqual(K.buildPredicateFindings(r.build00, r.build00w, opts), [], `${name}: the mutant accepts`);
+      assert.deepEqual(K.buildPredicateFindings(r.build00, r.build00w, opts).map((f) => f.key), names.filter((x) => x !== want), `${name}: the mutant removes exactly that stop`);
     }
     // A custom base type's own row. In the real shape its input function stops too, so this reading holds the row alone.
     {

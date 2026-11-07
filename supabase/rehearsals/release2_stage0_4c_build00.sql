@@ -38,6 +38,8 @@
 -- What runs on BUILD-01's INSERTs, for storage.buckets (part buckets) and auth.users
 -- (part authusers). B1 binds these rows exactly (plan §2.1, §0.7):
 --   relation                          relkind, relispartition, relhassubclass, its parents
+--   policies                          how many rows pg_policy holds for the table. Evidence
+--                                     only: whether RLS applies to the writer is BUILD-00W's
 --   column-type|<column>              every column: attidentity, attgenerated, its type
 --   default|<column>                  every stored default or generated expression:
 --                                     pg_get_expr
@@ -55,6 +57,24 @@
 --   trigger-function|<name>|<fn>      each function reached from a trigger on a path
 --   check-function|<name>|<fn>        with no type on it (below); the same from a CHECK
 --   route|<origin>|<name>|<kind>|<id> every other object the walk reaches
+-- Each stored expression's node tree, as PostgreSQL stored it, and what it names (X3f):
+--   node|<origin>|<name>              the pg_node_tree as text. <origin> is default, index-expr,
+--                                     index-pred, check, trigger, domain-check or domain-default
+--   node-function|<oid>               each :funcid: schema, whether its oid is below 16384 (made
+--                                     at initdb), provolatile, whether an argument is a pseudo-
+--                                     type, its name and signature
+--   node-operator|<oid>               each :opno: schema, oid below 16384, then its oprcode's
+--                                     schema, oid below 16384, provolatile, pseudo-type argument,
+--                                     oid, name and signature, then the operator's own signature
+--   node-type|<oid>                   each type field: schema, oid below 16384, typtype,
+--                                     typcategory and name
+-- Each foreign key on either side of the table, read from both of its relations (X3f), since
+-- an UPDATE of a referenced key and an INSERT of a referencing row each compare through it:
+--   fk|<in or out>|<table>|<name>     the other relation, confmatchtype, convalidated,
+--                                     condeferrable, pg_get_constraintdef
+--   fk-column|<in or out>|<table>|<name>|<n>  each key column: the referencing and referenced
+--                                     types' oids, the pf, pp and ff operators' oids, both names
+--   fk-index|<in or out>|<table>|<name>  each operator class of the index it depends on
 -- THE WALK starts at each column's type and collation, each stored default or generated
 -- expression, each index, each exclusion constraint, each CHECK and each trigger. It
 -- follows every pg_depend row but those naming a schema, a language or an extension, and
@@ -155,6 +175,18 @@ reviewed_checks as (
     from reviewed_tables r join pg_constraint k on k.conrelid = r.rel
    where k.contype = 'c'
 ),
+reviewed_fks as (
+  select r.part, (case when k.conrelid = r.rel then 'out' else 'in' end) as dir, k.oid, k.conname, k.conrelid, k.confrelid, k.conindid
+    from reviewed_tables r join pg_constraint k on k.contype = 'f' and (k.conrelid = r.rel or k.confrelid = r.rel)
+),
+reviewed_fk_columns as (
+  select f.part, f.dir, f.conrelid, f.conname, x.ord, a.atttypid as fk_type, b.atttypid as pk_type, a.attname as fk_col, b.attname as pk_col, x.pf, x.pp, x.ff
+    from reviewed_fks f
+    join pg_constraint k on k.oid = f.oid
+    cross join lateral unnest(k.conkey, k.confkey, k.conpfeqop, k.conppeqop, k.conffeqop) with ordinality as x(fk, pk, pf, pp, ff, ord)
+    join pg_attribute a on a.attrelid = k.conrelid and a.attnum = x.fk
+    join pg_attribute b on b.attrelid = k.confrelid and b.attnum = x.pk
+),
 reviewed_exclusions as (
   select r.part, r.rel, k.oid, k.conname
     from reviewed_tables r join pg_constraint k on k.conrelid = r.rel
@@ -215,6 +247,38 @@ walked as (
    where not (w.is_root and w.origin <> 'column')
      and not (w.classid = 'pg_class'::regclass::oid and w.objid = w.rel::oid)
    group by w.part, w.origin, w.name, w.classid, w.objid, i.type, i.schema, i.identity
+),
+reviewed_domain_checks as (
+  select distinct w.part, c.oid, c.contypid
+    from walked w join pg_constraint c on w.classid = 'pg_constraint'::regclass::oid and c.oid = w.objid
+   where c.contypid <> 0
+),
+reviewed_domains as (
+  select distinct w.part, w.objid as oid from walked w where w.classid = 'pg_type'::regclass::oid
+),
+reviewed_trees(part, origin, name, tree) as (
+  select d.part, 'default', d.attname::text, d.adbin::text from reviewed_defaults d
+  union all
+  select i.part, 'index-expr', i.relname::text, i.indexprs::text from reviewed_indexes i where i.indexprs is not null
+  union all
+  select i.part, 'index-pred', i.relname::text, i.indpred::text from reviewed_indexes i where i.indpred is not null
+  union all
+  select k.part, 'check', k.conname::text, c.conbin::text from reviewed_checks k join pg_constraint c on c.oid = k.oid
+  union all
+  select t.part, 'trigger', t.tgname::text, g.tgqual::text from reviewed_triggers t join pg_trigger g on g.oid = t.oid where g.tgqual is not null
+  union all
+  select d.part, 'domain-check', d.contypid::regtype::text || '.' || k.conname, k.conbin::text from reviewed_domain_checks d join pg_constraint k on k.oid = d.oid
+  union all
+  select d.part, 'domain-default', d.oid::regtype::text, t.typdefaultbin::text from reviewed_domains d join pg_type t on t.oid = d.oid where t.typtype = 'd' and t.typdefaultbin is not null
+),
+tree_refs(part, field, oid) as (
+  select t.part, m[1], m[2]::oid
+    from reviewed_trees t cross join lateral regexp_matches(t.tree, ':(funcid|opno|consttype|vartype|resulttype|funcresulttype|opresulttype|minmaxtype|coalescetype|casetype|array_typeid|element_typeid|typeId|type) ([0-9]+)', 'g') as m
+   where m[2] <> '0'
+  union
+  select c.part, 'opno', x.op from reviewed_fk_columns c cross join lateral (values (c.pf), (c.pp), (c.ff)) as x(op)
+  union
+  select c.part, 'type', x.t from reviewed_fk_columns c cross join lateral (values (c.fk_type), (c.pk_type)) as x(t)
 ),
 obs(part, key, value) as (
   select 'public', 'relation|' || c.relname, c.relkind::text || '|' || pg_get_userbyid(c.relowner)::text
@@ -364,15 +428,53 @@ obs(part, key, value) as (
     from reviewed_tables r join pg_rewrite w on w.ev_class = r.rel
   union all
   select d.part, 'domain-check|' || d.contypid::regtype::text || '|' || k.conname, pg_get_constraintdef(k.oid)
-    from (select distinct w.part, c.oid, c.contypid
-            from walked w join pg_constraint c on w.classid = 'pg_constraint'::regclass::oid and c.oid = w.objid
-           where c.contypid <> 0) d
-    join pg_constraint k on k.oid = d.oid
+    from reviewed_domain_checks d join pg_constraint k on k.oid = d.oid
   union all
   select d.part, 'domain-default|' || d.oid::regtype::text, pg_get_expr(t.typdefaultbin, 0)
-    from (select distinct w.part, w.objid as oid from walked w where w.classid = 'pg_type'::regclass::oid) d
-    join pg_type t on t.oid = d.oid
+    from reviewed_domains d join pg_type t on t.oid = d.oid
    where t.typtype = 'd' and t.typdefaultbin is not null
+  union all
+  select r.part, 'policies', (select count(*)::text from pg_policy p where p.polrelid = r.rel)
+    from reviewed_tables r where r.rel is not null
+  union all
+  select t.part, 'node|' || t.origin || '|' || t.name, t.tree from reviewed_trees t
+  union all
+  select r.part, 'node-function|' || r.oid::text,
+         coalesce((select n.nspname::text || '|' || (p.oid < 16384)::text || '|' || p.provolatile::text || '|'
+                          || (exists (select 1 from unnest(p.proargtypes::oid[]) as a(t) join pg_type y on y.oid = a.t where y.typtype = 'p'))::text || '|'
+                          || p.proname::text || '|' || n.nspname::text || '.' || p.proname::text || '(' || oidvectortypes(p.proargtypes) || ')'
+                     from pg_proc p join pg_namespace n on n.oid = p.pronamespace where p.oid = r.oid), '<absent>')
+    from tree_refs r where r.field = 'funcid'
+  union all
+  select r.part, 'node-operator|' || r.oid::text,
+         coalesce((select n.nspname::text || '|' || (o.oid < 16384)::text || '|' || m.nspname::text || '|' || (p.oid < 16384)::text || '|' || p.provolatile::text || '|'
+                          || (exists (select 1 from unnest(p.proargtypes::oid[]) as a(t) join pg_type y on y.oid = a.t where y.typtype = 'p'))::text || '|'
+                          || p.oid::text || '|' || p.proname::text || '|' || m.nspname::text || '.' || p.proname::text || '(' || oidvectortypes(p.proargtypes) || ')' || '|'
+                          || o.oid::regoperator::text
+                     from pg_operator o join pg_namespace n on n.oid = o.oprnamespace
+                     join pg_proc p on p.oid = o.oprcode::oid join pg_namespace m on m.oid = p.pronamespace
+                    where o.oid = r.oid), '<absent>')
+    from tree_refs r where r.field = 'opno'
+  union all
+  select r.part, 'node-type|' || r.oid::text,
+         coalesce((select n.nspname::text || '|' || (t.oid < 16384)::text || '|' || t.typtype::text || '|' || t.typcategory::text || '|' || t.typname::text
+                     from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.oid = r.oid), '<absent>')
+    from (select distinct x.part, x.oid from tree_refs x where x.field not in ('funcid', 'opno')) r
+  union all
+  select f.part, 'fk|' || f.dir || '|' || f.conrelid::regclass::text || '|' || f.conname,
+         f.confrelid::regclass::text || '|' || k.confmatchtype::text || '|' || k.convalidated::text || '|' || k.condeferrable::text || '|' || pg_get_constraintdef(k.oid)
+    from reviewed_fks f join pg_constraint k on k.oid = f.oid
+  union all
+  select c.part, 'fk-column|' || c.dir || '|' || c.conrelid::regclass::text || '|' || c.conname || '|' || c.ord::text,
+         c.fk_type::text || '|' || c.pk_type::text || '|' || c.pf::text || '|' || c.pp::text || '|' || c.ff::text || '|' || c.fk_col::text || '|' || c.pk_col::text
+    from reviewed_fk_columns c
+  union all
+  select f.part, 'fk-index|' || f.dir || '|' || f.conrelid::regclass::text || '|' || f.conname,
+         coalesce((select string_agg(n.nspname::text || '.' || c.opcname::text, ',' order by x.ord)
+                     from pg_index i cross join lateral unnest(i.indclass::oid[]) with ordinality as x(opc, ord)
+                     join pg_opclass c on c.oid = x.opc join pg_namespace n on n.oid = c.opcnamespace
+                    where i.indexrelid = f.conindid), '<none>')
+    from reviewed_fks f
   union all
   select 'authusers', 'constraint|' || k.conname, k.contype::text || '|' || pg_get_constraintdef(k.oid)
     from pg_constraint k where k.conrelid = to_regclass('auth.users')

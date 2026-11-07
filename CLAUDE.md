@@ -653,6 +653,22 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
           So bodies stay B1's review item: bodyReviewItemsOf, with an explicit disposition per digest
           (`body-review`). `w-expr-limit-string-body-helper.json` records what only a reader can catch.
         Its fixtures are `w-expr-*`, each a stored difference from `w-expr-base.json`;
+      - **X3f: the stored node trees** (Codex XE-R1, XE-R2, 5b, review of c940f0f; plan §0.9). Deparsed
+        text cannot show what a node runs: `LEAST` over an enum selects the type's default comparison
+        through the type cache, so a replaced comparator moved no reading, no dependency named it, and
+        BUILD-01 ran it. BUILD-00 now reports each pg_node_tree and the catalog row of each OID in it, and
+        `<part>-expression-nodes` judges them in both implementations (BUILD_NODE_TAGS, _FUNCTIONS, _TYPES).
+        `<part>-foreign-keys` reads each key's own rows, both sides, and `writerOf` takes the writer from
+        BUILD-00W's rows, never BUILD-00's reader. What this taught:
+        - **a node without a funcid can run code:** MINMAX, CoerceViaIO and ArrayCoerce dispatch on the type, so
+          every type in such a tree must be reviewed, and enum or domain passing the walk's kind rule proves nothing;
+        - **IMMUTABLE is a promise, not proof:** a body declared IMMUTABLE that calls nextval consumes the sequence;
+        - **PostgreSQL leaves an exclusion constraint's operators to the operator class** (no pg_depend row), hence
+          the `conexclop` edge;
+        - **a reading that does not move proves nothing about a body:** Codex's negative keeps identical readings,
+          so only the shape's own stop catches it;
+        - **operator names cannot end in `+` or `-`** unless they hold `~!@#%^&|?`, and a bare `commutator =` name
+          resolves outside the schema: write `OPERATOR(s.x)`;
       - **PERFORM_DECLARED is not PERFORM_QUERIES:** its entries (RB-43's two, and
         P1-4C's in stage0-4c-performs.mjs, data in the guard chain) have no receipt,
         no profile names them, and an envelope quoting one stays R4;

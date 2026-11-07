@@ -47,6 +47,12 @@
 //         now moves the reading
 //   4W-23 X3e: ordinary built-in forms are kept; a string-defined body stays B1's review
 //         item, with an explicit disposition
+//   4W-24 X3f: the stored node trees, by unit cases on real rows; one set of lists in both
+//         implementations
+//   4W-25 X3f: Codex's enum comparator, with identical readings, stops in both before any
+//         write; the implicit routes over each kind of type; the stock-like controls
+//   4W-26 X3f: policy counts zero and nonzero, as evidence only; the writer is BUILD-00W's
+//   4W-27 X3f: foreign keys from their own rows, on both sides of each table
 // Each database run in these is the harness's, on PGlite, which is not a
 // dependency of this repository; the test runs the comparator and the classifier on
 // what that run recorded, and each 55P03 and 40P01 there was raised on purpose.
@@ -473,7 +479,7 @@ test("4W-10 M-6g admits BUILD-01 in each ledger form, and refuses every statemen
 
 test("4W-11 the preflight predicates: on every real shape the comparator and BUILD-01's own read name the same ones; each predicate fails on its own negative; a malformed reading stops", () => {
   assert.deepEqual([...C.BUILD_PREDICATE_NAMES], [...A.BUILD_PREDICATE_NAMES], "one table of names, in both places");
-  assert.equal(C.BUILD_PREDICATE_NAMES.length, 36);
+  assert.equal(C.BUILD_PREDICATE_NAMES.length, 41);
   const WANT = {
     "job-files-row": ["buckets-rows"], "customer-uploads-row": ["buckets-rows"], "extra-notnull-bucket-column": ["buckets-notnull"], "generated-bucket-column": ["buckets-generated"],
     "no-arbiter": ["buckets-arbiter"], "policy-present": ["objects-policies"], "publication-all-tables": ["publication-present"], "publication-absent": ["publication-authority", "publication-present"],
@@ -531,6 +537,7 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
     ["marker-absent", set(b, "schemas", "schema|stage0_rehearsal", "postgres"), w],
     ["database-create", b, set(w, "database", "create", "false")],
     ["creator", b, set(set(w, "role", "name", "someone"), "role", "attr", "false|true|false|false|true|false|false")],
+    ["writer-identity", b, set(w, "role", "session", "x").map((r) => (r.part === "role" && r.key === "attr" ? { ...r, value: "true|true" } : r))],
   ]) { assert.deepEqual(ask(x, y), [name], name); tried.add(name); }
   // X3e's rows are in the reviewed set too, so each of these asks with its own reading's set, and names only its own rule.
   for (const p of ["buckets", "authusers"]) {
@@ -540,6 +547,8 @@ test("4W-11 the preflight predicates: on every real shape the comparator and BUI
       [`${p}-sequence-calls`, add(b, p, "default|x", "nextval(('s'::text)::regclass)")],
       [`${p}-routes`, add(b, p, "route|default|x|function|storage.f()", "storage|plpgsql|postgres|false|v||a|b\ndefinition")],
       [`${p}-rules`, add(b, p, "rule|x", "3|O|false|CREATE RULE x")],
+      [`${p}-expression-nodes`, add(b, p, "node|default|x", "{ROWCOMPAREEXPR :rctype 1 }")],
+      [`${p}-foreign-keys`, add(b, p, "fk|out|t|x", "o|s|true|false|FOREIGN KEY (a) REFERENCES o(b)")],
     ]) {
       assert.deepEqual(C.buildPredicateFindings(x, w, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(x) }).map((f) => f.key), [name], name);
       tried.add(name);
@@ -1016,25 +1025,25 @@ const EXPR_STOPS = {
   "default-setval": ["routes", "sequence-calls"],
   "default-setval-no-constant-dependency": ["sequence-calls"],
   "identity-column": ["sequence-calls"],
-  "default-function": ["expression-calls", "routes"],
-  "generated-function": ["expression-calls", "routes"],
-  "index-expression-function": ["expression-calls", "routes"],
-  "index-predicate-function": ["expression-calls", "routes"],
-  "domain-check-function": ["expression-calls", "routes"],
-  "domain-chain": ["expression-calls", "routes"],
+  "default-function": ["expression-calls", "expression-nodes", "routes"],
+  "generated-function": ["expression-calls", "expression-nodes", "routes"],
+  "index-expression-function": ["expression-calls", "expression-nodes", "routes"],
+  "index-predicate-function": ["expression-calls", "expression-nodes", "routes"],
+  "domain-check-function": ["expression-calls", "expression-nodes", "routes"],
+  "domain-chain": ["expression-calls", "expression-nodes", "routes"],
   "domain-check-nextval": ["routes", "sequence-calls"],
   "domain-check-dynamic-nextval": ["sequence-calls"],
   "domain-default-nextval": ["routes", "sequence-calls"],
-  "array-of-domain": ["expression-calls", "routes"],
-  "default-custom-operator": ["routes"],
-  "default-operator-over-unlisted-builtin": ["routes"],
-  "default-custom-cast": ["routes"],
-  "operator-implemented-by-nextval": ["routes", "sequence-calls"],
-  "operator-implemented-by-nextval-computed": ["routes", "sequence-calls"],
+  "array-of-domain": ["expression-calls", "expression-nodes", "routes"],
+  "default-custom-operator": ["expression-nodes", "routes"],
+  "default-operator-over-unlisted-builtin": ["expression-nodes", "routes"],
+  "default-custom-cast": ["expression-nodes", "routes"],
+  "operator-implemented-by-nextval": ["expression-nodes", "routes", "sequence-calls"],
+  "operator-implemented-by-nextval-computed": ["expression-nodes", "routes", "sequence-calls"],
   "check-custom-operator-over-nextval": ["sequence-calls"],
   "check-nextval": ["routes", "sequence-calls"],
   "check-dynamic-nextval": ["sequence-calls"],
-  "check-through-domain": ["expression-calls", "routes"],
+  "check-through-domain": ["expression-calls", "expression-nodes", "routes"],
   "trigger-when-nextval": ["routes", "sequence-calls"],
   "trigger-when-dynamic-nextval": ["sequence-calls"],
   "rule-on-insert": ["rules"],
@@ -1046,22 +1055,51 @@ const EXPR_STOPS = {
   "custom-collation": ["routes"],
   "custom-operator-class": ["routes"],
   "exclusion-custom-operator": ["routes"],
-  "builtin-running-a-query": ["expression-calls"],
-  "builtin-with-a-side-effect": ["expression-calls"],
+  "builtin-running-a-query": ["expression-calls", "expression-nodes"],
+  "generated-immutable-body-calling-nextval": ["expression-calls", "expression-nodes", "routes"],
+  "least-enum": ["expression-nodes"],
+  "greatest-enum": ["expression-nodes"],
+  "least-domain": ["expression-nodes"],
+  "least-domain-over-enum": ["expression-nodes"],
+  "least-array-of-enum": ["expression-nodes"],
+  "coerceviaio-from-enum": ["expression-nodes"],
+  "coerceviaio-to-enum": ["expression-nodes"],
+  "coerceviaio-unreviewed-builtin": ["expression-nodes"],
+  "arraycoerce-enum": ["expression-nodes"],
+  "generated-least-enum": ["expression-nodes"],
+  "check-least-enum": ["expression-nodes"],
+  "index-expression-least-enum": ["expression-nodes"],
+  "index-predicate-least-enum": ["expression-nodes"],
+  "trigger-when-least-enum": ["expression-nodes"],
+  "domain-check-least-enum": ["expression-nodes"],
+  "domain-default-least-enum": ["expression-nodes"],
+  "enum-equality-in-check": ["expression-nodes"],
+  "pseudo-type-function-over-enum": ["expression-nodes"],
+  "unlisted-cast-function": ["expression-nodes"],
+  "row-comparison": ["expression-nodes"],
+  "subscripting": ["expression-nodes"],
+  "fk-out-custom-type": ["foreign-keys"],
+  "fk-in-domain": ["foreign-keys"],
+  "fk-out-custom-opclass": ["foreign-keys"],
+  "builtin-with-a-side-effect": ["expression-calls", "expression-nodes"],
 };
 const EXPR_AFTER = {
   "default-added": ["reviewed", "routes", "sequence-calls"],
   "default-replaced": ["reviewed", "sequence-calls"],
-  "generated-added": ["expression-calls", "reviewed", "routes"],
-  "index-expression-added": ["expression-calls", "reviewed", "routes"],
-  "index-predicate-replaced": ["expression-calls", "reviewed", "routes"],
-  "domain-check-added": ["expression-calls", "reviewed", "routes"],
+  "generated-added": ["expression-calls", "expression-nodes", "reviewed", "routes"],
+  "index-expression-added": ["expression-calls", "expression-nodes", "reviewed", "routes"],
+  "index-predicate-replaced": ["expression-calls", "expression-nodes", "reviewed", "routes"],
+  "domain-check-added": ["expression-calls", "expression-nodes", "reviewed", "routes"],
   "domain-default-added": ["reviewed", "routes", "sequence-calls"],
   "rule-added": ["reviewed", "rules"],
   "delete-rule-changed": ["reviewed"],
   "check-operator-function-replaced": ["reviewed"],
   "check-operator-swapped": ["reviewed"],
   "check-custom-cast-function-replaced": ["reviewed"],
+  "fk-added": ["reviewed"],
+  "fk-referencing-table-added": ["reviewed"],
+  "fk-removed": ["reviewed"],
+  "policy-added": ["reviewed"],
   "helper-in-a-parsed-body-replaced": ["reviewed"],
 };
 const EXPR_BASE = json("w-expr-base.json");
@@ -1075,6 +1113,7 @@ const applyDelta = (base, { set, drop }) => {
 const exprFixture = (f) => { const r = json(f); return { ...r, build00: applyDelta(EXPR_BASE.build00, r.b00), build00w: applyDelta(EXPR_BASE.build00w, r.b00w) }; };
 const PARTS = ["buckets", "authusers"];
 const asks = (r, reviewed) => C.buildPredicateFindings(r.build00, r.build00w, { creator: "postgres", ledger: "absent-table", reviewed }).map((f) => f.key).sort();
+const ask2 = (b, w) => C.buildPredicateFindings(b, w, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(b) }).map((f) => f.key);
 
 test("4W-20 X3e: a stored expression's text is read, never run: calls are found outside literals and quoted names, and both implementations hold the same lists", () => {
   assert.deepEqual([...A.BUILD_EXPRESSION_CALLS], [...C.BUILD_EXPRESSION_CALLS], "one list, in both places");
@@ -1225,7 +1264,7 @@ test("4W-22 X3e: addition and replacement after the review stop in both implemen
 test("4W-23 X3e: ordinary built-in forms and reviewed routes are kept, a literal naming a function among them; what a string-defined body calls stays B1's review item, with an explicit disposition", () => {
   const files = readdirSync(FIX);
   const wanted = [];
-  for (const [name, parts] of [["builtins", PARTS], ["trigger-when-builtin", ["buckets"]], ["reviewed-operator-in-check", PARTS], ["reviewed-helper-in-a-parsed-body", PARTS]]) {
+  for (const [name, parts] of [["builtins", PARTS], ["trigger-when-builtin", ["buckets"]], ["reviewed-operator-in-check", PARTS], ["reviewed-helper-in-a-parsed-body", PARTS], ["fk-builtin", PARTS], ["policy-rls-off", PARTS], ["policy-rls-on-superuser", PARTS]]) {
     for (const part of parts) {
       const f = `w-expr-commit-${part}-${name}.json`;
       wanted.push(f);
@@ -1238,6 +1277,7 @@ test("4W-23 X3e: ordinary built-in forms and reviewed routes are kept, a literal
       assert.equal(r.consumed, false, `${part} ${name}: the witness`);
     }
   }
+  wanted.push("w-expr-commit-codex-stock-controls.json");
   assert.deepEqual(files.filter((f) => f.startsWith("w-expr-commit-")).sort(), wanted.sort(), "exactly these shapes");
   for (const part of PARTS) {
     const r = exprFixture(`w-expr-commit-${part}-builtins.json`);
@@ -1282,4 +1322,209 @@ test("4W-23 X3e: ordinary built-in forms and reviewed routes are kept, a literal
   }
   // M-6f holds the read with its new calls.
   assert.deepEqual(item4cProblems(OUT["BUILD-00"], "BUILD-00"), []);
+});
+
+/** A base reading with extra rows on one table, asked with its own reviewed set: only the rule under test can stop it. */
+const withRows = (part, rows) => {
+  const added = Object.entries(rows).map(([key, value]) => ({ part, key, value }));
+  const keys = new Set(added.map((r) => r.key));
+  return [...EXPR_BASE.build00.filter((r) => !(r.part === part && keys.has(r.key))), ...added];
+};
+const stopsOf = (build00) => C.buildPredicateFindings(build00, EXPR_BASE.build00w, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(build00) }).map((f) => f.key).sort();
+
+test("4W-24 X3f: each stored node tree is read for what it names, never run. Every function, operator and type resolves against the catalog, and a form it cannot resolve stops", () => {
+  assert.deepEqual([...A.BUILD_NODE_TAGS], [...C.BUILD_NODE_TAGS], "one list of nodes, in both places");
+  assert.deepEqual([...A.BUILD_NODE_FUNCTIONS], [...C.BUILD_NODE_FUNCTIONS], "one list of functions, in both places");
+  assert.deepEqual([...A.BUILD_NODE_TYPES], [...C.BUILD_NODE_TYPES], "one list of types, in both places");
+  for (const unsafe of ["ROWCOMPAREEXPR", "SUBSCRIPTINGREF", "FIELDSELECT", "FIELDSTORE", "ROWEXPR", "SUBLINK", "SUBPLAN", "AGGREF", "WINDOWFUNC", "PARAM", "XMLEXPR", "JSONEXPR", "NEXTVALUEEXPR", "CONVERTROWTYPEEXPR"]) assert.ok(!C.BUILD_NODE_TAGS.includes(unsafe), unsafe);
+  for (const f of ["nextval", "setval", "currval", "lastval", "query_to_xml", "set_config", "pg_advisory_lock", "money", "textcat"]) assert.ok(!C.BUILD_NODE_FUNCTIONS.includes(f), f);
+  for (const t of ["money", "inet", "record", "anyenum", "anyelement"]) assert.ok(!C.BUILD_NODE_TYPES.includes(t), t);
+  // What resolves: a built-in function, operator and type, in a tree of the real form.
+  const FN = (oid) => `{FUNCEXPR :funcid ${oid} :funcresulttype 25 :args <> }`;
+  const FACT = { fn: "pg_catalog|true|i|false|lower|pg_catalog.lower(text)", op: "pg_catalog|true|pg_catalog|true|i|false|67|texteq|pg_catalog.texteq(text, text)|=(text,text)", type: "pg_catalog|true|b|S|text", en: "storage|false|e|E|x_en" };
+  const OP = (opno, fid) => `{OPEXPR :opno ${opno} :opfuncid ${fid} :opresulttype 16 :args ({CONST :consttype 25 :constvalue 4 [ 1 0 0 0 ]}) }`;
+  const P = "buckets", N = "buckets-expression-nodes";
+  const ok = (rows) => assert.deepEqual(stopsOf(withRows(P, rows)).filter((s) => s === N), [], JSON.stringify(rows));
+  const stop = (rows, label) => assert.ok(stopsOf(withRows(P, rows)).includes(N), label);
+  const facts = { "node-function|870": FACT.fn, "node-operator|98": FACT.op, "node-type|25": FACT.type, "node-type|16": "pg_catalog|true|b|B|bool" };
+  ok({ "node|default|x": FN(870), ...facts });
+  ok({ "node|default|x": OP(98, 67), ...facts });
+  ok({ "node|default|x": `{MINMAXEXPR :minmaxtype 25 :args ({CONST :consttype 25 :constvalue 4 [ 1 0 0 0 ]}) }`, ...facts });
+  // An enum Const alone runs nothing, and no type-dependent node is near it.
+  ok({ "node|default|x": `{CONST :consttype 90000 :constvalue 4 [ 1 0 0 0 ]}`, "node-type|90000": FACT.en });
+  for (const [label, rows] of [
+    ["a NULL tree", { "node|default|x": "<null>" }],
+    ["a node off the list", { "node|default|x": "{ROWCOMPAREEXPR :rctype 1 }" }],
+    ["FUNCEXPR with no funcid", { "node|default|x": "{FUNCEXPR :funcresulttype 25 :args <> }", ...facts }],
+    ["funcid 0, which has no row", { "node|default|x": FN(0), ...facts }],
+    ["a funcid with no catalog row", { "node|default|x": FN(870), "node-function|870": "<absent>" }],
+    ["a built-in off the list", { "node|default|x": FN(1), "node-function|1": "pg_catalog|true|v|false|set_config|pg_catalog.set_config(text, text, boolean)" }],
+    ["a list name outside pg_catalog", { "node|default|x": FN(1), "node-function|1": "storage|false|i|false|lower|storage.lower(text)" }],
+    ["a list name made after initdb", { "node|default|x": FN(1), "node-function|1": "pg_catalog|false|i|false|lower|pg_catalog.lower(text)" }],
+    ["an operator node with no opno", { "node|default|x": "{OPEXPR :opfuncid 67 :args <> }", ...facts }],
+    ["an opno without its opfuncid", { "node|default|x": "{OPEXPR :opno 98 :opresulttype 16 }", ...facts }],
+    ["an opfuncid that is not the oprcode", { "node|default|x": OP(98, 68), ...facts }],
+    ["an operator with no catalog row", { "node|default|x": OP(98, 67), "node-operator|98": "<absent>", "node-type|25": FACT.type }],
+    ["a custom operator", { "node|default|x": OP(98, 67), "node-operator|98": "storage|false|pg_catalog|true|i|false|67|texteq|pg_catalog.texteq(text, text)|=%=(text,text)", "node-type|25": FACT.type }],
+    ["a built-in operator over a custom function", { "node|default|x": OP(98, 67), "node-operator|98": "pg_catalog|true|storage|false|i|false|67|f|storage.f(text, text)|=(text,text)", "node-type|25": FACT.type }],
+    ["a volatile oprcode", { "node|default|x": OP(98, 67), "node-operator|98": "pg_catalog|true|pg_catalog|true|v|false|67|f|pg_catalog.f(text, text)|=(text,text)", "node-type|25": FACT.type }],
+    ["a planner-only hash function", { "node|default|x": "{SCALARARRAYOPEXPR :opno 98 :opfuncid 67 :hashfuncid 5 :negfuncid 0 :useOr true }", ...facts }],
+    ["a type with no catalog row", { "node|default|x": "{CONST :consttype 90000 }", "node-type|90000": "<absent>" }],
+    ["a type with no row at all", { "node|default|x": "{CONST :consttype 90000 }" }],
+    ["MINMAX over a custom type", { "node|default|x": "{MINMAXEXPR :minmaxtype 90000 :args <> }", "node-type|90000": FACT.en }],
+    ["CoerceViaIO with a custom type on either side", { "node|default|x": "{COERCEVIAIO :arg {CONST :consttype 90000 } :resulttype 25 }", "node-type|90000": FACT.en, "node-type|25": FACT.type }],
+    ["ArrayCoerce over a custom type", { "node|default|x": "{ARRAYCOERCEEXPR :arg {CONST :consttype 90000 } :resulttype 1009 }", "node-type|90000": "storage|false|b|A|_x_en", "node-type|1009": "pg_catalog|true|b|A|_text" }],
+    ["a pseudo-type function over a custom type", { "node|default|x": `${FN(3058)}{CONST :consttype 90000 }`, "node-function|3058": "pg_catalog|true|s|true|concat|pg_catalog.concat(\"any\")", "node-type|25": FACT.type, "node-type|90000": FACT.en }],
+    ["a pseudo-type operator over a custom type", { "node|default|x": `{OPEXPR :opno 3516 :opfuncid 3508 :args ({CONST :consttype 90000 }) }`, "node-operator|3516": "pg_catalog|true|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|=(anyenum,anyenum)", "node-type|90000": FACT.en }],
+    ["a reviewed function on a strict path", { "node|default|x": FN(70000), "node-function|70000": "storage|false|v|false|f|storage.f()", "check-function|x|storage.f()": "plpgsql|postgres|false|v||a|b" }],
+  ]) stop(rows, label);
+  // A CHECK or a WHEN may call what the walk reports for it, and only for it.
+  const custom = "storage|false|v|false|f|storage.f()";
+  ok({ "node|check|c": FN(70000), "node-function|70000": custom, "check-function|c|storage.f()": "plpgsql|postgres|false|v||a|b" });
+  ok({ "node|trigger|t": FN(70000), "node-function|70000": custom, "trigger-function|t|storage.f()": "plpgsql|postgres|false|v||a|b" });
+  stop({ "node|check|c": FN(70000), "node-function|70000": custom }, "a function nothing reports");
+  stop({ "node|check|c": FN(70000), "node-function|70000": custom, "check-function|other|storage.f()": "plpgsql|postgres|false|v||a|b" }, "a function reported for another CHECK");
+  stop({ "node|check|c": FN(70000), "node-function|70000": custom, "trigger-function|c|storage.f()": "plpgsql|postgres|false|v||a|b" }, "a function reported for a trigger of that name");
+  // The sequence rule reads the identity too: a nextval the text would not show.
+  assert.ok(stopsOf(withRows(P, { "node|default|x": FN(1574), "node-function|1574": "pg_catalog|true|v|false|nextval|pg_catalog.nextval(regclass)", "node-type|20": "pg_catalog|true|b|N|int8" })).includes("buckets-sequence-calls"));
+  // Identity stays its own refusal.
+  assert.deepEqual(stopsOf(withRows("authusers", { "column-type|x": "a||bigint" })), ["authusers-sequence-calls"]);
+  // The real stored forms, from the local run: the coercions and implementations Codex names.
+  const r = exprFixture("w-expr-commit-codex-stock-controls.json");
+  const facts2 = Object.fromEntries(r.build00.filter((x) => x.part === "authusers").map((x) => [x.key, x.value]));
+  const nameOf = (v) => v.split("|")[4];
+  const fns = Object.entries(facts2).filter(([k]) => k.startsWith("node-function|")).map(([, v]) => nameOf(v)).sort();
+  for (const f of ["int2", "varchar", "lower", "jsonb_typeof", "jsonb_array_length", "now"]) assert.ok(fns.includes(f), f);
+  const impl = Object.entries(facts2).filter(([k]) => k.startsWith("node-operator|")).map(([, v]) => v.split("|")[7]).sort();
+  for (const f of ["textregexne", "texteq", "int4ge"]) assert.ok(impl.includes(f), f);
+  assert.match(facts2["node|default|review_small"], /^\{FUNCEXPR :funcid 314 /);
+  assert.match(facts2["node|default|review_varchar"], /^\{FUNCEXPR :funcid 669 /);
+  assert.match(facts2["node|default|review_least"], /^\{MINMAXEXPR :minmaxtype 1184 /);
+});
+
+test("4W-25 X3f: Codex's enum comparator, as it ran it, stops in both implementations before any write, though the readings do not move; the implicit routes over each kind of type stop; the built-in forms stay", () => {
+  for (const form of ["least", "greatest"]) {
+    const r = exprFixture(`w-expr-codex-enum-${form}.json`);
+    assert.equal(r.readingsEqualAfterReplacement, true, `${form}: nothing reports the comparator, so its body moves no reading`);
+    assert.equal(r.noFacts, true, form);
+    assert.deepEqual(r.js, ["buckets-expression-nodes"], `${form}: the comparator, in the run`);
+    assert.deepEqual(asks(r, C.reviewedSetOf(r.build00)), ["buckets-expression-nodes"], `${form}: the comparator, here`);
+    assert.deepEqual(r.sql, ["buckets-expression-nodes"], `${form}: BUILD-01's first step`);
+    assert.equal(r.code, "P0001", form);
+    assert.match(r.where, ONE_FRAME, form);
+    assert.deepEqual(r.left, { ledger_absent: true, marker_absent: true, files_absent: true }, `${form}: before the first write`);
+    assert.equal(r.witnessAfterRefusal, false, `${form}: nothing of it ran`);
+    // Without the step, what Codex saw at X3e: the comparator's body runs, and a rollback gives nothing back.
+    assert.equal(r.consumed.is_called, true, form);
+    const facts = Object.fromEntries(r.build00.filter((x) => x.part === "buckets").map((x) => [x.key, x.value]));
+    assert.match(facts["node|default|review_enum_value"], /^\{MINMAXEXPR :minmaxtype [0-9]+ /);
+    assert.equal(facts["default|review_enum_value"], `${form.toUpperCase()}('b'::storage.review_enum, 'a'::storage.review_enum)`, "a name on the text list");
+    assert.ok(!Object.keys(facts).some((k) => k.includes("review_cmp")), "and the comparator is reported nowhere");
+    assert.equal(facts["column-type|review_enum_value"], "||storage.review_enum");
+  }
+  // A body declared IMMUTABLE that calls nextval consumes the sequence: volatility is a promise, not proof.
+  for (const part of PARTS) assert.equal(exprFixture(`w-expr-stop-${part}-generated-immutable-body-calling-nextval.json`).consumed, true, part);
+  // The built-in timestamp forms stay, on both tables, with the rest of the stock-like list.
+  for (const part of PARTS) {
+    const r = exprFixture(`w-expr-commit-${part}-builtins.json`);
+    assert.deepEqual(asks(r, r.reviewed), []);
+    const facts = Object.fromEntries(r.build00.filter((x) => x.part === part).map((x) => [x.key, x.value]));
+    assert.match(facts["node|default|x_least"], /^\{MINMAXEXPR :minmaxtype 1184 /, "timestamp LEAST");
+    assert.match(facts["node|default|x_greatest"], /^\{MINMAXEXPR :minmaxtype 1184 /, "timestamp GREATEST");
+    assert.match(facts["node|default|x_small"], /^\{FUNCEXPR /, "integer to smallint");
+    assert.match(facts["node|default|x_varchar5"], /^\{FUNCEXPR /, "the varchar length coercion");
+    assert.match(facts["node|default|x_io"], /^\{COERCEVIAIO /, "CoerceViaIO over reviewed types");
+    assert.match(facts["node|default|x_arrays"], /^\{ARRAYCOERCEEXPR /, "ArrayCoerce over reviewed types");
+    assert.ok(facts["node|check|x_json"].includes(":funcid"), "the JSON CHECK");
+  }
+  const stock = exprFixture("w-expr-commit-codex-stock-controls.json");
+  assert.deepEqual(stock.stops, []);
+  assert.equal(stock.committed, true);
+});
+
+test("4W-26 X3f: policy counts are read for both tables, zero and nonzero, as evidence only; the writer's identity and BYPASSRLS come from BUILD-00W's own rows; the no-active-RLS preflight stays", () => {
+  const countOf = (rows, part) => rows.find((x) => x.part === part && x.key === "policies").value;
+  // Zero, on the shim's fresh shape; nonzero, with the rules still keeping it where RLS does not apply.
+  assert.equal(countOf(oldJson("a-build00.json"), "buckets"), "0");
+  assert.equal(countOf(oldJson("a-build00.json"), "authusers"), "0");
+  for (const part of PARTS) {
+    for (const name of ["policy-rls-off", "policy-rls-on-superuser"]) {
+      const r = exprFixture(`w-expr-commit-${part}-${name}.json`);
+      assert.equal(countOf(r.build00, part), "1", `${part} ${name}`);
+      assert.equal(countOf(r.build00, part === "buckets" ? "authusers" : "buckets"), "0", `${part} ${name}: the other table's`);
+      assert.equal(r.committed, true, `${part} ${name}`);
+      assert.ok(Object.hasOwn(r.reviewed[part], "policies"), "bound");
+    }
+  }
+  // A count that is not a number does not bind, and a policy added after review stops.
+  const b = oldJson("a-build00.json");
+  const set = (rows, part, key, value) => rows.map((x) => (x.part === part && x.key === key ? { ...x, value } : x));
+  const w = oldJson("a-build00w.json");
+  const ask = (x) => C.buildPredicateFindings(x, w, { creator: "postgres", ledger: "absent-table", reviewed: C.reviewedSetOf(x) }).map((f) => f.key);
+  assert.deepEqual(ask(set(b, "buckets", "policies", "<null>")), ["buckets-relation"]);
+  assert.deepEqual(ask(b.filter((x) => !(x.part === "authusers" && x.key === "policies"))), ["authusers-relation"]);
+  // Counts do not replace the preflight: RLS on, a role it applies to, and a policy that would admit it, still stop in both.
+  const rls = json("w-shape-rls-with-policy.json");
+  assert.deepEqual(rls.policies, { buckets: "1", authusers: "1" });
+  assert.deepEqual(rls.rls, { buckets: "true", authusers: "true" });
+  for (const names of [rls.js, rls.sql]) for (const n of ["buckets-rls", "authusers-rls"]) assert.ok(names.includes(n), n);
+  // The writer: BUILD-00W's own receipt, here read as `reader` while BUILD-00 was read as postgres.
+  assert.deepEqual(rls.writer, { role: "reader", session: "postgres", superuser: false, bypassrls: false });
+  const finalFrom = json("w-old-state.json");
+  const bound = C.build01Facts({ build00: b, build00w: w, ref: REF, finalFrom, reviewed: C.reviewedSetOf(b) });
+  assert.deepEqual(bound.facts.writer, C.writerOf(Object.fromEntries([["role", Object.fromEntries(w.filter((x) => x.part === "role").map((x) => [x.key, x.value]))]])));
+  // BUILD-00's rows about a role change nothing here: only BUILD-00W's do.
+  const otherReader = set(b, "roles", "attr|postgres", "false|false|false|false|false|false|false");
+  assert.deepEqual(C.build01Facts({ build00: otherReader, build00w: w, ref: REF, finalFrom, reviewed: C.reviewedSetOf(otherReader) }).facts.writer, bound.facts.writer);
+  const bypass = w.map((x) => (x.part === "role" && x.key === "attr" ? { ...x, value: "false|true|false|false|true|false|true" } : x));
+  assert.equal(C.build01Facts({ build00: b, build00w: bypass, ref: REF, finalFrom, reviewed: C.reviewedSetOf(b) }).facts.writer.bypassrls, true);
+  // A receipt that does not say who it is binds nothing.
+  for (const badAttr of ["", "true", "yes|no", "true|true|true|true|true|true|maybe"]) {
+    const bad = w.map((x) => (x.part === "role" && x.key === "attr" ? { ...x, value: badAttr } : x));
+    assert.ok(ask2(b, bad).includes("writer-identity"), badAttr);
+  }
+  assert.equal(C.writerOf(null), null);
+  assert.equal(C.writerOf({ role: { attr: "true|true|true|true|true|true|true" } }), null, "no name");
+});
+
+test("4W-27 X3f: foreign keys come from their own rows, on both sides of each table: reviewed built-in types and operators only, and each unsupported shape stops", () => {
+  // The real shapes, through the local run: out and in, with what each resolves to.
+  for (const part of PARTS) {
+    const S = part === "buckets" ? "storage" : "auth", T = part === "buckets" ? "storage.buckets" : "auth.users";
+    const r = exprFixture(`w-expr-commit-${part}-fk-builtin.json`);
+    const facts = Object.fromEntries(r.build00.filter((x) => x.part === part).map((x) => [x.key, x.value]));
+    assert.ok(Object.hasOwn(facts, `fk|out|${T}|${part === "buckets" ? "buckets" : "users"}_x_f_fkey`), "the outgoing key");
+    assert.ok(Object.hasOwn(facts, `fk|in|${S}.x_kid|x_kid_b_fkey`), "the incoming key, from a table this one's columns say nothing about");
+    assert.equal(facts[`fk-index|in|${S}.x_kid|x_kid_b_fkey`], `pg_catalog.${part === "buckets" ? "text" : "uuid"}_ops`);
+    const col = facts[`fk-column|in|${S}.x_kid|x_kid_b_fkey|1`].split("|");
+    assert.equal(col.length, 7);
+    assert.match(facts[`node-type|${col[0]}`], new RegExp(`^pg_catalog\\|true\\|b\\|[A-Z]\\|${part === "buckets" ? "text" : "uuid"}$`));
+    assert.match(facts[`node-operator|${col[2]}`], new RegExp(`\\|${part === "buckets" ? "texteq" : "uuid_eq"}\\|`));
+    assert.equal(r.committed, true);
+    // The negatives: a referenced custom type, a referencing domain the table's own columns never show, and a custom class.
+    const inKid = exprFixture(`w-expr-stop-${part}-fk-in-domain.json`);
+    assert.ok(!inKid.build00.some((x) => x.part === part && x.key.startsWith("column-type|") && x.value.includes("x_d")), "nothing on this table's columns names the domain");
+  }
+  // Each unsupported shape, on rows of the real form.
+  const P = "buckets", K = "buckets-foreign-keys";
+  const type = "pg_catalog|true|b|S|text", en = "storage|false|e|E|x_en", dom = "storage|false|d|S|x_d";
+  const op = "pg_catalog|true|pg_catalog|true|i|false|67|texteq|pg_catalog.texteq(text, text)|=(text,text)";
+  const fk = (over = {}) => ({ "fk|out|t|x": "o|s|true|false|FOREIGN KEY (a) REFERENCES o(b)", "fk-column|out|t|x|1": "25|25|98|98|98|a|b", "fk-index|out|t|x": "pg_catalog.text_ops", "node-type|25": type, "node-operator|98": op, ...over });
+  assert.ok(!stopsOf(withRows(P, fk())).includes(K), "the control");
+  for (const [label, rows] of [
+    ["no column row", fk({ "fk-column|out|t|x|1": undefined })],
+    ["a referencing custom type", fk({ "fk-column|out|t|x|1": "90000|25|98|98|98|a|b", "node-type|90000": en })],
+    ["a referenced custom type", fk({ "fk-column|out|t|x|1": "25|90000|98|98|98|a|b", "node-type|90000": en })],
+    ["a referencing domain", fk({ "fk-column|out|t|x|1": "90000|25|98|98|98|a|b", "node-type|90000": dom })],
+    ["a type with no row", fk({ "fk-column|out|t|x|1": "90001|25|98|98|98|a|b" })],
+    ["a custom operator", fk({ "fk-column|out|t|x|1": "25|25|90000|98|98|a|b", "node-operator|90000": "storage|false|storage|false|i|false|70000|f|storage.f(text, text)|=%=(text,text)" })],
+    ["a built-in operator over a pseudo-type", fk({ "fk-column|out|t|x|1": "25|25|25|98|98|a|b", "node-operator|25": "pg_catalog|true|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|=(anyenum,anyenum)" })],
+    ["an operator with no row", fk({ "fk-column|out|t|x|1": "25|25|98|98|90002|a|b" })],
+    ["a custom operator class", fk({ "fk-index|out|t|x": "storage.x_ops" })],
+    ["one custom class among others", fk({ "fk-index|out|t|x": "pg_catalog.text_ops,storage.x_ops" })],
+    ["no index", fk({ "fk-index|out|t|x": "<none>" })],
+  ]) {
+    const clean = Object.fromEntries(Object.entries(rows).filter(([, v]) => v !== undefined));
+    assert.ok(stopsOf(withRows(P, clean)).includes(K), label);
+  }
 });
