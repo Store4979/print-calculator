@@ -1181,6 +1181,17 @@ abuse, does not guarantee a cap"), say so in the comment itself.
    - Git for Windows' bash gives node a `/c/…` path it cannot read when the path holds
      a quote (this home has one): the driver asks `pwd -W`, and the tests name Git's
      own bash from `git --exec-path`, since `bash` from PowerShell can be WSL's.
+   - **the per-user locations (VT3):** the driver sets HOME, USERPROFILE, LOCALAPPDATA,
+     APPDATA and PSModuleAnalysisCachePath, after unsetting each under every spelling (bash
+     hands a Windows child two spellings as two entries; Node's spawn keeps one).
+     **Windows PowerShell 5.1 places its module analysis cache under the LocalApplicationData
+     known folder, which Windows builds from USERPROFILE, and never reads LOCALAPPDATA.**
+     Under a home with no AppData\Local that place is RELATIVE, and a PowerShell alive past
+     the save (about 10 s, a background thread) writes the cache into its working directory:
+     G-27's window did so in every driver-run clone and replay checkout before VT3 (traced
+     in `.review/vt3-trace-*`). `powershell-before` shows the placement at run time;
+     `tree-after` fails anything left in the tested clone or a replay checkout. It reads the
+     final state only, so a write removed again is not seen.
 
 ## Session log (standing rule, 2026-10-29; rewritten 2026-10-30)
 At the end of every session, before the final report, update docs/STATUS.md

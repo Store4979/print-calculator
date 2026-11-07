@@ -8,16 +8,20 @@
 //   VT-8 to VT-13 compare-fixtures: DR-1's exact negative, the valid generated-timestamp
 //                control, and each way a ledger can move outside the named entries
 //   VT-14, VT-15 check-tap: a log's counts, and the reviewed replay-state set
-//   VT-16        check-isolation
+//   VT-16        check-isolation before and after
+//   VT-19 to VT-22 VT3: the per-user locations each set once (a driver without its unset is
+//                refused), an unexpected write into the tested tree fails the run, PowerShell's
+//                cache placement with the driver's locations and with the old ones, and the
+//                tree check's cases
 // Everything runs on synthetic repositories, homes and fixture copies. No store, token,
 // remote or database. The compare-fixtures cases read HEAD's committed fixtures.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "acorn";
 
@@ -61,6 +65,28 @@ function launch(repo, tooling, out, label, args, { launcher = TOOL("verify-launc
   return spawnSync(BASH, [slash(launcher), "--repo", repo, "--tooling", tooling, "--out", out, "--label", label, "--", ...args], { encoding: "utf8", env: childEnv(home ?? out), windowsHide: true });
 }
 const summaryOf = (out, label) => readFileSync(join(out, `verify-${label}-summary.txt`), "utf8");
+const WIN = process.platform === "win32";
+const samePath = (a, b) => { const n = (p) => { const r = resolve(String(p)); return WIN ? r.toLowerCase() : r; }; return n(a) === n(b); };
+/** The `variable NAME=value` lines a summary records. */
+const variablesOf = (s) => Object.fromEntries([...s.matchAll(/^variable ([A-Za-z]+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
+const LOCATIONS = /^(HOME|USERPROFILE|LOCALAPPDATA|APPDATA|PSModuleAnalysisCachePath)$/i;
+/** The per-user locations the driver sets, for a home and a cache file of the test's own; their directories are made. */
+function isolatedEnv(home, pscache, extra = {}) {
+  for (const d of [join(home, "AppData", "Local"), join(home, "AppData", "Roaming"), dirname(pscache)]) mkdirSync(d, { recursive: true });
+  const env = childEnv(home);
+  for (const k of Object.keys(env)) if (LOCATIONS.test(k)) delete env[k];
+  return { ...env, HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, "AppData", "Local"), APPDATA: join(home, "AppData", "Roaming"), PSModuleAnalysisCachePath: pscache, ...extra };
+}
+/** A committed, clean checkout: one tracked file and, with `ignore`, the ignore rules of the real repository's driver outputs and *.log. */
+function cleanTree(t, { ignore = false } = {}) {
+  const d = newDir(t);
+  git(d, "init", "--quiet");
+  writeFileSync(join(d, "a.txt"), "a\n");
+  if (ignore) writeFileSync(join(d, ".gitignore"), "node_modules/\ndist/\n.stage0-replay/\n.stage0-replay-summary.json\n*.log\n");
+  git(d, "add", "-A");
+  git(d, "commit", "--quiet", "-m", "a clean tree");
+  return d;
+}
 
 test("VT-1 the pin set is current, its raw-text check finds nothing, and its required steps are the driver's", () => {
   assert.deepEqual(P.checkProblems(ROOT), []);
@@ -177,6 +203,10 @@ test("VT-5 each run records its commits, hashes, step set, exits and result, and
   for (const [path, pin] of Object.entries(pins.tools)) assert.ok(s.includes(`tool ${path} blob ${pin.blob} sha256 ${pin.sha256}`), path);
   assert.match(s, /^pin set scripts\/verify\/verification-pins\.json blob [0-9a-f]{40} sha256 [0-9a-f]{64}$/m);
   assert.match(s, /^required steps: pins s1$/m);
+  // The per-user locations it set (VT3), and the temporary directory's variables.
+  const v = variablesOf(s), home = join(out, "verify-record-home");
+  for (const [k, want] of [["HOME", home], ["USERPROFILE", home], ["LOCALAPPDATA", join(home, "AppData", "Local")], ["APPDATA", join(home, "AppData", "Roaming")], ["PSModuleAnalysisCachePath", join(out, "verify-record-pscache", "ModuleAnalysisCache")]]) assert.ok(samePath(v[k], want), `${k}=${v[k]}, not ${want}`);
+  assert.ok(Object.hasOwn(v, "TEMP") && Object.hasOwn(v, "TMP"), s);
   assert.match(s, /^pins exit 0 /m);
   assert.match(s, /^s1 exit 0 /m);
   assert.ok(s.indexOf("pins exit") < s.indexOf("s1 exit"));
@@ -250,6 +280,11 @@ test("VT-7 the launcher passes on the driver's exit, a killed driver included; a
   assert.equal(cloneInUse.status, 2);
   assert.match(cloneInUse.stdout, /exists: every run gets a new directory/);
   assert.equal(summaryInUse.stdout.includes("RESULT"), false);
+  mkdirSync(join(out, "verify-cachetaken-pscache"));
+  const cacheInUse = run("cachetaken", ["selftest", "--codes", "0"]);
+  assert.equal(cacheInUse.status, 2);
+  assert.match(cacheInUse.stdout, /exists: every run gets a new cache directory/);
+  assert.equal(existsSync(join(out, "verify-cachetaken-summary.txt")), false);
 });
 
 /**
@@ -258,26 +293,39 @@ test("VT-7 the launcher passes on the driver's exit, a killed driver included; a
  * is asked to run, so the marker shows what the driver started. No node_modules, harness or replay
  * exists there, so the steps that need them fail on their own.
  */
-function verifyRig(t, guardBody) {
+function verifyRig(t, guardBody, { yarn = "", driver = null } = {}) {
   const { repo } = toolRepo(t);
   mkdirSync(join(repo, "scripts", "manual"), { recursive: true });
   writeFileSync(join(repo, "scripts", "manual", "stage0-guard.mjs"), guardBody);
+  // A driver of the test's own, with the pins brought up to it.
+  if (driver) {
+    writeFileSync(join(repo, "scripts", "verify", "verify-driver.sh"), driver(readFileSync(TOOL("verify-driver.sh"), "utf8")));
+    execFileSync(process.execPath, [TOOL("check-pins.mjs"), "generate", "--root", repo]);
+  }
   git(repo, "add", "-A");
   git(repo, "commit", "--quiet", "-m", "a guard module");
   const stubs = newDir(t);
   const marker = join(stubs, "yarn-called.txt");
-  writeFileSync(join(stubs, "yarn"), `#!/usr/bin/env bash\necho "yarn $*" >> "${marker}"\nexit 0\n`);
+  // Executable, so that a POSIX PATH search finds it before any real yarn.
+  writeFileSync(join(stubs, "yarn"), `#!/usr/bin/env bash\necho "yarn $*" >> "${marker}"\n${yarn}exit 0\n`);
+  chmodSync(join(stubs, "yarn"), 0o755);
   const out = newDir(t);
   const pg = newDir(t);
   const head = git(repo, "rev-parse", "HEAD");
-  const run = (label) => {
+  const run = (label, change = (env) => env) => {
     const env = childEnv(out);
-    env.PATH = `${stubs}${process.platform === "win32" ? ";" : ":"}${env.PATH}`;
-    return spawnSync(BASH, [slash(TOOL("verify-launch.sh")), "--repo", repo, "--tooling", head, "--out", out, "--label", label, "--", "verify", "--commit", head, "--pglite", pg, "--expect-tests", "1"], { encoding: "utf8", env, windowsHide: true });
+    env.PATH = `${stubs}${WIN ? ";" : ":"}${env.PATH}`;
+    return spawnSync(BASH, [slash(TOOL("verify-launch.sh")), "--repo", repo, "--tooling", head, "--out", out, "--label", label, "--", "verify", "--commit", head, "--pglite", pg, "--expect-tests", "1"], { encoding: "utf8", env: change(env), windowsHide: true });
   };
-  return { out, marker, run };
+  return { repo, head, out, marker, run };
 }
-const AFTER_ISOLATION = ["install", "test", "test-counts", "build", "manifest", "m13", "targeted", "targeted-counts", "harness", "writing", "fixtures", "replay", "replay-counts", "isolation-after"];
+const AFTER_ISOLATION = ["powershell-before", "install", "test", "test-counts", "build", "manifest", "m13", "targeted", "targeted-counts", "harness", "writing", "fixtures", "replay", "replay-counts", "isolation-after", "tree-after"];
+const OWN_GUARD = `import { homedir } from "node:os";\nimport { join } from "node:path";\nexport const DEFAULT_STATE = join(homedir(), ".stage0-guard");\n`;
+/** Stale per-user values under lower-case spellings only, each naming a place inside `repo`, as a parent might pass them. */
+const staleSpellings = (repo) => (env) => {
+  for (const k of Object.keys(env)) if (/^(LOCALAPPDATA|APPDATA|PSModuleAnalysisCachePath)$/i.test(k)) delete env[k];
+  return { ...env, localappdata: join(repo, "stale-local"), appdata: join(repo, "stale-roaming"), psmoduleanalysiscachepath: join(repo, "stale-cache") };
+};
 
 test("VT-17 VT-R1: a refused isolation-before stops the run at once. No install, test, harness, build or replay command starts, and the summary names each as not run", (t) => {
   // The guard's default store lies outside the synthetic home.
@@ -296,12 +344,13 @@ test("VT-17 VT-R1: a refused isolation-before stops the run at once. No install,
   assert.ok(s.trimEnd().split("\n").at(-1).startsWith("RESULT FAILED"), "the failed summary is kept and final");
 });
 
-test("VT-18 a passing isolation-before goes on to every step, and an ordinary failure in them still reaches the result", (t) => {
-  const { out, marker, run } = verifyRig(t, `import { homedir } from "node:os";\nimport { join } from "node:path";\nexport const DEFAULT_STATE = join(homedir(), ".stage0-guard");\n`);
-  const r = run("control");
+test("VT-18 a passing isolation-before goes on to every step, and an ordinary failure in them still reaches the result. The per-user locations are the synthetic ones though the parent passed stale lower-case spellings, PowerShell's cache is at the synthetic file, and tree-after passes", { timeout: 180000 }, (t) => {
+  const { repo, out, marker, run } = verifyRig(t, OWN_GUARD);
+  const r = run("control", staleSpellings(repo));
   assert.equal(r.status, 1, r.stdout + r.stderr);
   const s = summaryOf(out, "control");
-  assert.match(s, /^isolation-before exit 0 /m);
+  assert.match(s, /^isolation-before exit 0 /m, readFileSync(join(out, "verify-control-isolation-before.txt"), "utf8"));
+  assert.match(s, /^powershell-before exit 0 /m, readFileSync(join(out, "verify-control-powershell-before.txt"), "utf8"));
   for (const step of AFTER_ISOLATION) assert.match(s, new RegExp(`^${step} exit [0-9]+ `, "m"), `${step} ran`);
   const called = readFileSync(marker, "utf8");
   for (const c of ["yarn install --frozen-lockfile", "yarn test", "yarn build"]) assert.ok(called.includes(c), c);
@@ -310,7 +359,49 @@ test("VT-18 a passing isolation-before goes on to every step, and an ordinary fa
   assert.match(s, /^test exit 0 /m);
   assert.match(s, /^test-counts exit 1 /m);
   assert.match(s, /^isolation-after exit 0 /m);
+  assert.match(s, /^tree-after exit 0 /m, readFileSync(join(out, "verify-control-tree-after.txt"), "utf8"));
   assert.match(s, /^RESULT FAILED: required steps failed: test-counts .*; not run: none /m);
+  // Each location the synthetic one, under one spelling, whatever the parent passed.
+  const v = variablesOf(s), home = join(out, "verify-control-home"), cache = join(out, "verify-control-pscache", "ModuleAnalysisCache");
+  assert.ok(samePath(v.LOCALAPPDATA, join(home, "AppData", "Local")) && samePath(v.APPDATA, join(home, "AppData", "Roaming")) && samePath(v.PSModuleAnalysisCachePath, cache), s);
+  const iso = readFileSync(join(out, "verify-control-isolation-before.txt"), "utf8");
+  for (const n of ["LOCALAPPDATA", "APPDATA", "PSModuleAnalysisCachePath"]) assert.equal([...iso.matchAll(new RegExp(`^${n}=`, "gmi"))].length, 1, iso);
+  const clone = readdirSync(out).find((n) => /^verify-[0-9a-f]{7}$/.test(n));
+  assert.equal(existsSync(join(out, clone, "Microsoft")), false, "nothing of PowerShell's in the clone");
+  if (WIN) {
+    assert.ok(existsSync(cache), "PowerShell's cache is at the synthetic file");
+    assert.match(readFileSync(join(out, "verify-control-powershell-before.txt"), "utf8"), /its cache location .*verify-control-pscache.ModuleAnalysisCache;/i);
+  } else assert.match(readFileSync(join(out, "verify-control-powershell-before.txt"), "utf8"), /not Windows, so none is started/);
+});
+
+test("VT-19 a driver that sets the per-user locations without first unsetting their other spellings is refused at isolation-before, which names the second spelling, and nothing after it runs", (t) => {
+  const { repo, out, marker, run } = verifyRig(t, OWN_GUARD, { driver: (d) => {
+    const unset = '  for n in $ISOLATED; do unset_spellings "$n"; done\n';
+    assert.equal(d.split(unset).length, 2, "the driver unsets each name once");
+    return d.split(unset).join("");
+  } });
+  const r = run("twice", staleSpellings(repo));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const s = summaryOf(out, "twice");
+  assert.match(s, /^isolation-before exit 1 /m);
+  const iso = readFileSync(join(out, "verify-twice-isolation-before.txt"), "utf8");
+  for (const n of ["LOCALAPPDATA", "APPDATA", "PSModuleAnalysisCachePath"]) assert.match(iso, new RegExp(`PROBLEM ${n} is set under 2 spellings`), iso);
+  assert.match(s, new RegExp(`^RESULT FAILED: required steps failed: isolation-before; not run: ${AFTER_ISOLATION.join(" ")} `, "m"));
+  assert.equal(existsSync(marker), false, "yarn was never started");
+});
+
+test("VT-20 an unexpected write into the tested tree fails the run at tree-after, which names it, though every other step's result is unchanged", { timeout: 180000 }, (t) => {
+  // The stub's `yarn test` leaves what PowerShell left before VT3, in its working directory, the clone.
+  const yarn = 'if [ "$1" = test ]; then mkdir -p Microsoft/Windows/PowerShell && echo cache > Microsoft/Windows/PowerShell/ModuleAnalysisCache; fi\n';
+  const { out, run } = verifyRig(t, OWN_GUARD, { yarn });
+  const r = run("written");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const s = summaryOf(out, "written");
+  assert.match(s, /^tree-after exit 1 /m);
+  assert.match(s, /^RESULT FAILED: required steps failed: test-counts .* tree-after; not run: none /m);
+  const log = readFileSync(join(out, "verify-written-tree-after.txt"), "utf8");
+  assert.match(log, /PROBLEM the tested tree changed: \?\? Microsoft\/Windows\/PowerShell\/ModuleAnalysisCache/);
+  assert.match(log, /PROBLEM a PowerShell per-user file is in the tested tree: .*ModuleAnalysisCache/);
 });
 
 // ── compare-fixtures ─────────────────────────────────────────────────────────────────
@@ -614,31 +705,137 @@ test("VT-15 check-tap: the replay's states are exactly the reviewed set for the 
   assert.match(run(disagree, clone).stdout, /P2-0304: the summary says tests 99, its log 3/);
 });
 
-test("VT-16 check-isolation: the home, the default store's path, and nothing created there", (t) => {
+test("VT-16 check-isolation before and after: the per-user locations, each once, absolute and outside the tested tree; the home and cache directory as the driver makes them; the default store's path, and nothing created there", (t) => {
   const d = newDir(t);
-  const home = join(d, "home");
+  const home = join(d, "home"), pscache = join(d, "pscache", "ModuleAnalysisCache");
   mkdirSync(home);
+  const tree = cleanTree(t);
   const guardFor = (where, name) => { const f = join(d, name); writeFileSync(f, `export const DEFAULT_STATE = ${JSON.stringify(where)};\n`); return f; };
   const iso = (args, env) => spawnSync(process.execPath, [TOOL("check-isolation.mjs"), ...args], { encoding: "utf8", env, windowsHide: true });
   const good = guardFor(join(home, ".stage0-guard"), "good.mjs");
-  const pass = iso(["before", "--home", home, "--guard", good], childEnv(home));
+  const before = (env, { h = home, c = pscache, g = good } = {}) => iso(["before", "--home", h, "--pscache", c, "--tree", tree, "--guard", g], env);
+  const env = isolatedEnv(home, pscache);
+  const pass = before(env);
   assert.equal(pass.status, 0, pass.stdout + pass.stderr);
-  assert.equal(iso(["after", "--home", home], childEnv(home)).status, 0);
+  assert.equal(iso(["after", "--home", home], env).status, 0);
   // The default path elsewhere.
   const elsewhere = guardFor(join(d, "elsewhere", ".stage0-guard"), "elsewhere.mjs");
-  assert.match(iso(["before", "--home", home, "--guard", elsewhere], childEnv(home)).stdout, /not under the synthetic home/);
+  assert.match(before(env, { g: elsewhere }).stdout, /not under the synthetic home/);
   // Another home.
   const other = join(d, "other");
   mkdirSync(other);
   assert.equal(iso(["after", "--home", home], childEnv(other)).status, 1);
-  assert.equal(iso(["before", "--home", home, "--guard", good], childEnv(other)).status, 1);
+  assert.match(before({ ...env, HOME: other, USERPROFILE: other }).stdout, /PROBLEM HOME is .*, not /);
   // A token or a session in the environment.
-  for (const k of ["SUPABASE_ACCESS_TOKEN", "STAGE0_SESSION"]) assert.match(iso(["before", "--home", home, "--guard", good], { ...childEnv(home), [k]: "set" }).stdout, new RegExp(`${k} is set`));
+  for (const k of ["SUPABASE_ACCESS_TOKEN", "STAGE0_SESSION"]) assert.match(before({ ...env, [k]: "set" }).stdout, new RegExp(`${k} is set`));
+  // A location elsewhere, relative, or absent.
+  assert.match(before({ ...env, LOCALAPPDATA: join(d, "elsewhere") }).stdout, /PROBLEM LOCALAPPDATA is .*, not /);
+  assert.match(before({ ...env, APPDATA: "AppData" }).stdout, /PROBLEM APPDATA is not absolute: AppData/);
+  const noCache = { ...env };
+  delete noCache.PSModuleAnalysisCachePath;
+  assert.match(before(noCache).stdout, /PROBLEM PSModuleAnalysisCachePath is set under 0 spellings \(none\), not once/);
+  // Two spellings of one name: Node's spawn passes one, so they arrive through bash, which keeps a
+  // lower-case spelling beside the one it exports.
+  const stale = { ...env, localappdata: join(tree, "stale") };
+  delete stale.LOCALAPPDATA;
+  const twice = spawnSync(BASH, ["-c", 'export LOCALAPPDATA="$1"; shift; exec "$@"', "bash", join(home, "AppData", "Local"), slash(process.execPath), TOOL("check-isolation.mjs"), "before", "--home", home, "--pscache", pscache, "--tree", tree, "--guard", good], { encoding: "utf8", env: stale, windowsHide: true });
+  assert.match(twice.stdout, /PROBLEM LOCALAPPDATA is set under 2 spellings/, twice.stdout + twice.stderr);
+  // The home or the cache file inside the tested tree, or the tested tree inside the home; the temporary directory inside it.
+  const inTree = join(tree, "home");
+  assert.match(before(isolatedEnv(inTree, pscache), { h: inTree }).stdout, /PROBLEM the home .* and the tested tree .* overlap/);
+  const cacheInTree = join(tree, "pscache", "ModuleAnalysisCache");
+  assert.match(before(isolatedEnv(home, cacheInTree), { c: cacheInTree }).stdout, /PROBLEM the cache file .* and the tested tree .* overlap/);
+  const tmpInTree = join(tree, "tmp");
+  assert.match(before({ ...env, TEMP: tmpInTree, TMP: tmpInTree, TMPDIR: tmpInTree }).stdout, /PROBLEM the temporary directory .* is inside the tested tree/);
+  // The home or the cache directory not as the driver makes them.
+  writeFileSync(join(home, "AppData", "Local", "left.txt"), "");
+  assert.match(before(env).stdout, /PROBLEM .*Local holds left\.txt, not nothing/);
+  rmSync(join(home, "AppData", "Local", "left.txt"));
+  writeFileSync(pscache, "");
+  assert.match(before(env).stdout, /PROBLEM .*pscache holds ModuleAnalysisCache, not nothing/);
+  rmSync(pscache);
+  assert.equal(before(env).status, 0, "the control again");
   // A guard module that will not load.
-  assert.match(iso(["before", "--home", home, "--guard", join(d, "absent.mjs")], childEnv(home)).stdout, /the guard module did not load/);
+  assert.match(before(env, { g: join(d, "absent.mjs") }).stdout, /the guard module did not load/);
   // A store created during the run.
   mkdirSync(join(home, ".stage0-guard"));
-  assert.match(iso(["after", "--home", home], childEnv(home)).stdout, /a default guard store exists/);
-  assert.equal(iso(["before", "--home", home, "--guard", good], childEnv(home)).status, 1);
-  assert.equal(iso([], childEnv(home)).status, 2);
+  assert.match(iso(["after", "--home", home], env).stdout, /a default guard store exists/);
+  assert.equal(before(env).status, 1);
+  assert.equal(iso([], env).status, 2);
+  assert.equal(iso(["before", "--home", home, "--guard", good], env).status, 2, "before names its cache file and tree");
+});
+
+test("VT-21 powershell-before: with the driver's locations, a PowerShell in the tested tree puts its cache at the synthetic file and nothing in the tree; with the locations before VT3 it writes the cache into the tree, as the old clones show, and is refused", { skip: !WIN && "Windows only: elsewhere no PowerShell is started", timeout: 180000 }, async (t) => {
+  const d = newDir(t);
+  const run = (env, tree, pscache) => new Promise((done) => {
+    const p = spawn(process.execPath, [TOOL("check-isolation.mjs"), "powershell", "--pscache", pscache, "--tree", tree], { env, windowsHide: true });
+    let out = "";
+    p.stdout.on("data", (x) => { out += x; });
+    p.stderr.on("data", (x) => { out += x; });
+    p.on("exit", (code) => done({ code, out }));
+  });
+  // The driver's locations.
+  const homeA = join(d, "a-home"), cacheA = join(d, "a-pscache", "ModuleAnalysisCache"), treeA = cleanTree(t);
+  // Before VT3: a synthetic home with no AppData\Local, the parent's LOCALAPPDATA and APPDATA, no cache path.
+  const homeB = join(d, "b-home"), cacheB = join(d, "b-pscache", "ModuleAnalysisCache"), treeB = cleanTree(t);
+  mkdirSync(homeB);
+  mkdirSync(dirname(cacheB));
+  const old = childEnv(homeB);
+  for (const k of Object.keys(old)) if (/^PSModuleAnalysisCachePath$/i.test(k)) delete old[k];
+  const [a, b] = await Promise.all([run(isolatedEnv(homeA, cacheA), treeA, cacheA), run(old, treeB, cacheB)]);
+  assert.equal(a.code, 0, a.out);
+  assert.ok(existsSync(cacheA), a.out);
+  assert.match(a.out, /its cache location .*a-pscache.ModuleAnalysisCache;/i, a.out);
+  assert.equal(git(treeA, "status", "--porcelain", "--untracked-files=all", "--ignored=matching"), "", "nothing in the tree");
+  assert.equal(b.code, 1, b.out);
+  assert.match(b.out, /PROBLEM PowerShell's cache location is relative \(Microsoft\\Windows\\PowerShell\\ModuleAnalysisCache\)/, b.out);
+  assert.match(b.out, /PROBLEM PowerShell wrote no cache at /);
+  assert.match(b.out, /PROBLEM PowerShell left the tested tree changed: \?\? Microsoft\/Windows\/PowerShell\/ModuleAnalysisCache/);
+  assert.ok(existsSync(join(treeB, "Microsoft", "Windows", "PowerShell", "ModuleAnalysisCache")), "the old placement, reproduced");
+});
+
+test("VT-22 tree-after: the tested tree and the replay's checkouts as checked out, but for the driver's own ignored outputs, and no PowerShell per-user file anywhere, ignored directories included", (t) => {
+  const tree = cleanTree(t, { ignore: true });
+  const home = newDir(t);
+  const check = () => spawnSync(process.execPath, [TOOL("check-isolation.mjs"), "tree", "--tree", tree], { encoding: "utf8", env: childEnv(home), windowsHide: true });
+  const passes = () => { const r = check(); assert.equal(r.status, 0, r.stdout + r.stderr); return r.stdout; };
+  const fails = (re) => { const r = check(); assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stdout, re); };
+  assert.match(passes(), /0 replay checkout\(s\) read/);
+  // The driver's own outputs, and a replay checkout as checked out.
+  for (const f of ["node_modules/pkg/index.js", "dist/index.html", ".stage0-replay/state-00.tap", ".stage0-replay-summary.json"]) { mkdirSync(dirname(join(tree, f)), { recursive: true }); writeFileSync(join(tree, f), "x"); }
+  const state = join(tree, ".stage0-replay", "state-00");
+  mkdirSync(state);
+  git(state, "init", "--quiet");
+  writeFileSync(join(state, "b.txt"), "b\n");
+  git(state, "add", "-A");
+  git(state, "commit", "--quiet", "-m", "a replay state");
+  assert.match(passes(), /1 replay checkout\(s\) read/);
+  const ps = ["Microsoft", "Windows", "PowerShell"];
+  // What PowerShell left before VT3, at the top: untracked, and a per-user file.
+  mkdirSync(join(tree, ...ps), { recursive: true });
+  writeFileSync(join(tree, ...ps, "ModuleAnalysisCache"), "x");
+  fails(/PROBLEM the tested tree changed: \?\? Microsoft\/Windows\/PowerShell\/ModuleAnalysisCache/);
+  fails(/PROBLEM a PowerShell per-user file is in the tested tree: .*ModuleAnalysisCache/);
+  rmSync(join(tree, "Microsoft"), { recursive: true });
+  // The same in a replay checkout, which the tested tree's own status cannot see.
+  mkdirSync(join(state, ...ps), { recursive: true });
+  writeFileSync(join(state, ...ps, "ModuleAnalysisCache"), "x");
+  fails(/PROBLEM the replay checkout state-00 changed: \?\? Microsoft\/Windows\/PowerShell\/ModuleAnalysisCache/);
+  rmSync(join(state, "Microsoft"), { recursive: true });
+  // A per-user file in an ignored directory, which no status shows.
+  writeFileSync(join(tree, "node_modules", "StartupProfileData-NonInteractive"), "x");
+  fails(/PROBLEM a PowerShell per-user file is in the tested tree: .*node_modules.StartupProfileData-NonInteractive/);
+  rmSync(join(tree, "node_modules", "StartupProfileData-NonInteractive"));
+  // A tracked file changed, and an ignored entry the driver does not make.
+  writeFileSync(join(tree, "a.txt"), "changed\n");
+  fails(/PROBLEM the tested tree changed:  M a\.txt/);
+  git(tree, "checkout", "--", "a.txt");
+  writeFileSync(join(tree, "run.log"), "x");
+  fails(/PROBLEM the tested tree holds an ignored entry the driver does not make: run\.log/);
+  rmSync(join(tree, "run.log"));
+  assert.match(passes(), /1 replay checkout\(s\) read/, "the control again");
+  // Not a checkout.
+  const r = spawnSync(process.execPath, [TOOL("check-isolation.mjs"), "tree", "--tree", newDir(t)], { encoding: "utf8", env: childEnv(home), windowsHide: true });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /PROBLEM git did not read the tested tree/);
 });

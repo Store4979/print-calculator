@@ -5,6 +5,7 @@
     "pins",
     "clone",
     "isolation-before",
+    "powershell-before",
     "install",
     "test",
     "test-counts",
@@ -18,7 +19,8 @@
     "fixtures",
     "replay",
     "replay-counts",
-    "isolation-after"
+    "isolation-after",
+    "tree-after"
   ],
   "replay": {
     "sets": [
@@ -50,14 +52,14 @@
   },
   "tools": {
     "scripts/verify/README.md": {
-      "blob": "e8d75b2ed768c86b2c2f14e247c54c7894dd0b9f",
-      "sha256": "8048f20cb1cd2fcd79e5611feb806a01ba1492ce0f9e02cfea4f27e657602a64",
-      "bytes": 4201
+      "blob": "5e7a8cc573845ebab8f8a52096a752ae58aaeacb",
+      "sha256": "014658bb124c15d2e7714f4243f4062d88b436ce6a5a675c00d5a820afa8030c",
+      "bytes": 6220
     },
     "scripts/verify/check-isolation.mjs": {
-      "blob": "46e435417c5b521876e45980e5b9b142180bfd59",
-      "sha256": "a7e0907378201a73fc7bd9b930e0713edcf01512b62b3d74a067b9cf3699bdb2",
-      "bytes": 2284
+      "blob": "b1bc90362165e6bfa0d29f2c5019d4271ddcb37c",
+      "sha256": "2d7a5b9d42ce5f89f724531885e7576ba41734f30cb74a20d810a6f01bcfc533",
+      "bytes": 12735
     },
     "scripts/verify/check-pins.mjs": {
       "blob": "05ac3eb1b584506b25f724bf9516375991cdebbc",
@@ -75,9 +77,9 @@
       "bytes": 19087
     },
     "scripts/verify/verify-driver.sh": {
-      "blob": "df63802779690497739f7ff0ae345cf8ca5371c2",
-      "sha256": "16f0a9c5e6e2780a118432b1065fe30e4ce741febf4be62b34da051ce8c7e892",
-      "bytes": 8198
+      "blob": "a253617d26004448d4d0e36b27e9298a44226e32",
+      "sha256": "a28046bd04b00833aff7b90603b4c41689723fe546084f3f893c5f5cd05ad61a",
+      "bytes": 10370
     },
     "scripts/verify/verify-launch.sh": {
       "blob": "9b5a63c41e5ac5555cab71844884603b22c80e62",

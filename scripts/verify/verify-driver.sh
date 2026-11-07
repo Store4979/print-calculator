@@ -9,9 +9,9 @@
 #
 # THE RULE: a failure in ANY required step makes the whole run exit nonzero, even when
 # later steps, the replay included, pass. It keeps going, so one run reports everything;
-# only failed pins, a failed clone or a failed isolation-before stop it early, since nothing
-# after them can be relied on, and the steps after isolation-before run the tested commit's
-# code. A required step that never ran fails the run too, and the summary names it. Nothing
+# only failed pins, a failed clone, a failed isolation-before or a failed powershell-before
+# stop it early, since nothing after them can be relied on, and the steps after them run the
+# tested commit's code. A required step that never ran fails the run too, and the summary names it. Nothing
 # after finish decides the exit status. A summary with no RESULT line means the run did not
 # finish.
 #
@@ -19,6 +19,19 @@
 # synthetic home, so that the default guard store resolves there. check-isolation.mjs
 # reads that path and checks nothing is created at it. No check here can show that a
 # test did not name another path.
+#
+# THE PER-USER LOCATIONS (VT3). Windows PowerShell 5.1 places its module analysis cache under
+# the known folder LocalApplicationData, which Windows builds from USERPROFILE; it does not read
+# LOCALAPPDATA. Under a synthetic home with no AppData\Local that folder reads empty, the
+# cache's place is the RELATIVE Microsoft\Windows\PowerShell\ModuleAnalysisCache, and a
+# PowerShell alive past the save (about 10 s) writes it into its working directory: before
+# VT3, G-27's window did so in the tested clone and in each replay checkout. So the home holds
+# AppData\Local and AppData\Roaming, LOCALAPPDATA and APPDATA name them, and
+# PSModuleAnalysisCachePath names the cache file, in a directory of its own beside the logs,
+# all before anything starts PowerShell. Each name is first unset under every spelling: Windows
+# reads names without regard to case, and bash hands a Windows child two spellings as two
+# entries. Children inherit these; a child given an environment of its own does not, and the
+# tree-after step is what shows a write that reached the tree.
 #
 # It never deletes anything: each run takes a new clone, new logs and a new home, and
 # refuses a name that exists.
@@ -86,16 +99,32 @@ done
 LOGS="$OUT/verify-$LABEL"
 SUMMARY="$LOGS-summary.txt"
 SYNTHETIC_HOME="$LOGS-home"
+PSCACHE="$LOGS-pscache"
+ISOLATED="HOME USERPROFILE LOCALAPPDATA APPDATA PSModuleAnalysisCachePath"
+
+# Every exported variable whose name is $1 in any case.
+unset_spellings() {
+  local want="${1,,}" n
+  for n in $(compgen -e); do
+    if [ "${n,,}" = "$want" ]; then unset "$n"; fi
+  done
+}
 
 begin() { # tested commit
   [ -e "$SUMMARY" ] && { echo "$SUMMARY exists: every run gets new logs"; exit 2; }
   [ -e "$SYNTHETIC_HOME" ] && { echo "$SYNTHETIC_HOME exists: every run gets a new home"; exit 2; }
-  mkdir -p "$SYNTHETIC_HOME" || exit 2
-  export HOME="$SYNTHETIC_HOME" USERPROFILE="$SYNTHETIC_HOME"
+  [ -e "$PSCACHE" ] && { echo "$PSCACHE exists: every run gets a new cache directory"; exit 2; }
+  mkdir -p "$SYNTHETIC_HOME/AppData/Local" "$SYNTHETIC_HOME/AppData/Roaming" "$PSCACHE" || exit 2
+  local home cache n
+  home="$(abspath "$SYNTHETIC_HOME")" || exit 2
+  cache="$(abspath "$PSCACHE")/ModuleAnalysisCache" || exit 2
+  for n in $ISOLATED; do unset_spellings "$n"; done
+  export HOME="$home" USERPROFILE="$home" LOCALAPPDATA="$home/AppData/Local" APPDATA="$home/AppData/Roaming" PSModuleAnalysisCachePath="$cache"
   : > "$SUMMARY"
   echo "run $LABEL started $(now)" >> "$SUMMARY"
   echo "tools run from $ROOT" >> "$SUMMARY"
   echo "node $(node --version), git $(git --version)" >> "$SUMMARY"
+  for n in $ISOLATED TEMP TMP; do echo "variable $n=${!n-<unset>}" >> "$SUMMARY"; done
   REQUIRED="$(node "$TOOLS/check-pins.mjs" required --root "$ROOT")" || REQUIRED=""
 }
 
@@ -116,7 +145,9 @@ case "$MODE" in
     step clone clone
     if [ -n "$FAILED" ]; then finish; fi
     cd "$V" || exit 2
-    step isolation-before node "$TOOLS/check-isolation.mjs" before --home "$SYNTHETIC_HOME" --guard "$V/scripts/manual/stage0-guard.mjs"
+    step isolation-before node "$TOOLS/check-isolation.mjs" before --home "$SYNTHETIC_HOME" --pscache "$PSCACHE/ModuleAnalysisCache" --tree "$V" --guard "$V/scripts/manual/stage0-guard.mjs"
+    if [ -n "$FAILED" ]; then finish; fi
+    step powershell-before node "$TOOLS/check-isolation.mjs" powershell --pscache "$PSCACHE/ModuleAnalysisCache" --tree "$V"
     if [ -n "$FAILED" ]; then finish; fi
     step install yarn install --frozen-lockfile
     step test yarn test
@@ -135,6 +166,7 @@ case "$MODE" in
     unset STAGE0_REPLAY_KEEP
     step replay-counts node "$TOOLS/check-tap.mjs" --replay "$V/.stage0-replay" --summary "$V/.stage0-replay-summary.json" --pins "$TOOLS/verification-pins.json" --clone "$V" --expect "$EXPECT"
     step isolation-after node "$TOOLS/check-isolation.mjs" after --home "$SYNTHETIC_HOME"
+    step tree-after node "$TOOLS/check-isolation.mjs" tree --tree "$V"
     finish
     ;;
   selftest)
