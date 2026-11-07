@@ -573,7 +573,20 @@ const EXPR_STOPS = [
   ["trigger-when-least-enum", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en; create trigger x_t before insert on ${T} for each row when (LEAST(new.x_e, new.x_e) is null) execute function ${S}.pass_fn();`, ["expression-nodes"], false, { authusers: ["authusers-triggers"] }],
   ["domain-check-least-enum", ({ T, S }) => `${ENUM(S)} create domain ${S}.x_d as ${S}.x_en check ((LEAST(value, value) is not null) or (value is null)); alter table ${T} add column x_c ${S}.x_d;`, ["expression-nodes"], false],
   ["domain-default-least-enum", ({ T, S }) => `${ENUM(S)} create domain ${S}.x_d as ${S}.x_en default LEAST('a'::${S}.x_en, 'b'::${S}.x_en); alter table ${T} add column x_c ${S}.x_d;`, ["expression-nodes"], false],
-  ["enum-equality-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check (x_e = 'a');`, ["expression-nodes"], false],
+  // X3g: the enum exception is the built-in equality and inequality under an OPEXPR, and nothing else.
+  ["enum-ordering-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check (x_e < 'b');`, ["expression-nodes"], false],
+  ["enum-equality-and-least-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check ((x_e = 'a') and (LEAST(x_e, x_e) = 'a'));`, ["expression-nodes"], false],
+  ["enum-equality-and-coerceviaio-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check ((x_e = 'a') and ((x_e)::text = 'a'));`, ["expression-nodes"], false],
+  ["enum-equality-and-ordering-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check ((x_e = 'a') or (x_e < 'b'));`, ["expression-nodes"], false],
+  ["enum-distinct-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check (x_e is distinct from 'b');`, ["expression-nodes"], false],
+  ["enum-nullif-default", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_c ${S}.x_en default NULLIF('a'::${S}.x_en, 'b'::${S}.x_en);`, ["expression-nodes"], false],
+  ["enum-any-in-check", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_e ${S}.x_en, add constraint x_k check (x_e = ANY (ARRAY['a'::${S}.x_en, 'b'::${S}.x_en]));`, ["expression-nodes"], false],
+  // The built-in's own signature in another schema: CREATE OPERATOR finds enum_eq only over anyenum.
+  ["enum-lookalike-operator-default", ({ T, S }) => `${ENUM(S)} create operator ${S}.= (function = pg_catalog.enum_eq, leftarg = anyenum, rightarg = anyenum); alter table ${T} add column x_c boolean default ('a'::${S}.x_en OPERATOR(${S}.=) 'a'::${S}.x_en);`, ["expression-nodes", "routes"], false],
+  ["enum-lookalike-operator-in-check", ({ T, S }) => `${ENUM(S)} create operator ${S}.= (function = pg_catalog.enum_eq, leftarg = anyenum, rightarg = anyenum); alter table ${T} add column x_e ${S}.x_en, add constraint x_k check (x_e OPERATOR(${S}.=) 'a'::${S}.x_en);`, ["expression-nodes"], false],
+  ["enum-lookalike-function", ({ T, S }) => `${ENUM(S)} create function ${S}.enum_eq(${S}.x_en, ${S}.x_en) returns boolean language sql immutable as 'select $1::text = $2::text'; create operator ${S}.= (function = ${S}.enum_eq, leftarg = ${S}.x_en, rightarg = ${S}.x_en); alter table ${T} add column x_c boolean default ('a'::${S}.x_en OPERATOR(${S}.=) 'a'::${S}.x_en);`, ["expression-nodes", "routes"], false],
+  // X3g (Codex XF-R1): a built-in operator off the reviewed list. @@ reads default_text_search_config.
+  ["text-search-operator", ({ T }) => `alter table ${T} add column x_c boolean default ('cats'::text @@ 'cat'::text);`, ["expression-nodes"], false],
   ["pseudo-type-function-over-enum", ({ T, S }) => `${ENUM(S)} alter table ${T} add column x_c text default concat('a'::${S}.x_en);`, ["expression-nodes"], false],
   ["unlisted-cast-function", ({ T }) => `alter table ${T} add column x_c money default (1)::money;`, ["expression-nodes"], false],
   ["row-comparison", ({ T }) => `alter table ${T} add column x_c boolean default (ROW('a'::text, 'b'::text) < ROW('c'::text, 'd'::text));`, ["expression-nodes"], false],
@@ -716,6 +729,11 @@ for (const [name, setup] of [
   // A policy with RLS off, and one with RLS on for an owner it does not apply to: the count is evidence.
   ["policy-rls-off", ({ T }) => `create policy x_p on ${T} for select using (true);`],
   ["policy-rls-on-superuser", ({ T }) => `alter table ${T} enable row level security; create policy x_p on ${T} for select using (true);`],
+  // X3g: the stock form of an enum column, its Const default (Codex's control) and CHECKs of equality and
+  // inequality against that literal, which compare the values' OIDs.
+  ["enum-stock-form", ({ T, S }) => `create type ${S}.buckettype as enum ('STANDARD', 'ANALYTICS'); alter table ${T} add column x_type ${S}.buckettype not null default 'STANDARD'::${S}.buckettype, add constraint x_type_is check (x_type = 'STANDARD'::${S}.buckettype), add constraint x_type_not check (x_type <> 'ANALYTICS'::${S}.buckettype);`],
+  // X3g: the stock smallint CHECK and boolean partial index, over listed operators.
+  ["stock-forms", ({ T, C }) => `alter table ${T} add column x_status smallint default 0, add column x_sso boolean not null default false, add constraint x_status_check check ((x_status >= 0) and (x_status <= 2)); create unique index x_sso_u on ${T} ((${C})) where (x_sso = false);`],
 ]) {
   for (const t of TABLES) {
     if (name === "trigger-when-builtin" && t.part !== "buckets") continue;
@@ -767,6 +785,38 @@ alter table storage.buckets add column review_enum_value storage.review_enum def
     save(`w-expr-codex-enum-${form}.json`, { b00: deltaOf(EXPR_BASE.build00, before.build00), b00w: deltaOf(EXPR_BASE.build00w, before.build00w), readingsEqualAfterReplacement: same(before, after), noFacts: atReview.facts === null, js, sql: namesOf(r), code: r.code ?? null, where: r.where ?? null, left, witnessAfterRefusal: refused, real: real.ok ? { committed: true } : { committed: false, code: real.code, message: String(real.message).slice(0, 200) }, consumed });
     say(same(before, after) && atReview.facts === null && same(js, ["buckets-expression-nodes"]) && same(namesOf(r), ["buckets-expression-nodes"]) && !r.ok && r.code === "P0001" && left.ledger_absent && left.files_absent && refused === false && consumed.is_called === true, `run W: Codex's enum comparator, ${fn}: the readings are still equal after the body is replaced, and both refuse ${js.join(", ")} | ${namesOf(r).join(", ")} before any file, witness unconsumed; without the step: ${real.ok ? "it commits" : `${real.code}`}, witness ${JSON.stringify(consumed)}`);
   }
+}
+{
+  // Codex's probe of 0acf9ca (XF-R1), the same sequence: a bucket default calling @@(text,text), read
+  // and bound under one default_text_search_config and run under another. The readings do not move,
+  // the default's value does, and at X3f both bound and BUILD-01 committed. Not shown to write
+  // anything it should not: shown to run what the readings do not hold. The reviewed list now stops
+  // it in both implementations, and BUILD-01's own text, with its list put back to X3f's blanket rule,
+  // commits on the same database.
+  const db = await fresh();
+  await db.exec("set default_text_search_config = 'pg_catalog.english'; alter table storage.buckets add column review_ts boolean default ('cats'::text @@ 'cat'::text);");
+  const value = async () => (await db.query("select ('cats'::text @@ 'cat'::text) as v")).rows[0].v;
+  const before = await reading(db);
+  const english = await value();
+  const reviewed = own(before);
+  const atReview = C.build01Facts({ ...before, ref: REF, finalFrom: refState, reviewed, bodyReview: disposed(before) });
+  const js = C.blocking(atReview.findings).map((f) => f.key);
+  const text = A.build01Text(src, MANIFEST, facts0(before, reviewed));
+  await db.exec("set default_text_search_config = 'pg_catalog.simple'");
+  const after = await reading(db);
+  const simple = await value();
+  const r = await runText(db, text);
+  const left = await noneLeft(db);
+  // X3f's blanket rule, put back into this text's operator check: every built-in non-volatile operator.
+  const head = "not coalesce('node-operator|' || x.ref || '|' || x.fact in (";
+  const at = text.indexOf(head);
+  if (at < 0 || text.indexOf(head, at + 1) >= 0) throw new Error("the operator check is not in BUILD-01's text exactly once");
+  const end = text.indexOf("), false)", at) + "), false)".length;
+  const blanket = `${text.slice(0, at)}not coalesce(x.fact ~ '^pg_catalog[|]true[|]pg_catalog[|]true[|][is][|]', false)${text.slice(end)}`;
+  const m = await runText(db, blanket);
+  const inserted = m.ok ? (await db.query("select review_ts from storage.buckets order by name")).rows.map((x) => x.review_ts) : null;
+  save("w-expr-codex-text-search.json", { b00: deltaOf(EXPR_BASE.build00, before.build00), b00w: deltaOf(EXPR_BASE.build00w, before.build00w), readingsEqualAfterSetting: same(before, after), values: { english, simple }, noFacts: atReview.facts === null, js, sql: namesOf(r), code: r.code ?? null, where: r.where ?? null, left, blanketSql: m.ok ? { committed: true, review_ts: inserted } : { committed: false, code: m.code, message: String(m.message).slice(0, 200) } });
+  say(same(before, after) && english === true && simple === false && atReview.facts === null && same(js, ["buckets-expression-nodes"]) && same(namesOf(r), ["buckets-expression-nodes"]) && !r.ok && r.code === "P0001" && left.ledger_absent && left.files_absent && m.ok, `run W: Codex's @@ under two text search settings: the readings are equal, the value moves ${english} → ${simple}, and both refuse ${js.join(", ")} | ${namesOf(r).join(", ")} before any file; with X3f's blanket rule back in the text, BUILD-01 ${m.ok ? `commits, the new buckets' review_ts ${JSON.stringify(inserted)}` : `does not commit: ${m.code}`}`);
 }
 {
   // Codex's stock-like expressions on auth.users, as it ran them: kept.

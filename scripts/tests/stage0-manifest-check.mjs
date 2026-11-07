@@ -611,7 +611,7 @@ const B1_PREDICATES = ["public-empty", "ledger", "buckets-present", "buckets-col
   "authusers-columns", "authusers-notnull", "authusers-authority", "authusers-rls", "authusers-triggers", "authusers-reviewed",
   "authusers-relation", "authusers-expression-calls", "authusers-sequence-calls", "authusers-routes", "authusers-rules", "authusers-expression-nodes", "authusers-foreign-keys", "marker-absent", "database-create", "creator", "writer-identity"];
 /** Every name BUILD-01's first step puts before "(" outside the two reads it embeds. */
-const B1_ASSERT_CALLS = ["all", "and", "array", "calls", "chr", "coalesce", "length", "node_bad", "node_dependent", "node_facts", "node_pairs", "node_refs", "node_tags", "node_trees", "starts_with", "count", "current_setting", "except", "exists", "f", "bound", "bad", "from", "group", "in", "lateral", "md5", "not", "or", "position", "regexp_matches", "regexp_replace", "reviewed", "scanned", "select", "split_part", "string_agg", "string_to_array", "substr", "substring", "union", "values", "where", "as", "p"];
+const B1_ASSERT_CALLS = ["all", "and", "array", "calls", "chr", "coalesce", "length", "node_bad", "node_dependent", "node_facts", "node_ops", "node_refs", "node_tags", "node_trees", "starts_with", "count", "current_setting", "except", "exists", "f", "bound", "bad", "from", "group", "in", "lateral", "md5", "not", "or", "position", "regexp_matches", "regexp_replace", "reviewed", "scanned", "select", "split_part", "string_agg", "string_to_array", "substr", "substring", "union", "values", "where", "as", "p"];
 
 /** A DO body's normalized statements, its tail checked and removed. */
 function b1Body(body, label, say) {

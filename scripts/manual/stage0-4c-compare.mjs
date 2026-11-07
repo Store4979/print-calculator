@@ -855,13 +855,19 @@ const relationHolds = (part) => part?.relation === BUILD_RELATION && /^[0-9]+$/.
  *     rest of this rule is about those;
  *   - for each :funcid, a built-in on BUILD_NODE_FUNCTIONS (made at initdb, in pg_catalog), or one
  *     the walk reports for this same CHECK or trigger. nextval and setval are the sequence rule's;
- *   - for each :opno, a built-in operator with a non-volatile built-in oprcode, or one whose oprcode
- *     the walk reports for this same CHECK or trigger. :opfuncid must be that oprcode;
+ *   - for each :opno, an operator on BUILD_NODE_OPERATORS or BUILD_ENUM_EQUALITY, or one whose oprcode
+ *     the walk reports for this same CHECK or trigger. :opfuncid must be that oprcode (X3g, Codex
+ *     XF-R1: "made at initdb, in pg_catalog, non-volatile" admitted @@(text,text), whose ts_match_tt
+ *     reads default_text_search_config, so a setting the readings do not hold changed what ran);
  *   - a catalog row for each type it names;
  *   - and, where what runs depends on the type (TYPE_DEPENDENT_TAGS, or a function or oprcode with a
  *     pseudo-type argument), only types on BUILD_NODE_TYPES. So MINMAX, CoerceViaIO and ArrayCoerce
  *     over an enum, a domain or an array of either stop, though the walk's kind rule accepts those
- *     types. An enum Const alone runs nothing.
+ *     types. An enum Const alone runs nothing. The one exception (X3g): an OPEXPR whose operator is
+ *     the built-in enum equality or inequality on BUILD_ENUM_EQUALITY, which compares the two values'
+ *     OIDs and dispatches nothing, does not by itself make the tree type-dependent. The same operator
+ *     under DISTINCTEXPR, NULLIFEXPR or SCALARARRAYOPEXPR, and any other node of the tree, keep the
+ *     restriction.
  * The tags and fields are PostgreSQL 17's. A string inside a tree could add a tag to what this reads,
  * never remove one, and every string-bearing node is off the list. The lists are judged here and in
  * BUILD-01, not in BUILD-00's text, so adding to them takes review and no new reading.
@@ -882,13 +888,56 @@ export const BUILD_NODE_TYPES = Object.freeze([
   "text", "varchar", "bpchar", "name", "unknown", "bool", "int2", "int4", "int8", "numeric", "float4", "float8", "timestamptz", "timestamp", "date", "time", "timetz", "interval", "uuid", "json", "jsonb", "bytea", "oid", "regclass",
   "_text", "_varchar", "_bpchar", "_name", "_bool", "_int2", "_int4", "_int8", "_numeric", "_float4", "_float8", "_timestamptz", "_timestamp", "_date", "_uuid", "_json", "_jsonb",
 ]);
+/**
+ * X3g (Codex XF-R1): the operators a supported expression may run, each by its catalog identity:
+ * [operator oid, operator signature, implementation oid, implementation signature]. A node-operator
+ * row passes only as the exact row of a listed entry: made at initdb, in pg_catalog, implemented by
+ * an initdb pg_catalog function that is immutable and takes no pseudo-type. The list is what the
+ * supported controls run (the stock-like CHECKs, partial indexes and foreign keys, Codex's controls
+ * and BUILTIN_CONTROLS), and nothing more. Text search is not on it: @@ reads
+ * default_text_search_config, a parser and dictionaries the readings do not hold. The OIDs are
+ * PostgreSQL 17's own (pg_operator.dat), checked on PGlite's 17.5; R-VER stops on another version.
+ */
+export const BUILD_NODE_OPERATORS = Object.freeze([
+  ["96", "=(integer,integer)", "65", "pg_catalog.int4eq(integer, integer)"],
+  ["97", "<(integer,integer)", "66", "pg_catalog.int4lt(integer, integer)"],
+  ["521", ">(integer,integer)", "147", "pg_catalog.int4gt(integer, integer)"],
+  ["523", "<=(integer,integer)", "149", "pg_catalog.int4le(integer, integer)"],
+  ["525", ">=(integer,integer)", "150", "pg_catalog.int4ge(integer, integer)"],
+  ["419", ">(bigint,integer)", "477", "pg_catalog.int84gt(bigint, integer)"],
+  ["430", ">=(bigint,integer)", "479", "pg_catalog.int84ge(bigint, integer)"],
+  ["540", "<=(smallint,integer)", "166", "pg_catalog.int24le(smallint, integer)"],
+  ["542", ">=(smallint,integer)", "168", "pg_catalog.int24ge(smallint, integer)"],
+  ["1755", "<=(numeric,numeric)", "1723", "pg_catalog.numeric_le(numeric, numeric)"],
+  ["1757", ">=(numeric,numeric)", "1721", "pg_catalog.numeric_ge(numeric, numeric)"],
+  ["91", "=(boolean,boolean)", "60", "pg_catalog.booleq(boolean, boolean)"],
+  ["98", "=(text,text)", "67", "pg_catalog.texteq(text, text)"],
+  ["531", "<>(text,text)", "157", "pg_catalog.textne(text, text)"],
+  ["642", "!~(text,text)", "1256", "pg_catalog.textregexne(text, text)"],
+  ["2972", "=(uuid,uuid)", "2956", "pg_catalog.uuid_eq(uuid, uuid)"],
+]);
+/**
+ * X3g (Ryan's request; Codex, review of 0acf9ca): the built-in enum equality and inequality, by
+ * catalog identity and signature. enum_eq and enum_ne compare the two values' OIDs; they consult no
+ * operator class and no comparison function. Only these two rows, under an OPEXPR, are exempt from
+ * the pseudo-type restriction.
+ */
+export const BUILD_ENUM_EQUALITY = Object.freeze([
+  ["3516", "=(anyenum,anyenum)", "3508", "pg_catalog.enum_eq(anyenum, anyenum)"],
+  ["3517", "<>(anyenum,anyenum)", "3509", "pg_catalog.enum_ne(anyenum, anyenum)"],
+]);
+/** The exact node-operator row of a list entry: built-in operator and implementation, immutable, the pseudo-type flag as given. */
+const operatorRow = ([, oprSig, implOid, implSig], pseudo) => `pg_catalog|true|pg_catalog|true|i|${pseudo}|${implOid}|${implSig.replace(/^pg_catalog\.([^(]*)\(.*$/, "$1")}|${implSig}|${oprSig}`;
+const listedOperator = (list, pseudo) => (oid, fact) => list.some((e) => e[0] === oid && fact === operatorRow(e, pseudo));
+export const reviewedOperator = listedOperator(BUILD_NODE_OPERATORS, "false");
+export const enumEquality = listedOperator(BUILD_ENUM_EQUALITY, "true");
 const TYPE_DEPENDENT_TAGS = Object.freeze(["ARRAYCOERCEEXPR", "COERCEVIAIO", "MINMAXEXPR"]);
 const OPERATOR_TAGS = Object.freeze(["DISTINCTEXPR", "NULLIFEXPR", "OPEXPR", "SCALARARRAYOPEXPR"]);
 const NODE_TAG = /[{]([A-Z_]+)/g;
 const NODE_REF = /:(funcid|opno|consttype|vartype|resulttype|funcresulttype|opresulttype|minmaxtype|coalescetype|casetype|array_typeid|element_typeid|typeId|type) ([0-9]+)/g;
-const NODE_OP_PAIR = /:opno ([0-9]+) :opfuncid ([0-9]+)/g;
+// Each operator node with its own operator and implementation: the tag, then :opno and :opfuncid, in PostgreSQL 17's order.
+const NODE_OP = /[{](DISTINCTEXPR|NULLIFEXPR|OPEXPR|SCALARARRAYOPEXPR) :opno ([0-9]+) :opfuncid ([0-9]+)/g;
 const NODE_PLANNER_FUNCTION = /:(?:hashfuncid|negfuncid) [1-9]/;
-const BUILTIN_OPERATOR = /^pg_catalog\|true\|pg_catalog\|true\|[is]\|/;
 const typeFactReviewed = (fact) => {
   const [schema, initdb, , , name] = String(fact).split("|");
   return schema === "pg_catalog" && initdb === "true" && BUILD_NODE_TYPES.includes(name);
@@ -900,10 +949,10 @@ function treeHolds(part, origin, name, tree) {
   if (!tags.every((t) => BUILD_NODE_TAGS.includes(t))) return false;
   const refs = [...tree.matchAll(NODE_REF)].map((m) => [m[1], m[2]]);
   const functions = refs.filter(([f]) => f === "funcid").map(([, o]) => o);
-  const pairs = [...tree.matchAll(NODE_OP_PAIR)].map((m) => [m[1], m[2]]);
+  const operators = [...tree.matchAll(NODE_OP)].map((m) => [m[1], m[2], m[3]]);
   const operatorRefs = refs.filter(([f]) => f === "opno");
   if (tags.filter((t) => t === "FUNCEXPR").length !== functions.length) return false;
-  if (tags.filter((t) => OPERATOR_TAGS.includes(t)).length !== operatorRefs.length || pairs.length !== operatorRefs.length) return false;
+  if (tags.filter((t) => OPERATOR_TAGS.includes(t)).length !== operatorRefs.length || operators.length !== operatorRefs.length) return false;
   if (NODE_PLANNER_FUNCTION.test(tree)) return false;
   const reviewedHere = (sig) => (origin === "check" || origin === "trigger") && Object.hasOwn(part, `${origin}-function|${name}|${sig}`);
   let dependent = tags.some((t) => TYPE_DEPENDENT_TAGS.includes(t));
@@ -915,13 +964,14 @@ function treeHolds(part, origin, name, tree) {
     if (!builtin && !reviewedHere(sig)) return false;
     if (pseudo === "true") dependent = true;
   }
-  for (const [oid, implementation] of pairs) {
+  for (const [tag, oid, implementation] of operators) {
     const fact = part[`node-operator|${oid}`];
     if (typeof fact !== "string") return false;
     const f = fact.split("|");
-    if (!BUILTIN_OPERATOR.test(fact) && !reviewedHere(f[8])) return false;
+    const equality = enumEquality(oid, fact);
+    if (!reviewedOperator(oid, fact) && !equality && !reviewedHere(f[8])) return false;
     if (implementation !== "0" && implementation !== f[6]) return false;
-    if (f[5] === "true") dependent = true;
+    if (f[5] === "true" && !(equality && tag === "OPEXPR")) dependent = true;
   }
   for (const [field, oid] of refs) {
     if (field === "funcid" || field === "opno") continue;
@@ -938,14 +988,15 @@ const nodesHold = (part) => Object.entries(part ?? {}).every(([key, tree]) => {
 });
 /**
  * X3f (Codex 5b): each foreign key on either side of the table. Every key column's two types are on
- * BUILD_NODE_TYPES, its three equality operators are built-ins with monomorphic oprcodes, and the
+ * BUILD_NODE_TYPES, its three equality operators are on BUILD_NODE_OPERATORS (X3g), and the
  * index it depends on uses only pg_catalog's operator classes. The referenced side comes from the
  * key's own rows, never from this table's columns. Any other shape stops.
  */
 const OPERATOR_CLASSES = /^pg_catalog\.[^,]*(?:,pg_catalog\.[^,]*)*$/;
+// X3g: the same reviewed list as the trees (Codex, review of 0acf9ca: one restriction for every shared helper).
 const foreignKeyOperator = (part, oid) => {
   const fact = part[`node-operator|${oid}`];
-  return typeof fact === "string" && BUILTIN_OPERATOR.test(fact) && fact.split("|")[5] === "false";
+  return typeof fact === "string" && reviewedOperator(oid, fact);
 };
 const foreignKeysHold = (part) => Object.entries(part ?? {}).every(([k, v]) => {
   if (k.startsWith("fk|")) return Object.keys(part).some((c) => c.startsWith(`fk-column|${k.slice(3)}|`));

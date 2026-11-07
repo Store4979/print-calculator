@@ -3169,6 +3169,59 @@ window.**
     (the read's own time is not stated):
     - Netlify → `printcalculator2` shows no new production deploy;
     - the Published entry is still `6ab020c50a788b0008d430c9` at main@7ec5af4.
+- **Codex accepted VT2 and X3f (`0acf9ca`), 2026-11-07**
+  (`reviews/2026-11-07-0acf9ca-review.md`), with an exact staging-only push
+  clearance:
+  - **the push:** exactly `0acf9ca51df3606b707ff945c773bd33264bb839` to
+    `refs/heads/security/release-2-slice-2`, a fast-forward from `2d53bed`, without
+    force or tags, carrying the tooling commit `a88df3f`, X3e `c940f0f`, VT2 `04a0380`
+    and X3f;
+  - **what it clears nothing for:** a merge to main, project creation, target
+    binding, a real-store command, a database send or a production window. R0a is not
+    cleared; X3g and VT3 are its follow-ups.
+- **The push, Sat 2026-11-07, 16:09:42.140–16:09:44.968Z (11:09 EST), under that
+  clearance only:**
+  - **Before (16:09:40Z):**
+    - the remote is `github.com/Store4979/print-calculator`, and `push.default`
+      is `nothing`;
+    - X3d..0acf9ca held exactly `a88df3f`, `c940f0f`, `04a0380` and `0acf9ca`, with
+      X3d an ancestor of X3f (a fast-forward);
+    - `ls-remote` showed the branch at
+      `2d53bedf5232a7722799f0fbf6d82bdff90d17f4`, `main` at
+      `7ec5af48666e3779266464f77cdbe4bdf851ae5a`, and no tags;
+    - the working tree held the uncommitted `docs/STATUS.md` and the untracked
+      `AGENTS.md`.
+  - **The command:**
+    `git push origin 0acf9ca51df3606b707ff945c773bd33264bb839:refs/heads/security/release-2-slice-2`
+    gave `2d53bed..0acf9ca`, exit 0, with no force and no tags. Neither the STATUS edit
+    nor `AGENTS.md` is in it.
+  - **After:** the branch is at `0acf9ca` and `main` is still at `7ec5af4`
+    (16:09:44Z, and again 16:30:21Z). There are no tags (both times).
+  - **Staging has not published `0acf9ca`.** At 16:09:32Z it served
+    deploy `6aee0c9d…` at `2d53bed`. Polled every 15 s from the push until the poll
+    gave up at 16:29:51Z, and read again at 16:30:21Z: still deploy
+    `6aee0c9dea7ebf31b912fe85` at `2d53bed`, built 2026-11-06T17:24:54.459Z. Earlier
+    pushes published in about 3.5 minutes. GitHub holds no status or check for this
+    site's builds, so nothing here shows why. A deploy is published only when its build
+    command exits 0, and that command runs `yarn test` before `yarn build`. Read again at
+    17:40:15Z, about 1 h 31 min after the push: still deploy `6aee0c9d…` at `2d53bed`.
+    **Why is not established:** no deploy log of the staging site for `0acf9ca` has been
+    read, and nothing here names a cause.
+  - **Production is unchanged** at 16:30:21Z, as it was before the push (16:09Z), and
+    again at 17:40:15Z. The live `index.html`, `main-DZt0oGiJ.js` and `index-ftBg9V1i.js`
+    (md5 `d67e9e91…`, `47ab9406…`, `57fb08e6…`, the same files as in the records
+    above) are byte-identical to deploy `6ab020c5`'s permalink.
+    `/.netlify/functions/deploy-context` on production returns the same bytes as
+    `index.html`. The checks are in this session's scratchpad, `x3f-push/pre`,
+    `x3f-push/post` and `x3f-push/post2`.
+  - **Ryan's §12 dashboard read after the push,** read-only, nothing clicked, done
+    just before the message, which arrived by about 17:40Z on Sat 2026-11-07 (12:40
+    EST), about 1 h 31 min after the push (the read's own time is not stated):
+    - Netlify → `printcalculator2` shows no new production deploy;
+    - the Published entry is still `6ab020c50a788b0008d430c9` at main@7ec5af4.
+
+    It is a read of the production site; it says nothing about the staging site's
+    build of `0acf9ca`.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 

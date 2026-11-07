@@ -1,22 +1,33 @@
-- Last updated: 2026-11-06
+- Last updated: 2026-11-07
 - HEAD (main): 7ec5af4 Merge pull request #47 (origin/main, 2026-09-20; unchanged, since no session log goes to main)
 - CI (main): none (no GitHub Actions workflows; Netlify runs yarn test + yarn build on deploy)
 - Security (main): none (no security workflow)
 - Deploy: https://printcalculator2.netlify.app/
 - Board: Print Calculator
 
+## 2026-11-07 — VT2 and X3f accepted and pushed (staging did not publish them); VT3, PowerShell's cache placed and checked; X3g, operators by exact identity and the enum equality
+- Shipped: security/release-2-slice-2 2d53bed..0acf9ca pushed 16:09Z (a88df3f, c940f0f, 04a0380, 0acf9ca, under Codex's review of 0acf9ca; staging has NOT published it and still served 6aee0c9d at 2d53bed at 17:40Z, cause not established; production unchanged, and Ryan's dashboard read agrees); 0acf9ca..this commit local, for Codex's review
+  - 051124d VT3: the driver sets HOME, USERPROFILE, LOCALAPPDATA, APPDATA and PSModuleAnalysisCachePath, each once, absolute and synthetic, before any step; powershell-before (PowerShell's cache at the synthetic file, nothing in the clone) and tree-after (nothing left in the clone or a replay checkout); VT-18's stand-in yarn executable; VT-19 to VT-22
+  - this commit X3g: operators by exact catalog identity (BUILD_NODE_OPERATORS), text search off the list, in the trees and the foreign keys (Codex XF-R1); the built-in enum equality and inequality exempt from the pseudo-type rule only as an OPEXPR (BUILD_ENUM_EQUALITY); Codex's @@ negative, the enum stock form and its negatives; 4W-28 and the mutants; plan §0.10; the 0acf9ca push record (production plan §E13) with Ryan's read; this log
+  - Not commits: the PowerShell cache trace (.review/vt3-trace-1 to -5, scripts in .review/vt3-evidence: the old placement reproduced in a fresh clone, G-27's window by module list and timing); VT3's precheck (.review/precheck-VT3-1, 671/671); the X4 draft, untracked (the gate, both runbooks, its tests), committed only on an accepted X3g
+- CI/Security on main: none
+- Open issues touched: none
+- Needs from Ryan: the staging site's (printcalculator2-staging) deploy of 0acf9ca: whether one exists, and the first non-zero exit in its log; forward the review request for VT3 and X3g when it is final
+- Needs a ruling from Claude (chat): none
+- Next planned step: X3g's clean verification through VT3's committed driver, then one review request for VT3 and X3g (a staging-only push clearance naming X3g's hash, and X3g as the read revision before R0a); X4 drafted in the working tree while Codex reviews
+
 ## 2026-11-06 — X3c and X3d accepted and pushed to staging; the verification tooling committed, with DR-1 fixed; X3e, what a stored expression can run
-- Shipped: security/release-2-slice-2 1a7aff1..2d53bed pushed 17:21Z (X3c, X3d, under Codex's review of 2d53bed; staging deploy 6aee0c9d; production unchanged); 2d53bed..this commit local, for Codex's review; Codex AMENDED a88df3f and c940f0f (review of c940f0f) and held the push
+- Shipped: security/release-2-slice-2 1a7aff1..2d53bed pushed 17:21Z (X3c, X3d, under Codex's review of 2d53bed; staging deploy 6aee0c9d; production unchanged); 2d53bed..0acf9ca local, for Codex's review; Codex AMENDED a88df3f and c940f0f (review of c940f0f) and held the push; 0acf9ca accepted and pushed on 11-07
   - a88df3f scripts/verify: the driver, the fixture comparator, the TAP checker, a launcher and their regression tests (VT-1 to VT-16), with their own pin set; DR-1: fixed ledger versions come from the manifest, and only named generated entries may carry another timestamp; the reviewed replay-state set; no SQL or manifest pin moved
   - c940f0f X3e: BUILD-00 reports every column's type, every stored default, generated expression, index expression and predicate, every rule, and a walk along pg_depend plus oprcode, trigger functions, domains and array elements; <part>-relation, -sequence-calls, -expression-calls, -routes and -rules in both implementations; a body's helpers are B1's review item, with an explicit disposition; the X3b and 2d53bed push records, each with Ryan's read, the 44-to-43 correction and this log
   - 04a0380 VT2: a refused isolation-before stops the run (VT-R1, VT-17, VT-18); the raw-text audit's claim narrowed, the closure a source-review item, and a parse of each module in the suite (VT-N1, VT-2b)
-  - this commit X3f: BUILD-00 reports each stored node tree and the catalog identity of what it names, policy counts and foreign keys on both sides; <part>-expression-nodes, <part>-foreign-keys and writer-identity in both implementations; Codex's enum comparator refused before any write though the readings do not move; the records of plan §0.9
-  - Not commits: X3e's clean verification, through the committed tooling: .review/verify-c940f0f, logs verify-X3e-*, RESULT PASSED, launcher exit 0, suite 660/660, targeted 264/264, build, manifest, M-13 2/2, harnesses 33 and 224 PASS, fixtures 0 problems, replay 14 × 660; a run of the same tooling on its own commit, RESULT PASSED, 655/655
+  - 0acf9ca X3f: BUILD-00 reports each stored node tree and the catalog identity of what it names, policy counts and foreign keys on both sides; <part>-expression-nodes, <part>-foreign-keys and writer-identity in both implementations; Codex's enum comparator refused before any write though the readings do not move; the records of plan §0.9
+  - Not commits: X3e's clean verification, through the committed tooling: .review/verify-c940f0f, logs verify-X3e-*, RESULT PASSED, launcher exit 0, suite 660/660, targeted 264/264, build, manifest, M-13 2/2, harnesses 33 and 224 PASS, fixtures 0 problems, replay 14 × 660; a run of the same tooling on its own commit, RESULT PASSED, 655/655; X3f's clean verification, through VT2's committed tooling: .review/verify-0acf9ca, logs verify-X3f-*, RESULT PASSED, launcher exit 0, suite 667/667, targeted 271/271, build, manifest, M-13 2/2, harnesses 33 and 292 PASS, fixtures 0 problems, replay 14 × 667
 - CI/Security on main: none
 - Open issues touched: none
-- Needs from Ryan: forward the review request to Codex (reviews/requests/codex-review-request-VT2-X3f.md)
-- Needs a ruling from Claude (chat): none. From Codex: operators by rule rather than by list, and whether enum equality should stay stopped (plan §0.9)
-- Next planned step: Codex's review of VT2 and X3f, which asks a staging-only push clearance naming X3f's hash, carrying a88df3f, c940f0f, VT2 and X3f. R0a waits for this read revision's acceptance, and X4 waits for that verdict
+- Needs from Ryan: none (done)
+- Needs a ruling from Claude (chat): none. Codex ruled: a reviewed operator list, and the narrow enum exception (plan §0.10)
+- Next planned step: done: Codex accepted VT2 and X3f, cleared their push, and required VT3 and X3g
 
 ## 2026-11-05 — X3b accepted and pushed to staging; the verification driver repaired; X3c (the lock and deadlock policy) and X3d (the exact set of triggers and CHECKs)
 - Shipped: security/release-2-slice-2 47a0b69..1a7aff1 pushed 00:02Z on 11-06 (X3, X3b, under Codex's review of 1a7aff1; staging deploy 6aed190b; production unchanged); 1a7aff1..2d53bed local, for Codex's review
@@ -30,7 +41,7 @@
 - Next planned step: done: Codex accepted X3c and X3d, and required X3e
 
 ## 2026-11-04 — X2c accepted, and X2 to X2c pushed to staging; X3, item 4(c)'s writing texts; Codex's AMEND of X3, and X3b
-- Shipped: security/release-2-slice-2 a5a05ec..47a0b69 pushed 19:12Z (X2, X2b, X2c, under Codex's review of 47a0b69; staging deploy 6aeb8393; production unchanged); 47a0b69..this commit local, for Codex's review
+- Shipped: security/release-2-slice-2 a5a05ec..47a0b69 pushed 19:12Z (X2, X2b, X2c, under Codex's review of 47a0b69; staging deploy 6aeb8393; production unchanged); 47a0b69..1a7aff1 local, for Codex's review
   - 47a0b69 X2c: Codex's review of X2b: under `empty`, only the exact reviewed document, byte for byte (B1), and the one relation form; absent-schema and absent-table only with the matching schema and table facts, an empty relation and columns, no constraint or trigger fact, and <not read> (B2); an unknown fact and a non-object row stop; the schema-ACL comparison scope and X4's images obligation recorded (4(c) plan §0.4, §2.2); CLAUDE.md's to_regclass line narrowed; 4C-18, 4C-19, 4C-M1 at 52 mutants; the comparator re-pinned; no SQL text, send policy or fixture changed (Codex: ACCEPT, pushed)
   - 87b34fa X3: P1-4C (P1′, its proofs source, 11 lock boundaries, its exact result and cap); BUILD-01 as a function of the facts B1 binds, with its re-assertion before the first file, and no text, policy or target until B1; M-6g; the preflight predicates in the comparator and in BUILD-01's SQL; the classifier's success entries and declared PERFORMs; the sender binds the step's declared text, go.text and the planned text (G-28, a G-26 mutant); the local run and its fixtures; 4W-1..4W-14, 4W-M1..M3; the guard chain re-pinned; no rehearsal target and no change to a preserved text's policy (Codex: AMEND, no push; the sender's binding accepted and closed)
   - 1a7aff1 X3b: Codex's review of X3: stage0_expect_error's inner handler lets 55P03 through (X3-R1), BUILD-00's arbiter| row and the one supported arbiter in both predicates (X3-R2), a bounded text column must hold its literals in both predicates (X3-R3); Codex's three probes as 4W-15 to 4W-17, 4W-M4; the plan's reconciliations, the cap ruling and the obligations for B1 and X4 (§0.6); the X2c push record (production plan §E13) and this log; BUILD-00 and P1-4C re-pinned, the comparator and assembler re-pinned; P1, the sender, the classifier and every other output unchanged (Codex: ACCEPT, pushed)
@@ -55,16 +66,3 @@
 - Needs from Ryan: forward the X2b review request to Codex (done)
 - Needs a ruling from Claude (chat): none
 - Next planned step: Codex's review of X2b (done: AMEND); then X3 under the outline; the launch analyzer only as its own reviewed work
-
-## 2026-11-02 — T and W2 pushed; G-6 fixed (W, W2); the 4(c) plan accepted (V2)
-- Shipped: security/release-2-slice-2 04b6520..c62644a pushed 16:59Z (T only, cleared by Codex; staging deploy 6ae8c169; production unchanged); c62644a..d8ec242 pushed 2026-11-03 02:20Z (U, V, W, V2, W2, under Codex's review of d8ec242 after its replay condition; staging deploy 6ae9450b; production unchanged)
-  - ed393be V: docs/security/stage0-item4c-plan.md answers Codex's review of U (U-1 to U-5, C1–C8) and records Ryan's decisions (Codex: AMEND, V-1 and V-2)
-  - 4b7450d W: G-6's F1–F3 under Codex's review of the G-6 addendum (withLock retries EPERM/EACCES/EBUSY on acquisition only; status, gate and the sender's first check read one locked snapshot, BUSY not DAMAGED; G-6/AP-3 released on acknowledgement; LK-*, SN-* tests); the guard chain re-pinned (Codex: AMEND, W-R1 to W-R3, W-N1)
-  - ea0c616 V2: the plan answers Codex's review of V: BUILD's non-public preflight with BUILD-00W (V-1); POST′'s reviewed Release 2 EXECUTE rows (V-2); the smoke order kept (C10) and the upload's file read; the data scope around P1′; P1′'s result schema; first receipts bound by hash; G-6's status; the image provenance (Codex: ACCEPT at plan level; its push held for W2)
-  - d8ec242 W2: Codex's review of W: status, gate and corroborate read their clock under the lock (W-R1, TM-*); LK-6 counts only witnessed sections (W-R2, LK-6b); the stale-lock procedure, procedure §7.1, in the refusal and the docs (W-R3, SN-6); within() clears the helpers' timers (W-N1, HL-1); the guard chain re-pinned (Codex: ACCEPT, with the outline's split and decisions 5–9 ruled)
-  - Not commits: the G-6 capture and addendum (Codex: ACCEPTED); W verified 537/537, build, replay 14 × 537; W's load campaign, as Codex counted it: 48 complete passing race TAP results (40 with exit 0, four 010 runs with exit 127, four 012 runs with no exit line), nine load suites 537/537, B #4 and C #4 stopped incomplete; not 200 completed runs, and not 48 captured zero exits; W2 verified 546/546, build, replay 14 × 546 (exit 0); W2's short cold-load sample after the push: 12 runs, all exit 0, the nine race tests ok in each, 35–40 s per run, at a mild load; the 4(c) implementation outline (reviews/requests); this session's records (the push records, V2's acceptance, the image observations, W's AMEND and W2) went into the next session's X0
-- CI/Security on main: none
-- Open issues touched: none
-- Needs from Ryan: the outline's decisions 1–4; the word to start X1 (both given 2026-11-03)
-- Needs a ruling from Claude (chat): none
-- Next planned step: X1 (the rehearsal target and M-12) under the outline, when Ryan says; the docs commit for these records when he asks

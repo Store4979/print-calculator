@@ -283,9 +283,9 @@
   },
   "assembler": {
     "path": "scripts/manual/assemble-stage0.mjs",
-    "blob": "6729fd0616459b996968b480e5c6818df55d4977",
-    "md5": "96a33148f5d17c2741f81f025e556511",
-    "bytes": 109709,
+    "blob": "2c8b0b10947e0af0a8517e5bd97f16c5de57ac57",
+    "md5": "bebc91c8b655e53575bddb1e7cb7cb0d",
+    "bytes": 112215,
     "pinnedAt": "manifest-commit"
   },
   "sender": {
@@ -308,16 +308,16 @@
     "files": [
       {
         "path": "scripts/manual/assemble-stage0.mjs",
-        "blob": "6729fd0616459b996968b480e5c6818df55d4977",
-        "md5": "96a33148f5d17c2741f81f025e556511",
-        "bytes": 109709,
+        "blob": "2c8b0b10947e0af0a8517e5bd97f16c5de57ac57",
+        "md5": "bebc91c8b655e53575bddb1e7cb7cb0d",
+        "bytes": 112215,
         "pinnedAt": "manifest-commit"
       },
       {
         "path": "scripts/manual/stage0-4c-compare.mjs",
-        "blob": "a682810afcc8e0f6168b5545caf8c748e531abd8",
-        "md5": "2051ad39d423ad220f7dbf73c26d0032",
-        "bytes": 77073,
+        "blob": "0fceab235bc0a5b43f34240ce178f2954f8791d0",
+        "md5": "76251cd0e9de18ecfaf653f05ece4e36",
+        "bytes": 81193,
         "pinnedAt": "manifest-commit"
       },
       {

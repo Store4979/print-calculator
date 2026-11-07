@@ -597,6 +597,58 @@ migration files themselves create are in their pinned blobs.
 reading; that the tags and fields stay the same in another PostgreSQL major version, though a different version number between the two projects already stops (§2.2);
 anything about Supabase's real roles or platform hooks. **This read revision must be accepted before any R0a receipt.**
 
+### 0.10 Codex's review of VT2 and X3f (`0acf9ca`), VT3 and X3g
+
+Codex, 2026-11-07 (`reviews/2026-11-07-0acf9ca-review.md`): **ACCEPT** VT-R1, VT-N1, XE-R1, XE-R2, the foreign-key extension and the corrected records,
+and the exact staging-only push of `0acf9ca`, which was made (production plan §E13). **AMEND the pre-R0a contract: R0a is not cleared.** Two
+fix-forward commits answer it.
+
+**VT3, the tooling (the PowerShell cache).** Traced in synthetic reproductions (`.review/vt3-trace-1` to `-5`, scripts in `.review/vt3-evidence`):
+Windows PowerShell 5.1 places its module analysis cache under the LocalApplicationData known folder, which Windows builds from `USERPROFILE`,
+and does not read `LOCALAPPDATA`. Under the old driver's synthetic home, which had no `AppData\Local`, that folder read empty, PowerShell's own
+`AnalysisCacheData.cacheStoreLocation` was the relative `Microsoft\Windows\PowerShell\ModuleAnalysisCache`, and a PowerShell alive past the save
+(about 10 s, on a background thread) wrote the cache into its working directory: G-27's window, by the cache's module list and timing, in the
+tested clone and in each replay checkout. The driver now sets the five per-user locations, each once and absolute, before any step;
+`powershell-before` shows the placement at run time, and `tree-after` fails anything left in the tested clone or a replay checkout.
+
+**XF-R1: resolved identity is not a dispatch boundary.** X3f admitted every operator made at initdb, in `pg_catalog`, with a non-volatile
+built-in implementation. Codex's reproduction: a bucket default `'cats'::text @@ 'cat'::text`, read and bound under `default_text_search_config =
+pg_catalog.english` with no finding, then run under `pg_catalog.simple`. The readings stayed identical, the value went from true to false, and
+BUILD-01 generated from the original facts committed. **That is an unbound configuration-dependent route, not a demonstrated irreversible
+write:** `ts_match_tt` calls `to_tsvector` and `plainto_tsquery`, and the configuration selects a parser and dictionaries, none of which resolving
+the `@@` implementation establishes. **A correction of §0.9:** I wrote that I knew of no built-in non-volatile `oprcode` that changes state.
+Whether or not that is so, it was the wrong test: stable built-ins read settings the readings do not hold.
+
+**X3g's operator rule.** `BUILD_NODE_OPERATORS` lists, by catalog identity, the operators the supported expressions run: each operator's OID and
+signature and its implementation's OID and signature, the implementation immutable and with no pseudo-type argument. A `node-operator|` row
+passes only as the exact row of an entry, so a lookalike in another schema, the same row under another OID, another implementation or another
+volatility all stop. The entries are what the supported controls use: integer, bigint-to-integer and smallint-to-integer comparisons (the
+stock CHECK `email_change_confirm_status >= 0 and <= 2`), numeric `>=` and `<=`, boolean `=` (the stock partial index `where is_sso_user =
+false`), text `=`, `<>` and `!~` (the stock regex predicate) and uuid `=` (the foreign keys). **Text search is off the list.** The foreign-key
+rule uses the same list. The body-review exception is unchanged: an operator whose `oprcode` the walk reports for the same CHECK or trigger
+passes as B1's review item, as before, and in no other origin; the list does not reach it.
+- Codex's negative is `w-expr-codex-text-search.json`, and `text-search-operator` on both tables: both implementations refuse before any write.
+  BUILD-01's own text, with its list put back to X3f's blanket rule, commits on the same database, and the new rows hold the second setting's
+  value: the list is what refuses it.
+- A required-failing mutant restores the blanket rule in the comparator (4W-M6).
+- The supported controls are unchanged, and pass: the stock-like list, Codex's stock controls, the foreign-key control.
+
+**The enum exception (Ryan's request; Codex accepted the design).** `enum_eq` and `enum_ne` compare the two values' OIDs; they consult no
+operator class and no comparison function. **Ryan's earlier note said sort order; that was wrong** (Codex). `BUILD_ENUM_EQUALITY` holds
+`=(anyenum,anyenum)` → `enum_eq` and `<>(anyenum,anyenum)` → `enum_ne`, by OID and signature, never by name. Only that equality or
+inequality, as an `OPEXPR`, is exempt from the pseudo-type restriction. Every other node keeps it: the same operator under `DISTINCTEXPR`,
+`NULLIFEXPR` or `SCALARARRAYOPEXPR` (not approved by this exception), ordering, MINMAX and I/O coercion. Index routes keep the existing
+operator-class rule, unchanged. In a tree that holds both an enum equality and an unsafe enum operation, the unsafe one still stops it.
+- Controls, both tables: the stock form, an enum column with its `Const` default `'STANDARD'::…buckettype` and CHECKs of `=` and `<>` against
+  that literal (`enum-stock-form`); the default alone was already Codex's control.
+- Negatives, both tables, in both implementations: ordering; equality beside `LEAST`, beside a CoerceViaIO and beside an ordering in one tree;
+  `IS DISTINCT FROM`, `NULLIF` and `= ANY`; a custom operator named `=` over the built-in `enum_eq`, in a default and in a CHECK; a custom
+  `enum_eq` of its own; and unit cases for every identity field.
+
+**What X3g does not show:** that the operator list covers a stock project's own reading, which decides that at B1 (a stop there needs review and
+no new reading); anything beyond PostgreSQL 17's node vocabulary and OIDs, checked on PGlite's 17.5 and not on the hosted 17.6; anything about
+Supabase's real roles or platform hooks. **This read revision must be accepted before any R0a receipt.**
+
 ## 1. What the remaining path touches
 
 These facts shape the rest of the plan. They come from reading the

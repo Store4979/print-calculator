@@ -1286,8 +1286,34 @@ export const BUILD_NODE_TYPES = Object.freeze([
   "text", "varchar", "bpchar", "name", "unknown", "bool", "int2", "int4", "int8", "numeric", "float4", "float8", "timestamptz", "timestamp", "date", "time", "timetz", "interval", "uuid", "json", "jsonb", "bytea", "oid", "regclass",
   "_text", "_varchar", "_bpchar", "_name", "_bool", "_int2", "_int4", "_int8", "_numeric", "_float4", "_float8", "_timestamptz", "_timestamp", "_date", "_uuid", "_json", "_jsonb",
 ]);
+/** X3g (Codex XF-R1): the reviewed operators and the enum equality, by catalog identity; the comparator's say why, and 4W-24 compares them. */
+export const BUILD_NODE_OPERATORS = Object.freeze([
+  ["96", "=(integer,integer)", "65", "pg_catalog.int4eq(integer, integer)"],
+  ["97", "<(integer,integer)", "66", "pg_catalog.int4lt(integer, integer)"],
+  ["521", ">(integer,integer)", "147", "pg_catalog.int4gt(integer, integer)"],
+  ["523", "<=(integer,integer)", "149", "pg_catalog.int4le(integer, integer)"],
+  ["525", ">=(integer,integer)", "150", "pg_catalog.int4ge(integer, integer)"],
+  ["419", ">(bigint,integer)", "477", "pg_catalog.int84gt(bigint, integer)"],
+  ["430", ">=(bigint,integer)", "479", "pg_catalog.int84ge(bigint, integer)"],
+  ["540", "<=(smallint,integer)", "166", "pg_catalog.int24le(smallint, integer)"],
+  ["542", ">=(smallint,integer)", "168", "pg_catalog.int24ge(smallint, integer)"],
+  ["1755", "<=(numeric,numeric)", "1723", "pg_catalog.numeric_le(numeric, numeric)"],
+  ["1757", ">=(numeric,numeric)", "1721", "pg_catalog.numeric_ge(numeric, numeric)"],
+  ["91", "=(boolean,boolean)", "60", "pg_catalog.booleq(boolean, boolean)"],
+  ["98", "=(text,text)", "67", "pg_catalog.texteq(text, text)"],
+  ["531", "<>(text,text)", "157", "pg_catalog.textne(text, text)"],
+  ["642", "!~(text,text)", "1256", "pg_catalog.textregexne(text, text)"],
+  ["2972", "=(uuid,uuid)", "2956", "pg_catalog.uuid_eq(uuid, uuid)"],
+]);
+export const BUILD_ENUM_EQUALITY = Object.freeze([
+  ["3516", "=(anyenum,anyenum)", "3508", "pg_catalog.enum_eq(anyenum, anyenum)"],
+  ["3517", "<>(anyenum,anyenum)", "3509", "pg_catalog.enum_ne(anyenum, anyenum)"],
+]);
 const BUILD_NODE_REF = ":(funcid|opno|consttype|vartype|resulttype|funcresulttype|opresulttype|minmaxtype|coalescetype|casetype|array_typeid|element_typeid|typeId|type) ([0-9]+)";
-const BUILD_BUILTIN_OPERATOR = "^pg_catalog[|]true[|]pg_catalog[|]true[|][is][|]";
+/** Each listed operator as its exact `node-operator|<oid>|<row>`, the key and value of BUILD-00's row joined by `|`. */
+const buildOperatorRows = (list, pseudo) => list.map(([oid, oprSig, implOid, implSig]) => `node-operator|${oid}|pg_catalog|true|pg_catalog|true|i|${pseudo}|${implOid}|${implSig.replace(/^pg_catalog\.([^(]*)\(.*$/, "$1")}|${implSig}|${oprSig}`);
+const BUILD_REVIEWED_OPERATOR_ROWS = buildOperatorRows(BUILD_NODE_OPERATORS, "false");
+const BUILD_ENUM_EQUALITY_ROWS = buildOperatorRows(BUILD_ENUM_EQUALITY, "true");
 const BUILD_QUOTED = `'(?:[^']|'')*'|"(?:[^"]|"")*"`;
 const BUILD_CALL = "([A-Za-z_][A-Za-z0-9_$]*(?:[.][A-Za-z_][A-Za-z0-9_$]*)*)[(]";
 const BUILD_EXPRESSION_KEY = "^(default|index-expr|index-pred|check|domain-check|domain-default)[|]";
@@ -1322,7 +1348,7 @@ function buildPredicates(facts) {
   const expressionNodes = (part) => `not exists (select 1 from node_bad n where n.part = ${q(part)})`;
   // Each foreign key on either side (X3f): the key's own rows, never this table's columns.
   const typeReviewed = (ref) => `coalesce((select v.value ~ '^pg_catalog[|]true[|]' and split_part(v.value, '|', 5) in (${BUILD_NODE_TYPES.map(q).join(", ")}) from f v where v.src = 'build00' and v.part = c.part and v.key = 'node-type|' || ${ref}), false)`;
-  const operatorBuiltin = (ref) => `coalesce((select v.value ~ ${q(BUILD_BUILTIN_OPERATOR)} and split_part(v.value, '|', 6) = 'false' from f v where v.src = 'build00' and v.part = c.part and v.key = 'node-operator|' || ${ref}), false)`;
+  const operatorBuiltin = (ref) => `coalesce((select v.key || '|' || v.value in (${BUILD_REVIEWED_OPERATOR_ROWS.map(q).join(", ")}) from f v where v.src = 'build00' and v.part = c.part and v.key = 'node-operator|' || ${ref}), false)`;
   const field = (n) => `split_part(c.value, '|', ${n})`;
   const foreignKeys = (part) => `not exists (select 1 from f c where ${part01(part).replace(/\bf\./g, "c.")} and c.key like 'fk|%' and not exists (select 1 from f d where d.src = 'build00' and d.part = c.part and starts_with(d.key, 'fk-column|' || substr(c.key, 4) || '|'))) and not exists (select 1 from f c where ${part01(part).replace(/\bf\./g, "c.")} and c.key like 'fk-index|%' and c.value !~ '^pg_catalog[.][^,]*(,pg_catalog[.][^,]*)*$') and not exists (select 1 from f c where ${part01(part).replace(/\bf\./g, "c.")} and c.key like 'fk-column|%' and not (${typeReviewed(field(1))} and ${typeReviewed(field(2))} and ${operatorBuiltin(field(3))} and ${operatorBuiltin(field(4))} and ${operatorBuiltin(field(5))}))`;
   return [
@@ -1418,8 +1444,8 @@ ${body("build00w")}
   node_refs(part, key, field, ref) as (
     select t.part, t.key, m[1], m[2] from node_trees t cross join lateral regexp_matches(t.tree, ${q(BUILD_NODE_REF)}, 'g') as m
   ),
-  node_pairs(part, key, opno, implementation) as (
-    select t.part, t.key, m[1], m[2] from node_trees t cross join lateral regexp_matches(t.tree, ':opno ([0-9]+) :opfuncid ([0-9]+)', 'g') as m
+  node_ops(part, key, tag, opno, implementation) as (
+    select t.part, t.key, m[1], m[2], m[3] from node_trees t cross join lateral regexp_matches(t.tree, '[{](DISTINCTEXPR|NULLIFEXPR|OPEXPR|SCALARARRAYOPEXPR) :opno ([0-9]+) :opfuncid ([0-9]+)', 'g') as m
   ),
   node_facts(part, key, field, ref, fact) as (
     select r.part, r.key, r.field, r.ref, v.value from node_refs r
@@ -1429,7 +1455,11 @@ ${body("build00w")}
   node_dependent(part, key) as (
     select g.part, g.key from node_tags g where g.tag in ('ARRAYCOERCEEXPR', 'COERCEVIAIO', 'MINMAXEXPR')
     union
-    select x.part, x.key from node_facts x where (x.field = 'funcid' and split_part(x.fact, '|', 4) = 'true') or (x.field = 'opno' and split_part(x.fact, '|', 6) = 'true')
+    select x.part, x.key from node_facts x where x.field = 'funcid' and split_part(x.fact, '|', 4) = 'true'
+    union
+    select o.part, o.key from node_ops o left join f v on v.src = 'build00' and v.part = o.part and v.key = 'node-operator|' || o.opno
+     where split_part(v.value, '|', 6) = 'true'
+       and not (o.tag = 'OPEXPR' and v.key || '|' || v.value in (${BUILD_ENUM_EQUALITY_ROWS.map(q).join(", ")}))
   ),
   node_bad(part) as (
     select t.part from node_trees t where t.tree = '<null>' or t.tree ~ ':(hashfuncid|negfuncid) [1-9]'
@@ -1439,7 +1469,7 @@ ${body("build00w")}
     select t.part from node_trees t
      where (select count(*) from node_tags g where g.part = t.part and g.key = t.key and g.tag = 'FUNCEXPR') <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'funcid')
         or (select count(*) from node_tags g where g.part = t.part and g.key = t.key and g.tag in ('DISTINCTEXPR', 'NULLIFEXPR', 'OPEXPR', 'SCALARARRAYOPEXPR')) <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'opno')
-        or (select count(*) from node_pairs p where p.part = t.part and p.key = t.key) <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'opno')
+        or (select count(*) from node_ops p where p.part = t.part and p.key = t.key) <> (select count(*) from node_refs r where r.part = t.part and r.key = t.key and r.field = 'opno')
     union all
     select x.part from node_facts x join node_trees t on t.part = x.part and t.key = x.key
      where x.field = 'funcid'
@@ -1448,10 +1478,10 @@ ${body("build00w")}
     union all
     select x.part from node_facts x join node_trees t on t.part = x.part and t.key = x.key
      where x.field = 'opno'
-       and not coalesce(x.fact ~ ${q(BUILD_BUILTIN_OPERATOR)}, false)
+       and not coalesce('node-operator|' || x.ref || '|' || x.fact in (${[...BUILD_REVIEWED_OPERATOR_ROWS, ...BUILD_ENUM_EQUALITY_ROWS].map(q).join(", ")}), false)
        and not (t.origin in ('check', 'trigger') and exists (select 1 from f r where r.src = 'build00' and r.part = x.part and r.key = t.origin || '-function|' || t.name || '|' || split_part(x.fact, '|', 9)))
     union all
-    select p.part from node_pairs p left join f v on v.src = 'build00' and v.part = p.part and v.key = 'node-operator|' || p.opno
+    select p.part from node_ops p left join f v on v.src = 'build00' and v.part = p.part and v.key = 'node-operator|' || p.opno
      where p.implementation <> '0' and p.implementation is distinct from split_part(v.value, '|', 7)
     union all
     select x.part from node_facts x

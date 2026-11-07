@@ -669,6 +669,13 @@ Owner: Ryan. Live at https://printcalculator2.netlify.app
           so only the shape's own stop catches it;
         - **operator names cannot end in `+` or `-`** unless they hold `~!@#%^&|?`, and a bare `commutator =` name
           resolves outside the schema: write `OPERATOR(s.x)`;
+      - **X3g: operators by exact catalog identity** (Codex XF-R1, review of 0acf9ca; plan §0.10). Built-in and
+        non-volatile is no dispatch boundary: `@@(text,text)`'s stable `ts_match_tt` reads `default_text_search_config`,
+        so under another setting the readings stayed identical and the default's value changed. `<part>-expression-nodes`
+        and `<part>-foreign-keys` take only `BUILD_NODE_OPERATORS` (operator OID and signature, implementation OID and
+        signature, immutable, no pseudo-type), each the exact row; text search stays off it. The enum exception is
+        `BUILD_ENUM_EQUALITY` (`enum_eq`, `enum_ne`, which compare the values' OIDs, not their sort order), exempt from
+        the pseudo-type rule only as an `OPEXPR`, never by name;
       - **PERFORM_DECLARED is not PERFORM_QUERIES:** its entries (RB-43's two, and
         P1-4C's in stage0-4c-performs.mjs, data in the guard chain) have no receipt,
         no profile names them, and an envelope quoting one stays R4;

@@ -48,11 +48,15 @@
 //   4W-23 X3e: ordinary built-in forms are kept; a string-defined body stays B1's review
 //         item, with an explicit disposition
 //   4W-24 X3f: the stored node trees, by unit cases on real rows; one set of lists in both
-//         implementations
+//         implementations. X3g: operators by exact catalog identity, and the enum exception
 //   4W-25 X3f: Codex's enum comparator, with identical readings, stops in both before any
 //         write; the implicit routes over each kind of type; the stock-like controls
 //   4W-26 X3f: policy counts zero and nonzero, as evidence only; the writer is BUILD-00W's
-//   4W-27 X3f: foreign keys from their own rows, on both sides of each table
+//   4W-27 X3f: foreign keys from their own rows, on both sides of each table; X3g's
+//         operator list there too
+//   4W-28 X3g: Codex's @@ under two text search settings stops in both before any write,
+//         and the SQL with X3f's blanket rule put back commits; the enum equality's stock
+//         form is kept, and every other use of an enum stops
 // Each database run in these is the harness's, on PGlite, which is not a
 // dependency of this repository; the test runs the comparator and the classifier on
 // what that run recorded, and each 55P03 and 40P01 there was raised on purpose.
@@ -1073,7 +1077,17 @@ const EXPR_STOPS = {
   "trigger-when-least-enum": ["expression-nodes"],
   "domain-check-least-enum": ["expression-nodes"],
   "domain-default-least-enum": ["expression-nodes"],
-  "enum-equality-in-check": ["expression-nodes"],
+  "enum-ordering-in-check": ["expression-nodes"],
+  "enum-equality-and-least-in-check": ["expression-nodes"],
+  "enum-equality-and-coerceviaio-in-check": ["expression-nodes"],
+  "enum-equality-and-ordering-in-check": ["expression-nodes"],
+  "enum-distinct-in-check": ["expression-nodes"],
+  "enum-nullif-default": ["expression-nodes"],
+  "enum-any-in-check": ["expression-nodes"],
+  "enum-lookalike-operator-default": ["expression-nodes", "routes"],
+  "enum-lookalike-operator-in-check": ["expression-nodes"],
+  "enum-lookalike-function": ["expression-nodes", "routes"],
+  "text-search-operator": ["expression-nodes"],
   "pseudo-type-function-over-enum": ["expression-nodes"],
   "unlisted-cast-function": ["expression-nodes"],
   "row-comparison": ["expression-nodes"],
@@ -1264,7 +1278,7 @@ test("4W-22 X3e: addition and replacement after the review stop in both implemen
 test("4W-23 X3e: ordinary built-in forms and reviewed routes are kept, a literal naming a function among them; what a string-defined body calls stays B1's review item, with an explicit disposition", () => {
   const files = readdirSync(FIX);
   const wanted = [];
-  for (const [name, parts] of [["builtins", PARTS], ["trigger-when-builtin", ["buckets"]], ["reviewed-operator-in-check", PARTS], ["reviewed-helper-in-a-parsed-body", PARTS], ["fk-builtin", PARTS], ["policy-rls-off", PARTS], ["policy-rls-on-superuser", PARTS]]) {
+  for (const [name, parts] of [["builtins", PARTS], ["trigger-when-builtin", ["buckets"]], ["reviewed-operator-in-check", PARTS], ["reviewed-helper-in-a-parsed-body", PARTS], ["fk-builtin", PARTS], ["policy-rls-off", PARTS], ["policy-rls-on-superuser", PARTS], ["enum-stock-form", PARTS], ["stock-forms", PARTS]]) {
     for (const part of parts) {
       const f = `w-expr-commit-${part}-${name}.json`;
       wanted.push(f);
@@ -1375,8 +1389,42 @@ test("4W-24 X3f: each stored node tree is read for what it names, never run. Eve
     ["CoerceViaIO with a custom type on either side", { "node|default|x": "{COERCEVIAIO :arg {CONST :consttype 90000 } :resulttype 25 }", "node-type|90000": FACT.en, "node-type|25": FACT.type }],
     ["ArrayCoerce over a custom type", { "node|default|x": "{ARRAYCOERCEEXPR :arg {CONST :consttype 90000 } :resulttype 1009 }", "node-type|90000": "storage|false|b|A|_x_en", "node-type|1009": "pg_catalog|true|b|A|_text" }],
     ["a pseudo-type function over a custom type", { "node|default|x": `${FN(3058)}{CONST :consttype 90000 }`, "node-function|3058": "pg_catalog|true|s|true|concat|pg_catalog.concat(\"any\")", "node-type|25": FACT.type, "node-type|90000": FACT.en }],
-    ["a pseudo-type operator over a custom type", { "node|default|x": `{OPEXPR :opno 3516 :opfuncid 3508 :args ({CONST :consttype 90000 }) }`, "node-operator|3516": "pg_catalog|true|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|=(anyenum,anyenum)", "node-type|90000": FACT.en }],
     ["a reviewed function on a strict path", { "node|default|x": FN(70000), "node-function|70000": "storage|false|v|false|f|storage.f()", "check-function|x|storage.f()": "plpgsql|postgres|false|v||a|b" }],
+  ]) stop(rows, label);
+  // X3g (Codex XF-R1): an operator passes as the exact row of a reviewed entry, never by a rule.
+  assert.deepEqual(A.BUILD_NODE_OPERATORS.map((e) => [...e]), C.BUILD_NODE_OPERATORS.map((e) => [...e]), "one list of operators, in both places");
+  assert.deepEqual(A.BUILD_ENUM_EQUALITY.map((e) => [...e]), C.BUILD_ENUM_EQUALITY.map((e) => [...e]), "one enum equality, in both places");
+  assert.deepEqual(C.BUILD_ENUM_EQUALITY.map((e) => e[1]), ["=(anyenum,anyenum)", "<>(anyenum,anyenum)"]);
+  for (const [, sig] of C.BUILD_NODE_OPERATORS) assert.ok(!/anyenum|anyelement|anyarray|tsquery|tsvector|@@/.test(sig), sig);
+  const row = ([, sig, impl, implSig], pseudo = "false") => `pg_catalog|true|pg_catalog|true|i|${pseudo}|${impl}|${implSig.replace(/^pg_catalog\.([^(]*)\(.*$/, "$1")}|${implSig}|${sig}`;
+  const EQ = C.BUILD_ENUM_EQUALITY[0], NE = C.BUILD_ENUM_EQUALITY[1];
+  const ENUM = { "node-type|90000": FACT.en, "node-type|16": "pg_catalog|true|b|B|bool" };
+  const ENUM_ROWS = { "node-operator|3516": row(EQ, "true"), "node-operator|3517": row(NE, "true"), ...ENUM };
+  const enumOp = (tag, opno, fid) => `{${tag} :opno ${opno} :opfuncid ${fid} :opresulttype 16 :args ({VAR :vartype 90000} {CONST :consttype 90000 :constvalue 4 [ 1 0 0 0 ]}) }`;
+  for (const e of C.BUILD_NODE_OPERATORS) ok({ "node|check|c": `{OPEXPR :opno ${e[0]} :opfuncid ${e[2]} :opresulttype 16 }`, [`node-operator|${e[0]}`]: row(e), "node-type|16": "pg_catalog|true|b|B|bool" });
+  // The built-in enum equality and inequality, by identity, under an OPEXPR: the stock CHECK form.
+  ok({ "node|check|c": enumOp("OPEXPR", 3516, 3508), ...ENUM_ROWS });
+  ok({ "node|check|c": enumOp("OPEXPR", 3517, 3509), ...ENUM_ROWS });
+  ok({ "node|check|c": `{BOOLEXPR :boolop and :args (${enumOp("OPEXPR", 3516, 3508)} ${enumOp("OPEXPR", 3517, 3509)}) }`, ...ENUM_ROWS });
+  for (const [label, rows] of [
+    // A built-in the blanket rule admitted, off the list: Codex's @@, and others of its kind.
+    ["@@(text,text), stable, reading a setting", { "node|default|x": "{OPEXPR :opno 3762 :opfuncid 3760 :opresulttype 16 }", "node-operator|3762": "pg_catalog|true|pg_catalog|true|s|false|3760|ts_match_tt|pg_catalog.ts_match_tt(text, text)|@@(text,text)", "node-type|16": "pg_catalog|true|b|B|bool" }],
+    ["an immutable built-in off the list", { "node|default|x": "{OPEXPR :opno 518 :opfuncid 144 :opresulttype 16 }", "node-operator|518": "pg_catalog|true|pg_catalog|true|i|false|144|int4ne|pg_catalog.int4ne(integer, integer)|<>(integer,integer)", "node-type|16": "pg_catalog|true|b|B|bool" }],
+    ["a listed row under another oid", { "node|default|x": "{OPEXPR :opno 90001 :opfuncid 65 :opresulttype 16 }", "node-operator|90001": row(C.BUILD_NODE_OPERATORS[0]), "node-type|16": "pg_catalog|true|b|B|bool" }],
+    ["a listed oid whose row is a lookalike outside pg_catalog", { "node|default|x": "{OPEXPR :opno 96 :opfuncid 65 :opresulttype 16 }", "node-operator|96": row(C.BUILD_NODE_OPERATORS[0]).replace(/^pg_catalog\|true\|/, "storage|false|"), "node-type|16": "pg_catalog|true|b|B|bool" }],
+    ["a listed oid implemented by another function", { "node|default|x": "{OPEXPR :opno 96 :opfuncid 90002 :opresulttype 16 }", "node-operator|96": "pg_catalog|true|storage|false|i|false|90002|int4eq|storage.int4eq(integer, integer)|=(integer,integer)", "node-type|16": "pg_catalog|true|b|B|bool" }],
+    ["a listed row, stable", { "node|default|x": "{OPEXPR :opno 96 :opfuncid 65 :opresulttype 16 }", "node-operator|96": row(C.BUILD_NODE_OPERATORS[0]).replace("|i|false|", "|s|false|"), "node-type|16": "pg_catalog|true|b|B|bool" }],
+    // The enum exception, by identity only, and only under an OPEXPR.
+    ["enum ordering", { "node|check|c": enumOp("OPEXPR", 3518, 3510), "node-operator|3518": "pg_catalog|true|pg_catalog|true|i|true|3510|enum_lt|pg_catalog.enum_lt(anyenum, anyenum)|<(anyenum,anyenum)", ...ENUM }],
+    ["enum equality under DISTINCTEXPR", { "node|check|c": enumOp("DISTINCTEXPR", 3516, 3508), ...ENUM_ROWS }],
+    ["enum equality under NULLIFEXPR", { "node|default|x": enumOp("NULLIFEXPR", 3516, 3508), ...ENUM_ROWS }],
+    ["enum equality under SCALARARRAYOPEXPR", { "node|check|c": `{SCALARARRAYOPEXPR :opno 3516 :opfuncid 3508 :hashfuncid 0 :negfuncid 0 :useOr true :args ({VAR :vartype 90000} {CONST :consttype 90001 }) }`, ...ENUM_ROWS, "node-type|90001": "storage|false|b|A|_x_en" }],
+    ["enum equality beside MINMAX in one tree", { "node|check|c": `{BOOLEXPR :boolop and :args (${enumOp("OPEXPR", 3516, 3508)} {NULLTEST :arg {MINMAXEXPR :minmaxtype 90000 :args ({VAR :vartype 90000}) } }) }`, ...ENUM_ROWS }],
+    ["enum equality beside CoerceViaIO in one tree", { "node|check|c": `{BOOLEXPR :boolop and :args (${enumOp("OPEXPR", 3516, 3508)} {NULLTEST :arg {COERCEVIAIO :arg {VAR :vartype 90000} :resulttype 25 } }) }`, ...ENUM_ROWS, "node-type|25": FACT.type }],
+    ["the enum equality's row under another oid", { "node|check|c": enumOp("OPEXPR", 90003, 3508), "node-operator|90003": row(EQ, "true"), ...ENUM }],
+    ["a lookalike enum equality outside pg_catalog over the built-in enum_eq", { "node|default|x": enumOp("OPEXPR", 90004, 3508), "node-operator|90004": "storage|false|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|storage.=(anyenum,anyenum)", ...ENUM }],
+    ["the enum equality's oid over a lookalike enum_eq", { "node|default|x": enumOp("OPEXPR", 3516, 90005), "node-operator|3516": "pg_catalog|true|storage|false|i|false|90005|enum_eq|storage.enum_eq(storage.x_en, storage.x_en)|=(anyenum,anyenum)", ...ENUM }],
+    ["the enum equality's row without its pseudo-type flag", { "node|check|c": enumOp("OPEXPR", 3516, 3508), "node-operator|3516": row(EQ, "false"), ...ENUM }],
   ]) stop(rows, label);
   // A CHECK or a WHEN may call what the walk reports for it, and only for it.
   const custom = "storage|false|v|false|f|storage.f()";
@@ -1520,11 +1568,57 @@ test("4W-27 X3f: foreign keys come from their own rows, on both sides of each ta
     ["a custom operator", fk({ "fk-column|out|t|x|1": "25|25|90000|98|98|a|b", "node-operator|90000": "storage|false|storage|false|i|false|70000|f|storage.f(text, text)|=%=(text,text)" })],
     ["a built-in operator over a pseudo-type", fk({ "fk-column|out|t|x|1": "25|25|25|98|98|a|b", "node-operator|25": "pg_catalog|true|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|=(anyenum,anyenum)" })],
     ["an operator with no row", fk({ "fk-column|out|t|x|1": "25|25|98|98|90002|a|b" })],
+    // X3g: the reviewed list, as in the trees, and not its enum exception.
+    ["the built-in enum equality, by identity", fk({ "fk-column|out|t|x|1": "25|25|3516|98|98|a|b", "node-operator|3516": "pg_catalog|true|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|=(anyenum,anyenum)" })],
+    ["an immutable built-in off the list", fk({ "fk-column|out|t|x|1": "25|25|93|98|98|a|b", "node-operator|93": "pg_catalog|true|pg_catalog|true|i|false|62|nameeq|pg_catalog.nameeq(name, name)|=(name,name)" })],
+    ["texteq's row under another oid", fk({ "fk-column|out|t|x|1": "25|25|90003|98|98|a|b", "node-operator|90003": op })],
     ["a custom operator class", fk({ "fk-index|out|t|x": "storage.x_ops" })],
     ["one custom class among others", fk({ "fk-index|out|t|x": "pg_catalog.text_ops,storage.x_ops" })],
     ["no index", fk({ "fk-index|out|t|x": "<none>" })],
   ]) {
     const clean = Object.fromEntries(Object.entries(rows).filter(([, v]) => v !== undefined));
     assert.ok(stopsOf(withRows(P, clean)).includes(K), label);
+  }
+});
+
+test("4W-28 X3g: Codex's @@ under two text search settings stops in both implementations before any write, and BUILD-01's own text with X3f's blanket rule put back commits; the enum equality's stock form is kept, and every other use of an enum stops", () => {
+  const r = exprFixture("w-expr-codex-text-search.json");
+  assert.equal(r.readingsEqualAfterSetting, true, "nothing in either reading holds default_text_search_config");
+  assert.deepEqual(r.values, { english: true, simple: false }, "and the default's value moved with it");
+  assert.equal(r.noFacts, true);
+  assert.deepEqual(r.js, ["buckets-expression-nodes"], "the comparator, in the run");
+  assert.deepEqual(asks(r, C.reviewedSetOf(r.build00)), ["buckets-expression-nodes"], "the comparator, here");
+  assert.deepEqual(r.sql, ["buckets-expression-nodes"], "BUILD-01's first step");
+  assert.equal(r.code, "P0001");
+  assert.match(r.where, ONE_FRAME);
+  assert.deepEqual(r.left, { ledger_absent: true, marker_absent: true, files_absent: true }, "before the first write");
+  assert.equal(r.blanketSql.committed, true, "the SQL list is what refuses it: put the blanket rule back, and the same text commits");
+  assert.ok(r.blanketSql.review_ts.length > 0 && r.blanketSql.review_ts.every((v) => v === false), "under the other setting");
+  const facts = Object.fromEntries(r.build00.filter((x) => x.part === "buckets").map((x) => [x.key, x.value]));
+  assert.equal(facts["node-operator|3762"], "pg_catalog|true|pg_catalog|true|s|false|3760|ts_match_tt|pg_catalog.ts_match_tt(text, text)|@@(text,text)", "what the blanket rule admitted");
+  // The stock form: an enum column, its Const default, and CHECKs of equality and inequality, on both tables.
+  for (const part of PARTS) {
+    const x = exprFixture(`w-expr-commit-${part}-enum-stock-form.json`);
+    const f = Object.fromEntries(x.build00.filter((y) => y.part === part).map((y) => [y.key, y.value]));
+    assert.match(f["node|default|x_type"], /^\{CONST :consttype [0-9]+ /, "the default is a stored Const");
+    assert.match(f["node|check|x_type_is"], /^\{OPEXPR :opno 3516 :opfuncid 3508 /);
+    assert.match(f["node|check|x_type_not"], /^\{OPEXPR :opno 3517 :opfuncid 3509 /);
+    assert.equal(f["node-operator|3516"], "pg_catalog|true|pg_catalog|true|i|true|3508|enum_eq|pg_catalog.enum_eq(anyenum, anyenum)|=(anyenum,anyenum)");
+    assert.equal(f["node-operator|3517"], "pg_catalog|true|pg_catalog|true|i|true|3509|enum_ne|pg_catalog.enum_ne(anyenum, anyenum)|<>(anyenum,anyenum)");
+    assert.equal(x.committed, true);
+    const s = exprFixture(`w-expr-commit-${part}-stock-forms.json`);
+    const g = Object.fromEntries(s.build00.filter((y) => y.part === part).map((y) => [y.key, y.value]));
+    for (const impl of ["int24ge", "int24le", "booleq"]) assert.ok(Object.entries(g).some(([k, v]) => k.startsWith("node-operator|") && v.split("|")[7] === impl), `${part}: ${impl}`);
+    assert.equal(s.committed, true);
+  }
+  // Each other use stops, and in a tree that also holds an enum equality, the unsafe node still stops it.
+  for (const part of PARTS) {
+    for (const name of ["enum-ordering-in-check", "enum-equality-and-least-in-check", "enum-equality-and-coerceviaio-in-check", "enum-equality-and-ordering-in-check", "enum-distinct-in-check", "enum-nullif-default", "enum-any-in-check", "enum-lookalike-operator-default", "enum-lookalike-operator-in-check", "enum-lookalike-function", "text-search-operator"]) {
+      const y = exprFixture(`w-expr-stop-${part}-${name}.json`);
+      assert.ok(y.js.includes(`${part}-expression-nodes`) && y.sql.includes(`${part}-expression-nodes`), `${part} ${name}: both implementations`);
+    }
+    const look = exprFixture(`w-expr-stop-${part}-enum-lookalike-operator-default.json`);
+    const op = look.build00.find((y) => y.part === part && y.key.startsWith("node-operator|") && y.value.includes("|enum_eq|"));
+    assert.ok(op && !op.value.startsWith("pg_catalog|true|"), `${part}: the lookalike is an operator of its own schema over the built-in enum_eq`);
   }
 });
