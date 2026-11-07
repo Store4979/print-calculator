@@ -9,21 +9,22 @@
 //                control, and each way a ledger can move outside the named entries
 //   VT-14, VT-15 check-tap: a log's counts, and the reviewed replay-state set
 //   VT-16        check-isolation before and after
-//   VT-19 to VT-22 VT3: the per-user locations each set once (a driver without its unset is
+//   VT-19 to VT-23 VT3: the per-user locations each set once (a driver without its unset is
 //                refused), an unexpected write into the tested tree fails the run, PowerShell's
 //                cache placement with the driver's locations and with the old ones, and the
-//                tree check's cases
+//                tree check's cases; VT3b: a stand-in put on PATH is executable (VT-23)
 // Everything runs on synthetic repositories, homes and fixture copies. No store, token,
 // remote or database. The compare-fixtures cases read HEAD's committed fixtures.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "acorn";
+import { jsCode } from "./source-util.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TOOL = (f) => join(ROOT, "scripts", "verify", f);
@@ -288,6 +289,33 @@ test("VT-7 the launcher passes on the driver's exit, a killed driver included; a
 });
 
 /**
+ * A stand-in program for a test to put on PATH, written executable. Bash's PATH search on Linux
+ * passes over a file without the execute bit and runs the next one it finds; Git for Windows'
+ * bash runs a `#!` file without it. VT-18's stand-in yarn had no bit, so on Netlify's Linux the
+ * build's own yarn ran and VT-18 failed (staging deploy 6aef4d4a of 0acf9ca).
+ */
+function pathStub(dir, name, body) {
+  const p = join(dir, name);
+  writeFileSync(p, body, { mode: 0o755 });
+  chmodSync(p, 0o755);
+  return p;
+}
+/**
+ * `env` with `dir` first on its PATH. On POSIX it refuses a directory holding a file that is
+ * not executable by everyone, so a stand-in written without its bit fails here, by name, and
+ * never falls through to a real program. Every stand-in this file puts on PATH goes through it;
+ * a stand-in put on PATH some other way is a review item, which no check here finds.
+ */
+function stubsOnPath(env, dir) {
+  if (!WIN) {
+    for (const n of readdirSync(dir)) {
+      const s = statSync(join(dir, n));
+      if (s.isFile() && (s.mode & 0o111) !== 0o111) throw new Error(`${n} in ${dir} is not executable (mode ${(s.mode & 0o777).toString(8)}): a POSIX PATH search would pass over it`);
+    }
+  }
+  return { ...env, PATH: `${dir}${WIN ? ";" : ":"}${env.PATH ?? env.Path ?? ""}` };
+}
+/**
  * A synthetic tested repository for the driver's real verify mode: the tools, and a guard module
  * whose default path `guardBody` decides. A stub yarn on PATH leaves a marker for each command it
  * is asked to run, so the marker shows what the driver started. No node_modules, harness or replay
@@ -305,16 +333,13 @@ function verifyRig(t, guardBody, { yarn = "", driver = null } = {}) {
   git(repo, "add", "-A");
   git(repo, "commit", "--quiet", "-m", "a guard module");
   const stubs = newDir(t);
-  const marker = join(stubs, "yarn-called.txt");
-  // Executable, so that a POSIX PATH search finds it before any real yarn.
-  writeFileSync(join(stubs, "yarn"), `#!/usr/bin/env bash\necho "yarn $*" >> "${marker}"\n${yarn}exit 0\n`);
-  chmodSync(join(stubs, "yarn"), 0o755);
+  const marker = join(newDir(t), "yarn-called.txt");
+  pathStub(stubs, "yarn", `#!/usr/bin/env bash\necho "yarn $*" >> "${marker}"\n${yarn}exit 0\n`);
   const out = newDir(t);
   const pg = newDir(t);
   const head = git(repo, "rev-parse", "HEAD");
   const run = (label, change = (env) => env) => {
-    const env = childEnv(out);
-    env.PATH = `${stubs}${WIN ? ";" : ":"}${env.PATH}`;
+    const env = stubsOnPath(childEnv(out), stubs);
     return spawnSync(BASH, [slash(TOOL("verify-launch.sh")), "--repo", repo, "--tooling", head, "--out", out, "--label", label, "--", "verify", "--commit", head, "--pglite", pg, "--expect-tests", "1"], { encoding: "utf8", env: change(env), windowsHide: true });
   };
   return { repo, head, out, marker, run };
@@ -838,4 +863,28 @@ test("VT-22 tree-after: the tested tree and the replay's checkouts as checked ou
   const r = spawnSync(process.execPath, [TOOL("check-isolation.mjs"), "tree", "--tree", newDir(t)], { encoding: "utf8", env: childEnv(home), windowsHide: true });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /PROBLEM git did not read the tested tree/);
+});
+
+test("VT-23 a stand-in put on PATH is executable and is what a PATH search runs; on POSIX a stand-in without its execute bit is passed over, as on Netlify, and stubsOnPath refuses it by name", (t) => {
+  const dir = newDir(t), mark = join(newDir(t), "called.txt");
+  const stub = pathStub(dir, "vt23stub", `#!/usr/bin/env bash\necho "ran $*" >> "${mark}"\n`);
+  if (!WIN) assert.equal(statSync(stub).mode & 0o777, 0o755, "written executable");
+  const env = stubsOnPath(childEnv(newDir(t)), dir);
+  const r = spawnSync(BASH, ["-c", "vt23stub probe"], { encoding: "utf8", env, windowsHide: true });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(readFileSync(mark, "utf8"), "ran probe\n", "bash's PATH search ran the stand-in");
+  // The rig every driver test uses puts its stand-in on PATH through the same two helpers.
+  const src = jsCode(readFileSync(join(ROOT, "scripts", "tests", "verify-tooling.test.js"), "utf8"), { label: "verify-tooling.test.js" });
+  const rig = src.slice(src.indexOf("function verifyRig("), src.indexOf("const AFTER_ISOLATION"));
+  assert.ok(rig.includes("pathStub(stubs, \"yarn\"") && rig.includes("stubsOnPath(childEnv(out), stubs)"), "verifyRig writes and places its stand-in through the helpers");
+  if (WIN) { t.diagnostic("Windows: Git for Windows' bash runs a #! file without an execute bit, so the POSIX half is not observable here"); return; }
+  // POSIX: the same stand-in written as VT-18 wrote it before VT3, with no execute bit.
+  const bare = newDir(t), mark2 = join(newDir(t), "called.txt");
+  writeFileSync(join(bare, "vt23stub"), `#!/usr/bin/env bash\necho "ran" >> "${mark2}"\n`, { mode: 0o644 });
+  chmodSync(join(bare, "vt23stub"), 0o644);
+  const raw = { ...childEnv(newDir(t)), PATH: `${bare}:${process.env.PATH}` };
+  const r2 = spawnSync(BASH, ["-c", "vt23stub probe"], { encoding: "utf8", env: raw, windowsHide: true });
+  assert.notEqual(r2.status, 0, "the PATH search passed over it");
+  assert.equal(existsSync(mark2), false, "and it never ran");
+  assert.throws(() => stubsOnPath(childEnv(newDir(t)), bare), /vt23stub in .* is not executable \(mode 644\): a POSIX PATH search would pass over it/);
 });

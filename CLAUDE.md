@@ -1199,6 +1199,17 @@ abuse, does not guarantee a cap"), say so in the comment itself.
      in `.review/vt3-trace-*`). `powershell-before` shows the placement at run time;
      `tree-after` fails anything left in the tested clone or a replay checkout. It reads the
      final state only, so a write removed again is not seen.
+   - **A stand-in program a test puts on PATH needs its executable bit.** Bash on Linux
+     passes over a non-executable file in its PATH search and runs the next one; Git for
+     Windows' bash runs a `#!` file without the bit, so a Windows run never shows it.
+     Netlify runs `yarn test` on Linux: staging's build of `0acf9ca` (deploy 6aef4d4a, log
+     `reviews/netlify-staging-6aef4d4a-0acf9ca.log`) failed on VT-18, whose stand-in yarn
+     never ran, and the published staging deploy stayed at `2d53bed` (Claude (chat)
+     reproduced it in a Linux container). In verify-tooling.test.js write one with
+     `pathStub` and place it with `stubsOnPath`, which refuses a non-executable file on
+     POSIX by name (VT-23, VT3b). A stand-in put on PATH any other way is a review item;
+     no check finds it. **The deploy's `yarn test` gate is deliberate:** never remove it to
+     get a build through (Ryan rejected Netlify's AI advice to, 2026-11-07).
 
 ## Session log (standing rule, 2026-10-29; rewritten 2026-10-30)
 At the end of every session, before the final report, update docs/STATUS.md

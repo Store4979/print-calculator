@@ -3222,6 +3222,45 @@ window.**
 
     It is a read of the production site; it says nothing about the staging site's
     build of `0acf9ca`.
+  - **Ryan's read of the staging site's deploy log,** read-only (he opened and saved the
+    log; no buttons pressed), reported on Sat 2026-11-07 after 18:56Z; the log is saved
+    as `reviews/netlify-staging-6aef4d4a-0acf9ca.log`:
+    - `printcalculator2-staging` deploy **`6aef4d4a39c1f371d28ac444`** for `0acf9ca` ran
+      11:09:47 to 11:13:02 EST (16:09:47–16:13:02Z) on build image `noble-new-builds`,
+      node v22.23.4, and **failed in `yarn test`**: 667 tests, 664 pass, 1 fail, 2
+      skipped (G-27 and G-27b skip off Windows), tests 179 s, the build 3 min 15 s,
+      ending "Build script returned non-zero exit code: 2". The published deploy stayed
+      `6aee0c9d` at `2d53bed`, which is why the poll never saw `0acf9ca`.
+    - **The failure is `not ok 630`, VT-18** (VT2): ENOENT opening
+      `/tmp/verify-tooling-*/yarn-called.txt`, the stand-in yarn's marker, at
+      `verify-tooling.test.js:306`. VT-18's assertions before that line passed (the driver's
+      `isolation-before` exited 0 and every later step ran), so the driver ran its `yarn`
+      steps, and none of them reached the stand-in: the marker it writes on every call does
+      not exist.
+    - **Why the stand-in did not run, as far as the log shows:** VT-18 wrote it with
+      `writeFileSync` and no executable bit, and bash's PATH search on Linux passes over a
+      file that is not executable, so the build's own `yarn` (Corepack was enabled) ran
+      instead. Git for Windows' bash runs a file with a `#!` line whether or not it has the
+      bit, so no local run showed it. VT3 (`051124d`) makes the stand-in executable.
+    - **Claude (chat)'s unguarded local reproduction,** as Ryan relays it (this session did
+      not run it and has not seen its output): Netlify's test step at the pushed `0acf9ca`
+      in Claude (chat)'s own Linux container, Node 22.22, yarn 1.22.22,
+      `node --test scripts/tests/*.test.js` as `yarn test` runs it in `netlify.toml`, Sat
+      2026-11-07 about 13:10 to 13:35 EST. Run as a non-root user with an ordinary home
+      outside /tmp, as Netlify runs, the only failure was VT-18: `verify-tooling.test.js:269`
+      wrote the stand-in yarn without an execute bit, Linux's PATH lookup passed over it,
+      the real yarn ran, and the marker was never written. With that file written
+      `{ mode: 0o755 }` in a scratch copy, VT-18 passed. Run as root with HOME under /tmp,
+      LN-3 and ST-7 also failed there; both pass as non-root with an ordinary home and
+      passed on Netlify, so they came from that container's setup, not the commit.
+    - **So the cause is established:** VT-18's non-executable stand-in, on Netlify's Linux.
+      Nothing about the deploy gate changes: Netlify's AI summary of the deploy suggested
+      removing `yarn test` from the build, and **that advice is rejected**, because the
+      deploy's test gate is deliberate (Ryan, 2026-11-07).
+    - **Staging catches up only when the next cleared push carries the fix.** Until then it
+      serves `6aee0c9d` at `2d53bed`. Nothing in X4's draft depends on staging having
+      `0acf9ca`: its workflows target the rehearsal and production, never staging. VT3's own
+      tests, and VT-23's POSIX half (VT3b), have not run on Linux yet.
 
 **E14. The item 2 staging capture — RECORD, 2026-10-22 to 2026-10-27.**
 
